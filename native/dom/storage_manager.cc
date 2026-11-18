@@ -12,14 +12,15 @@
 #include "mitto/dom/cache_storage_answers.h"
 #include "mitto/dom/cache_storage_host.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
-#include "v8/include/v8-persistent-handle.h"
-#include "v8/include/v8-promise.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
+#include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-primitive.h"
+#include "v8/include/v8-promise.h"
 
 namespace mitto {
 
@@ -61,9 +62,12 @@ v8::Local<v8::Promise> StorageManager::Estimate(
   v8::Isolate* const isolate = exception_state.GetIsolate();
   // A document that its Session loaded asks the Session's quota, as Blink asks
   // the browser's QuotaManagerHost, and its answer comes from a task of its
-  // own.
-  if (CacheStorageHost* const host =
-          Window::Current().GetDocument().GetCacheStorageHost()) {
+  // own. A worker's is a Known Gap.
+  CacheStorageHost* const host =
+      ExecutionContext::Current().IsWindow()
+          ? Window::Current().GetDocument().GetCacheStorageHost()
+          : nullptr;
+  if (host) {
     const v8::Local<v8::Context> context = isolate->GetCurrentContext();
     v8::Local<v8::Promise::Resolver> resolver;
     if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {

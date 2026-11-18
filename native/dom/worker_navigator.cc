@@ -78,4 +78,12 @@ NavigatorUAData* WorkerNavigator::UserAgentData() const {
   return navigator_->UserAgentData();
 }
 
+mitto::Permissions* WorkerNavigator::Permissions() {
+  return navigator_->Permissions();
+}
+
+StorageManager* WorkerNavigator::Storage() {
+  return navigator_->Storage();
+}
+
 }  // namespace mitto

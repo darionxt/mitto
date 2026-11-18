@@ -24,6 +24,8 @@ namespace mitto {
 class Navigator;
 class NavigatorUAData;
 class NetworkInformation;
+class Permissions;
+class StorageManager;
 
 class WorkerNavigator final : public bindings::ScriptWrappable {
  public:
@@ -52,6 +54,8 @@ class WorkerNavigator final : public bindings::ScriptWrappable {
   NetworkInformation* Connection();
   float DeviceMemory() const;
   NavigatorUAData* UserAgentData() const;
+  mitto::Permissions* Permissions();
+  StorageManager* Storage();
 
  private:
   // A window's navigator of the same values, which no page reaches, as Blink

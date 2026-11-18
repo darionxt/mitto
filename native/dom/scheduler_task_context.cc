@@ -1,7 +1,7 @@
 #include "mitto/dom/scheduler_task_context.h"
 
 #include "mitto/dom/abort_signal.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/execution_context.h"
 #include "v8/include/v8-cpp-heap-external.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
@@ -65,18 +65,19 @@ EventLoop::Queue SchedulerTaskContext::QueueFor(Priority priority,
   }
 }
 
-SchedulerTaskContext::SchedulerTaskContext(Window* window,
+SchedulerTaskContext::SchedulerTaskContext(ExecutionContext* context,
                                            AbortSignal* abort_source,
                                            Priority priority)
-    : window_(window), abort_source_(abort_source), priority_(priority) {}
+    : context_(context), abort_source_(abort_source), priority_(priority) {}
 
 void SchedulerTaskContext::Trace(cppgc::Visitor* visitor) const {
-  visitor->Trace(window_);
+  visitor->Trace(context_);
   visitor->Trace(abort_source_);
 }
 
-bool SchedulerTaskContext::CanPropagateTo(const Window* window) const {
-  return window_.Get() == window;
+bool SchedulerTaskContext::CanPropagateTo(
+    const ExecutionContext* context) const {
+  return context_.Get() == context;
 }
 
 SchedulerTaskScope::SchedulerTaskScope(v8::Isolate* isolate,

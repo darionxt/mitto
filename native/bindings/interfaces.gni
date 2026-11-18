@@ -3037,6 +3037,8 @@ mitto_bindings_interfaces = [
       "connection",
       "deviceMemory",
       "userAgentData",
+      "permissions",
+      "storage",
     ]
   },
   {
@@ -3052,6 +3054,8 @@ mitto_bindings_interfaces = [
       "origin",
       "isSecureContext",
       "performance",
+      "crypto",
+      "scheduler",
       "structuredClone",
       "importScripts",
       "fetch",

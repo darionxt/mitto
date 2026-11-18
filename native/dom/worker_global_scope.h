@@ -34,7 +34,9 @@ namespace bindings {
 class ExceptionState;
 }  // namespace bindings
 
+class Crypto;
 class ImportedScriptLoader;
+class Scheduler;
 class WorkerLocation;
 class WorkerNavigator;
 
@@ -51,6 +53,9 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   WorkerLocation* Location();
   // What the worker reads of the browser and the machine, made the first time.
   WorkerNavigator* Navigator();
+  // Each made the first time.
+  mitto::Crypto* Crypto();
+  mitto::Scheduler* Scheduler();
   // The worker's origin, its creator's, serialized.
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
@@ -101,6 +106,8 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   cppgc::Member<mitto::Performance> performance_;
   cppgc::Member<WorkerLocation> location_;
   cppgc::Member<WorkerNavigator> navigator_;
+  cppgc::Member<mitto::Crypto> crypto_;
+  cppgc::Member<mitto::Scheduler> scheduler_;
   GURL url_;
   url::Origin origin_;
   raw_ptr<ImportedScriptLoader> imported_script_loader_ = nullptr;

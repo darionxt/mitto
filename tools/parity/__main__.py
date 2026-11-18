@@ -53,7 +53,7 @@ def _write_script_list(baselines: Path) -> int:
     print("\n".join(_script_counts(loaded, found)))
     skipped = list(dict.fromkeys(baseline.case for baseline in loaded if not baseline.in_a_page))
     if skipped:
-        print(f"Skipped, since a Page has no frames and no workers yet: {', '.join(skipped)}")
+        print(f"Skipped, since a Page has no frames yet: {', '.join(skipped)}")
     return 0
 
 

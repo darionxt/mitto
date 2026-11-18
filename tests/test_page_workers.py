@@ -65,6 +65,14 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"channel.onmessage = (e) => channel.postMessage(['worker heard', e.data, e.origin]);"
         b"postMessage('listening');",
     ),
+    "/apis.js": (
+        "text/javascript",
+        b"Promise.all([navigator.userAgentData.getHighEntropyValues(['platform']).then((v) => v.platform),"
+        b"scheduler.postTask(() => 'posted'), Promise.resolve(crypto.getRandomValues(new Uint8Array(4)).length),"
+        b"navigator.permissions.query({name: 'storage-access'}).then((s) => s.state),"
+        b"Promise.resolve(Notification.permission), Promise.resolve(PerformanceObserver.supportedEntryTypes.join())])"
+        b".then((values) => postMessage(values));",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -314,3 +322,14 @@ def test_a_broadcast_goes_between_a_window_and_its_worker(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == [["worker heard", "from the window", server], True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_apis_answer_as_chromes_do_in_a_worker(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/apis.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    # Chrome's browser answers for a context with no frame.
+    assert _evaluate(server, script) == ["Windows", "posted", 4, "prompt", "denied", "mark,measure,resource"]

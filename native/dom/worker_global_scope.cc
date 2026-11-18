@@ -13,11 +13,13 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_worker_global_scope.h"
+#include "mitto/dom/crypto.h"
 #include "mitto/dom/dedicated_worker_messaging.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
+#include "mitto/dom/scheduler.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/worker_location.h"
 #include "mitto/dom/worker_navigator.h"
@@ -51,6 +53,22 @@ void WorkerGlobalScope::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(performance_);
   visitor->Trace(location_);
   visitor->Trace(navigator_);
+  visitor->Trace(crypto_);
+  visitor->Trace(scheduler_);
+}
+
+mitto::Crypto* WorkerGlobalScope::Crypto() {
+  if (!crypto_) {
+    crypto_ = mitto::Crypto::Create();
+  }
+  return crypto_.Get();
+}
+
+mitto::Scheduler* WorkerGlobalScope::Scheduler() {
+  if (!scheduler_) {
+    scheduler_ = bindings::MakeGarbageCollected<mitto::Scheduler>(this);
+  }
+  return scheduler_.Get();
 }
 
 WorkerNavigator* WorkerGlobalScope::Navigator() {

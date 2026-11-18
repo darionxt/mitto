@@ -39,9 +39,11 @@ const bindings::WrapperTypeInfo* Notification::GetWrapperTypeInfo() const {
 // static
 std::u16string Notification::Permission() {
   // Blink answers "denied" in a context that is not secure without asking the
-  // browser, whose answer elsewhere is the content setting's default, ask.
-  return ExecutionContext::Current().IsSecureContextForBindings() ? u"default"
-                                                                  : u"denied";
+  // browser, whose answer elsewhere is the content setting's default, ask,
+  // which a context with no frame, as a worker's, also reads as "denied".
+  ExecutionContext& context = ExecutionContext::Current();
+  return context.IsSecureContextForBindings() && context.IsWindow() ? u"default"
+                                                                    : u"denied";
 }
 
 // static
