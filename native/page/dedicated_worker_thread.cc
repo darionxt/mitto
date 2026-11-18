@@ -108,7 +108,8 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
 
   void RunClassicScript(ScriptResponse response);
   void ReceiveMessage(SerializedScriptValue message,
-                      std::vector<MessagePortChannel> ports);
+                      std::vector<MessagePortChannel> ports,
+                      bool user_activation);
   // PrepareForShutdownOnWorkerThread(): the context goes, which ends the
   // worker's own workers, and every queue shuts down. Then the thread's loop
   // ends.
@@ -412,7 +413,8 @@ void DedicatedWorkerThread::Scope::RunClassicScript(ScriptResponse response) {
 
 void DedicatedWorkerThread::Scope::ReceiveMessage(
     SerializedScriptValue message,
-    std::vector<MessagePortChannel> ports) {
+    std::vector<MessagePortChannel> ports,
+    bool user_activation) {
   if (shut_down_) {
     return;
   }
@@ -422,7 +424,7 @@ void DedicatedWorkerThread::Scope::ReceiveMessage(
   // end.
   const v8::MicrotasksScope microtasks_scope(
       context_.Get(isolate_), v8::MicrotasksScope::kDoNotRunMicrotasks);
-  scope_->ReceiveMessage(std::move(message), std::move(ports));
+  scope_->ReceiveMessage(std::move(message), std::move(ports), user_activation);
 }
 
 void DedicatedWorkerThread::Scope::OnResponse(FrameFromSession frame) {
@@ -629,18 +631,20 @@ void DedicatedWorkerThread::RunClassicScript(ScriptResponse response) {
 }
 
 void DedicatedWorkerThread::PostMessage(SerializedScriptValue message,
-                                        std::vector<MessagePortChannel> ports) {
+                                        std::vector<MessagePortChannel> ports,
+                                        bool user_activation) {
   message_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](DedicatedWorkerThread* thread, SerializedScriptValue message,
-             std::vector<MessagePortChannel> ports) {
+             std::vector<MessagePortChannel> ports, bool user_activation) {
             if (thread->scope_) {
               thread->scope_->ReceiveMessage(std::move(message),
-                                             std::move(ports));
+                                             std::move(ports), user_activation);
             }
           },
-          base::Unretained(this), std::move(message), std::move(ports)));
+          base::Unretained(this), std::move(message), std::move(ports),
+          user_activation));
 }
 
 void DedicatedWorkerThread::Terminate() {

@@ -11,6 +11,7 @@
 #include "mitto/dom/message_event.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/serialized_script_value.h"
+#include "mitto/dom/user_activation.h"
 
 namespace mitto {
 
@@ -69,13 +70,17 @@ void DedicatedWorkerGlobalScope::PostMessage(
 
 void DedicatedWorkerGlobalScope::ReceiveMessage(
     SerializedScriptValue message,
-    std::vector<MessagePortChannel> channels) {
+    std::vector<MessagePortChannel> channels,
+    bool user_activation) {
   const std::vector<cppgc::Persistent<MessagePort>> ports =
       MessagePort::EntanglePorts(this, std::move(channels));
-  // From the Worker, whose origin is the worker's: no origin, no source.
+  // From the Worker, whose origin is the worker's: no origin, no source. The
+  // snapshot is the window's, as it was when the message was sent: a Page has
+  // had no user activation.
   DispatchEvent(MessageEvent::CreateForMessage(
       std::move(message), /*origin=*/std::nullopt, /*source=*/nullptr,
-      MessagePort::PortsOf(ports), /*user_activation=*/nullptr));
+      MessagePort::PortsOf(ports),
+      user_activation ? UserActivation::CreateSnapshot() : nullptr));
 }
 
 // DedicatedWorkerGlobalScope::requestAnimationFrame(): the callback goes to

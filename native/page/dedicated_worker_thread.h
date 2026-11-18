@@ -128,7 +128,8 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
   // Hands a message of its Worker's to the worker's global scope, from a task
   // of the worker's.
   void PostMessage(SerializedScriptValue message,
-                   std::vector<MessagePortChannel> ports);
+                   std::vector<MessagePortChannel> ports,
+                   bool user_activation);
   // Ends the worker, as WorkerThread::Terminate() does: what waits in its
   // queues never runs, and a script that still runs 2 seconds later is
   // stopped.

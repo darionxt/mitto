@@ -149,6 +149,15 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"try { requestAnimationFrame(() => {}); postMessage('no error'); } catch (e) { postMessage(String(e)); }",
     ),
+    "/activation.js": (
+        "text/javascript",
+        b"onmessage = (e) => {"
+        b"  const channel = new MessageChannel();"
+        b"  channel.port2.onmessage = (m) => postMessage([e.userActivation && e.userActivation.hasBeenActive,"
+        b"    m.userActivation]);"
+        b"  channel.port1.postMessage(null, {includeUserActivation: true});"
+        b"};",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -521,6 +530,26 @@ def test_a_worker_that_a_worker_started_has_no_animation_frames(server: str) -> 
         "NotSupportedError: Failed to execute 'requestAnimationFrame' on 'DedicatedWorkerGlobalScope': "
         "requestAnimationFrame not supported in this Worker."
     )
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_snapshot_of_user_activation_goes_only_from_a_window(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/activation.js');
+        const answers = [];
+        worker.onmessage = (e) => {
+            answers.push(e.data);
+            if (answers.length === 1) {
+                worker.postMessage(null);
+            } else {
+                resolve(answers);
+            }
+        };
+        worker.postMessage(null, {includeUserActivation: true});
+    })"""
+
+    # A Page has had no user activation, and a worker's port takes no snapshot, as in Chrome.
+    assert _evaluate(server, script) == [[False, None], [None, None]]
 
 
 @pytest.mark.usefixtures("page_program")

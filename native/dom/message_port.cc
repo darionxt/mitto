@@ -366,7 +366,9 @@ void MessagePort::PostMessage(v8::Local<v8::Value> message,
   }
   TransferableMessage sent(*std::move(serialized));
   sent.ports = *std::move(ports);
-  sent.user_activation = options.include_user_activation;
+  // PostMessageHelper::CreateUserActivationSnapshot(): only a window's.
+  sent.user_activation =
+      options.include_user_activation && ExecutionContext::Current().IsWindow();
   if (initially_entangled_port_) {
     sent.task_state = SchedulerTaskContext::Current(isolate);
   }

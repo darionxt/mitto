@@ -145,10 +145,15 @@ void Worker::PostMessage(v8::Local<v8::Value> message,
   if (!channels) {
     return;
   }
-  // A message after terminate() goes nowhere, once serialized.
+  // A message after terminate() goes nowhere, once serialized. A window's
+  // carries a snapshot of its user activation if asked, and a worker's none,
+  // as PostMessageHelper::CreateUserActivationSnapshot() takes one only of a
+  // window.
   if (proxy_) {
-    proxy_->PostMessageToWorkerGlobalScope(*std::move(serialized),
-                                           *std::move(channels));
+    proxy_->PostMessageToWorkerGlobalScope(
+        *std::move(serialized), *std::move(channels),
+        options.include_user_activation &&
+            ExecutionContext::Current().IsWindow());
   }
 }
 

@@ -69,11 +69,13 @@ class DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
     animation_frames_ = animation_frames;
   }
   WorkerObjectProxy* GetObjectProxy() const { return object_proxy_; }
-  // A message of its Worker's, with the ports it transfers, from a task of
-  // the worker's: a message event, as WorkerGlobalScope::ReceiveMessage()
+  // A message of its Worker's, with the ports it transfers and whether it
+  // carries a snapshot of the creator's user activation, from a task of the
+  // worker's: a message event, as WorkerGlobalScope::ReceiveMessage()
   // dispatches it.
   void ReceiveMessage(SerializedScriptValue message,
-                      std::vector<MessagePortChannel> ports);
+                      std::vector<MessagePortChannel> ports,
+                      bool user_activation);
 
  private:
   const std::u16string name_;
