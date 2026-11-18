@@ -3,7 +3,7 @@ import.meta, top-level await, import maps, and JSON and text modules.
 
 Each case is a page that logs what runs, in order, and the local server of `tests.script_pages`, which holds a response
 until the page sends a mark, so that an order does not hang on the network's timing. The orders are what Chrome
-157.0.8103.51 gave, headless on macOS against the same pages and server. Each test goes through both APIs, and needs a
+157.0.8103.51 and Chrome for Testing 157.0.8103.79 gave, headless on macOS against the same pages and server. Each test goes through both APIs, and needs a
 native library with the Page program beside it, as CI's native job installs it on every Host.
 """
 
@@ -100,7 +100,8 @@ _CASES["graph"] = Case(
 )
 
 # import() from a classic script, a module and a string that a timer runs, against the document's base URL or the
-# script's, with JSON and text modules, and how each failure rejects.
+# script's, with JSON and text modules, and how each failure rejects. The timer and the deferred module race, so the
+# page logs them in a fixed order.
 _CASES["dynamic_import"] = Case(
     {
         "/": _page(
@@ -108,6 +109,7 @@ _CASES["dynamic_import"] = Case(
             "<script>"
             "const show = r => r.status === 'fulfilled' ? 'ok ' + JSON.stringify(r.value.default)"
             " : r.reason.name + ': ' + path(r.reason.message);"
+            "window.later = {};"
             "window.cases = ["
             " ['relative', import('./x.js')],"
             " ['missing', import('./missing.js')],"
@@ -124,12 +126,14 @@ _CASES["dynamic_import"] = Case(
             "];"
             "</script>"
             "<script type=module>"
-            "window.cases.push(['from module', import('./x.js')]);"
-            "window.cases.push(['meta resolve', Promise.resolve({default: import.meta.resolve('./y.js')})]);"
+            "window.later['from module'] = import('./x.js');"
+            "window.later['meta resolve'] = Promise.resolve({default: import.meta.resolve('./y.js')});"
             "</script>"
             "<script>"
-            "setTimeout(\"window.cases.push(['from timer', import('./x.js')])\");"
+            "setTimeout(\"window.later['from timer'] = import('./x.js')\");"
             "addEventListener('load', () => setTimeout(async () => {"
+            " for (const name of ['from module', 'meta resolve', 'from timer']) {"
+            "  window.cases.push([name, window.later[name]]); }"
             " for (const [name, promise] of window.cases) {"
             "  const [result] = await Promise.allSettled([promise]); log(name + ' ' + show(result)); }"
             " finish(logged); }, 100));"
@@ -220,7 +224,7 @@ _CASES["import_maps"] = Case(
 )
 
 
-# What Chrome 157.0.8103.51 logged for each case.
+# What Chrome 157 logged for each case.
 _CHROME: dict[str, list[str]] = {
     "dynamic_import": [
         'relative ok "x"',
