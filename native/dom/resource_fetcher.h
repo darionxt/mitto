@@ -91,12 +91,21 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // `params`.
   bool CanUse(const Resource& existing, const FetchParameters& params) const;
   void StartLoad(Resource& resource, const FetchParameters& params);
-  // A fetch that held the load event back has ended.
-  void BlockingLoadFinished();
+  // The fetch of `resource` has ended, and lets the load event go if it held
+  // it back.
+  void LoadFinished(Resource& resource);
+  // Blink's AllClientsAndObserversRemoved(): a load that nothing uses is
+  // cancelled from a task, unless something uses it by then.
+  void ScheduleCancel(Resource& resource);
+  void CancelLoad(Resource& resource);
+
+  friend class Resource;
 
   cppgc::WeakMember<Document> document_;
   // The document's resources, Blink's cached_resources_map_, newest last.
   HeapVector<Resource> resources_;
+  // The resources whose fetch holds the document's load event back.
+  HeapVector<Resource> blocking_;
   // Whether the preload scanner has asked for an image, after which it
   // lowers late scripts and style sheets.
   bool image_fetched_ = false;

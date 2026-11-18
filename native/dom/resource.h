@@ -11,16 +11,19 @@
 #include <optional>
 #include <string>
 
+#include "base/functional/callback.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/image_header.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/garbage-collected.h"
+#include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
 
 class Resource;
+class ResourceFetcher;
 
 // Blink's ResourceType, of those a Page fetches through its ResourceFetcher.
 enum class ResourceType {
@@ -83,7 +86,18 @@ class Resource : public cppgc::GarbageCollected<Resource> {
   bool HasImage() const { return image_.has_value(); }
 
   void AddClient(ResourceClient* client);
+  // Removes one of `client`. A load that loses its last client is cancelled
+  // soon, as Blink's is.
   void RemoveClient(ResourceClient* client);
+  bool HasClients() const;
+
+  // What the document's fetcher keeps: itself, and what cancels the fetch
+  // while it runs.
+  void SetFetcher(ResourceFetcher* fetcher) { fetcher_ = fetcher; }
+  void SetCancelLoad(base::OnceClosure cancel) {
+    cancel_load_ = std::move(cancel);
+  }
+  base::OnceClosure TakeCancelLoad() { return std::move(cancel_load_); }
 
   // What the fetch hears, in order.
   void ResponseReceived(int status, std::string mime_type);
@@ -102,6 +116,8 @@ class Resource : public cppgc::GarbageCollected<Resource> {
   std::string body_;
   std::optional<ImageHeader> image_;
   WeakHeapVector<ResourceClient> clients_;
+  cppgc::WeakMember<ResourceFetcher> fetcher_;
+  base::OnceClosure cancel_load_;
 };
 
 }  // namespace mitto

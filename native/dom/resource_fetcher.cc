@@ -4,11 +4,14 @@
 #include <memory>
 #include <utility>
 
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_tasks.h"
 #include "mitto/encoding/content_type.h"
 #include "mitto/header_rules.h"
 #include "url/url_constants.h"
@@ -17,8 +20,10 @@
 namespace mitto {
 namespace {
 
-// net::ERR_INVALID_URL, which the Page program, with no //net, cannot name.
+// net::ERR_INVALID_URL and ERR_ABORTED, which the Page program, with no
+// //net, cannot name.
 constexpr int kInvalidUrl = -300;
+constexpr int kAborted = -3;
 
 // Blink's kSmallImageMaxSize: an image of at most this many square pixels
 // by its attributes is small, and gets no boost.
@@ -75,12 +80,11 @@ FetchDestination DestinationOf(ResourceType type) {
 
 }  // namespace
 
-// What a resource's fetch hears, which keeps the resource until it ends, and
-// the document's load event back while it blocks it, as Blink's loaders_ do.
+// What a resource's fetch hears, which keeps the resource until it ends.
 class ResourceFetcher::ResourceLoader final : public FetchClient {
  public:
-  ResourceLoader(Resource& resource, ResourceFetcher* blocking)
-      : resource_(&resource), blocking_(blocking) {}
+  ResourceLoader(Resource& resource, ResourceFetcher& fetcher)
+      : resource_(&resource), fetcher_(&fetcher) {}
 
   ResourceLoader(const ResourceLoader&) = delete;
   ResourceLoader& operator=(const ResourceLoader&) = delete;
@@ -103,17 +107,25 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
     controller_->TookBody(bytes.size());
   }
   void OnResponseEnded(int net_error) override {
+    resource_->SetCancelLoad(base::OnceClosure());
     resource_->Finish(net_error);
-    if (ResourceFetcher* const fetcher = blocking_.Get()) {
-      blocking_ = nullptr;
-      fetcher->BlockingLoadFinished();
+    if (ResourceFetcher* const fetcher = fetcher_.Get()) {
+      fetcher->LoadFinished(*resource_);
     }
+  }
+
+  // Ends the fetch, and destroys this before it returns.
+  void Cancel() { controller_->Cancel(); }
+
+  base::WeakPtr<ResourceLoader> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
   }
 
  private:
   const cppgc::Persistent<Resource> resource_;
-  cppgc::WeakPersistent<ResourceFetcher> blocking_;
+  const cppgc::WeakPersistent<ResourceFetcher> fetcher_;
   raw_ptr<FetchController> controller_ = nullptr;
+  base::WeakPtrFactory<ResourceLoader> weak_factory_{this};
 };
 
 FetchParameters::FetchParameters() = default;
@@ -128,6 +140,7 @@ ResourceFetcher::~ResourceFetcher() = default;
 void ResourceFetcher::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
   visitor->Trace(resources_);
+  visitor->Trace(blocking_);
 }
 
 Resource* ResourceFetcher::CachedResource(const GURL& url) const {
@@ -183,12 +196,15 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
   }
   Resource* const resource = bindings::MakeGarbageCollected<Resource>(
       params.type, params.url, params.mode, params.credentials);
+  resource->SetFetcher(this);
+  resources_.push_back(resource);
   if (params.url.SchemeIs(url::kDataScheme)) {
     // CreateResourceForStaticData(): parsed and loaded now, with no
-    // request, and none at all for a URL that does not parse.
+    // request. One that does not parse fails, as its loader would.
     std::optional<DataUrlResponse> data = ParseDataUrl(params.url);
     if (!data) {
-      return nullptr;
+      resource->Finish(kInvalidUrl);
+      return resource;
     }
     resource->ResponseReceived(200, std::move(data->mime_type));
     resource->AppendData(data->body);
@@ -196,7 +212,6 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
   } else {
     StartLoad(*resource, params);
   }
-  resources_.push_back(resource);
   return resource;
 }
 
@@ -222,19 +237,64 @@ void ResourceFetcher::StartLoad(Resource& resource,
   request.render_blocking = params.render_blocking;
   // Resource::IsLoadEventBlockingResourceType(), for a fetch that is no link
   // preload and that nothing lets go.
-  const bool blocks_load = params.load_blocking && !params.is_link_preload;
-  if (blocks_load) {
+  if (params.load_blocking && !params.is_link_preload) {
+    blocking_.push_back(&resource);
     document_->IncrementLoadEventDelayCount();
   }
-  fetcher->Fetch(
-      std::move(request),
-      std::make_unique<ResourceLoader>(resource, blocks_load ? this : nullptr));
+  auto loader = std::make_unique<ResourceLoader>(resource, *this);
+  resource.SetCancelLoad(
+      base::BindOnce(&ResourceLoader::Cancel, loader->GetWeakPtr()));
+  fetcher->Fetch(std::move(request), std::move(loader));
 }
 
-void ResourceFetcher::BlockingLoadFinished() {
-  if (Document* const document = document_.Get()) {
+void ResourceFetcher::LoadFinished(Resource& resource) {
+  bool was_blocking = false;
+  blocking_.EraseIf([&resource, &was_blocking](Resource* item) {
+    if (was_blocking || item != &resource) {
+      return false;
+    }
+    was_blocking = true;
+    return true;
+  });
+  Document* const document = document_.Get();
+  if (was_blocking && document) {
     document->DecrementLoadEventDelayCount();
   }
+}
+
+void ResourceFetcher::ScheduleCancel(Resource& resource) {
+  // ResourceLoader::ScheduleCancel(): a timer of no delay, which cancels the
+  // load if still nothing uses it.
+  Document* const document = document_.Get();
+  Window* const window = document ? document->DefaultView() : nullptr;
+  WindowTasks* const tasks = window ? window->GetTasks() : nullptr;
+  if (!tasks) {
+    return;
+  }
+  tasks->PostTask(
+      TaskType::kInternalLoading,
+      base::BindOnce(
+          [](const cppgc::WeakPersistent<ResourceFetcher>& fetcher,
+             const cppgc::Persistent<Resource>& resource) {
+            if (fetcher && resource->IsLoading() && !resource->HasClients()) {
+              fetcher->CancelLoad(*resource);
+            }
+          },
+          cppgc::WeakPersistent<ResourceFetcher>(this),
+          cppgc::Persistent<Resource>(&resource)));
+}
+
+void ResourceFetcher::CancelLoad(Resource& resource) {
+  base::OnceClosure cancel = resource.TakeCancelLoad();
+  if (!cancel) {
+    return;
+  }
+  // A cancelled resource fails, and goes from the document's resources, as
+  // Blink's memory cache lets one go, so the next request fetches again.
+  resource.Finish(kAborted);
+  LoadFinished(resource);
+  resources_.EraseIf([&resource](Resource* item) { return item == &resource; });
+  std::move(cancel).Run();
 }
 
 FetchPriority ResourceFetcher::ComputeLoadPriority(

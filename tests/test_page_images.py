@@ -440,3 +440,21 @@ def test_a_lazy_image_does_not_hold_the_window_load_event_back(session: mitto.Se
 
     assert waiting is False
     assert settled["naturalWidth"] == 1
+
+
+def test_an_image_that_lets_its_load_go_no_longer_holds_the_window_load_event_back(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The fetch that no img uses any more is cancelled, as Blink's is once its last client goes.
+    hold = threading.Event()
+    server.image("/never.png", _png(1, 1))
+    server.routes["/never.png"].hold = hold
+    url = server.page("/", "<img id='gone' src='never.png'><script>document.getElementById('gone').src = '';</script>")
+
+    try:
+        with _open_page(session, url) as page:
+            complete = page.evaluate("document.getElementById('gone').complete", timeout=_TIMEOUT_SECONDS)
+    finally:
+        hold.set()
+
+    assert complete is True

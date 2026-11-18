@@ -1,9 +1,11 @@
 #include "mitto/dom/resource.h"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
 #include "base/check.h"
+#include "mitto/dom/resource_fetcher.h"
 
 namespace mitto {
 
@@ -20,6 +22,7 @@ Resource::~Resource() = default;
 
 void Resource::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(clients_);
+  visitor->Trace(fetcher_);
 }
 
 void Resource::AddClient(ResourceClient* client) {
@@ -42,6 +45,16 @@ void Resource::RemoveClient(ResourceClient* client) {
     removed = true;
     return true;
   });
+  if (removed && !HasClients() && IsLoading() && cancel_load_) {
+    if (ResourceFetcher* const fetcher = fetcher_.Get()) {
+      fetcher->ScheduleCancel(*this);
+    }
+  }
+}
+
+bool Resource::HasClients() const {
+  return std::ranges::any_of(clients_.ToVector(),
+                             [](ResourceClient* client) { return client; });
 }
 
 void Resource::ResponseReceived(int status, std::string mime_type) {
