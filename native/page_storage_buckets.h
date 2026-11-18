@@ -107,6 +107,10 @@ class PageStorageBuckets {
   uint64_t next_bucket_ = 1;
   // By bucket ID.
   std::map<int64_t, Host> hosts_;
+  // How many opens each context waits for, and the contexts among them that
+  // have gone, whose opens give no bucket.
+  std::map<uint64_t, size_t> pending_opens_;
+  std::set<uint64_t> gone_with_opens_;
   base::WeakPtrFactory<PageStorageBuckets> weak_factory_{this};
 };
 

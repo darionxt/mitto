@@ -146,6 +146,11 @@ void StorageQuota::WhenKnown(std::vector<std::string> bucket_keys,
         if (!self) {
           return;
         }
+        // A bucket that went while the quota was read has no usage to ask
+        // its clients for.
+        std::erase_if(bucket_keys, [&](const std::string& bucket_key) {
+          return !self->IsBucketKeyLive(bucket_key);
+        });
         const base::RepeatingClosure barrier =
             base::BarrierClosure(bucket_keys.size(), std::move(done));
         for (const std::string& bucket_key : bucket_keys) {

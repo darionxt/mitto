@@ -183,6 +183,7 @@ void PageStorageBuckets::OnOpen(PageStorageBucketCall call,
   }
   // `persisted` takes effect only with the persistent storage permission,
   // which a Page never has.
+  ++pending_opens_[context];
   quota_->UpdateOrCreateBucket(
       std::move(params),
       base::BindOnce(
@@ -195,6 +196,19 @@ void PageStorageBuckets::OnOpen(PageStorageBucketCall call,
             PageStorageBucketAnswer answer;
             answer.op = StorageBucketAnswerOp::kOpened;
             answer.question = question;
+            // BucketManagerHost::DidGetBucket() of a context that has gone,
+            // whose remote would go with it.
+            const auto pending = self->pending_opens_.find(context);
+            const bool gone = self->gone_with_opens_.contains(context);
+            if (--pending->second == 0) {
+              self->pending_opens_.erase(pending);
+              self->gone_with_opens_.erase(context);
+            }
+            if (gone) {
+              answer.error = StorageBucketError::kUnknown;
+              self->SendAnswer(answer);
+              return;
+            }
             if (!result.has_value()) {
               answer.error = ToWire(result.error());
               self->SendAnswer(answer);
@@ -316,6 +330,11 @@ std::optional<PageStorageBuckets::Target> PageStorageBuckets::Locate(
 }
 
 void PageStorageBuckets::ForgetContexts(const std::set<uint64_t>& contexts) {
+  for (uint64_t context : contexts) {
+    if (pending_opens_.contains(context)) {
+      gone_with_opens_.insert(context);
+    }
+  }
   std::vector<uint64_t> gone;
   for (const auto& [bucket, handle] : handles_) {
     if (contexts.contains(handle.context)) {
