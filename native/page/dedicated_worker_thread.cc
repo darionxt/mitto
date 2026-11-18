@@ -58,6 +58,8 @@ namespace {
 
 // A request's priority of 1 and net::HIGHEST, as the messages carry it.
 constexpr uint8_t kHighestPriority = 6;
+// A response that is used as it arrives, as the messages say it.
+constexpr uint8_t kIncremental = 2;
 
 // The stack of a worker's thread, beyond the 500 KB that V8 may use of it.
 constexpr size_t kWorkerThreadStackSize = 4 * 1024 * 1024;
@@ -476,11 +478,13 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
   }
   // WorkerClassicScriptLoader::LoadSynchronously(): destination script, of
   // mode no-cors and credentials include, which a script's Request Kind has,
-  // at the highest priority, as Blink gives a synchronous request.
+  // at the highest priority, as Blink gives a synchronous request. It loads
+  // as a RawResource, which ResourceFetcher marks incremental.
   PageRequest request;
   request.kind = PageRequestKind::kScript;
   request.url = url.spec();
   request.priority = kHighestPriority;
+  request.incremental = kIncremental;
   ImportedScriptClient client;
   requests_->StartSynchronous(std::move(request), client,
                               thread_->abort_synchronous_load());
