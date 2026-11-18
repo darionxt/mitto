@@ -475,6 +475,8 @@ A string enum, so that `kind="fetch"` and `kind=mitto.RequestKind.FETCH` are the
 | `RequestKind.BEACON` | `"beacon"` | A page's `navigator.sendBeacon()`, in mode `no-cors` with credentials, so it sends `Origin` with its `POST` |
 | `RequestKind.IFRAME` | `"iframe"` | The navigation of an `<iframe>` whose parent is the page of `initiator=`, which has no body. Its cookies are those of a frame of that page, so a frame of another site gets no `SameSite` `Strict` or `Lax` cookie, and the origin it goes to keeps none of the client hints it asks for |
 | `RequestKind.FAVICON` | `"favicon"` | A page's icon, which the browser asks for at a higher priority than an image's |
+| `RequestKind.MODULE_JSON` | `"module_json"` | A JSON module that a module imports with `with {type: "json"}`, as a module but with `Accept: application/json,*/*;q=0.5` and `Sec-Fetch-Dest: json` |
+| `RequestKind.MODULE_TEXT` | `"module_text"` | A text module that a module imports with `with {type: "text"}`, as a module but with `Accept: text/plain,*/*;q=0.5` and `Sec-Fetch-Dest: text` |
 
 ### `initiator=`
 

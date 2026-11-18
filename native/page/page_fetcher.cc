@@ -150,6 +150,31 @@ class PageFetcher::Request final : public PageRequests::Client,
   std::optional<std::string> response_url_;
 };
 
+namespace {
+
+// The Request Kind of a request: a module script, or what one imports, by
+// its destination, where a CSS module, which M9's CSSOM makes, sends a
+// JavaScript module's lines, a Known Gap; a classic script; or a fetch.
+PageRequestKind KindOf(const FetchRequestData& data) {
+  if (data.is_module) {
+    switch (data.destination) {
+      case FetchDestination::kJson:
+        return PageRequestKind::kModuleJson;
+      case FetchDestination::kText:
+        return PageRequestKind::kModuleText;
+      case FetchDestination::kEmpty:
+      case FetchDestination::kScript:
+      case FetchDestination::kStyle:
+        return PageRequestKind::kModule;
+    }
+  }
+  return data.destination == FetchDestination::kScript
+             ? PageRequestKind::kScript
+             : PageRequestKind::kFetch;
+}
+
+}  // namespace
+
 PageFetcher::PageFetcher(PageRequests& requests) : requests_(requests) {}
 
 PageFetcher::~PageFetcher() {
@@ -197,13 +222,7 @@ void PageFetcher::Fetch(FetchRequestData data,
     keepalive_bytes_ += body_size;
   }
   PageRequest page_request;
-  // A module script and what one imports go as a module, whatever their
-  // destination: the json, style and text ones send a JavaScript module's
-  // lines, a Known Gap.
-  page_request.kind = data.is_module ? PageRequestKind::kModule
-                      : data.destination == FetchDestination::kScript
-                          ? PageRequestKind::kScript
-                          : PageRequestKind::kFetch;
+  page_request.kind = KindOf(data);
   page_request.url = std::move(data.url);
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);

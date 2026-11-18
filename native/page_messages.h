@@ -32,7 +32,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 22;
+inline constexpr uint32_t kPageProtocolVersion = 23;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -276,6 +276,9 @@ enum class PageRequestKind : uint8_t {
   kBeacon = 10,
   kIframe = 11,
   kFavicon = 12,
+  // What a module imports with `with {type: "json"}` or `{type: "text"}`.
+  kModuleJson = 13,
+  kModuleText = 14,
 };
 
 // What a Page's request says of its mode, as Fetch names it, where 0 leaves
