@@ -31,6 +31,7 @@
 #include "mitto/sec_header_helpers.h"
 #include "mitto/storage/storage_area_impl.h"
 #include "mitto/storage/storage_context.h"
+#include "mitto/storage_quota.h"
 #include "net/base/io_buffer.h"
 #include "net/base/isolation_info.h"
 #include "net/base/net_errors.h"
@@ -1869,14 +1870,84 @@ void PageHost::OnCacheStorage(PageCacheStorageCall call,
             weak_factory_.GetWeakPtr()),
         next_cache_storage_number_);
   }
-  // GlobalCacheStorage::CanCreateCacheStorage() and caches' [SecureContext]:
-  // an origin that is not opaque, of a potentially trustworthy URL.
-  std::optional<std::string> storage_key;
-  if (document_url.SchemeIs(url::kHttpsScheme) ||
-      net::IsLocalhost(document_url)) {
-    storage_key = ContextSerializedStorageKey(context_id);
+  std::optional<std::string> storage_key =
+      SecureContextStorageKey(context_id, document_url);
+  bool bucket_live = true;
+  switch (call.op) {
+    case CacheStorageCallOp::kOpen:
+    case CacheStorageCallOp::kHas:
+    case CacheStorageCallOp::kDelete:
+    case CacheStorageCallOp::kKeys:
+    case CacheStorageCallOp::kMatch:
+      // CacheStorage's calls go to the bucket they name.
+      if (storage_key) {
+        std::optional<PageStorageBuckets::Target> target =
+            LocateBucket(call.bucket, context_id, *storage_key);
+        if (!target) {
+          return;
+        }
+        storage_key = std::move(target->bucket_key);
+        bucket_live = target->live;
+      }
+      break;
+    default:
+      break;
   }
-  cache_storage_->OnCall(std::move(call), context_id, storage_key);
+  cache_storage_->OnCall(std::move(call), context_id, storage_key, bucket_live);
+}
+
+std::optional<std::string> PageHost::SecureContextStorageKey(
+    uint64_t context_id,
+    const GURL& url) {
+  // GlobalCacheStorage::CanCreateCacheStorage(), and the [SecureContext] of
+  // caches and of the Storage Buckets API: an origin that is not opaque, of a
+  // potentially trustworthy URL.
+  if (!url.SchemeIs(url::kHttpsScheme) && !net::IsLocalhost(url)) {
+    return std::nullopt;
+  }
+  return ContextSerializedStorageKey(context_id);
+}
+
+std::optional<PageStorageBuckets::Target> PageHost::LocateBucket(
+    uint64_t bucket,
+    uint64_t context_id,
+    const std::string& storage_key) {
+  if (bucket == 0) {
+    network_->storage_quota().EnsureDefaultBucket(storage_key);
+    return PageStorageBuckets::Target{storage_key, true};
+  }
+  if (!storage_buckets_) {
+    Refuse(base::StrCat({"a call of the storage of bucket ",
+                         base::NumberToString(bucket),
+                         ", which the Page was not given"}));
+    return std::nullopt;
+  }
+  return storage_buckets_->Locate(bucket, context_id);
+}
+
+void PageHost::OnStorageBuckets(PageStorageBucketCall call,
+                                uint64_t context_id,
+                                const GURL& document_url) {
+  if (!storage_buckets_) {
+    storage_buckets_ = std::make_unique<PageStorageBuckets>(
+        network_->storage_quota(),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string frame) {
+              if (host && host->channel_ && !host->refused_by_library_) {
+                host->channel_->Send(std::move(frame));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string why) {
+              if (host && !host->refused_by_library_) {
+                host->Refuse(std::move(why));
+              }
+            },
+            weak_factory_.GetWeakPtr()));
+  }
+  storage_buckets_->OnCall(std::move(call), context_id,
+                           SecureContextStorageKey(context_id, document_url));
 }
 
 void PageHost::OnIndexedDb(PageIndexedDbCall call,
@@ -1902,8 +1973,28 @@ void PageHost::OnIndexedDb(PageIndexedDbCall call,
   }
   // IDBFactory's check that the origin may reach databases: not an opaque
   // one, which a Page's documents only have outside HTTP and HTTPS.
-  indexed_db_->OnCall(std::move(call), context_id,
-                      ContextSerializedStorageKey(context_id));
+  std::optional<std::string> storage_key =
+      ContextSerializedStorageKey(context_id);
+  bool bucket_live = true;
+  switch (call.op) {
+    case IndexedDbCallOp::kGetDatabaseInfo:
+    case IndexedDbCallOp::kOpen:
+    case IndexedDbCallOp::kDeleteDatabase:
+      // A factory's calls go to the bucket they name.
+      if (storage_key) {
+        std::optional<PageStorageBuckets::Target> target =
+            LocateBucket(call.bucket, context_id, *storage_key);
+        if (!target) {
+          return;
+        }
+        storage_key = std::move(target->bucket_key);
+        bucket_live = target->live;
+      }
+      break;
+    default:
+      break;
+  }
+  indexed_db_->OnCall(std::move(call), context_id, storage_key, bucket_live);
 }
 
 std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
@@ -2332,6 +2423,10 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
   if (indexed_db_) {
     indexed_db_->ForgetContexts(ids);
   }
+  // Its StorageBuckets' remotes go with it.
+  if (storage_buckets_) {
+    storage_buckets_->ForgetContexts(ids);
+  }
   std::erase_if(frame_navigation_responses_, [&ids](const auto& entry) {
     return ids.contains(entry.second.parent) ||
            ids.contains(entry.second.target);
@@ -2666,6 +2761,10 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       OnIndexedDb(std::move(frame->indexed_db_call), frame->document,
                   document_url);
       return;
+    case PageMessage::kStorageBuckets:
+      OnStorageBuckets(std::move(frame->storage_bucket_call), frame->document,
+                       document_url);
+      return;
     case PageMessage::kWorkerStarted:
       OnWorkerStarted(frame->worker_started);
       return;
@@ -2704,6 +2803,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kStoragePart:
     case PageMessage::kCacheStorageAnswer:
     case PageMessage::kIndexedDbCallback:
+    case PageMessage::kStorageBucketsAnswer:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }

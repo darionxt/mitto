@@ -46,6 +46,7 @@ class NavigatorUAData;
 class NetworkInformation;
 class Permissions;
 class PluginArray;
+class StorageBucketManager;
 class StorageManager;
 
 class Navigator final : public bindings::ScriptWrappable {
@@ -96,6 +97,7 @@ class Navigator final : public bindings::ScriptWrappable {
   mitto::Permissions* Permissions();
   mitto::Geolocation* Geolocation();
   StorageManager* Storage();
+  StorageBucketManager* StorageBuckets();
   // The Credential Management API's container, [SameObject], made the first
   // time a page asks.
   CredentialsContainer* Credentials();
@@ -135,6 +137,7 @@ class Navigator final : public bindings::ScriptWrappable {
   cppgc::Member<mitto::Permissions> permissions_;
   cppgc::Member<mitto::Geolocation> geolocation_;
   cppgc::Member<StorageManager> storage_;
+  cppgc::Member<StorageBucketManager> storage_buckets_;
   cppgc::Member<mitto::Keyboard> keyboard_;
   cppgc::Member<mitto::MediaDevices> media_devices_object_;
   cppgc::Member<mitto::LockManager> locks_;
