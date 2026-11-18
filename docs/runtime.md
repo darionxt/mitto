@@ -778,7 +778,7 @@ A promise rejected with no handler fires a `PromiseRejectionEvent` of type `unha
 
 A Known Gap that gives a readable stream, such as `Blob`'s `stream()` while a `Blob` has no bytes or WebTransport's streams, gives a closed, empty `ReadableStream`, and one that gives a writable stream, such as `SerialPort`'s `writable` or `FileSystemFileHandle`'s `createWritable()`, a `WritableStream` whose sink takes each chunk and keeps nothing, each of the interface the IDL names ([What a Known Gap does](#what-a-known-gap-does)).
 
-`Response.body` and `Request.body` are byte streams of Blink's `BodyStreamBuffer` ([fetch()](#fetch)), and `textStream()` pipes a body through a `TextDecoderStream` for UTF-8.
+The `body` of a `Response` or a `Request` is a byte stream of Blink's `BodyStreamBuffer` ([fetch()](#fetch)), and `textStream()` pipes a body through a `TextDecoderStream` for UTF-8.
 
 Known Gaps: sending a stream as a `fetch()` body as the Session reads it; and transferring a stream with `postMessage()`, which a transfer list refuses.
 

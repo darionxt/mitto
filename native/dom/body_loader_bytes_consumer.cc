@@ -63,8 +63,14 @@ BytesConsumer::Result BodyLoaderBytesConsumer::EndRead(size_t read) {
   DCHECK(IsWaiting());
   DCHECK_LE(read, Unread());
   offset_ += read;
+  // What has been read goes once it is at least as much as what is left, so
+  // that a body read a little at a time while more comes keeps no more than
+  // twice what waits, as a data pipe frees what its reader took.
   if (offset_ == buffer_.size()) {
     buffer_.clear();
+    offset_ = 0;
+  } else if (offset_ >= buffer_.size() - offset_) {
+    buffer_.erase(0, offset_);
     offset_ = 0;
   }
   if (read > 0 && loader_) {
