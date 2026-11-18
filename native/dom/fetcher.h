@@ -192,6 +192,9 @@ class Fetcher {
  public:
   virtual void Fetch(FetchRequestData request,
                      std::unique_ptr<FetchClient> client) = 0;
+  // Whether a response at `url`, after its redirects, has come whole, which a
+  // later request may name as its referrer, as the Session allows it.
+  virtual bool HasFinishedResponse(std::string_view url) const = 0;
 
  protected:
   virtual ~Fetcher() = default;

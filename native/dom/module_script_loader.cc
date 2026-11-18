@@ -199,17 +199,20 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   data.mode = FetchMode::kCors;
   data.credentials = options_.credentials_mode;
   data.referrer_policy = request.options.referrer_policy;
-  // The referrer is the URL of the script that imports it, which the
-  // Session takes only from the document's origin: from another origin, the
-  // document's URL stands for it, a Known Gap.
+  // The referrer is the base URL of the script that imports it, which the
+  // Session takes from the document's origin, or as the final URL of a
+  // response that the document has had, such as a module's of another
+  // origin. One that is neither, as the base URL of an inline script beneath
+  // a base element of another origin, is the document's URL: a Known Gap.
   if (request.referrer == kNoReferrer) {
     data.referrer = kNoReferrer;
   } else if (request.referrer != kClientReferrer) {
     const GURL referrer(request.referrer);
     if (referrer.is_valid() &&
-        url::Origin::Create(referrer).IsSameOriginWith(
-            GURL(window->GetDocument().UrlForBinding()))) {
-      data.referrer = request.referrer;
+        (url::Origin::Create(referrer).IsSameOriginWith(
+             GURL(window->GetDocument().UrlForBinding())) ||
+         fetcher->HasFinishedResponse(referrer.spec()))) {
+      data.referrer = referrer.spec();
     }
   }
   // A module script's priority is its destination's whatever its scheduling,
