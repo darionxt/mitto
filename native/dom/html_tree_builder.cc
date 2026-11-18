@@ -3070,6 +3070,14 @@ class HtmlTreeBuilder {
         ProcessEndOfFile();
         return;
       case Mode::kText:
+        // The HTML Standard marks a script that the input leaves open as
+        // already started, so that it never runs. Blink does so only for a
+        // fragment, such as Range.createContextualFragment()'s, whose
+        // scripts can run: a document's unclosed script still runs in Chrome
+        // 157.
+        if (IsFragment() && CurrentNodeIs(u"script")) {
+          static_cast<HTMLScriptElement&>(CurrentNode()).SetAlreadyStarted();
+        }
         Pop();
         mode_ = original_mode_;
         ProcessEndOfFile();
