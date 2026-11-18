@@ -10,12 +10,8 @@
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/persistent.h"
-#include "v8/include/v8-context.h"
-#include "v8/include/v8-isolate.h"
-#include "v8/include/v8-local-handle.h"
-#include "v8/include/v8-microtask-queue.h"
-#include "v8/include/v8-object.h"
 
 namespace mitto {
 
@@ -72,26 +68,6 @@ Event* MakeIDBEvent(const std::u16string& type, bool bubbles, bool cancelable) {
   return event;
 }
 
-bool RunInIDBContext(Window* window, base::FunctionRef<void()> run) {
-  if (!window || !window->HasContext()) {
-    return false;
-  }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  const v8::HandleScope handle_scope(isolate);
-  // The window's wrapper is its context's global proxy.
-  v8::Local<v8::Context> context;
-  if (!window->ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context)) {
-    return false;
-  }
-  const v8::Context::Scope context_scope(context);
-  // Holds back no microtasks: a listener's own scope is the outermost one
-  // that runs them, as V8ScriptRunner::CallFunction()'s is in Blink.
-  const v8::MicrotasksScope microtasks_scope(
-      context, v8::MicrotasksScope::kDoNotRunMicrotasks);
-  run();
-  return true;
-}
-
 void PostIDBTask(Window* window, base::OnceClosure task) {
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
@@ -101,7 +77,8 @@ void PostIDBTask(Window* window, base::OnceClosure task) {
           FROM_HERE,
           base::BindOnce(
               [](cppgc::WeakPersistent<Window> window, base::OnceClosure task) {
-                RunInIDBContext(window.Get(), [&] { std::move(task).Run(); });
+                RunInWindowContext(window.Get(),
+                                   [&] { std::move(task).Run(); });
               },
               cppgc::WeakPersistent<Window>(window), std::move(task)));
 }
