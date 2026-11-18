@@ -114,6 +114,21 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"  postMessage([keys, text, estimate.usageDetails.caches > 0]);"
         b"})().catch((e) => postMessage(String(e)));",
     ),
+    "/indexed-db.js": (
+        "text/javascript",
+        b"const open = indexedDB.open('shared', 1);"
+        b"open.onupgradeneeded = () => open.result.createObjectStore('things');"
+        b"open.onsuccess = () => {"
+        b"  const database = open.result;"
+        b"  const transaction = database.transaction('things', 'readwrite');"
+        b"  transaction.objectStore('things').put({by: 'the worker'}, 'key');"
+        b"  transaction.oncomplete = async () => {"
+        b"    database.close();"
+        b"    postMessage([(await indexedDB.databases()).map((info) => [info.name, info.version])]);"
+        b"  };"
+        b"};"
+        b"open.onerror = () => postMessage(String(open.error));",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -446,6 +461,22 @@ def test_a_worker_reaches_the_caches_of_its_origin(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == [[["shared"], "put by the worker", True], "put by the worker"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_reaches_the_databases_of_its_origin(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/indexed-db.js');
+        worker.onmessage = (e) => {
+            const open = indexedDB.open('shared');
+            open.onsuccess = () => {
+                const get = open.result.transaction('things').objectStore('things').get('key');
+                get.onsuccess = () => resolve([e.data, get.result]);
+            };
+        };
+    })"""
+
+    assert _evaluate(server, script) == [[[["shared", 1]]], {"by": "the worker"}]
 
 
 @pytest.mark.usefixtures("page_program")

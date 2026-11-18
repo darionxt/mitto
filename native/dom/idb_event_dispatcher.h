@@ -1,7 +1,7 @@
 // How IndexedDB fires its events, as Blink's IDBEventDispatcher does: an
 // event at a request goes on to its transaction and its connection, capturing
 // from the connection down and bubbling back up, and one at a transaction to
-// its connection. And how a task of IndexedDB's runs in a window's context.
+// its connection. And how a task of IndexedDB's runs in a context.
 //
 // Upstream: third_party/blink/renderer/modules/indexeddb/idb_event_dispatcher.h
 // Upstream: third_party/blink/renderer/modules/indexeddb/idb_event_dispatcher.cc
@@ -18,7 +18,7 @@
 namespace mitto {
 
 class Event;
-class Window;
+class ExecutionContext;
 
 // Dispatches `event` along `targets`, the target first and each parent after
 // it, which outlive the dispatch.
@@ -29,9 +29,9 @@ DispatchEventResult DispatchIDBEvent(Event& event,
 // CreateCancelableBubble() make the events that IndexedDB fires.
 Event* MakeIDBEvent(const std::u16string& type, bool bubbles, bool cancelable);
 
-// Runs `task` in `window`'s context from a later task of the database access
+// Runs `task` in `execution_context` from a later task of the database access
 // queue, as Blink posts to the context's kDatabaseAccess task runner.
-void PostIDBTask(Window* window, base::OnceClosure task);
+void PostIDBTask(ExecutionContext* execution_context, base::OnceClosure task);
 
 }  // namespace mitto
 

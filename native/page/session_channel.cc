@@ -317,12 +317,12 @@ class SessionLink final : public PageChannel::Delegate
           Refuse("an IndexedDB callback came before the start");
           return;
         }
-        // Blink binds IndexedDB's interfaces to this queue.
-        database_access_->PostTask(
-            FROM_HERE,
-            base::BindOnce(&SessionIndexedDb::OnCallback,
-                           base::Unretained(&*indexed_db_),
-                           std::move(frame->indexed_db_callback)));
+        // To the queue of the context that called, which Blink binds
+        // IndexedDB's interfaces to.
+        if (std::optional<std::string> why = sender_->RouteIndexedDb(
+                std::move(frame->indexed_db_callback))) {
+          Refuse(*std::move(why));
+        }
         return;
       case PageMessage::kRefused:
       case PageMessage::kEvaluated:
@@ -410,7 +410,7 @@ class SessionLink final : public PageChannel::Delegate
         },
         send));
     cache_storage_->SetSender(sender_, misc_platform_api_, refuse);
-    indexed_db_->SetSend(send, refuse);
+    indexed_db_->SetSender(sender_, database_access_, refuse);
     // What the document's localStorage and sessionStorage ask of the Session.
     storage_backend_->SetSend(send);
     StorageBackend::Set(&*storage_backend_);

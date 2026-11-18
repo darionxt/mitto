@@ -186,4 +186,98 @@ std::optional<std::string> SessionSender::RouteCacheStorage(
   return std::nullopt;
 }
 
+uint64_t SessionSender::AddIndexedDbHost(IndexedDbRoute route) {
+  const base::AutoLock lock(lock_);
+  const uint64_t host = ++last_indexed_db_host_;
+  indexed_db_hosts_.emplace(host, std::move(route));
+  return host;
+}
+
+void SessionSender::RemoveIndexedDbHost(uint64_t host) {
+  const base::AutoLock lock(lock_);
+  indexed_db_hosts_.erase(host);
+  const auto of_host = [host](const auto& entry) {
+    return entry.second == host;
+  };
+  std::erase_if(indexed_db_calls_, of_host);
+  std::erase_if(indexed_db_connections_, of_host);
+}
+
+uint64_t SessionSender::NextIndexedDbNumber() {
+  const base::AutoLock lock(lock_);
+  return ++last_indexed_db_number_;
+}
+
+uint64_t SessionSender::SendIndexedDbCall(
+    uint64_t host,
+    base::FunctionRef<std::string(uint64_t call)> encode) {
+  const base::AutoLock lock(lock_);
+  const uint64_t call = ++last_indexed_db_number_;
+  indexed_db_calls_.emplace(call, host);
+  send_.Run(encode(call));
+  return call;
+}
+
+void SessionSender::ForgetIndexedDbCall(uint64_t call) {
+  const base::AutoLock lock(lock_);
+  indexed_db_calls_.erase(call);
+}
+
+void SessionSender::AddIndexedDbConnection(uint64_t host, uint64_t connection) {
+  const base::AutoLock lock(lock_);
+  indexed_db_connections_.insert_or_assign(connection, host);
+}
+
+void SessionSender::ForgetIndexedDbConnection(uint64_t connection) {
+  const base::AutoLock lock(lock_);
+  indexed_db_connections_.erase(connection);
+}
+
+std::optional<std::string> SessionSender::RouteIndexedDb(
+    PageIndexedDbCallback callback) {
+  IndexedDbRoute route;
+  uint64_t host = 0;
+  {
+    const base::AutoLock lock(lock_);
+    switch (callback.op) {
+      case IndexedDbCallbackOp::kForcedClose:
+      case IndexedDbCallbackOp::kVersionChange:
+      case IndexedDbCallbackOp::kAbort:
+      case IndexedDbCallbackOp::kComplete: {
+        const uint64_t* const found =
+            base::FindOrNull(indexed_db_connections_, callback.connection);
+        if (!found) {
+          // A connection that its context closed hears nothing more.
+          return std::nullopt;
+        }
+        host = *found;
+        break;
+      }
+      default: {
+        const uint64_t* const found =
+            base::FindOrNull(indexed_db_calls_, callback.call);
+        if (!found) {
+          if (callback.call > last_indexed_db_number_) {
+            return base::StrCat({"an answer to IndexedDB call ",
+                                 base::NumberToString(callback.call),
+                                 ", which no script waits for"});
+          }
+          // A call of a context that has gone.
+          return std::nullopt;
+        }
+        host = *found;
+        break;
+      }
+    }
+    const IndexedDbRoute* const found =
+        base::FindOrNull(indexed_db_hosts_, host);
+    if (!found) {
+      return std::nullopt;
+    }
+    route = *found;
+  }
+  route.Run(host, std::move(callback));
+  return std::nullopt;
+}
+
 }  // namespace mitto

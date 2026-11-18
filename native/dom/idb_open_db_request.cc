@@ -18,14 +18,14 @@
 
 namespace mitto {
 
-IDBOpenDBRequest::IDBOpenDBRequest(Window* window,
+IDBOpenDBRequest::IDBOpenDBRequest(ExecutionContext* execution_context,
                                    IDBFactory* factory,
                                    IndexedDbHost* host,
                                    const std::u16string& name,
                                    uint64_t connection,
                                    uint64_t transaction_id,
                                    int64_t version)
-    : IDBRequest(window, nullptr, nullptr),
+    : IDBRequest(execution_context, nullptr, nullptr),
       factory_(factory),
       host_(host),
       db_name_(name),
@@ -69,7 +69,7 @@ bool IDBOpenDBRequest::OnUpgradeNeeded(
   DCHECK(connection_);
 
   IDBDatabase* const idb_database = bindings::MakeGarbageCollected<IDBDatabase>(
-      GetWindow(), host_.get(), connection_);
+      GetExecutionContext(), host_.get(), connection_);
   idb_database->SetMetadata(metadata);
 
   if (old_version == IDBDatabaseMetadata::kNoVersion) {
@@ -81,7 +81,7 @@ bool IDBOpenDBRequest::OnUpgradeNeeded(
   old_database_metadata.version = old_version;
 
   transaction_ = IDBTransaction::CreateVersionChange(
-      GetWindow(), host_.get(), transaction_id_, idb_database, this,
+      GetExecutionContext(), host_.get(), transaction_id_, idb_database, this,
       old_database_metadata);
   SetResult(bindings::MakeGarbageCollected<IDBAny>(idb_database));
 
@@ -108,7 +108,7 @@ bool IDBOpenDBRequest::OnOpenDBSuccess(const IDBDatabaseMetadata& metadata) {
   } else {
     DCHECK(connection_);
     idb_database = bindings::MakeGarbageCollected<IDBDatabase>(
-        GetWindow(), host_.get(), connection_);
+        GetExecutionContext(), host_.get(), connection_);
     made_database = true;
     SetResult(bindings::MakeGarbageCollected<IDBAny>(idb_database));
   }

@@ -50,6 +50,7 @@ class BarProp;
 class CrashReportContext;
 class CacheStorage;
 class CacheStorageHost;
+class IndexedDbHost;
 class CookieStore;
 class Storage;
 class Crypto;
@@ -91,6 +92,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   mitto::Performance* Performance() override;
   // The document's.
   CacheStorageHost* GetCacheStorageHost() const override;
+  IndexedDbHost* GetIndexedDbHost() const override;
   // DOMWindowFileSystem's: the file system of the document's origin, from a
   // task of its own, as Chrome's browser opens one for a new profile, or an
   // error for an opaque origin or a type other than TEMPORARY and PERSISTENT.

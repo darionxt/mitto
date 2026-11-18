@@ -3,9 +3,9 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/location.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
-#include "mitto/dom/event_loop.h"
 #include "mitto/page_messages.h"
 
 namespace mitto {
@@ -78,28 +78,42 @@ PageIndexedDbCallback TooLargeAnswer(const PageIndexedDbCall& call) {
 }  // namespace
 
 SessionIndexedDb::SessionIndexedDb() = default;
-SessionIndexedDb::~SessionIndexedDb() = default;
 
-void SessionIndexedDb::SetSend(
-    SendFrame send,
+SessionIndexedDb::~SessionIndexedDb() {
+  if (host_ != 0) {
+    sender_->RemoveIndexedDbHost(host_);
+  }
+}
+
+void SessionIndexedDb::SetSender(
+    scoped_refptr<SessionSender> sender,
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
     base::RepeatingCallback<void(std::string why)> refuse) {
-  send_ = std::move(send);
+  sender_ = std::move(sender);
+  runner_ = std::move(runner);
   refuse_ = std::move(refuse);
 }
 
 uint64_t SessionIndexedDb::NextNumber() {
-  return ++last_number_;
+  return sender_->NextIndexedDbNumber();
+}
+
+bool SessionIndexedDb::NamesWhatWent(const PageIndexedDbCall& call) const {
+  for (const uint64_t number :
+       {call.connection, call.transaction, call.cursor}) {
+    if (number != 0 && number < first_number_) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void SessionIndexedDb::Send(const PageIndexedDbCall& call) {
   // What a collected object of a document before lets go has gone with it.
-  for (const uint64_t number :
-       {call.connection, call.transaction, call.cursor}) {
-    if (number != 0 && number <= last_number_before_) {
-      return;
-    }
+  if (NamesWhatWent(call)) {
+    return;
   }
-  send_.Run(EncodeIndexedDb(document_, call));
+  sender_->Send(EncodeIndexedDb(document_, call));
 }
 
 void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
@@ -108,16 +122,22 @@ void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
     transaction_connections_.insert_or_assign(call.transaction,
                                               call.connection);
   }
-  call.call = NextNumber();
+  // Each number takes as many bytes, so the call's own does not change
+  // whether it fits.
   if (!IndexedDbCallFits(call)) {
-    EventLoop::Get()
-        ->TaskRunner(TaskType::kDatabaseAccess)
-        ->PostTask(FROM_HERE,
-                   base::BindOnce(std::move(answer), TooLargeAnswer(call)));
+    runner_->PostTask(FROM_HERE,
+                      base::BindOnce(std::move(answer), TooLargeAnswer(call)));
     return;
   }
-  calls_.emplace(call.call, std::move(answer));
-  Send(call);
+  if (NamesWhatWent(call)) {
+    return;
+  }
+  const uint64_t number =
+      sender_->SendIndexedDbCall(host_, [this, &call](uint64_t number) {
+        call.call = number;
+        return EncodeIndexedDb(document_, call);
+      });
+  calls_.emplace(number, std::move(answer));
 }
 
 void SessionIndexedDb::Tell(PageIndexedDbCall call) {
@@ -145,22 +165,42 @@ void SessionIndexedDb::Tell(PageIndexedDbCall call) {
 
 void SessionIndexedDb::ListenToConnection(uint64_t connection,
                                           Answer listener) {
+  sender_->AddIndexedDbConnection(host_, connection);
   listeners_.insert_or_assign(connection, std::move(listener));
 }
 
 void SessionIndexedDb::StopListening(uint64_t connection) {
+  sender_->ForgetIndexedDbConnection(connection);
   listeners_.erase(connection);
 }
 
 void SessionIndexedDb::DocumentCommitted(uint64_t document) {
+  // What the document before asked and opened goes unheard.
+  if (host_ != 0) {
+    sender_->RemoveIndexedDbHost(host_);
+  }
+  host_ = sender_->AddIndexedDbHost(base::BindRepeating(
+      [](scoped_refptr<base::SingleThreadTaskRunner> runner,
+         base::WeakPtr<SessionIndexedDb> self, uint64_t host,
+         PageIndexedDbCallback callback) {
+        runner->PostTask(
+            FROM_HERE, base::BindOnce(&SessionIndexedDb::OnCallback, self, host,
+                                      std::move(callback)));
+      },
+      runner_, weak_factory_.GetWeakPtr()));
+  first_number_ = sender_->NextIndexedDbNumber();
   document_ = document;
   calls_.clear();
   listeners_.clear();
   transaction_connections_.clear();
-  last_number_before_ = last_number_;
 }
 
-void SessionIndexedDb::OnCallback(PageIndexedDbCallback callback) {
+void SessionIndexedDb::OnCallback(uint64_t host,
+                                  PageIndexedDbCallback callback) {
+  if (host != host_) {
+    // What the Session sent a document before, which has gone.
+    return;
+  }
   switch (callback.op) {
     case IndexedDbCallbackOp::kForcedClose:
     case IndexedDbCallbackOp::kVersionChange:
@@ -181,10 +221,6 @@ void SessionIndexedDb::OnCallback(PageIndexedDbCallback callback) {
       break;
   }
   const auto found = calls_.find(callback.call);
-  if (found == calls_.end() && callback.call <= last_number_before_) {
-    // A call of a document before, which has gone.
-    return;
-  }
   if (found == calls_.end()) {
     refuse_.Run(base::StrCat({"an answer to IndexedDB call ",
                               base::NumberToString(callback.call),
@@ -194,6 +230,7 @@ void SessionIndexedDb::OnCallback(PageIndexedDbCallback callback) {
   Answer answer = EndsCall(callback) ? std::move(found->second) : found->second;
   if (EndsCall(callback)) {
     calls_.erase(found);
+    sender_->ForgetIndexedDbCall(callback.call);
   }
   answer.Run(std::move(callback));
 }

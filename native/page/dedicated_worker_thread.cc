@@ -40,6 +40,7 @@
 #include "mitto/page/page_reporter.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cache_storage.h"
+#include "mitto/page/session_indexed_db.h"
 #include "mitto/page/worker_scheduler.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-array-buffer.h"
@@ -146,6 +147,7 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   std::unique_ptr<PageRequests> requests_;
   std::unique_ptr<PageFetcher> fetcher_;
   std::unique_ptr<SessionCacheStorage> cache_storage_;
+  std::unique_ptr<SessionIndexedDb> indexed_db_;
   std::unique_ptr<PageWorkerStarter> worker_starter_;
   int reports_queued_ = 0;
   bool shut_down_ = false;
@@ -224,8 +226,8 @@ void DedicatedWorkerThread::Scope::Start() {
           base::Unretained(this)));
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
   scope_->SetFetcher(fetcher_.get());
-  // The worker's own Cache API, as its creator's frame's storage key reaches
-  // it, unless its origin may not reach caches.
+  // The worker's own Cache API and IndexedDB, as its creator's frame's
+  // storage key reaches them, unless its origin is opaque and may not.
   if (!params_.origin.opaque()) {
     cache_storage_ = std::make_unique<SessionCacheStorage>();
     cache_storage_->SetSender(
@@ -233,6 +235,12 @@ void DedicatedWorkerThread::Scope::Start() {
         params_.refuse);
     cache_storage_->DocumentCommitted(params_.id);
     scope_->SetCacheStorageHost(cache_storage_.get());
+    indexed_db_ = std::make_unique<SessionIndexedDb>();
+    indexed_db_->SetSender(params_.sender,
+                           scheduler_->TaskRunner(TaskType::kDatabaseAccess),
+                           params_.refuse);
+    indexed_db_->DocumentCommitted(params_.id);
+    scope_->SetIndexedDbHost(indexed_db_.get());
   }
   scope_->SetConsoleSink(base::BindRepeating(
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
@@ -314,6 +322,7 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetWorkerStarter(nullptr);
     scope_->SetImportedScriptLoader(nullptr);
     scope_->SetCacheStorageHost(nullptr);
+    scope_->SetIndexedDbHost(nullptr);
   }
   if (requests_) {
     requests_->CancelAll();

@@ -44,7 +44,7 @@ class DOMStringList;
 class IDBObjectStore;
 class IDBTransaction;
 class IndexedDbHost;
-class Window;
+class ExecutionContext;
 
 class IDBDatabase final : public EventTarget {
   CPPGC_USING_PRE_FINALIZER(IDBDatabase, Dispose);
@@ -86,9 +86,12 @@ class IDBDatabase final : public EventTarget {
   static constexpr char kDatabaseClosedErrorMessage[] =
       "The database connection is closed.";
 
-  // Connection `connection` of `window`'s document, which `host` gave and
-  // the Session opened, whose events it hears from now on.
-  IDBDatabase(Window* window, IndexedDbHost* host, uint64_t connection);
+  // Connection `connection` of the document or worker of `execution_context`,
+  // which `host` gave and the Session opened, whose events it hears from now
+  // on.
+  IDBDatabase(ExecutionContext* execution_context,
+              IndexedDbHost* host,
+              uint64_t connection);
   ~IDBDatabase() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -143,10 +146,12 @@ class IDBDatabase final : public EventTarget {
   bool IsConnectionOpen() const { return connection_open_; }
   uint64_t Connection() const { return connection_; }
   IndexedDbHost* Host() const { return host_; }
-  Window* GetWindow() const { return window_.Get(); }
+  ExecutionContext* GetExecutionContext() const {
+    return execution_context_.Get();
+  }
   bool HasContext() const;
 
-  // What the Session tells the connection, from a task of the window's
+  // What the Session tells the connection, from a task of the context's
   // context: blink.mojom.IDBDatabaseCallbacks.
   void ForcedClose();
   void VersionChange(int64_t old_version, int64_t new_version);
@@ -227,7 +232,7 @@ class IDBDatabase final : public EventTarget {
   void DidBecomeInactive();
 
   // Asks the Session `call` of this connection for `request`, and hands each
-  // answer to the request's `on_answer` in its window's context, unless the
+  // answer to the request's `on_answer` in its context, unless the
   // request or the context has gone, as Blink binds an IDBRequest method
   // weakly to a call's callback. Nothing goes once the connection has
   // closed.
@@ -259,7 +264,7 @@ class IDBDatabase final : public EventTarget {
   void OnConnectionCallback(PageIndexedDbCallback callback);
   // Drops the connection, which the Session closes, aborting what it runs.
   void CloseConnection();
-  // The window's context went: the connection closes at once, without
+  // The context went: the connection closes at once, without
   // waiting for its transactions.
   void ContextDestroyed();
   // A connection that the collector takes closes, as dropping Blink's remote
@@ -269,7 +274,7 @@ class IDBDatabase final : public EventTarget {
   // to hear versionchange.
   void UpdateKeepAlive();
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> execution_context_;
   const raw_ptr<IndexedDbHost> host_;
   const uint64_t connection_;
   bool connection_open_ = true;

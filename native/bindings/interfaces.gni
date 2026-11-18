@@ -3058,6 +3058,7 @@ mitto_bindings_interfaces = [
       "crypto",
       "scheduler",
       "caches",
+      "indexedDB",
       "structuredClone",
       "importScripts",
       "fetch",
