@@ -614,13 +614,17 @@ def test_a_nullable_reflected_attribute_reads_its_keywords() -> None:
         (Condition(other=("SecureContext",)), "data->secure_context()"),
         (Condition(other=("RuntimeEnabled=G in the context",)), "features.IsEnabled(RuntimeFeature::kG)"),
         (Condition(other=("Exposed=Window,Worker",)), "true"),
-        (Condition(other=("Exposed=Worker",)), None),
+        (Condition(other=("Exposed=Window",)), "data->is_window()"),
+        (Condition(other=("Exposed=Worker",)), "!data->is_window()"),
+        (Condition(other=("Exposed=DedicatedWorker",)), "!data->is_window()"),
+        (Condition(other=("Exposed=ServiceWorker,SharedWorker",)), None),
         (Condition(other=("ContextEnabled=X",)), None),
         (Condition(other=("CrossOriginIsolated",)), None),
     ],
 )
 def test_a_page_installs_what_its_conditions_allow(condition: Condition, test: str | None) -> None:
-    # A Page is a secure top-level window with no origin trials and nothing a context enables.
+    # A Page is a secure top-level window with no origin trials and nothing a context enables, and so are its dedicated
+    # workers, each of whose isolates has only workers' contexts.
     assert condition_test(condition, "Thing.x") == test
 
 
@@ -844,12 +848,14 @@ def test_namespaces_and_callback_interfaces_have_constants_on_their_object_only(
 
 
 def test_an_operation_is_installed_where_any_of_its_overloads_is() -> None:
-    either = Condition(alternatives=(Condition(features=("A",)), Condition(other=("Exposed=Worker",))))
+    either = Condition(alternatives=(Condition(features=("A",)), Condition(other=("Exposed=ServiceWorker",))))
+    on_workers = Condition(alternatives=(Condition(features=("A",)), Condition(other=("Exposed=Worker",))))
     always = Condition(alternatives=(Condition(features=("A",)), ALWAYS))
 
     assert condition_test(either, "Thing.f") == "((features.IsEnabled(RuntimeFeature::kA)))"
+    assert condition_test(on_workers, "Thing.f") == "((features.IsEnabled(RuntimeFeature::kA)) || (!data->is_window()))"
     assert condition_test(always, "Thing.f") == "true"
-    assert either.describe() == "([RuntimeEnabled=A]) or ([Exposed=Worker])"
+    assert on_workers.describe() == "([RuntimeEnabled=A]) or ([Exposed=Worker])"
 
 
 def test_the_listing_names_what_each_exposed_construct_gives() -> None:
@@ -1320,6 +1326,45 @@ def test_a_factory_function_with_behaviour_calls_the_class_and_the_window_instal
     assert "mitto::Thing::CreateForJSConstructor(arg1_width, arg2_height)" in source
     assert "ExceptionMessages::ConstructorCalledAsFunction()" in source
     assert "&V8Thing::ImageLegacyFactoryFunctionCallback}" in files["v8_window.cc"]
+
+
+def test_a_dedicated_workers_global_object_has_what_workers_expose() -> None:
+    # Once DedicatedWorkerGlobalScope has a class, a construct that only workers expose gets a table, and the worker's
+    # global object a function of its own that sets it up; until then, neither.
+    thing = _interface(name="WorkerThing", exposure=(("Worker", None),))
+
+    def global_object(name: str, tag: int, exposure: str, names: tuple[str, ...]) -> Interface:
+        return _interface(
+            name=name,
+            tag=tag,
+            max_subclass_tag=tag,
+            exposure=((exposure, None),),
+            extended_attributes=_extended("Global"),
+            exposed_constructs=names,
+            exposed=tuple(ExposedConstruct(construct, "interface", construct, ALWAYS) for construct in names),
+        )
+
+    window = global_object("Window", 2, "Window", ("Window",))
+    worker = global_object(
+        "DedicatedWorkerGlobalScope", 3, "DedicatedWorker", ("DedicatedWorkerGlobalScope", "WorkerThing")
+    )
+    definitions = Definitions(
+        {"WorkerThing": thing, "Window": window, "DedicatedWorkerGlobalScope": worker}, {}, {}, {}, frozenset()
+    )
+    window_class = ImplementedInterface("Window", "mitto/dom/window.h")
+    worker_class = ImplementedInterface("DedicatedWorkerGlobalScope", "mitto/dom/dedicated_worker_global_scope.h")
+
+    with_workers = write_bindings(definitions, [], [window_class, worker_class])
+    without = write_bindings(definitions, [], [window_class])
+
+    def tables(files: dict[str, str]) -> str:
+        return "".join(content for name, content in files.items() if name.startswith("interfaces_without_class_"))
+
+    assert "void InstallWorkerInterfaceObjects(v8::Local<v8::Context> context);" in with_workers["interface_objects.h"]
+    assert "V8DedicatedWorkerGlobalScope::kWrapperTypeInfo" in with_workers["interface_objects.cc"]
+    assert '"WorkerThing"' in tables(with_workers)
+    assert "InstallWorkerInterfaceObjects" not in without["interface_objects.h"]
+    assert '"WorkerThing"' not in tables(without)
 
 
 def test_a_class_declared_in_a_shared_header_is_included_from_it() -> None:

@@ -56,7 +56,12 @@ from bindings_generator.table_writer import Construct, KnownGapContext, member_r
 from bindings_generator.type_tables import HEADER as TYPES_HEADER
 from bindings_generator.type_tables import SOURCE as TYPES_SOURCE
 from bindings_generator.type_tables import TypeTables
-from bindings_generator.web_idl_reader import PAGE_GLOBAL_NAME, Definitions
+from bindings_generator.web_idl_reader import (
+    PAGE_GLOBAL_NAME,
+    WORKER_GLOBAL_INTERFACE,
+    WORKER_GLOBAL_NAMES,
+    Definitions,
+)
 
 __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 
@@ -197,8 +202,10 @@ def condition_test(condition: Condition, where: str) -> str | None:
     """The C++ test of whether a Page installs a construct, or None if it never does.
 
     A Page is a top-level window that is a secure context, as about:blank is, and is neither isolated nor cross-origin
-    isolated, and no embedder turns a context-enabled feature on for it. A feature that a context could turn on, such
-    as one an origin trial can enable, is on if the Page's set has it, since a Page has no origin trials.
+    isolated, and no embedder turns a context-enabled feature on for it, and so is each of its dedicated workers. A
+    feature that a context could turn on, such as one an origin trial can enable, is on if the Page's set has it, since
+    a Page has no origin trials. A worker's isolate has only workers' contexts, so a construct exposed on the window or
+    on workers alone is tested once for each isolate, as bind_gen tests it for each context.
     """
     if condition.alternatives:
         # The overloads of one operation whose conditions differ: Blink installs it if any of them holds.
@@ -224,8 +231,15 @@ def condition_test(condition: Condition, where: str) -> str | None:
             names = other.removeprefix("Exposed with ").split(" or ")
             tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
         elif other.startswith("Exposed="):
-            if PAGE_GLOBAL_NAME not in other.removeprefix("Exposed=").split(","):
+            names = set(other.removeprefix("Exposed=").split(","))
+            in_window = PAGE_GLOBAL_NAME in names
+            in_worker = bool(names & WORKER_GLOBAL_NAMES)
+            if not in_window and not in_worker:
                 return None
+            if not in_worker:
+                tests.append("data->is_window()")
+            elif not in_window:
+                tests.append("!data->is_window()")
         elif other.startswith("CrossOriginIsolatedOrRuntimeEnabled="):
             names = other.removeprefix("CrossOriginIsolatedOrRuntimeEnabled=").split(",")
             tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
@@ -2414,18 +2428,30 @@ def _write_features(features: list[Feature]) -> tuple[str, str]:
     )
 
 
-def _write_interface_objects(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> tuple[str, str]:
-    """The function that sets up a Page's global object once its context exists: it makes the interface object of
-    Window, which installs on the global object what the context decides, its exposed constructs among them, as Blink's
-    LocalWindowProxy::InstallConditionalFeatures() asks for it."""
+def _page_globals(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> list[str]:
+    """The global interfaces of a Page's contexts that have a C++ class: Window, and DedicatedWorkerGlobalScope once
+    workers have one."""
     if PAGE_GLOBAL_NAME not in implemented:
         raise UnhandledError(f"{PAGE_GLOBAL_NAME}, the global interface of a Page, has no C++ class")
-    not_exposed = set(implemented) - set(definitions.interfaces[PAGE_GLOBAL_NAME].exposed_constructs)
+    return [name for name in (PAGE_GLOBAL_NAME, WORKER_GLOBAL_INTERFACE) if name in implemented]
+
+
+def _write_interface_objects(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> tuple[str, str]:
+    """The functions that set up a context's global object once the context exists: each makes the interface object of
+    the global interface, Window's or a dedicated worker's, which installs on the global object what the context
+    decides, its exposed constructs among them, as Blink's LocalWindowProxy::InstallConditionalFeatures() and
+    WorkerOrWorkletScriptController::Initialize() ask for it."""
+    globals_ = _page_globals(definitions, implemented)
+    exposed = {name for global_ in globals_ for name in definitions.interfaces[global_].exposed_constructs}
+    not_exposed = set(implemented) - exposed
     hidden = {
         name for name in not_exposed if "LegacyNoInterfaceObject" in definitions.interfaces[name].extended_attributes
     }
     if not_exposed - hidden:
-        raise UnhandledError(f"interfaces not exposed on {PAGE_GLOBAL_NAME}: {', '.join(sorted(not_exposed - hidden))}")
+        raise UnhandledError(
+            f"interfaces not exposed on {' or '.join(globals_)}: {', '.join(sorted(not_exposed - hidden))}"
+        )
+    functions = {PAGE_GLOBAL_NAME: "InstallInterfaceObjects", WORKER_GLOBAL_INTERFACE: "InstallWorkerInterfaceObjects"}
     header = [
         _BANNER,
         "#ifndef MITTO_BINDINGS_INTERFACE_OBJECTS_H_",
@@ -2442,6 +2468,15 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         "// on the global object's template.",
         "void InstallInterfaceObjects(v8::Local<v8::Context> context);",
         "",
+    ]
+    if WORKER_GLOBAL_INTERFACE in globals_:
+        header += [
+            f"// The same for a context whose global object is a {WORKER_GLOBAL_INTERFACE},",
+            "// once a dedicated worker's context exists.",
+            "void InstallWorkerInterfaceObjects(v8::Local<v8::Context> context);",
+            "",
+        ]
+    header += [
         "}  // namespace mitto::bindings",
         "",
         "#endif  // MITTO_BINDINGS_INTERFACE_OBJECTS_H_",
@@ -2454,15 +2489,20 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         "#include <tuple>",
         "",
         '#include "mitto/bindings/idl_member_installer.h"',
-        f'#include "{header_of(PAGE_GLOBAL_NAME)}"',
+        *sorted(f'#include "{header_of(global_)}"' for global_ in globals_),
         '#include "v8/include/v8-context.h"',
         "",
         "namespace mitto::bindings {",
         "",
-        "void InstallInterfaceObjects(v8::Local<v8::Context> context) {",
-        f"  std::ignore = InterfaceObject(context, V8{PAGE_GLOBAL_NAME}::kWrapperTypeInfo);",
-        "}",
-        "",
+    ]
+    for global_ in globals_:
+        source += [
+            f"void {functions[global_]}(v8::Local<v8::Context> context) {{",
+            f"  std::ignore = InterfaceObject(context, V8{global_}::kWrapperTypeInfo);",
+            "}",
+            "",
+        ]
+    source += [
         "}  // namespace mitto::bindings",
         "",
     ]
@@ -2577,14 +2617,16 @@ def _iterator_operation(name: str, arguments: tuple[Argument, ...]) -> Operation
 
 
 def _constructs_with_tables(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> list[str]:
-    """The constructs that get tables, sorted by name: each that has no C++ class and that the global object exposes,
-    with or without an interface object, each ancestor of one, and each interface that their attributes and
-    operations give, such as StyleMedia, which has no [Exposed] and whose objects a page still gets, but not one
-    exposed only on other global objects, such as a worker's."""
-    window = definitions.interfaces[PAGE_GLOBAL_NAME]
+    """The constructs that get tables, sorted by name: each that has no C++ class and that a global object of a Page
+    exposes, the window's or, once workers have a class, a dedicated worker's, with or without an interface object,
+    each ancestor of one, and each interface that their attributes and operations give, such as StyleMedia, which has
+    no [Exposed] and whose objects a page still gets, but not one exposed only on other global objects, such as a
+    shared worker's."""
+    globals_ = _page_globals(definitions, implemented)
     pending = [
         name
-        for name in window.exposed_constructs
+        for global_ in globals_
+        for name in definitions.interfaces[global_].exposed_constructs
         if definitions.interfaces[name].kind != "callback interface"
         or definitions.interfaces[name].has_interface_object
     ]
@@ -2594,7 +2636,7 @@ def _constructs_with_tables(definitions: Definitions, implemented: dict[str, Imp
         if name in names or name not in definitions.interfaces:
             continue
         interface = definitions.interfaces[name]
-        if interface.exposure and not interface.is_exposed_on(PAGE_GLOBAL_NAME):
+        if interface.exposure and not _is_exposed_on_a_page(interface, globals_):
             continue
         names.add(name)
         if interface.parent is not None:
@@ -2603,6 +2645,13 @@ def _constructs_with_tables(definitions: Definitions, implemented: dict[str, Imp
         given += [overload.return_type for group in interface.operation_groups for overload in group.overloads]
         pending += [found for idl_type in given for found in _interfaces_in(idl_type)]
     return sorted(names - set(implemented))
+
+
+def _is_exposed_on_a_page(interface: Interface, globals_: list[str]) -> bool:
+    """Whether the interface is exposed on one of the global objects of a Page."""
+    if interface.is_exposed_on(PAGE_GLOBAL_NAME):
+        return True
+    return WORKER_GLOBAL_INTERFACE in globals_ and any(interface.is_exposed_on(name) for name in WORKER_GLOBAL_NAMES)
 
 
 def write_bindings(

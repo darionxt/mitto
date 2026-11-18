@@ -135,6 +135,13 @@ class PerIsolateData {
     secure_context_ = secure_context;
   }
 
+  // Whether the isolate's contexts are a window's, as a Page's main thread
+  // has them, or a dedicated worker's, as each worker's thread has. An
+  // isolate never has both, so the bindings decide what [Exposed] puts on
+  // one global object or the other once for each isolate.
+  bool is_window() const { return window_; }
+  void set_worker() { window_ = false; }
+
   // The template of an interface or a callback interface, which this makes
   // the first time.
   v8::Local<v8::FunctionTemplate> InterfaceTemplate(
@@ -206,6 +213,7 @@ class PerIsolateData {
   base::TimeTicks time_origin_;
   ExceptionReporter exception_reporter_;
   bool secure_context_ = true;
+  bool window_ = true;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::Template>> templates_;
   std::map<const ExposedConstructInfo*, v8::Eternal<v8::FunctionTemplate>>
       factory_function_templates_;

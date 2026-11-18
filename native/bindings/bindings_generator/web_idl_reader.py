@@ -43,6 +43,9 @@ __all__ = ["Definitions", "read_database"]
 
 # The global object that a Page's scripts run in, by the name that [Exposed] gives it.
 PAGE_GLOBAL_NAME = "Window"
+# The global interface of a Page's dedicated workers, and the names that [Exposed] gives it, as its [Global] does.
+WORKER_GLOBAL_INTERFACE = "DedicatedWorkerGlobalScope"
+WORKER_GLOBAL_NAMES = frozenset({"Worker", "DedicatedWorker"})
 
 # The kinds of definition that the database holds, as web_idl's DatabaseBody.Kind names them, and those that the
 # reader reads on their own. Mixins are merged into the interfaces that include them, unions and typedefs into the
