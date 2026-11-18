@@ -202,6 +202,8 @@ mitto_bindings_interfaces = [
       "name",
       "postMessage",
       "close",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
     ]
   },
   {

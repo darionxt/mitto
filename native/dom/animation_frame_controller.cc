@@ -12,6 +12,7 @@
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/event_target.h"
+#include "mitto/dom/performance.h"
 #include "mitto/dom/scheduler_task_context.h"
 #include "mitto/dom/time_clamper.h"
 #include "mitto/dom/window.h"
@@ -54,6 +55,13 @@ struct AnimationFrameController::FrameCallback {
   cppgc::Persistent<SchedulerTaskContext> task_state;
 };
 
+// The microtask of a worker's frame: the controller, while it lasts, and the
+// frame's time.
+struct AnimationFrameController::WorkerFrame {
+  base::WeakPtr<AnimationFrameController> controller;
+  double time = 0;
+};
+
 struct AnimationFrameController::QueuedEvent {
   cppgc::Persistent<EventTarget> target;
   cppgc::Persistent<Event> event;
@@ -61,9 +69,11 @@ struct AnimationFrameController::QueuedEvent {
 
 AnimationFrameController::AnimationFrameController(
     v8::Isolate* isolate,
-    v8::Local<v8::Context> context)
+    v8::Local<v8::Context> context,
+    std::optional<base::TimeTicks> worker_time_origin)
     : isolate_(isolate),
-      context_(std::make_unique<v8::Global<v8::Context>>(isolate, context)) {}
+      context_(std::make_unique<v8::Global<v8::Context>>(isolate, context)),
+      worker_time_origin_(worker_time_origin) {}
 
 AnimationFrameController::~AnimationFrameController() = default;
 
@@ -133,6 +143,16 @@ void AnimationFrameController::ScheduleAnimationIfNeeded() {
 void AnimationFrameController::ServiceScriptedAnimations(
     base::TimeTicks frame_time) {
   frame_requested_ = false;
+  if (worker_time_origin_) {
+    // WorkerAnimationFrameProvider::BeginFrame(): a microtask runs the
+    // callbacks, with the frame's time as performance.now() would give it.
+    const double time = Performance::MonotonicTimeToDOMHighResTimeStamp(
+        *worker_time_origin_, frame_time);
+    isolate_->EnqueueMicrotask(
+        &AnimationFrameController::RunWorkerFrameCallbacks,
+        new WorkerFrame{weak_factory_.GetWeakPtr(), time});
+    return;
+  }
   const v8::HandleScope handle_scope(isolate_);
   const v8::Context::Scope context_scope(context_->Get(isolate_));
   DocumentLoadTiming& timing = Window::Current().GetDocumentLoadTiming();
@@ -153,6 +173,19 @@ void AnimationFrameController::ServiceScriptedAnimations(
       animation_time_.InMillisecondsF(),
       timing.MonotonicTimeToPseudoWallTime(zero_time + animation_time_)
           .InMillisecondsF());
+}
+
+// static
+void AnimationFrameController::RunWorkerFrameCallbacks(void* data) {
+  const std::unique_ptr<WorkerFrame> frame(static_cast<WorkerFrame*>(data));
+  AnimationFrameController* const controller = frame->controller.get();
+  if (!controller) {
+    return;
+  }
+  const v8::HandleScope handle_scope(controller->isolate_);
+  const v8::Context::Scope context_scope(
+      controller->context_->Get(controller->isolate_));
+  controller->ExecuteFrameCallbacks(frame->time, frame->time);
 }
 
 // ScriptedAnimationController::DispatchEvents(): the events that wait now,

@@ -6,8 +6,10 @@
 #include "base/check_op.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
+#include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "mitto/page/idle_helper.h"
@@ -23,18 +25,41 @@ constexpr int kDefaultRefreshRate = 60;
 constexpr int kLeastRefreshRate = 24;
 constexpr int kMostRefreshRate = 1000;
 
-// How long after its vsync a frame's callbacks start on an idle main thread,
-// and how long after the request a missed frame's do, which no vsync waits
-// for. Read from Chrome 157.0.8103.51 on macOS, headless: medians of 1.2 and
-// 0.15 milliseconds.
-constexpr base::TimeDelta kBeginFrameLatency = base::Microseconds(1200);
-constexpr base::TimeDelta kMissedBeginFrameLatency = base::Microseconds(150);
 
 // MainThreadSchedulerImpl's kDefaultRenderingStarvationThreshold.
 constexpr base::TimeDelta kRenderingStarvationThreshold =
     base::Milliseconds(100);
 
+// The display's vsyncs, which the main thread sets and workers read.
+base::Lock& DisplayVSyncLock() {
+  static base::NoDestructor<base::Lock> lock;
+  return *lock;
+}
+
+BeginFrameSource::VSync& DisplayVSyncLocked() {
+  static BeginFrameSource::VSync vsync{.interval = base::Seconds(1) /
+                                                   kDefaultRefreshRate};
+  return vsync;
+}
+
 }  // namespace
+
+base::TimeTicks BeginFrameSource::VSync::LastAtOrBefore(
+    base::TimeTicks time) const {
+  const base::TimeTicks next = time.SnappedToNextTick(timebase, interval);
+  return next == time ? time : next - interval;
+}
+
+base::TimeTicks BeginFrameSource::VSync::NextAfter(base::TimeTicks time) const {
+  const base::TimeTicks next = time.SnappedToNextTick(timebase, interval);
+  return next == time ? time + interval : next;
+}
+
+// static
+BeginFrameSource::VSync BeginFrameSource::DisplayVSync() {
+  const base::AutoLock lock(DisplayVSyncLock());
+  return DisplayVSyncLocked();
+}
 
 BeginFrameSource::BeginFrameSource(
     base::sequence_manager::SequenceManager* sequence_manager,
@@ -79,6 +104,9 @@ void BeginFrameSource::SetRefreshRate(int hertz) {
   // Page does sets.
   vsync_timebase_ =
       base::TimeTicks::Now() - vsync_interval_ * base::RandDouble();
+  const base::AutoLock lock(DisplayVSyncLock());
+  DisplayVSyncLocked() = {.timebase = vsync_timebase_,
+                          .interval = vsync_interval_};
 }
 
 base::TimeTicks BeginFrameSource::LastVSyncAtOrBefore(

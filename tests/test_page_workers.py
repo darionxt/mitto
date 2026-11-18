@@ -130,6 +130,25 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"};"
         b"open.onerror = () => postMessage(String(open.error));",
     ),
+    "/frames.js": (
+        "text/javascript",
+        b"const times = []; let cancelledRan = false;"
+        b"cancelAnimationFrame(requestAnimationFrame(() => { cancelledRan = true; }));"
+        b"const step = (time) => {"
+        b"  times.push(time);"
+        b"  if (times.length < 3) { requestAnimationFrame(step); return; }"
+        b"  postMessage([times[0] < times[1] && times[1] < times[2], times[2] <= performance.now(), cancelledRan]);"
+        b"};"
+        b"requestAnimationFrame(step);",
+    ),
+    "/nested-frames.js": (
+        "text/javascript",
+        b"const inner = new Worker('/no-frames.js'); inner.onmessage = (e) => postMessage(e.data);",
+    ),
+    "/no-frames.js": (
+        "text/javascript",
+        b"try { requestAnimationFrame(() => {}); postMessage('no error'); } catch (e) { postMessage(String(e)); }",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -479,6 +498,29 @@ def test_a_worker_reaches_the_databases_of_its_origin(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == [[[["shared", 1]]], {"by": "the worker"}]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_a_window_started_has_animation_frames(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/frames.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == [True, True, False]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_a_worker_started_has_no_animation_frames(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/nested-frames.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == (
+        "NotSupportedError: Failed to execute 'requestAnimationFrame' on 'DedicatedWorkerGlobalScope': "
+        "requestAnimationFrame not supported in this Worker."
+    )
 
 
 @pytest.mark.usefixtures("page_program")

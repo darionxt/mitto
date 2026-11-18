@@ -19,6 +19,7 @@
 #include "base/time/time.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_dedicated_worker_global_scope.h"
+#include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/dedicated_worker_global_scope.h"
 #include "mitto/dom/dom_timer.h"
@@ -144,6 +145,7 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   cppgc::Persistent<DedicatedWorkerGlobalScope> scope_;
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<WindowTasks> tasks_;
+  std::unique_ptr<AnimationFrameController> animation_frames_;
   std::unique_ptr<PageRequests> requests_;
   std::unique_ptr<PageFetcher> fetcher_;
   std::unique_ptr<SessionCacheStorage> cache_storage_;
@@ -210,6 +212,11 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetTimers(timers_.get());
   tasks_ = std::make_unique<WindowTasks>(isolate_, context);
   scope_->SetTasks(tasks_.get());
+  if (params_.begin_frames) {
+    animation_frames_ = std::make_unique<AnimationFrameController>(
+        isolate_, context, data_->time_origin());
+    scope_->SetAnimationFrames(animation_frames_.get());
+  }
   // The worker's requests are its own, and their responses come to this
   // thread, on its networking queue.
   requests_ = std::make_unique<PageRequests>(
@@ -289,6 +296,7 @@ DedicatedWorkerThread::Scope::~Scope() {
   worker_starter_.reset();
   fetcher_.reset();
   requests_.reset();
+  animation_frames_.reset();
   tasks_.reset();
   timers_.reset();
   reporter_.reset();
@@ -323,6 +331,7 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetImportedScriptLoader(nullptr);
     scope_->SetCacheStorageHost(nullptr);
     scope_->SetIndexedDbHost(nullptr);
+    scope_->SetAnimationFrames(nullptr);
   }
   if (requests_) {
     requests_->CancelAll();

@@ -1,0 +1,65 @@
+#include "mitto/page/worker_begin_frame_provider.h"
+
+#include <utility>
+
+#include "base/functional/bind.h"
+#include "base/location.h"
+#include "mitto/page/begin_frame_source.h"
+
+namespace mitto {
+
+WorkerBeginFrameProvider::WorkerBeginFrameProvider(
+    scoped_refptr<base::SingleThreadTaskRunner> compositor)
+    : compositor_(std::move(compositor)) {
+  timer_.SetTaskRunner(compositor_);
+}
+
+WorkerBeginFrameProvider::~WorkerBeginFrameProvider() = default;
+
+// BeginFrameProvider::RequestBeginFrame(): the frame sink starts to need
+// BeginFrames, and Viz sends a missed one at once.
+void WorkerBeginFrameProvider::RequestBeginFrame(
+    EventLoop::BeginFrameCallback begin_frame) {
+  requests_.push_back(std::move(begin_frame));
+  if (observing_) {
+    return;
+  }
+  observing_ = true;
+  const base::TimeTicks now = base::TimeTicks::Now();
+  PostBeginFrame(BeginFrameSource::DisplayVSync().LastAtOrBefore(now),
+                 now + BeginFrameSource::kMissedBeginFrameLatency);
+}
+
+void WorkerBeginFrameProvider::PostBeginFrame(base::TimeTicks frame_time,
+                                              base::TimeTicks arrival) {
+  timer_.Start(FROM_HERE, arrival,
+               base::BindOnce(&WorkerBeginFrameProvider::OnBeginFrame,
+                              base::Unretained(this), frame_time),
+               base::subtle::DelayPolicy::kPrecise);
+}
+
+// BeginFrameProvider::OnBeginFrame(): one that nothing waits for stops them,
+// and a late one is dropped; the rest run what waits, and the next comes at
+// the next vsync.
+void WorkerBeginFrameProvider::OnBeginFrame(base::TimeTicks frame_time) {
+  if (requests_.empty()) {
+    observing_ = false;
+    return;
+  }
+  const BeginFrameSource::VSync vsync = BeginFrameSource::DisplayVSync();
+  const base::TimeTicks now = base::TimeTicks::Now();
+  if (now > frame_time + vsync.interval) {
+    const base::TimeTicks next = vsync.NextAfter(now);
+    PostBeginFrame(next, next + BeginFrameSource::kBeginFrameLatency);
+    return;
+  }
+  const base::TimeTicks next = vsync.NextAfter(frame_time);
+  PostBeginFrame(next, next + BeginFrameSource::kBeginFrameLatency);
+  std::vector<EventLoop::BeginFrameCallback> requests;
+  requests.swap(requests_);
+  for (EventLoop::BeginFrameCallback& request : requests) {
+    std::move(request).Run(frame_time);
+  }
+}
+
+}  // namespace mitto

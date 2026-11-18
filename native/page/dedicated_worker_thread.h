@@ -82,6 +82,9 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     bool strict_mime_type = false;
     // Whether its creator is a secure context.
     bool secure_context = true;
+    // Whether it begins frames for requestAnimationFrame(), as a worker that
+    // a window starts does, from the frame's compositor.
+    bool begin_frames = false;
     // What its creator reads of the browser and the machine.
     PageStart start;
     PageConnection connection;

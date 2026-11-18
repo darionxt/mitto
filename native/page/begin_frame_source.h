@@ -47,6 +47,28 @@ class IdleHelper;
 
 class BeginFrameSource final : public base::TaskObserver {
  public:
+  // How long after its vsync a frame's callbacks start on an idle thread,
+  // and how long after the request a missed frame's do, which no vsync waits
+  // for. Read from Chrome 157.0.8103.51 on macOS, headless: medians of 1.2 and
+  // 0.15 milliseconds.
+  static constexpr base::TimeDelta kBeginFrameLatency =
+      base::Microseconds(1200);
+  static constexpr base::TimeDelta kMissedBeginFrameLatency =
+      base::Microseconds(150);
+
+  // The display's vsyncs, a vsync and the period between two, as the Page's
+  // frames have them, which a dedicated worker's frames follow too.
+  struct VSync {
+    base::TimeTicks timebase;
+    base::TimeDelta interval;
+
+    // The vsync at or before `time`, and the first one after it.
+    base::TimeTicks LastAtOrBefore(base::TimeTicks time) const;
+    base::TimeTicks NextAfter(base::TimeTicks time) const;
+  };
+  // The display's, as the last refresh rate set them. Any thread.
+  static VSync DisplayVSync();
+
   // The priorities of the compositor's queue: its own, and the one that it
   // has while rendering starves.
   struct Priorities {

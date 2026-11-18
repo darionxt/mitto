@@ -28,6 +28,7 @@
 
 namespace mitto {
 
+class AnimationFrameController;
 class MessagePortChannel;
 class SerializedScriptValue;
 class WorkerObjectProxy;
@@ -51,12 +52,22 @@ class DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
                    const bindings::PostMessageOptions& options,
                    bindings::ExceptionState& exception_state);
   // close() is WorkerGlobalScope's.
+  // A worker that a window started has frames; one that a worker started has
+  // none, and throws.
+  int32_t RequestAnimationFrame(v8::Local<v8::Function> callback,
+                                bindings::ExceptionState& exception_state);
+  void CancelAnimationFrame(int32_t handle);
 
   // What the Page uses.
   // Where postMessage() and the errors that the worker leaves uncaught go:
   // the Page program's proxy of its Worker, which outlives the scope's
   // context. Without one, as in the Page program given a script, nowhere.
   void SetObjectProxy(WorkerObjectProxy* proxy) { object_proxy_ = proxy; }
+  // What runs requestAnimationFrame()'s callbacks: none for a worker that a
+  // worker started, or once the worker has ended.
+  void SetAnimationFrames(AnimationFrameController* animation_frames) {
+    animation_frames_ = animation_frames;
+  }
   WorkerObjectProxy* GetObjectProxy() const { return object_proxy_; }
   // A message of its Worker's, with the ports it transfers, from a task of
   // the worker's: a message event, as WorkerGlobalScope::ReceiveMessage()
@@ -67,6 +78,7 @@ class DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
  private:
   const std::u16string name_;
   raw_ptr<WorkerObjectProxy> object_proxy_ = nullptr;
+  raw_ptr<AnimationFrameController> animation_frames_ = nullptr;
 };
 
 }  // namespace mitto

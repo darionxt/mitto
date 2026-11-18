@@ -139,6 +139,9 @@ WorkerScheduler::WorkerScheduler() {
                               TaskPriority::kControlPriority);
   idle_queue_ =
       make_queue(QueueName::WORKER_IDLE_TQ, TaskPriority::kBestEffortPriority);
+  // WorkerThreadScheduler's compositor queue, of no priority of its own.
+  compositor_queue_ =
+      make_queue(QueueName::COMPOSITOR_TQ, TaskPriority::kNormalPriority);
   // WorkerSchedulerImpl's queues have no priority of their own.
   constexpr std::array<QueueName, kWorkerQueueCount> kNames = {
       QueueName::WORKER_THROTTLEABLE_TQ, QueueName::WORKER_PAUSABLE_TQ,
@@ -173,10 +176,12 @@ void WorkerScheduler::BindToCurrentThread() {
 }
 
 void WorkerScheduler::Shutdown() {
+  begin_frames_.reset();
   default_queue_.reset();
   v8_queue_.reset();
   control_queue_.reset();
   idle_queue_.reset();
+  compositor_queue_.reset();
   for (TaskQueue::Handle& queue : worker_queues_) {
     queue.reset();
   }
@@ -225,9 +230,17 @@ void WorkerScheduler::PostIdleTask(const base::Location& from_here,
 }
 
 void WorkerScheduler::RequestBeginFrame(BeginFrameCallback begin_frame) {
-  // A worker begins no frames: its requestAnimationFrame() is a Known Gap.
+  if (!compositor_queue_) {
+    return;
+  }
+  if (!begin_frames_) {
+    begin_frames_ = std::make_unique<WorkerBeginFrameProvider>(
+        compositor_queue_->task_runner());
+  }
+  begin_frames_->RequestBeginFrame(std::move(begin_frame));
 }
 
+// A worker's frames follow the display's vsyncs, which the Page's set.
 void WorkerScheduler::SetRefreshRate(int hertz) {}
 
 }  // namespace mitto
