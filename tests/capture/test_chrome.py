@@ -106,6 +106,8 @@ _DOCUMENT_SITE_MODE_AND_DESTINATION = {
     "module_static_import": ("same-origin", *_MODULE_SCRIPT),
     "module_dynamic_import": ("same-origin", *_MODULE_SCRIPT),
     "module_cross_site": ("cross-site", *_MODULE_SCRIPT),
+    "module_json": ("same-origin", "cors", "json"),
+    "module_text": ("same-origin", "cors", "text"),
     "xhr_get": ("same-origin", *_CORS),
     "xhr_get_cross_site": ("cross-site", *_CORS),
     "xhr_post_text": ("same-origin", *_CORS),

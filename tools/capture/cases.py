@@ -61,6 +61,7 @@ _JAVASCRIPT = "text/javascript; charset=utf-8"
 _PNG = "image/png"
 _CSS = "text/css; charset=utf-8"
 _WOFF2 = "font/woff2"
+_JSON = "application/json"
 _EVERY_ORIGIN = ("Access-Control-Allow-Origin", "*")
 _ETAG = '"mitto"'
 
@@ -172,6 +173,8 @@ _MODULE = _case("module")
 _MODULE_STATIC_IMPORT = _case("module_static_import")
 _MODULE_DYNAMIC_IMPORT = _case("module_dynamic_import")
 _MODULE_CROSS_SITE = _case("module_cross_site")
+_MODULE_JSON = _case("module_json")
+_MODULE_TEXT = _case("module_text")
 _XHR_GET = _case("xhr_get")
 _XHR_GET_CROSS_SITE = _case("xhr_get_cross_site")
 _XHR_POST_TEXT = _case("xhr_post_text")
@@ -350,6 +353,8 @@ DOCUMENT_CASES = (
     _MODULE_STATIC_IMPORT,
     _MODULE_DYNAMIC_IMPORT,
     _MODULE_CROSS_SITE,
+    _MODULE_JSON,
+    _MODULE_TEXT,
     _XHR_GET,
     _XHR_GET_CROSS_SITE,
     _XHR_POST_TEXT,
@@ -960,8 +965,11 @@ _DOCUMENTS_START_SCRIPT = """
   });
 """
 
-# A module that imports two more, and then says so to the page. The page waits for its event before it goes on.
+# A module that imports two more, a JSON module and a text module, and then says so to the page. The page waits for
+# its event before it goes on.
 _MODULE_SOURCE = f"""import "{_MODULE_STATIC_IMPORT.path}";
+import "{_MODULE_JSON.path}" with {{type: "json"}};
+import "{_MODULE_TEXT.path}" with {{type: "text"}};
 await import("{_MODULE_DYNAMIC_IMPORT.path}");
 dispatchEvent(new Event("mitto-module"));
 """
@@ -1168,6 +1176,8 @@ def _document_responses(
         _MODULE_STATIC_IMPORT.path: script,
         _MODULE_DYNAMIC_IMPORT.path: script,
         _MODULE_CROSS_SITE.path: script,
+        _MODULE_JSON.path: _case_response(_JSON, b"{}\n"),
+        _MODULE_TEXT.path: text,
         _XHR_GET.path: text,
         _XHR_GET_CROSS_SITE.path: text,
         _XHR_POST_TEXT.path: text,
