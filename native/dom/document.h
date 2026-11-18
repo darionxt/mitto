@@ -520,7 +520,9 @@ class Document : public Node {
   // LocalFrameView::ProcessUrlFragment(), as ElementFragmentAnchor::TryCreate()
   // runs it: the CSS target becomes the element that the fragment of `url`
   // indicates, or none, once the document has finished parsing and after each
-  // navigation within it.
+  // navigation within it. The indicated part is revealed: each closed details
+  // element around it opens, and each ancestor hidden "until-found" gets
+  // beforematch and shows.
   void ProcessUrlFragment(const GURL& url);
 
   // The language that the response's Content-Language and a content-language
