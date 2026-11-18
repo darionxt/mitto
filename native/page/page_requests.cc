@@ -70,9 +70,7 @@ uint64_t PageRequests::Start(PageRequest request,
   timed.url = base::UTF8ToUTF16(request.url);
   timed.render_blocking = render_blocking;
   ExecutionContext& context = ExecutionContext::Current();
-  if (context.IsWindow()) {
-    timed.window = &Window::Current();
-  }
+  timed.execution_context = &context;
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timed.context.Reset(isolate, isolate->GetCurrentContext());
   // The Session works out the Initiator from the context that asks.
@@ -230,8 +228,8 @@ void PageRequests::LetGo(uint64_t number) {
 void PageRequests::AddResourceTiming(Timed& timed,
                                      base::TimeTicks response_end,
                                      const PageResponseEnded* ended) {
-  Window* const window = timed.window.Get();
-  if (!window || !window->HasContext()) {
+  ExecutionContext* const execution_context = timed.execution_context.Get();
+  if (!execution_context || !execution_context->HasContext()) {
     return;
   }
   // A request can end outside any context, as when the garbage collector takes
@@ -253,8 +251,8 @@ void PageRequests::AddResourceTiming(Timed& timed,
     }
   }
   info.render_blocking_status = timed.render_blocking;
-  window->Performance()->AddResourceTiming(std::move(info),
-                                           timed.initiator_type);
+  execution_context->Performance()->AddResourceTiming(std::move(info),
+                                                      timed.initiator_type);
 }
 
 void PageRequests::TookBody(uint64_t number, size_t bytes) {

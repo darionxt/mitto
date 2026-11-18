@@ -56,7 +56,8 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
     ),
     "/fetches.js": (
         "text/javascript",
-        b"fetch('/data.txt').then((r) => r.text()).then((t) => postMessage([t, performance.now() > 0]));",
+        b"fetch('/data.txt').then((r) => r.text()).then((t) => postMessage([t, performance.now() > 0,"
+        b"performance.getEntriesByType('resource').map((e) => [e.name.replace(location.origin, ''), e.initiatorType])]));",
     ),
     "/data.txt": ("text/plain", b"data from the server"),
     "/broadcast.js": (
@@ -405,7 +406,8 @@ def test_a_worker_fetches_through_the_session(server: str) -> None:
         worker.onmessage = (e) => resolve(e.data);
     })"""
 
-    assert _evaluate(server, script) == ["data from the server", True]
+    # The worker's own timeline has an entry of its request, as Chrome's does.
+    assert _evaluate(server, script) == ["data from the server", True, [["/data.txt", "fetch"]]]
 
 
 @pytest.mark.usefixtures("page_program")

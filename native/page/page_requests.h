@@ -28,7 +28,7 @@
 
 namespace mitto {
 
-class Window;
+class ExecutionContext;
 
 class PageRequests {
  public:
@@ -136,9 +136,10 @@ class PageRequests {
     bool render_blocking = false;
     std::optional<PageResponseStarted> response;
     uint64_t decoded_body_size = 0;
-    // The window that asked, whose timeline gets the entry while it runs, and
-    // its context, in which the entry is added, whoever ends the request.
-    cppgc::WeakPersistent<Window> window;
+    // The window or worker that asked, whose timeline gets the entry while it
+    // runs, and its context, in which the entry is added, whoever ends the
+    // request.
+    cppgc::WeakPersistent<ExecutionContext> execution_context;
     v8::Global<v8::Context> context;
   };
 
