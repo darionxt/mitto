@@ -794,6 +794,11 @@ mitto_bindings_interfaces = [
     implemented = [
       "width",
       "height",
+      "naturalWidth",
+      "naturalHeight",
+      "complete",
+      "currentSrc",
+      "decode",
       "Image",
     ]
   },

@@ -58,6 +58,7 @@
 #include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/qualified_name.h"
 #include "mitto/dom/range.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/svg_element.h"
 #include "mitto/dom/svg_element_factory.h"
@@ -207,6 +208,7 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(all_);
   visitor->Trace(feature_policy_);
   visitor->Trace(script_runner_);
+  visitor->Trace(fetcher_);
   current_script_stack_.Trace(visitor);
   pending_render_blocking_scripts_.Trace(visitor);
   visitor->Trace(template_document_);
@@ -1334,6 +1336,13 @@ void Document::UpdateBaseUrl() {
   }
 }
 
+ResourceFetcher& Document::Fetcher() {
+  if (!fetcher_) {
+    fetcher_ = bindings::MakeGarbageCollected<ResourceFetcher>(*this);
+  }
+  return *fetcher_;
+}
+
 DocumentScriptRunner& Document::GetScriptRunner() {
   if (!script_runner_) {
     script_runner_ =
@@ -1377,6 +1386,13 @@ void Document::DecrementLoadEventDelayCount() {
                         document->CheckCompleted();
                       },
                       cppgc::WeakPersistent<Document>(this)));
+}
+
+void Document::DecrementLoadEventDelayCountAndCheckLoadEvent() {
+  CHECK_GT(load_event_delay_count_, 0);
+  if (--load_event_delay_count_ == 0) {
+    CheckCompleted();
+  }
 }
 
 void Document::SetLoadTiming(DocumentLoadTiming* timing) {
