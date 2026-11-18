@@ -966,10 +966,12 @@ _DOCUMENTS_START_SCRIPT = """
 """
 
 # A module that imports two more, a JSON module and a text module, and then says so to the page. The page waits for
-# its event before it goes on.
+# its event before it goes on. Chrome 155 has no text modules: a static import of one would fail the whole module, and
+# its import() rejects before any request, so this takes the text module with import(), whose request carries the same
+# lines as a static import's, and goes on without it.
 _MODULE_SOURCE = f"""import "{_MODULE_STATIC_IMPORT.path}";
 import "{_MODULE_JSON.path}" with {{type: "json"}};
-import "{_MODULE_TEXT.path}" with {{type: "text"}};
+await import("{_MODULE_TEXT.path}", {{with: {{type: "text"}}}}).catch(() => {{}});
 await import("{_MODULE_DYNAMIC_IMPORT.path}");
 dispatchEvent(new Event("mitto-module"));
 """
