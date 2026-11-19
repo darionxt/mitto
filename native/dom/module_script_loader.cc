@@ -1,6 +1,7 @@
 #include "mitto/dom/module_script_loader.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/check.h"
@@ -8,6 +9,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/data_url.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/pending_script.h"
@@ -15,6 +17,7 @@
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
+#include "url/url_constants.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
 
@@ -180,6 +183,21 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
                                        ModuleGraphLevel level) {
   url_ = request.url;
   expected_module_type_ = request.expected_module_type;
+  // A data: URL is answered in the Page, with no request, as Blink's
+  // ResourceFetcher answers one from its static data, and one that does not
+  // parse fails as its loader would.
+  if (request.url.SchemeIs(url::kDataScheme)) {
+    std::optional<DataUrlResponse> response = ParseDataUrl(request.url);
+    if (!response) {
+      Finish(nullptr);
+      return;
+    }
+    NotifyFetchFinished(
+        /*net_error=*/0, /*status=*/200, request.url,
+        base::StrCat({"Content-Type: ", response->content_type, "\n"}),
+        /*opaque=*/false, std::move(response->body));
+    return;
+  }
   Window* const window = modulator_->GetWindow();
   Fetcher* const fetcher = window ? window->GetFetcher() : nullptr;
   if (!fetcher) {
