@@ -147,6 +147,12 @@ void Window::CancelAnimationFrame(int32_t handle) {
   }
 }
 
+void Window::RequestPostLifecycleSteps(base::OnceClosure steps) {
+  if (animation_frames_) {
+    animation_frames_->RequestPostLifecycleSteps(std::move(steps));
+  }
+}
+
 size_t Window::AnimationFrameCallbackCount() const {
   return animation_frames_ ? animation_frames_->size() : 0;
 }

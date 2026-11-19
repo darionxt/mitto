@@ -385,6 +385,10 @@ class HTMLPictureElement final : public HTMLElement {
   explicit HTMLPictureElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // A source child came, went or changed: each img child picks its source
+  // anew, as Blink's SourceChanged() has them.
+  void SourceChanged();
 };
 
 class HTMLProgressElement final : public HTMLElement {
@@ -458,6 +462,18 @@ class HTMLSourceElement final : public HTMLElement {
 
   std::u16string Type() const;
   void SetType(const std::u16string& type);
+
+  // Whether its media attribute, if it has one, matches the window's
+  // Machine, which never changes while a Page runs.
+  bool MediaQueryMatches() const;
+
+  // Node:
+  InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
+  void RemovedFrom(Node& insertion_point) override;
+  // Element:
+  void AttributeChanged(const QualifiedName& name,
+                        const std::u16string* old_value,
+                        const std::u16string* new_value) override;
 };
 
 class HTMLTableCaptionElement final : public HTMLElement {

@@ -77,7 +77,8 @@ class Construct:
     interface_object_parent: str | None
     in_global_prototype_chain: bool
     display_name: str | None = None
-    """The name a page sees, where it is not the identifier: "Headers Iterator" for SyncIterator_Headers."""
+    """The name a page sees as the class and @@toStringTag, where it is not the identifier: "Headers Iterator" for
+    SyncIterator_Headers, whose members still name the identifier in their errors' context, as bind_gen's do."""
     parent_intrinsic: str | None = None
     """For an iterator, the intrinsic its prototype inherits from, such as "v8::kIteratorPrototype"."""
 
@@ -340,6 +341,7 @@ class _ShardWriter:
             f"    {length},",
             f"    {constructor_number},",
             f"    {' | '.join(flags) if flags else '0'},",
+            f"    {_quote(construct.display_name) if construct.display_name else 'nullptr'},",
             "};",
             "",
         ]
@@ -355,7 +357,7 @@ class _ShardWriter:
         return [
             f"const WrapperTypeInfo V8{interface.name}::kWrapperTypeInfo = {{",
             f"    {{{interface.tag}}},",
-            f"    {_quote(construct.display_name or interface.name)},",
+            f"    {_quote(interface.name)},",
             f"    {parent},",
             f"    static_cast<v8::CppHeapPointerTag>({interface.tag}),",
             f"    static_cast<v8::CppHeapPointerTag>({interface.max_subclass_tag}),",
