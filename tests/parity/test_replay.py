@@ -97,7 +97,7 @@ def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of
     waiting = {name: replay.made_by_a_page for name, replay in REPLAYS.items() if replay.made_by_a_page is not None}
 
     assert set(waiting) <= {case.name for case in DOCUMENT_CASES}
-    assert set(waiting.values()) <= {280, 283, 285, 289}
+    assert set(waiting.values()) <= {280, 283, 285, 289, 291}
 
 
 def test_the_navigations_that_a_page_starts_and_what_a_documents_markup_asks_for_go_through_a_page() -> None:
