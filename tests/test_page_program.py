@@ -98,6 +98,25 @@ def test_intl_has_icus_whole_data(program: Path) -> None:
     assert _evaluate(program, script) == "5 true de"
 
 
+def test_a_timer_that_a_later_task_sets_keeps_the_program_running(program: Path) -> None:
+    # The first task leaves nothing waiting, and the messages' tasks set the first timer: the program runs it before it
+    # ends.
+    script = """
+        (async () => {
+          const { port1, port2 } = new MessageChannel();
+          port2.onmessage = (e) => port2.postMessage(e.data + 1);
+          const got = await new Promise((resolve) => {
+            port1.onmessage = (e) => resolve(e.data);
+            port1.postMessage(1);
+          });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return got;
+        })()
+    """
+
+    assert _evaluate(program, script) == "2"
+
+
 def test_a_script_that_throws_prints_what_it_threw(program: Path) -> None:
     result = _run(program, "throw new TypeError('no ' + 'good')")
 

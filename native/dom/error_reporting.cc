@@ -161,9 +161,15 @@ bool DispatchUnhandledRejection(v8::Isolate* isolate,
 v8::ScriptOrigin ClassicScriptOrigin(v8::Local<v8::Value> name,
                                      bool muted_errors,
                                      int line_offset,
-                                     int column_offset) {
+                                     int column_offset,
+                                     v8::Local<v8::Data> host_defined_options) {
   return v8::ScriptOrigin(name, line_offset, column_offset,
-                          /*resource_is_shared_cross_origin=*/!muted_errors);
+                          /*resource_is_shared_cross_origin=*/!muted_errors,
+                          /*script_id=*/-1,
+                          /*source_map_url=*/v8::Local<v8::Value>(),
+                          /*resource_is_opaque=*/false,
+                          /*is_wasm=*/false, /*is_module=*/false,
+                          host_defined_options);
 }
 
 void ReportScriptException(v8::Isolate* isolate,
