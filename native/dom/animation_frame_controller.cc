@@ -107,6 +107,12 @@ void AnimationFrameController::EnqueueEvent(EventTarget& target, Event& event) {
   ScheduleAnimationIfNeeded();
 }
 
+void AnimationFrameController::RequestPostLifecycleSteps(
+    base::OnceClosure steps) {
+  post_lifecycle_steps_.push_back(std::move(steps));
+  ScheduleAnimationIfNeeded();
+}
+
 void AnimationFrameController::BeginLifecycleUpdates() {
   if (!lifecycle_updates_deferred_) {
     return;
@@ -117,7 +123,8 @@ void AnimationFrameController::BeginLifecycleUpdates() {
 
 void AnimationFrameController::ScheduleAnimationIfNeeded() {
   if (frame_requested_ || lifecycle_updates_deferred_ ||
-      (callbacks_.empty() && events_.empty())) {
+      (callbacks_.empty() && events_.empty() &&
+       post_lifecycle_steps_.empty())) {
     return;
   }
   frame_requested_ = true;
@@ -153,6 +160,19 @@ void AnimationFrameController::ServiceScriptedAnimations(
       animation_time_.InMillisecondsF(),
       timing.MonotonicTimeToPseudoWallTime(zero_time + animation_time_)
           .InMillisecondsF());
+  if (!self) {
+    return;
+  }
+  // The frame's post-lifecycle steps, after the lifecycle that the Page,
+  // laying nothing out, does not run.
+  std::vector<base::OnceClosure> steps;
+  steps.swap(post_lifecycle_steps_);
+  for (base::OnceClosure& step : steps) {
+    std::move(step).Run();
+    if (!self) {
+      return;
+    }
+  }
 }
 
 // ScriptedAnimationController::DispatchEvents(): the events that wait now,

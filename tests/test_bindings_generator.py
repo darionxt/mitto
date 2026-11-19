@@ -397,6 +397,27 @@ def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -
         types.default_value(dataclasses.replace(union, members=union.members[:1] * 2), "{}", "b")
 
 
+def test_a_dictionary_with_a_required_member_takes_no_undefined_or_null() -> None:
+    # QueuingStrategyInit's highWaterMark: Chrome's "The provided value is not of type 'QueuingStrategyInit'." for
+    # new CountQueuingStrategy(undefined), as bind_gen's conversion of a dictionary with a required member has it.
+    types = TypeMapper(frozenset(), frozenset())
+    required = DictionaryMember(
+        "highWaterMark",
+        IdlType(TypeKind.FLOATING_POINT, "unrestricted double"),
+        True,
+        None,
+        ExtendedAttributes(),
+        ALWAYS,
+    )
+    dictionary = Dictionary("Init", None, (required,), ExtendedAttributes())
+
+    _, required_source = cpp_writer._write_dictionary(dictionary, types, has_required=True)  # pyright: ignore[reportPrivateUsage]
+    _, optional_source = cpp_writer._write_dictionary(dictionary, types)  # pyright: ignore[reportPrivateUsage]
+
+    assert "value->IsNullOrUndefined()" not in "\n".join(required_source)
+    assert "value->IsNullOrUndefined()" in "\n".join(optional_source)
+
+
 def test_a_buffer_source_in_a_dictionary_converts_as_blinks_union_of_a_buffer_and_a_view() -> None:
     # WebAuthn's challenge: BufferSource, which a dictionary member holds as the union it is.
     types = TypeMapper(frozenset(), frozenset())
@@ -888,6 +909,20 @@ def test_a_table_holds_each_member_in_the_plans_order_with_its_condition() -> No
     assert "    7,\n    &kThingTable," in source
     assert files["interfaces_without_class_1.cc"].count("const WrapperTypeInfo") == 0
     assert "class V8Thing final {" in files["interfaces_without_class.h"]
+
+
+def test_an_iterators_table_keeps_its_display_name_apart_from_its_identifier() -> None:
+    # Chrome's errors name the identifier, "Failed to execute 'next' on 'AsyncIterator_ReadableStream'", and its
+    # @@toStringTag the display name, "ReadableStream AsyncIterator".
+    interface = _interface(name="AsyncIterator_Thing", kind="async iterator")
+    construct = Construct(interface, 3, None, False, "Thing AsyncIterator", "v8::kAsyncIteratorPrototype")
+
+    source = write_tables([construct], 1, lambda name: False, condition_test, _context())[
+        "interfaces_without_class_0.cc"
+    ]
+
+    assert '    {1},\n    "AsyncIterator_Thing",' in source
+    assert '    "Thing AsyncIterator",\n};' in source
 
 
 def test_a_table_leaves_out_what_a_page_never_installs() -> None:
@@ -1669,6 +1704,58 @@ def test_a_read_only_maplike_with_behaviour_reads_the_classs_entries() -> None:
     assert "->Call(context, info[1], 3, arguments).IsEmpty()" in source
     assert "info.GetReturnValue().Set(v8::Undefined(isolate));" in source
     assert "info.GetReturnValue().Set(v8::False(isolate));" in source
+
+
+def test_a_value_async_iterable_with_behaviour_takes_its_source_from_the_class() -> None:
+    # ReadableStream's async_iterable<any>(optional ReadableStreamIteratorOptions options = {}).
+    options = Argument("options", IdlType(TypeKind.ANY, "any"), True, False, None)
+    iterator = IdlType(TypeKind.ITERATOR, "AsyncIterator_Thing")
+    values = Operation("values", (options,), iterator, False, ExtendedAttributes(), ALWAYS)
+    async_iterable = CollectionLike(
+        "async iterable",
+        (),
+        (OperationGroup("values", (values,), False, 0, ExtendedAttributes(), ALWAYS),),
+        "values",
+        iterator="AsyncIterator_Thing",
+        has_return=True,
+        value_type=IdlType(TypeKind.ANY, "any"),
+    )
+
+    source = _bindings_of(_interface(collection=async_iterable), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert '#include "mitto/bindings/async_iterable.h"' in source
+    assert "impl->CreateAsyncIterationSource(arg1_options, exception_state);" in source
+    assert "NewAsyncIterator(context, V8AsyncIterator_Thing::kWrapperTypeInfo, source)" in source
+    assert "v8::Symbol::GetAsyncIterator(isolate)" in source
+
+
+def test_a_value_async_iterable_that_is_missing_writes_no_source() -> None:
+    iterator = IdlType(TypeKind.ITERATOR, "AsyncIterator_Thing")
+    values = Operation("values", (), iterator, False, ExtendedAttributes(), ALWAYS)
+    async_iterable = CollectionLike(
+        "async iterable",
+        (),
+        (OperationGroup("values", (values,), False, 0, ExtendedAttributes(), ALWAYS),),
+        "values",
+        iterator="AsyncIterator_Thing",
+        value_type=IdlType(TypeKind.ANY, "any"),
+    )
+
+    source = _bindings_of(
+        _interface(collection=async_iterable), ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=())
+    )
+
+    assert "CreateAsyncIterationSource" not in source
+
+
+def test_a_nullable_view_attribute_gives_null_for_an_empty_handle() -> None:
+    # ReadableStreamBYOBRequest's view, which is null once the request is answered.
+    view = IdlType(TypeKind.BUFFER_SOURCE, "ArrayBufferView", nullable=True)
+    interface = _interface(attributes=(Attribute("view", view, True, False, ExtendedAttributes(), ALWAYS),))
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert "info.GetReturnValue().Set(ToV8NullableObject(isolate, impl->View()));" in source
 
 
 def test_a_promise_attribute_that_is_a_known_gap_has_no_signature() -> None:

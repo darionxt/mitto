@@ -29,6 +29,7 @@
 #include "mitto/dom/idb_version_change_event.h"
 #include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 
 namespace mitto {
 
@@ -44,7 +45,7 @@ IDBDatabase::IDBDatabase(Window* window,
                          if (!target) {
                            return;
                          }
-                         RunInIDBContext(target->GetWindow(), [&] {
+                         RunInWindowContext(target->GetWindow(), [&] {
                            target->OnConnectionCallback(std::move(callback));
                          });
                        },
@@ -566,8 +567,8 @@ void IDBDatabase::AskForRequest(PageIndexedDbCall call,
                    if (!target) {
                      return;
                    }
-                   RunInIDBContext(target->GetWindow(),
-                                   [&] { (target->*on_answer)(answer); });
+                   RunInWindowContext(target->GetWindow(),
+                                      [&] { (target->*on_answer)(answer); });
                  },
                  cppgc::WeakPersistent<IDBRequest>(request), on_answer));
 }
@@ -653,7 +654,7 @@ void IDBDatabase::GetAll(uint64_t transaction_id,
                    if (!target) {
                      return;
                    }
-                   RunInIDBContext(target->GetWindow(), [&] {
+                   RunInWindowContext(target->GetWindow(), [&] {
                      target->OnGetAll(result_type, answer);
                    });
                  },
@@ -691,7 +692,7 @@ void IDBDatabase::OpenCursor(int64_t object_store_id,
           [](IndexedDbHost* host, cppgc::WeakPersistent<IDBRequest> request,
              uint64_t cursor, PageIndexedDbCallback answer) {
             IDBRequest* const target = request.Get();
-            if (target && RunInIDBContext(target->GetWindow(), [&] {
+            if (target && RunInWindowContext(target->GetWindow(), [&] {
                   target->OnOpenCursor(cursor, answer);
                 })) {
               return;

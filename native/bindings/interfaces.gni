@@ -34,7 +34,10 @@
 #
 # "maplike" or "setlike" in `implemented` gives a read-only declaration of
 # that kind its behaviour: the bindings write its members, which read the
-# class's MaplikeEntries() or SetlikeValues().
+# class's MaplikeEntries() or SetlikeValues(). A value async iterable has its
+# behaviour unless the entry names it as missing or names only other members:
+# the bindings write values(), whose iterator takes its source from the
+# class's CreateAsyncIterationSource().
 mitto_bindings_interfaces = [
   {
     name = "AbortController"
@@ -110,6 +113,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "ByteLengthQueuingStrategy"
+    file = "byte_length_queuing_strategy"
+  },
+  {
     name = "CacheStorage"
     file = "cache_storage"
     implemented = [
@@ -153,6 +160,10 @@ mitto_bindings_interfaces = [
     file = "cookie_change_event"
   },
   {
+    name = "CompressionStream"
+    file = "compression_stream"
+  },
+  {
     name = "CookieStore"
     file = "cookie_store"
 
@@ -169,6 +180,10 @@ mitto_bindings_interfaces = [
     file = "crash_report_context"
     made_by_known_gaps = true
     implemented = []
+  },
+  {
+    name = "CountQueuingStrategy"
+    file = "count_queuing_strategy"
   },
   {
     name = "Crypto"
@@ -221,6 +236,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "DecompressionStream"
+    file = "decompression_stream"
+  },
+  {
     name = "DOMException"
     file = "dom_exception"
   },
@@ -231,6 +250,10 @@ mitto_bindings_interfaces = [
   {
     name = "DOMImplementation"
     file = "dom_implementation"
+  },
+  {
+    name = "DOMParser"
+    file = "dom_parser"
   },
   {
     name = "DOMRect"
@@ -362,6 +385,9 @@ mitto_bindings_interfaces = [
       "writeln",
       "createProcessingInstruction",
       "createCDATASection",
+      "xmlEncoding",
+      "xmlVersion",
+      "xmlStandalone",
       "dir",
       "fgColor",
       "bgColor",
@@ -681,6 +707,10 @@ mitto_bindings_interfaces = [
     implemented = [ "get location" ]
   },
   {
+    name = "XMLSerializer"
+    file = "xml_serializer"
+  },
+  {
     name = "HTMLElement"
     file = "html_element"
     implemented = [
@@ -794,6 +824,11 @@ mitto_bindings_interfaces = [
     implemented = [
       "width",
       "height",
+      "naturalWidth",
+      "naturalHeight",
+      "complete",
+      "currentSrc",
+      "decode",
       "Image",
     ]
   },
@@ -1800,6 +1835,31 @@ mitto_bindings_interfaces = [
       "getBoundingClientRect",
       "expand",
     ]
+  },
+  {
+    name = "ReadableByteStreamController"
+    file = "readable_byte_stream_controller"
+  },
+  {
+    name = "ReadableStream"
+    file = "readable_stream"
+    made_by_known_gaps = true
+  },
+  {
+    name = "ReadableStreamBYOBReader"
+    file = "readable_stream_byob_reader"
+  },
+  {
+    name = "ReadableStreamBYOBRequest"
+    file = "readable_stream_byob_request"
+  },
+  {
+    name = "ReadableStreamDefaultController"
+    file = "readable_stream_default_controller"
+  },
+  {
+    name = "ReadableStreamDefaultReader"
+    file = "readable_stream_default_reader"
   },
   {
     name = "Request"
@@ -2834,12 +2894,28 @@ mitto_bindings_interfaces = [
     file = "text_decoder"
   },
   {
+    name = "TextDecoderStream"
+    file = "text_decoder_stream"
+  },
+  {
     name = "TextEncoder"
     file = "text_encoder"
   },
   {
+    name = "TextEncoderStream"
+    file = "text_encoder_stream"
+  },
+  {
     name = "ToggleEvent"
     file = "toggle_event"
+  },
+  {
+    name = "TransformStream"
+    file = "transform_stream"
+  },
+  {
+    name = "TransformStreamDefaultController"
+    file = "transform_stream_default_controller"
   },
   {
     name = "TreeWalker"
@@ -2994,6 +3070,19 @@ mitto_bindings_interfaces = [
     name = "WindowProperties"
     file = "window_properties"
     missing = []
+  },
+  {
+    name = "WritableStream"
+    file = "writable_stream"
+    made_by_known_gaps = true
+  },
+  {
+    name = "WritableStreamDefaultController"
+    file = "writable_stream_default_controller"
+  },
+  {
+    name = "WritableStreamDefaultWriter"
+    file = "writable_stream_default_writer"
   },
   {
     name = "XMLDocument"

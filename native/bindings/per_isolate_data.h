@@ -142,6 +142,11 @@ class PerIsolateData {
       v8::Isolate* isolate,
       const WrapperTypeInfo* info);
 
+  // The template of the plain objects that wrap a C++ object of the bindings'
+  // own, such as the data of a ScriptFunction's function, which this makes the
+  // first time.
+  v8::Local<v8::ObjectTemplate> HolderTemplate(v8::Isolate* isolate);
+
   // The template of a namespace, which this makes the first time.
   v8::Local<v8::ObjectTemplate> NamespaceTemplate(v8::Isolate* isolate,
                                                   const WrapperTypeInfo* info);
@@ -208,6 +213,7 @@ class PerIsolateData {
   ExceptionReporter exception_reporter_;
   bool secure_context_ = true;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::Template>> templates_;
+  v8::Eternal<v8::ObjectTemplate> holder_template_;
   std::map<const ExposedConstructInfo*, v8::Eternal<v8::FunctionTemplate>>
       factory_function_templates_;
   DOMExceptionHooks dom_exception_hooks_;

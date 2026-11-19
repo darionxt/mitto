@@ -53,6 +53,10 @@ struct HtmlParserOptions {
   // The HTML Standard's scripting flag. On, noscript holds raw text. Off, its
   // contents are markup, with the "in head noscript" insertion mode.
   bool scripting_flag = false;
+  // Whether a document's template with a shadowrootmode attaches a
+  // declarative shadow root, which a document that DOMParser makes refuses,
+  // as Blink's HTMLDocumentParser reads its DeclarativeShadowRootAllowState.
+  bool include_shadow_roots = true;
 };
 
 // What a tree builder refers to: its document and every node that it holds,

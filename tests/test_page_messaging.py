@@ -2,7 +2,7 @@
 
 tests/messaging_cases.js runs in a Page at an HTTP origin and gives what structuredClone(), window.postMessage(),
 MessageChannel, MessageEvent and BroadcastChannel did, which tests/data/messaging_cases.json holds as Chrome 157 gave it
-for the same script on the same kind of page, headless on macOS (157.0.8103.51), with the page's origin as ORIGIN. The
+for the same script on the same kind of page, headless on macOS (157.0.8103.79), with the page's origin as ORIGIN. The
 other tests send BroadcastChannel messages between the Pages of one Session, as Chrome's browser process passes them
 between tabs.
 """
