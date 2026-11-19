@@ -46,6 +46,7 @@ class IndexedDbHost;
 class CookieJar;
 class DOMImplementation;
 class DocumentFragment;
+class ResourceFetcher;
 class CustomElementRegistry;
 class DocumentLoadTiming;
 class DocumentScriptRunner;
@@ -460,6 +461,11 @@ class Document : public Node {
   //
   // The async and in-order scripts, which it makes the first time.
   DocumentScriptRunner& GetScriptRunner();
+  // What fetches the document's subresources, such as its images.
+  ResourceFetcher& Fetcher();
+  bool HasFetcher() const { return fetcher_.Get() != nullptr; }
+  // The fetcher if the document has made one, as a const document reads it.
+  ResourceFetcher* ExistingFetcher() const { return fetcher_.Get(); }
   // The HTML Standard's currentScript, as Blink keeps it for scripts that
   // run inside others.
   void PushCurrentScript(Element* element);
@@ -472,6 +478,9 @@ class Document : public Node {
   // load event delay timer runs it.
   void IncrementLoadEventDelayCount() { ++load_event_delay_count_; }
   void DecrementLoadEventDelayCount();
+  // The same, but checks the load event at once, from a task that a delay
+  // held, such as an image's load event.
+  void DecrementLoadEventDelayCountAndCheckLoadEvent();
   bool IsDelayingLoadEvent() const { return load_event_delay_count_ > 0; }
 
   // How the document loads, as Blink's Document and its frame's loader see
@@ -730,6 +739,7 @@ class Document : public Node {
   GURL base_element_url_;
   GURL base_url_ = GURL("about:blank");
   cppgc::Member<DocumentScriptRunner> script_runner_;
+  cppgc::Member<ResourceFetcher> fetcher_;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;
