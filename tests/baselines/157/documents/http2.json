@@ -1916,6 +1916,67 @@
         "priority: u=1, i"
       ]
     },
+    "prefetch": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 110
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/prefetch",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-purpose: prefetch",
+        "sec-ch-ua-mobile: ?0",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=4, i"
+      ]
+    },
+    "prefetch_cross_site": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 110
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/prefetch-cross-site",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-purpose: prefetch",
+        "sec-ch-ua-mobile: ?0",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: empty",
+        "sec-fetch-storage-access: active",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=4, i"
+      ]
+    },
     "navigation_form_get": {
       "flags": [
         "END_STREAM",

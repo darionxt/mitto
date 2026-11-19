@@ -140,6 +140,7 @@ The runs at `documents/` record what a document requests beside the main Request
 
 | `document_style`, `document_preload_style`, `document_preload_script`, `document_preload_image`, `document_preload_font`, `document_script`, `document_image_small`, `document_image`, `document_style_body`, `document_script_deferred` | What a document's markup asks for: stylesheets in its head and its body, preloads of a stylesheet, a script, an image and a font, a script that blocks the parser and a deferred one, and an image that says it is small and one that does not say its size |
 | `favicon` | `/favicon.ico`, which Chrome asks for by itself after that document has loaded, because it names no icon. Every other page names a `data:` icon. The page waits three seconds and then says that Chrome did not ask, which counts only if Chrome did not, as `{"refused": true}` |
+| `prefetch`, `prefetch_cross_site` | What a `link` with `rel="prefetch"` asks for, of the page's origin and of another site, which that document's script adds once the document has loaded, so that the order of the rest stays as it was |
 | `navigation_form_get`, `navigation_form_text`, `navigation_form_cross_site` | A click on the button of a form that GETs, which puts its fields in the query that stands for the case, one that POSTs `text/plain`, and one that POSTs urlencoded to another site |
 | `navigation_history_back` | `history.back()` to the page of an earlier step, which Chrome asks for again. The page in between sets a cookie for that page's path, so only this request carries it |
 

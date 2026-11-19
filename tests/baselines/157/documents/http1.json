@@ -1234,6 +1234,45 @@
         "Accept-Language: en-US,en;q=0.9"
       ]
     },
+    "prefetch": {
+      "request_line": "GET /case/prefetch HTTP/1.1",
+      "headers": [
+        "Host: <authority>",
+        "Connection: keep-alive",
+        "sec-ch-ua-platform: \"Windows\"",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "Sec-Purpose: prefetch",
+        "sec-ch-ua-mobile: ?0",
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Sec-Fetch-Site: same-origin",
+        "Sec-Fetch-Mode: no-cors",
+        "Sec-Fetch-Dest: empty",
+        "Referer: <origin>/case/document",
+        "Accept-Encoding: gzip, deflate, br, zstd",
+        "Accept-Language: en-US,en;q=0.9"
+      ]
+    },
+    "prefetch_cross_site": {
+      "request_line": "GET /case/prefetch-cross-site HTTP/1.1",
+      "headers": [
+        "Host: <cross-site-authority>",
+        "Connection: keep-alive",
+        "sec-ch-ua-platform: \"Windows\"",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "Sec-Purpose: prefetch",
+        "sec-ch-ua-mobile: ?0",
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Sec-Fetch-Site: cross-site",
+        "Sec-Fetch-Mode: no-cors",
+        "Sec-Fetch-Dest: empty",
+        "Sec-Fetch-Storage-Access: active",
+        "Referer: <origin>/",
+        "Accept-Encoding: gzip, deflate, br, zstd",
+        "Accept-Language: en-US,en;q=0.9"
+      ]
+    },
     "navigation_form_get": {
       "request_line": "GET /case/navigation-form-get?name=mitto&a+b%26c=d+e%26f%2Bg HTTP/1.1",
       "headers": [
