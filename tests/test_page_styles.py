@@ -105,6 +105,22 @@ def test_a_sheet_and_its_imports_go_as_a_callers_style_requests(
         assert _value(page_lines, "Referer") == initiator, path
 
 
+def test_an_import_of_a_sheet_of_another_origin_names_that_sheet_as_referrer(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    with RecordingServer() as other:
+        other.route("/sheet.css", b"@import 'imported.css';", _CSS)
+        other.route("/imported.css", b"p {}", _CSS)
+        url = server.page("/", f'<link rel="stylesheet" href="{other.url("/sheet.css")}">')
+
+        with _open_page(session, url):
+            pass
+
+        # The sheet's own URL, a response that the document had whole, as Chrome sends it.
+        [imported] = other.headers_of("/imported.css")
+        assert _value(imported, "Referer") == other.url("/sheet.css")
+
+
 def test_an_import_after_a_rule_or_of_its_own_sheet_loads_nothing(
     session: mitto.Session, server: RecordingServer
 ) -> None:

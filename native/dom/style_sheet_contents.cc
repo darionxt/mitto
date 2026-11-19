@@ -10,8 +10,10 @@
 #include "mitto/css/css_selector_parser.h"
 #include "mitto/css/style_sheet_imports.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/resource_fetcher.h"
+#include "mitto/dom/window.h"
 #include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_encoding_registry.h"
 #include "mitto/encoding/text_resource_decoder.h"
@@ -179,10 +181,15 @@ void StyleRuleImport::RequestStyleSheet() {
   params.url = url;
   params.type = ResourceType::kCSSStyleSheet;
   params.referrer_policy = parent->Referrer().policy;
-  // The sheet's URL is the referrer. The Session takes only one of the
-  // document's origin for now, a Known Gap for a sheet of another origin.
+  // The sheet's URL is the referrer, which the Session takes of the
+  // document's origin, or as the final URL of a response that the document
+  // has had whole, as a sheet's of another origin is.
   const GURL referrer(parent->Referrer().referrer);
-  if (referrer.is_valid() && document->GetOrigin().IsSameOriginWith(referrer)) {
+  const Window* const window = document->DefaultView();
+  const Fetcher* const fetcher = window ? window->GetFetcher() : nullptr;
+  if (referrer.is_valid() &&
+      (document->GetOrigin().IsSameOriginWith(referrer) ||
+       (fetcher && fetcher->HasFinishedResponse(referrer.spec())))) {
     params.referrer = referrer.spec();
   }
   params.charset = parent->Charset();
