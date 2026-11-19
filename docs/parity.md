@@ -70,7 +70,7 @@ A Session replays the cases of documents as a caller would make them. A page mak
 | `worker_import_scripts`, `worker_fetch`, `worker_blob_fetch` | That a worker asks for it, which sends no hints, at the worker's priority, and with no `Referer` from a `blob:` worker | [#289](https://github.com/darionxt/mitto/issues/289) |
 | `frame_script`, `frame_image`, `frame_fetch`, `frame_nested_fetch` | That a frame of another site asks for it, whose site for cookies is no site | [#285](https://github.com/darionxt/mitto/issues/285) |
 | `document_*` | The priority that Blink gives what a document's markup asks for, and over HTTP/2 and HTTP/3 the order in which it asks | [#284](https://github.com/darionxt/mitto/issues/284) |
-| `module_text` | That a text module asks for it, whose `Accept` and `Sec-Fetch-Dest` no Request Kind has until Chrome 155, which has no text modules and so no Baseline of them, leaves the Supported Window | [#291](https://github.com/darionxt/mitto/issues/291) |
+| `module_text` | That a text module asks for it, whose `Accept` and `Sec-Fetch-Dest` no Request Kind has yet. `RequestKind.MODULE_TEXT` comes with the Chrome 158 run, when the Supported Window becomes 156-158, by the owner's choice of 2026-11-19, because Chrome 155 has no text modules and so no Baseline of one | [#291](https://github.com/darionxt/mitto/issues/291) |
 
 The other cases of documents, the frames' own navigations, `frame_nested` and `favicon` among them, have checks now, and what a Session cannot replay of them yet is in the known-gaps list, as for any case.
 

@@ -193,7 +193,8 @@ def _document_replays() -> dict[str, Replay]:
         "module_dynamic_import": Replay(RequestKind.MODULE, page=_PATHS["module"]),
         "module_cross_site": Replay(RequestKind.MODULE, host=CROSS_SITE_HOST, page=start),
         "module_json": Replay(RequestKind.MODULE_JSON, page=_PATHS["module"]),
-        # A text module gets a Request Kind once Chrome 155, which has none, leaves the Supported Window.
+        # RequestKind.MODULE_TEXT comes with the Chrome 158 run, when the Supported Window becomes 156-158, by the
+        # owner's choice of 2026-11-19: Chrome 155 has no text modules, so no Baseline of 155 holds one.
         "module_text": Replay(RequestKind.MODULE, page=_PATHS["module"], made_by_a_page=291),
         "xhr_get": Replay(RequestKind.XHR, page=start),
         "xhr_get_cross_site": Replay(RequestKind.XHR, host=CROSS_SITE_HOST, page=start),
