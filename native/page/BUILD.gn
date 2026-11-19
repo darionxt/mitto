@@ -91,6 +91,8 @@ executable("mitto_page") {
     "session_cookie_jar.h",
     "session_storage_backend.cc",
     "session_storage_backend.h",
+    "session_storage_buckets.cc",
+    "session_storage_buckets.h",
     "v8_flags.cc",
     "v8_flags.h",
     "wall_clock_clamper.cc",

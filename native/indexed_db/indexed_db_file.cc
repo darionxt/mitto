@@ -132,4 +132,14 @@ bool IndexedDbFile::Write(const std::string& storage_key,
   return transaction.Commit();
 }
 
+bool IndexedDbFile::Delete(const std::string& storage_key) {
+  if (!database_) {
+    return false;
+  }
+  sql::Statement statement(database_->GetCachedStatement(
+      SQL_FROM_HERE, "DELETE FROM entries WHERE storage_key = ?"));
+  statement.BindBlob(0, storage_key);
+  return statement.Run();
+}
+
 }  // namespace mitto
