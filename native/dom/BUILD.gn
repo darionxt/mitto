@@ -619,6 +619,8 @@ source_set("dom") {
     "time_clamper.h",
     "toggle_event.cc",
     "toggle_event.h",
+    "transferable_streams.cc",
+    "transferable_streams.h",
     "transform_stream.cc",
     "transform_stream.h",
     "transform_stream_default_controller.cc",
