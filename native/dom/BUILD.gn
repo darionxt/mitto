@@ -694,4 +694,27 @@ if (use_libfuzzer) {
       "//v8",
     ]
   }
+
+  # Feeds any XML to the code that drives libxml2 and the Rust xml crate, on
+  # V8's C++ heap as the Page program has it.
+  fuzzer_test("xml_parser_fuzzer") {
+    sources = [ "//mitto/test/xml_parser_fuzzer.cc" ]
+    deps = [
+      ":dom",
+      "//base",
+      "//mitto/page:icu_data",
+      "//mitto/page:v8_snapshot",
+      "//third_party/icu",
+      "//v8",
+    ]
+  }
+
+  # What the runtime-fuzz build builds: both fuzz targets on V8's heap.
+  group("runtime_fuzzers") {
+    testonly = true
+    deps = [
+      ":html_tree_builder_fuzzer",
+      ":xml_parser_fuzzer",
+    ]
+  }
 }
