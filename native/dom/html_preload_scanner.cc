@@ -11,6 +11,7 @@
 #include "mitto/css/sizes_attribute_parser.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_write_intervention.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_image_element.h"
 #include "mitto/dom/html_link_element.h"
 #include "mitto/dom/html_parser_idioms.h"
@@ -169,12 +170,25 @@ PreloadRequest& PreloadRequest::operator=(PreloadRequest&&) = default;
 PreloadRequest::~PreloadRequest() = default;
 
 void PreloadRequest::Start(Document& document) const {
-  // HTMLResourcePreloader::Preload(): a preconnect makes no request here,
-  // a Known Gap.
-  if (request_type == RequestType::kPreconnect || !document.DefaultView()) {
+  Window* const window = document.DefaultView();
+  if (!window) {
     return;
   }
   const std::u16string_view stripped = StripHTMLSpaces(resource_url);
+  // HTMLResourcePreloader::Preload(): PreconnectHost(), a connection for
+  // requests with credentials unless crossorigin says anonymous. It resolves
+  // the URL against the base element's alone, so with none only an absolute
+  // URL connects; the link connects when the parser inserts it.
+  if (request_type == RequestType::kPreconnect) {
+    const GURL url = base_url.is_valid() ? base_url.Resolve(stripped)
+                                         : GURL(base::UTF16ToUTF8(stripped));
+    if (Fetcher* const fetcher = window->GetFetcher();
+        fetcher && url.is_valid() && url.SchemeIsHTTPOrHTTPS()) {
+      fetcher->Preconnect(url,
+                          cross_origin != CrossOriginAttribute::kAnonymous);
+    }
+    return;
+  }
   const GURL url = base_url.is_valid() ? base_url.Resolve(stripped)
                                        : document.CompleteUrl(stripped);
   if (!url.is_valid()) {

@@ -20,6 +20,7 @@ from mitto import _native
 from mitto._errors import PageTimeoutError
 from mitto._page import Page
 from tests.local_server import QuietServer, refused_port
+from tests.page_server import without_favicon
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -1163,7 +1164,7 @@ def test_a_document_resolves_its_urls_against_its_first_base_element_with_an_hre
             "'data' URLs may not be used as base URLs for a document.",
             "'javascript' URLs may not be used as base URLs for a document.",
         ]
-        assert [path for path, _ in server.requests] == ["/", "/sub/dir/b.js", "/sub/dir/f.json"]
+        assert without_favicon(path for path, _ in server.requests) == ["/", "/sub/dir/b.js", "/sub/dir/f.json"]
 
 
 def test_a_request_parses_its_url_against_the_base_url_in_utf_8_whatever_the_documents_encoding(
@@ -1198,4 +1199,4 @@ def test_a_document_without_a_base_url_keeps_its_encoding_for_an_absolute_url(
 
     with _open_page(session, url) as page:
         assert page.evaluate("[document.baseURI, window.ran]") == ["about:blank", True]
-    assert [path for path, _ in server.requests] == ["/", "/s.js?q=%E9"]
+    assert without_favicon(path for path, _ in server.requests) == ["/", "/s.js?q=%E9"]

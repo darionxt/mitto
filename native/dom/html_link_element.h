@@ -118,6 +118,9 @@ class HTMLLinkElement final : public HTMLElement,
   bool ShouldLoadLink() const;
   // LinkLoader::Abort(): lets go of the resource that it waits for.
   void Abort();
+  // PreloadHelper::DnsPrefetchIfNeeded() and PreconnectIfNeeded(): the
+  // hints that a link of rel dns-prefetch or preconnect gives the Session.
+  void HintIfNeeded();
   // PreloadHelper::PreloadIfNeeded().
   Resource* PreloadIfNeeded();
   // HTMLLinkElement::LinkLoaded() and LinkLoadingErrored().

@@ -27,6 +27,7 @@
 #include "mitto/mitto.h"
 #include "mitto/page_cache_storage.h"
 #include "mitto/page_indexed_db.h"
+#include "mitto/preconnect_manager.h"
 #include "mitto/ready_requests.h"
 #include "mitto/sec_header_helpers.h"
 #include "mitto/storage/storage_area_impl.h"
@@ -2323,6 +2324,39 @@ void PageHost::OnStorageUnbind(uint64_t area) {
   }
 }
 
+void PageHost::OnNetworkHint(const PageNetworkHint& hint, uint64_t document) {
+  // The Page names an origin, as Blink's WebPrescientNetworkingImpl hands the
+  // browser a url::SchemeHostPort, and only of HTTP or HTTPS, the only ones
+  // that PreconnectManager takes.
+  const GURL url(hint.url);
+  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() ||
+      url != url.DeprecatedGetOriginAsURL()) {
+    Refuse("a network hint that is not an HTTP or HTTPS origin");
+    return;
+  }
+  // GetPendingIsolationInfoForSubresources() of the document's frame.
+  const Context& context = contexts_.at(document);
+  const FrameTree tree = FrameTreeOf(document);
+  const net::SiteForCookies site_for_cookies =
+      tree.cross_site ? net::SiteForCookies()
+                      : net::SiteForCookies::FromOrigin(tree.top_frame_origin);
+  const net::NetworkAnonymizationKey key =
+      net::IsolationInfo::Create(net::IsolationInfo::RequestType::kOther,
+                                 tree.top_frame_origin, context.origin,
+                                 site_for_cookies)
+          .network_anonymization_key();
+  PreconnectManager& preconnect_manager = network_->preconnect_manager();
+  switch (hint.type) {
+    case PageNetworkHintType::kPrefetchDns:
+      preconnect_manager.StartPreresolveHost(url, key);
+      return;
+    case PageNetworkHintType::kPreconnect:
+      preconnect_manager.StartPreconnectUrl(url, hint.allow_credentials, key);
+      return;
+  }
+  NOTREACHED();
+}
+
 void PageHost::DeliverBroadcast(const url::Origin& origin,
                                 const PageBroadcast& broadcast) {
   // The Page hands it to the channels of its contexts of that origin, if it
@@ -2926,6 +2960,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     case PageMessage::kStorageUnbind:
       OnStorageUnbind(frame->storage_unbind);
+      return;
+    case PageMessage::kNetworkHint:
+      OnNetworkHint(frame->network_hint, frame->document);
       return;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:

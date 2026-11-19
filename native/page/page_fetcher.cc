@@ -5,6 +5,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "mitto/page_messages.h"
+#include "url/gurl.h"
+#include "url/scheme_host_port.h"
 
 namespace mitto {
 namespace {
@@ -220,6 +222,9 @@ void PageFetcher::Fetch(FetchRequestData data,
       case FetchDestination::kFont:
         page_request.kind = PageRequestKind::kFont;
         break;
+      case FetchDestination::kFavicon:
+        page_request.kind = PageRequestKind::kFavicon;
+        break;
       case FetchDestination::kJson:
       case FetchDestination::kText:
         // Only a module's fetch has these destinations.
@@ -247,12 +252,28 @@ void PageFetcher::Fetch(FetchRequestData data,
   }
   page_request.keepalive = data.keepalive;
   started.set_number(
-      requests_->Start(std::move(page_request), started, data.render_blocking));
+      requests_->Start(std::move(page_request), started, data.render_blocking,
+                       data.resource_timing));
   open_.emplace(started.number(), std::move(request));
 }
 
 bool PageFetcher::HasFinishedResponse(std::string_view url) const {
   return finished_responses_.contains(url);
+}
+
+void PageFetcher::PrefetchDns(const GURL& url) {
+  PageNetworkHint hint;
+  hint.type = PageNetworkHintType::kPrefetchDns;
+  hint.url = url::SchemeHostPort(url).GetURL().spec();
+  requests_->Hint(hint);
+}
+
+void PageFetcher::Preconnect(const GURL& url, bool allow_credentials) {
+  PageNetworkHint hint;
+  hint.type = PageNetworkHintType::kPreconnect;
+  hint.allow_credentials = allow_credentials;
+  hint.url = url::SchemeHostPort(url).GetURL().spec();
+  requests_->Hint(hint);
 }
 
 void PageFetcher::Finished(uint64_t number) {

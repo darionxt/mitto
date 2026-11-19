@@ -18,6 +18,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page
+from tests.page_server import without_favicon
 from tests.script_pages import Case, Route, ScriptServer
 
 pytestmark = pytest.mark.usefixtures("both_apis")
@@ -870,7 +871,7 @@ def test_a_document_resolves_its_scripts_and_fetches_against_its_base_url(
 ) -> None:
     page, _ = _run(session, server, "base_url")
     with page:
-        assert [path for path in server.requests if not path.startswith(("/mark/", "/result"))] == [
+        assert without_favicon(path for path in server.requests if not path.startswith(("/mark/", "/result"))) == [
             "/",
             "/sub/dir/b.js",
             "/sub/dir/f.json",

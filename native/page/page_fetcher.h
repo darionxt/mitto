@@ -38,6 +38,8 @@ class PageFetcher final : public Fetcher {
   void Fetch(FetchRequestData request,
              std::unique_ptr<FetchClient> client) override;
   bool HasFinishedResponse(std::string_view url) const override;
+  void PrefetchDns(const GURL& url) override;
+  void Preconnect(const GURL& url, bool allow_credentials) override;
 
  private:
   class Request;

@@ -229,6 +229,7 @@ void HTMLLinkElement::Process(bool media_change) {
     if (!ShouldLoadLink()) {
       return;
     }
+    HintIfNeeded();
     if (Resource* const resource = PreloadIfNeeded()) {
       pending_resource_ = resource;
       adding_client_ = true;
@@ -503,6 +504,36 @@ void HTMLLinkElement::ScheduleEvent(bool loaded) {
           },
           cppgc::Persistent<HTMLLinkElement>(this),
           cppgc::WeakPersistent<Document>(&document), loaded));
+}
+
+void HTMLLinkElement::HintIfNeeded() {
+  const LinkRelAttribute rel(AttributeOrEmpty(*this, u"rel"));
+  Window* const window = ActiveWindowOf(GetDocument());
+  Fetcher* const fetcher = window ? window->GetFetcher() : nullptr;
+  if ((!rel.is_dns_prefetch && !rel.is_preconnect) || !fetcher) {
+    return;
+  }
+  const std::u16string_view href =
+      StripHTMLSpaces(AttributeOrEmpty(*this, u"href"));
+  const GURL url = href.empty() ? GURL() : GetDocument().CompleteUrl(href);
+  // Only an origin of HTTP or HTTPS gets anything from the browser's
+  // PreconnectManager.
+  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
+    return;
+  }
+  if (rel.is_dns_prefetch) {
+    fetcher->PrefetchDns(url);
+  }
+  if (rel.is_preconnect) {
+    // A connection for requests with credentials, unless crossorigin says
+    // anonymous, or a value that counts as it.
+    const std::u16string* cross_origin = FindAttribute(u"crossorigin");
+    fetcher->Preconnect(
+        url,
+        CrossOriginAttributeFromValue(
+            cross_origin ? std::optional<std::u16string>(*cross_origin)
+                         : std::nullopt) != CrossOriginAttribute::kAnonymous);
+  }
 }
 
 Resource* HTMLLinkElement::PreloadIfNeeded() {

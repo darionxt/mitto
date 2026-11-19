@@ -14,6 +14,8 @@
 #include <string>
 #include <string_view>
 
+class GURL;
+
 namespace mitto {
 
 // The Fetch Standard's request destination: none for fetch(), image for an
@@ -26,6 +28,9 @@ enum class FetchDestination {
   kStyle,
   kFont,
   kText,
+  // Not the Fetch Standard's: what the browser's favicon driver fetches, an
+  // image of the Request Kind favicon.
+  kFavicon,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.
@@ -152,6 +157,10 @@ struct FetchRequestData {
   // Whether it blocks rendering, which its entry of the Performance Timeline
   // says.
   bool render_blocking = false;
+  // Whether the window's Performance Timeline gets an entry of it, as of a
+  // request of Blink's ResourceFetcher. The icon that the browser has the
+  // renderer's image downloader fetch, through a loader of its own, gets none.
+  bool resource_timing = true;
 };
 
 // A response, after any redirects.
@@ -214,6 +223,13 @@ class Fetcher {
   // Whether a response at `url`, after its redirects, has come whole, which a
   // later request may name as its referrer, as the Session allows it.
   virtual bool HasFinishedResponse(std::string_view url) const = 0;
+
+  // Blink's WebPrescientNetworking: hints that the document will soon want
+  // `url`'s origin, which is HTTP or HTTPS, for the browser to resolve its
+  // host's name, or to connect to it as well, with credentials if
+  // `allow_credentials`.
+  virtual void PrefetchDns(const GURL& url) = 0;
+  virtual void Preconnect(const GURL& url, bool allow_credentials) = 0;
 
  protected:
   virtual ~Fetcher() = default;
