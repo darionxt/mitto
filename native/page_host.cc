@@ -97,7 +97,6 @@ constexpr auto kRequestKindNames =
         {"iframe", PageRequestKind::kIframe},
         {"favicon", PageRequestKind::kFavicon},
         {"module_json", PageRequestKind::kModuleJson},
-        {"module_text", PageRequestKind::kModuleText},
     });
 constexpr std::string_view kWithBodySuffix = "_with_body";
 constexpr std::string_view kSecFetchMode = "Sec-Fetch-Mode";

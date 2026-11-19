@@ -153,18 +153,18 @@ class PageFetcher::Request final : public PageRequests::Client,
 namespace {
 
 // The Request Kind of a request: a module script, or what one imports, by
-// its destination, where a CSS module, which M9's CSSOM makes, sends a
-// JavaScript module's lines, a Known Gap; a classic script; or a fetch.
+// its destination, where a text module, whose Request Kind comes once Chrome
+// 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
+// send a JavaScript module's lines, Known Gaps; a classic script; or a fetch.
 PageRequestKind KindOf(const FetchRequestData& data) {
   if (data.is_module) {
     switch (data.destination) {
       case FetchDestination::kJson:
         return PageRequestKind::kModuleJson;
-      case FetchDestination::kText:
-        return PageRequestKind::kModuleText;
       case FetchDestination::kEmpty:
       case FetchDestination::kScript:
       case FetchDestination::kStyle:
+      case FetchDestination::kText:
         return PageRequestKind::kModule;
     }
   }

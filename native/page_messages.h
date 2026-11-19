@@ -276,9 +276,8 @@ enum class PageRequestKind : uint8_t {
   kBeacon = 10,
   kIframe = 11,
   kFavicon = 12,
-  // What a module imports with `with {type: "json"}` or `{type: "text"}`.
+  // What a module imports with `with {type: "json"}`.
   kModuleJson = 13,
-  kModuleText = 14,
 };
 
 // What a Page's request says of its mode, as Fetch names it, where 0 leaves

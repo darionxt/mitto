@@ -335,7 +335,13 @@ def method_and_target(form: dict[str, Json], case: str) -> tuple[str, str]:
 def test_each_document_case_is_what_it_says_it_is(
     chrome: str, name: str, case: str, expected: tuple[str, str, str]
 ) -> None:
-    headers = headers_of(recorded(chrome, name), case)
+    form = recorded(chrome, name)
+    requests = form["requests"]
+    assert isinstance(requests, dict)
+    if case == "module_text" and case not in requests:
+        # Chrome 155 has no text modules, and its import() rejects before any request.
+        pytest.skip("this Chrome has no text modules")
+    headers = headers_of(form, case)
 
     assert (headers["sec-fetch-site"], headers["sec-fetch-mode"], headers["sec-fetch-dest"]) == expected
     # Only a person's click counts as the user's, and what a page starts by itself does not.

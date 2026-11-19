@@ -59,8 +59,7 @@ uint64_t PageRequests::Start(PageRequest request,
   // A module's initiator type is "script" too, as ModuleScriptLoader sets it.
   timed.initiator_type = request.kind == PageRequestKind::kScript ||
                                  request.kind == PageRequestKind::kModule ||
-                                 request.kind == PageRequestKind::kModuleJson ||
-                                 request.kind == PageRequestKind::kModuleText
+                                 request.kind == PageRequestKind::kModuleJson
                              ? u"script"
                              : u"fetch";
   timed.url = base::UTF8ToUTF16(request.url);

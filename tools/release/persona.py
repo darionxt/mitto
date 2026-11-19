@@ -169,9 +169,8 @@ _KINDS = {
         own="frame_same_origin",
     ),
     "favicon": _KindSource(credentials_mode="include", lines="favicon", hints="client_hints_image"),
-    # What a module imports as JSON or text goes as a module does, with the Accept and Sec-Fetch-Dest of its destination.
+    # What a module imports as JSON goes as a module does, with the Accept and Sec-Fetch-Dest of its destination.
     "module_json": _KindSource(credentials_mode="same-origin", lines="module_json", hints="client_hints_script"),
-    "module_text": _KindSource(credentials_mode="same-origin", lines="module_text", hints="client_hints_script"),
 }
 
 KIND_CASES = {kind: source.own or kind for kind, source in _KINDS.items()}
