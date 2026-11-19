@@ -242,7 +242,7 @@ def condition_test(condition: Condition, where: str) -> str | None:
                 return None
             if window_test == "true" and worker_test == "true":
                 continue
-            parts = []
+            parts: list[str] = []
             if window_test is not None:
                 parts.append("data->is_window()" if window_test == "true" else f"(data->is_window() && {window_test})")
             if worker_test is not None:
