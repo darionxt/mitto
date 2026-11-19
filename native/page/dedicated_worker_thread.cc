@@ -20,6 +20,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_dedicated_worker_global_scope.h"
 #include "mitto/dom/animation_frame_controller.h"
+#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/dedicated_worker_global_scope.h"
 #include "mitto/dom/dom_timer.h"
@@ -27,7 +28,6 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/page_interfaces.h"
-#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/window_tasks.h"
@@ -43,6 +43,7 @@
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_indexed_db.h"
+#include "mitto/page/session_storage_buckets.h"
 #include "mitto/page/worker_scheduler.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-array-buffer.h"
@@ -152,6 +153,7 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   std::unique_ptr<PageFetcher> fetcher_;
   std::unique_ptr<SessionCacheStorage> cache_storage_;
   std::unique_ptr<SessionIndexedDb> indexed_db_;
+  std::unique_ptr<SessionStorageBuckets> storage_buckets_;
   std::unique_ptr<PageWorkerStarter> worker_starter_;
   int reports_queued_ = 0;
   bool shut_down_ = false;
@@ -235,8 +237,9 @@ void DedicatedWorkerThread::Scope::Start() {
           base::Unretained(this)));
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
   scope_->SetFetcher(fetcher_.get());
-  // The worker's own Cache API and IndexedDB, as its creator's frame's
-  // storage key reaches them, unless its origin is opaque and may not.
+  // The worker's own Cache API, IndexedDB and Storage Buckets, as its
+  // creator's frame's storage key reaches them, unless its origin is opaque
+  // and may not.
   if (!params_.origin.opaque()) {
     cache_storage_ = std::make_unique<SessionCacheStorage>();
     cache_storage_->SetSender(
@@ -250,6 +253,12 @@ void DedicatedWorkerThread::Scope::Start() {
                            params_.refuse);
     indexed_db_->DocumentCommitted(params_.id);
     scope_->SetIndexedDbHost(indexed_db_.get());
+    storage_buckets_ = std::make_unique<SessionStorageBuckets>();
+    storage_buckets_->SetSender(
+        params_.sender, scheduler_->TaskRunner(TaskType::kMiscPlatformAPI),
+        params_.refuse);
+    storage_buckets_->DocumentCommitted(params_.id);
+    scope_->SetStorageBucketHost(storage_buckets_.get());
   }
   scope_->SetConsoleSink(base::BindRepeating(
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
@@ -333,6 +342,7 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetImportedScriptLoader(nullptr);
     scope_->SetCacheStorageHost(nullptr);
     scope_->SetIndexedDbHost(nullptr);
+    scope_->SetStorageBucketHost(nullptr);
     scope_->SetAnimationFrames(nullptr);
   }
   if (requests_) {

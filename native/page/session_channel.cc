@@ -320,11 +320,12 @@ class SessionLink final : public PageChannel::Delegate
           Refuse("a Storage Buckets answer came before the start");
           return;
         }
-        // Blink binds StorageBucketManager to this queue.
-        misc_platform_api_->PostTask(
-            FROM_HERE, base::BindOnce(&SessionStorageBuckets::OnAnswer,
-                                      base::Unretained(&*storage_buckets_),
-                                      std::move(frame->storage_bucket_answer)));
+        // To the queue of the context that asked, which Blink binds
+        // StorageBucketManager to.
+        if (std::optional<std::string> why = sender_->RouteStorageBucket(
+                std::move(frame->storage_bucket_answer))) {
+          Refuse(*std::move(why));
+        }
         return;
       case PageMessage::kIndexedDbCallback:
         if (!started_) {
@@ -426,7 +427,7 @@ class SessionLink final : public PageChannel::Delegate
         send));
     cache_storage_->SetSender(sender_, misc_platform_api_, refuse);
     indexed_db_->SetSender(sender_, database_access_, refuse);
-    storage_buckets_->SetSend(send, refuse);
+    storage_buckets_->SetSender(sender_, misc_platform_api_, refuse);
     // What the document's localStorage and sessionStorage ask of the Session.
     storage_backend_->SetSend(send);
     StorageBackend::Set(&*storage_backend_);

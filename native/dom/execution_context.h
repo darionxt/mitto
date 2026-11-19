@@ -39,6 +39,7 @@ namespace mitto {
 
 class CacheStorageHost;
 class IndexedDbHost;
+class StorageBucketHost;
 class DOMTimerCoordinator;
 class Performance;
 class EventTarget;
@@ -92,6 +93,9 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // Where the context's IndexedDB reaches the Session, or null for a context
   // whose origin may not reach databases.
   virtual IndexedDbHost* GetIndexedDbHost() const = 0;
+  // Where the context's Storage Buckets API reaches the Session, or null for
+  // a context whose origin may not reach buckets.
+  virtual StorageBucketHost* GetStorageBucketHost() const = 0;
 
   // ExecutionContext's state of its error events (error_reporting.h).
   struct ErrorEventState {

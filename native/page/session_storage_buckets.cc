@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "base/functional/bind.h"
+#include "base/location.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "mitto/page_messages.h"
@@ -9,19 +11,29 @@
 namespace mitto {
 
 SessionStorageBuckets::SessionStorageBuckets() = default;
-SessionStorageBuckets::~SessionStorageBuckets() = default;
 
-void SessionStorageBuckets::SetSend(
-    SendFrame send,
+SessionStorageBuckets::~SessionStorageBuckets() {
+  if (host_ != 0) {
+    sender_->RemoveStorageBucketHost(host_);
+  }
+}
+
+void SessionStorageBuckets::SetSender(
+    scoped_refptr<SessionSender> sender,
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
     base::RepeatingCallback<void(std::string why)> refuse) {
-  send_ = std::move(send);
+  sender_ = std::move(sender);
+  runner_ = std::move(runner);
   refuse_ = std::move(refuse);
 }
 
 void SessionStorageBuckets::Ask(PageStorageBucketCall call, Answer answer) {
-  call.question = ++last_question_;
-  questions_.emplace(call.question, std::move(answer));
-  send_.Run(EncodeStorageBuckets(document_, call));
+  const uint64_t question =
+      sender_->SendStorageBucketQuestion(host_, [this, &call](uint64_t number) {
+        call.question = number;
+        return EncodeStorageBuckets(document_, call);
+      });
+  questions_.emplace(question, std::move(answer));
 }
 
 void SessionStorageBuckets::Release(uint64_t bucket) {
@@ -32,22 +44,35 @@ void SessionStorageBuckets::Release(uint64_t bucket) {
   PageStorageBucketCall call;
   call.op = StorageBucketCallOp::kRelease;
   call.bucket = bucket;
-  send_.Run(EncodeStorageBuckets(document_, call));
+  sender_->Send(EncodeStorageBuckets(document_, call));
 }
 
 void SessionStorageBuckets::DocumentCommitted(uint64_t document) {
+  // What the document before asked goes unheard.
+  if (host_ != 0) {
+    sender_->RemoveStorageBucketHost(host_);
+  }
+  host_ = sender_->AddStorageBucketHost(base::BindRepeating(
+      [](scoped_refptr<base::SingleThreadTaskRunner> runner,
+         base::WeakPtr<SessionStorageBuckets> self, uint64_t host,
+         PageStorageBucketAnswer answer) {
+        runner->PostTask(FROM_HERE,
+                         base::BindOnce(&SessionStorageBuckets::OnAnswer, self,
+                                        host, std::move(answer)));
+      },
+      runner_, weak_factory_.GetWeakPtr()));
   document_ = document;
   questions_.clear();
   buckets_.clear();
-  last_question_before_ = last_question_;
 }
 
-void SessionStorageBuckets::OnAnswer(PageStorageBucketAnswer answer) {
-  const auto found = questions_.find(answer.question);
-  if (found == questions_.end() && answer.question <= last_question_before_) {
-    // A question of a document before, which has gone.
+void SessionStorageBuckets::OnAnswer(uint64_t host,
+                                     PageStorageBucketAnswer answer) {
+  if (host != host_) {
+    // An answer to a document before, which has gone.
     return;
   }
+  const auto found = questions_.find(answer.question);
   if (found == questions_.end()) {
     refuse_.Run(base::StrCat({"an answer to Storage Buckets question ",
                               base::NumberToString(answer.question),

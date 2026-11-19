@@ -158,6 +158,15 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"  channel.port1.postMessage(null, {includeUserActivation: true});"
         b"};",
     ),
+    "/buckets.js": (
+        "text/javascript",
+        b"(async () => {"
+        b"  const bucket = await navigator.storageBuckets.open('drafts');"
+        b"  const cache = await bucket.caches.open('in-a-bucket');"
+        b"  await cache.put('/data.txt', new Response('in the bucket'));"
+        b"  postMessage([bucket.name, await navigator.storageBuckets.keys()]);"
+        b"})().catch((e) => postMessage(String(e)));",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -550,6 +559,20 @@ def test_a_snapshot_of_user_activation_goes_only_from_a_window(server: str) -> N
 
     # A Page has had no user activation, and a worker's port takes no snapshot, as in Chrome.
     assert _evaluate(server, script) == [[False, None], [None, None]]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_opens_the_storage_buckets_of_its_origin(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/buckets.js');
+        worker.onmessage = async (e) => {
+            const bucket = await navigator.storageBuckets.open('drafts');
+            const response = await bucket.caches.match('/data.txt');
+            resolve([e.data, await navigator.storageBuckets.keys(), response && (await response.text())]);
+        };
+    })"""
+
+    assert _evaluate(server, script) == [["drafts", ["drafts"]], ["drafts"], "in the bucket"]
 
 
 @pytest.mark.usefixtures("page_program")

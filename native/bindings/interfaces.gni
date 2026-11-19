@@ -3140,6 +3140,7 @@ mitto_bindings_interfaces = [
       "permissions",
       "storage",
       "locks",
+      "storageBuckets",
     ]
   },
   {

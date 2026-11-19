@@ -12,10 +12,10 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_exception.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/idb_factory.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/storage_bucket_host.h"
-#include "mitto/dom/window.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
@@ -45,11 +45,11 @@ void RejectUnknown(v8::Isolate* isolate,
 
 }  // namespace
 
-StorageBucket::StorageBucket(Window* window,
+StorageBucket::StorageBucket(ExecutionContext* context,
                              StorageBucketHost* host,
                              std::u16string name,
                              uint64_t bucket)
-    : window_(window), host_(host), name_(std::move(name)), bucket_(bucket) {}
+    : context_(context), host_(host), name_(std::move(name)), bucket_(bucket) {}
 
 StorageBucket::~StorageBucket() = default;
 
@@ -59,7 +59,7 @@ const bindings::WrapperTypeInfo* StorageBucket::GetWrapperTypeInfo() const {
 
 void StorageBucket::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
-  visitor->Trace(window_);
+  visitor->Trace(context_);
   visitor->Trace(indexed_db_);
   visitor->Trace(caches_);
 }
@@ -75,8 +75,8 @@ void StorageBucket::Dispose() {
 }
 
 StorageBucketHost* StorageBucket::Host() const {
-  Window* const window = window_.Get();
-  if (!window || !window->HasContext()) {
+  ExecutionContext* const context = context_.Get();
+  if (!context || !context->HasContext()) {
     return nullptr;
   }
   return host_;
@@ -243,22 +243,21 @@ v8::Local<v8::Promise> StorageBucket::Expires() {
 IDBFactory* StorageBucket::IndexedDB() {
   if (!indexed_db_) {
     indexed_db_ =
-        bindings::MakeGarbageCollected<IDBFactory>(window_.Get(), this);
+        bindings::MakeGarbageCollected<IDBFactory>(context_.Get(), this);
   }
   return indexed_db_.Get();
 }
 
 CacheStorage* StorageBucket::Caches(bindings::ExceptionState& exception_state) {
-  // GlobalCacheStorage::CanCreateCacheStorage(), as the window's caches.
-  Window* const window = window_.Get();
-  if (!window || !window->HasContext() ||
-      !window->GetDocument().GetCacheStorageHost()) {
+  // GlobalCacheStorage::CanCreateCacheStorage(), as the context's caches.
+  ExecutionContext* const context = context_.Get();
+  if (!context || !context->HasContext() || !context->GetCacheStorageHost()) {
     exception_state.ThrowDOMException("SecurityError",
                                       "Access to cache storage is denied.");
     return nullptr;
   }
   if (!caches_) {
-    caches_ = bindings::MakeGarbageCollected<CacheStorage>(window, this);
+    caches_ = bindings::MakeGarbageCollected<CacheStorage>(context, this);
   }
   return caches_.Get();
 }

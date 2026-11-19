@@ -27,6 +27,7 @@ class Navigator;
 class NavigatorUAData;
 class NetworkInformation;
 class Permissions;
+class StorageBucketManager;
 class StorageManager;
 
 class WorkerNavigator final : public bindings::ScriptWrappable {
@@ -59,6 +60,7 @@ class WorkerNavigator final : public bindings::ScriptWrappable {
   mitto::Permissions* Permissions();
   StorageManager* Storage();
   mitto::LockManager* Locks();
+  StorageBucketManager* StorageBuckets();
 
  private:
   // A window's navigator of the same values, which no page reaches, as Blink

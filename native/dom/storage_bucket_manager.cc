@@ -20,10 +20,10 @@
 #include "mitto/dom/cache_storage_answers.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_exception.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/quota_exceeded_error.h"
 #include "mitto/dom/storage_bucket.h"
 #include "mitto/dom/storage_bucket_host.h"
-#include "mitto/dom/window.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -67,16 +67,17 @@ v8::Local<v8::Value> UnknownError(v8::Isolate* isolate,
       ->ToV8(isolate);
 }
 
-// The Window and its host for a call, or an exception thrown for none.
+// The host of the current context, a window's or a worker's, for a call, or
+// an exception thrown for none.
 StorageBucketHost* HostForCall(bindings::ExceptionState& exception_state) {
-  Window& window = Window::Current();
-  if (!window.HasContext()) {
+  ExecutionContext& context = ExecutionContext::Current();
+  if (!context.HasContext()) {
     exception_state.ThrowTypeError(kDestroyed);
     return nullptr;
   }
   // CanAccessStorageBuckets(): an origin that is not opaque, which only a
-  // document that the Session loaded over HTTP or HTTPS has.
-  StorageBucketHost* const host = window.GetDocument().GetStorageBucketHost();
+  // document that the Session loaded over HTTP or HTTPS has, or its worker.
+  StorageBucketHost* const host = context.GetStorageBucketHost();
   if (!host) {
     exception_state.ThrowDOMException("SecurityError", kDenied);
   }
@@ -171,8 +172,8 @@ v8::Local<v8::Promise> StorageBucketManager::Open(
   }
   Ask(isolate, resolver, *host, std::move(call),
       base::BindOnce(
-          [](cppgc::WeakPersistent<Window> window, StorageBucketHost* host,
-             std::u16string name, v8::Isolate* isolate,
+          [](cppgc::WeakPersistent<ExecutionContext> execution_context,
+             StorageBucketHost* host, std::u16string name, v8::Isolate* isolate,
              v8::Local<v8::Context> context,
              v8::Local<v8::Promise::Resolver> resolver,
              PageStorageBucketAnswer answer) {
@@ -180,10 +181,10 @@ v8::Local<v8::Promise> StorageBucketManager::Open(
             switch (answer.error) {
               case StorageBucketError::kNone:
                 std::ignore = resolver->Resolve(
-                    context,
-                    bindings::MakeGarbageCollected<StorageBucket>(
-                        window.Get(), host, std::move(name), answer.bucket)
-                        ->ToV8(isolate));
+                    context, bindings::MakeGarbageCollected<StorageBucket>(
+                                 execution_context.Get(), host, std::move(name),
+                                 answer.bucket)
+                                 ->ToV8(isolate));
                 return;
               case StorageBucketError::kUnknown:
                 std::ignore = resolver->Reject(
@@ -219,7 +220,8 @@ v8::Local<v8::Promise> StorageBucketManager::Open(
                 return;
             }
           },
-          cppgc::WeakPersistent<Window>(&Window::Current()), host, name));
+          cppgc::WeakPersistent<ExecutionContext>(&ExecutionContext::Current()),
+          host, name));
   return resolver->GetPromise();
 }
 

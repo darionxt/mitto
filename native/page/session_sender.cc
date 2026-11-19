@@ -280,4 +280,57 @@ std::optional<std::string> SessionSender::RouteIndexedDb(
   return std::nullopt;
 }
 
+uint64_t SessionSender::AddStorageBucketHost(StorageBucketRoute route) {
+  const base::AutoLock lock(lock_);
+  const uint64_t host = ++last_storage_bucket_host_;
+  storage_bucket_hosts_.emplace(host, std::move(route));
+  return host;
+}
+
+void SessionSender::RemoveStorageBucketHost(uint64_t host) {
+  const base::AutoLock lock(lock_);
+  storage_bucket_hosts_.erase(host);
+  std::erase_if(storage_bucket_questions_,
+                [host](const auto& entry) { return entry.second == host; });
+}
+
+uint64_t SessionSender::SendStorageBucketQuestion(
+    uint64_t host,
+    base::FunctionRef<std::string(uint64_t question)> encode) {
+  const base::AutoLock lock(lock_);
+  const uint64_t question = ++last_storage_bucket_question_;
+  storage_bucket_questions_.emplace(question, host);
+  send_.Run(encode(question));
+  return question;
+}
+
+std::optional<std::string> SessionSender::RouteStorageBucket(
+    PageStorageBucketAnswer answer) {
+  StorageBucketRoute route;
+  uint64_t host = 0;
+  {
+    const base::AutoLock lock(lock_);
+    const auto found = storage_bucket_questions_.find(answer.question);
+    if (found == storage_bucket_questions_.end()) {
+      if (answer.question > last_storage_bucket_question_) {
+        return base::StrCat({"an answer to Storage Buckets question ",
+                             base::NumberToString(answer.question),
+                             ", which no script waits for"});
+      }
+      // A question of a context that has gone.
+      return std::nullopt;
+    }
+    host = found->second;
+    storage_bucket_questions_.erase(found);
+    const StorageBucketRoute* const found_route =
+        base::FindOrNull(storage_bucket_hosts_, host);
+    if (!found_route) {
+      return std::nullopt;
+    }
+    route = *found_route;
+  }
+  route.Run(host, std::move(answer));
+  return std::nullopt;
+}
+
 }  // namespace mitto

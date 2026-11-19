@@ -4,10 +4,10 @@
 // contexts to be larger than those before them, so this takes each such
 // number under one lock with the sending of the frame that carries it, and two
 // threads' frames reach the Session in the order of their numbers, the
-// questions of the Cache API and the calls of IndexedDB among them. It also
-// keeps where the response of each request of a worker goes, and where each
-// answer of the Cache API and of IndexedDB goes, for the I/O thread to hand it
-// to the thread of the context that asked.
+// questions of the Cache API and of Storage Buckets and the calls of IndexedDB
+// among them. It also keeps where the response of each request of a worker
+// goes, and where each answer of those goes, for the I/O thread to hand it to
+// the thread of the context that asked.
 
 #ifndef MITTO_PAGE_SESSION_SENDER_H_
 #define MITTO_PAGE_SESSION_SENDER_H_
@@ -26,6 +26,7 @@
 #include "mitto/cache_storage_messages.h"
 #include "mitto/indexed_db_messages.h"
 #include "mitto/page_messages.h"
+#include "mitto/storage_bucket_messages.h"
 
 namespace mitto {
 
@@ -44,6 +45,11 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   using IndexedDbRoute =
       base::RepeatingCallback<void(uint64_t host,
                                    PageIndexedDbCallback callback)>;
+  // Takes a Storage Buckets answer to the host numbered `host`, on the I/O
+  // thread, for the host's thread.
+  using StorageBucketRoute =
+      base::RepeatingCallback<void(uint64_t host,
+                                   PageStorageBucketAnswer answer)>;
 
   // `send` hands a frame to the I/O thread, from any thread.
   explicit SessionSender(base::RepeatingCallback<void(std::string)> send);
@@ -119,6 +125,21 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // refusal, which this returns. The I/O thread.
   std::optional<std::string> RouteIndexedDb(PageIndexedDbCallback callback);
 
+  // The Storage Buckets API of a context, whose answers go to `route`: its
+  // number. Any thread, as are the others below but the last.
+  uint64_t AddStorageBucketHost(StorageBucketRoute route);
+  // The host has gone, or its document has: what it asked goes unheard.
+  void RemoveStorageBucketHost(uint64_t host);
+  // Takes the number of the Page's next Storage Buckets question, of `host`,
+  // sends the frame that `encode` makes of it, and returns it.
+  uint64_t SendStorageBucketQuestion(
+      uint64_t host,
+      base::FunctionRef<std::string(uint64_t question)> encode);
+  // Hands `answer` to the route of its host. One for a host that has gone
+  // goes unheard, and one for a question that the Page never numbered is a
+  // refusal, which this returns. The I/O thread.
+  std::optional<std::string> RouteStorageBucket(PageStorageBucketAnswer answer);
+
  private:
   friend class base::RefCountedThreadSafe<SessionSender>;
   ~SessionSender();
@@ -146,6 +167,12 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // connection that hears what the Session tells it.
   std::map<uint64_t, uint64_t> indexed_db_calls_ GUARDED_BY(lock_);
   std::map<uint64_t, uint64_t> indexed_db_connections_ GUARDED_BY(lock_);
+  uint64_t last_storage_bucket_host_ GUARDED_BY(lock_) = 0;
+  std::map<uint64_t, StorageBucketRoute> storage_bucket_hosts_
+      GUARDED_BY(lock_);
+  uint64_t last_storage_bucket_question_ GUARDED_BY(lock_) = 0;
+  // The host of each question that waits for its answer.
+  std::map<uint64_t, uint64_t> storage_bucket_questions_ GUARDED_BY(lock_);
 };
 
 }  // namespace mitto

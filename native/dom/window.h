@@ -51,6 +51,7 @@ class CrashReportContext;
 class CacheStorage;
 class CacheStorageHost;
 class IndexedDbHost;
+class StorageBucketHost;
 class CookieStore;
 class Storage;
 class Crypto;
@@ -94,6 +95,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   // The document's.
   CacheStorageHost* GetCacheStorageHost() const override;
   IndexedDbHost* GetIndexedDbHost() const override;
+  StorageBucketHost* GetStorageBucketHost() const override;
   // DOMWindowFileSystem's: the file system of the document's origin, from a
   // task of its own, as Chrome's browser opens one for a new profile, or an
   // error for an opaque origin or a type other than TEMPORARY and PERSISTENT.

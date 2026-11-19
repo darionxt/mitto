@@ -38,6 +38,7 @@ class CacheStorage;
 class CacheStorageHost;
 class IDBFactory;
 class IndexedDbHost;
+class StorageBucketHost;
 class Crypto;
 class ImportedScriptLoader;
 class Scheduler;
@@ -89,6 +90,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   GURL BaseUrl() const override;
   CacheStorageHost* GetCacheStorageHost() const override;
   IndexedDbHost* GetIndexedDbHost() const override;
+  StorageBucketHost* GetStorageBucketHost() const override;
 
   // What the Page uses.
   // Where the worker's Cache API reaches the Session: none for a worker of an
@@ -98,6 +100,10 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   }
   // Where the worker's IndexedDB reaches the Session, the same.
   void SetIndexedDbHost(IndexedDbHost* host) { indexed_db_host_ = host; }
+  // Where the worker's Storage Buckets API reaches the Session, the same.
+  void SetStorageBucketHost(StorageBucketHost* host) {
+    storage_bucket_host_ = host;
+  }
   // The worker's URL, its script's final one, as InitializeURL() takes it
   // once the script has come, and its origin, its creator's or an opaque one
   // for a data: URL, from when it starts.
@@ -136,6 +142,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   raw_ptr<ImportedScriptLoader> imported_script_loader_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
+  raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   bool module_ = false;
   bool closing_ = false;
 };

@@ -105,6 +105,10 @@ IndexedDbHost* WorkerGlobalScope::GetIndexedDbHost() const {
   return indexed_db_host_;
 }
 
+StorageBucketHost* WorkerGlobalScope::GetStorageBucketHost() const {
+  return storage_bucket_host_;
+}
+
 WorkerNavigator* WorkerGlobalScope::Navigator() {
   if (!navigator_) {
     navigator_ = WorkerNavigator::Create(Start(), Connection());
