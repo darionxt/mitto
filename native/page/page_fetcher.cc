@@ -151,6 +151,36 @@ class PageFetcher::Request final : public PageRequests::Client,
   std::optional<std::string> response_url_;
 };
 
+namespace {
+
+// The Request Kind of a request: a module script, or what one imports, by
+// its destination, where a text module, whose Request Kind comes once Chrome
+// 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
+// send a JavaScript module's lines, Known Gaps; a classic script; an image;
+// or a fetch.
+PageRequestKind KindOf(const FetchRequestData& data) {
+  if (data.is_module) {
+    return data.destination == FetchDestination::kJson
+               ? PageRequestKind::kModuleJson
+               : PageRequestKind::kModule;
+  }
+  switch (data.destination) {
+    case FetchDestination::kEmpty:
+      return PageRequestKind::kFetch;
+    case FetchDestination::kScript:
+      return PageRequestKind::kScript;
+    case FetchDestination::kImage:
+      return PageRequestKind::kImage;
+    case FetchDestination::kJson:
+    case FetchDestination::kStyle:
+    case FetchDestination::kText:
+      // Only a module's fetch has these destinations.
+      NOTREACHED();
+  }
+}
+
+}  // namespace
+
 PageFetcher::PageFetcher(PageRequests& requests) : requests_(requests) {}
 
 PageFetcher::~PageFetcher() {
@@ -198,29 +228,7 @@ void PageFetcher::Fetch(FetchRequestData data,
     keepalive_bytes_ += body_size;
   }
   PageRequest page_request;
-  // A module script and what one imports go as a module, whatever their
-  // destination: the json, style and text ones send a JavaScript module's
-  // lines, a Known Gap.
-  if (data.is_module) {
-    page_request.kind = PageRequestKind::kModule;
-  } else {
-    switch (data.destination) {
-      case FetchDestination::kEmpty:
-        page_request.kind = PageRequestKind::kFetch;
-        break;
-      case FetchDestination::kScript:
-        page_request.kind = PageRequestKind::kScript;
-        break;
-      case FetchDestination::kImage:
-        page_request.kind = PageRequestKind::kImage;
-        break;
-      case FetchDestination::kJson:
-      case FetchDestination::kStyle:
-      case FetchDestination::kText:
-        // Only a module's fetch has these destinations.
-        NOTREACHED();
-    }
-  }
+  page_request.kind = KindOf(data);
   page_request.url = std::move(data.url);
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);

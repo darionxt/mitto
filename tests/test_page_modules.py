@@ -226,6 +226,21 @@ _CASES["import_maps"] = Case(
 # A module and a classic script of another origin, each of which imports more: what they import names them as its
 # referrer, as Chrome sends it. The server's other name, localhost, is the other origin.
 _CORS = [("Access-Control-Allow-Origin", "*")]
+# A JSON module and a text module, each fetched once.
+_CASES["module_lines"] = Case(
+    {
+        "/": _page(
+            "<script type=module>"
+            "import './m.json' with {type: 'json'};"
+            "await import('./t.txt', {with: {type: 'text'}});"
+            "log('imported'); finish(logged);"
+            "</script>"
+        ),
+        "/m.json": Route("{}", _JSON),
+        "/t.txt": Route("some text", "text/plain"),
+    }
+)
+
 _CASES["referrers"] = Case(
     {
         "/": _page(
@@ -419,3 +434,17 @@ def test_what_a_script_of_another_origin_imports_names_it_as_the_referrer(
             for path, referer in server.referers.items()
             if path.startswith("/remote/")
         } == _CHROME_REFERERS
+
+
+def test_a_json_module_sends_the_accept_and_sec_fetch_dest_of_its_destination(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, logged = _run(session, server, "module_lines")
+    with page:
+        assert logged == ["imported"]
+        lines = {path: (h.get("accept"), h.get("sec-fetch-dest")) for path, h in server.request_headers.items()}
+        # As Windows Chrome's Baselines have module_json.
+        assert lines["/m.json"] == ("application/json,*/*;q=0.5", "json")
+        # Chrome sends text/plain,*/*;q=0.5 and text, which a text module gets once Chrome 155, which has no text
+        # modules, leaves the Supported Window: until then it goes as a module, a Known Gap.
+        assert lines["/t.txt"] == ("*/*", "script")
