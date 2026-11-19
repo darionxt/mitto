@@ -165,6 +165,8 @@ PARTS = (
     Part("#287", "Web Storage", ("webstorage/",)),
     Part("#288", "IndexedDB and the Cache API", ("IndexedDB/", "service-workers/cache-storage/")),
     Part("#289", "Dedicated workers", ("workers/",)),
+    # streams/ and compression/ are no directories of #260's: the owner added them for streams.
+    Part("#379", "Streams", ("streams/", "compression/", "encoding/streams/")),
 )
 """The parts of M8 that web-platform-tests cover. A test belongs to at most one."""
 

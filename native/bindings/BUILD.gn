@@ -184,6 +184,8 @@ action_with_pydeps("generate_bindings") {
 # The code that the generated bindings run on, which knows no interface.
 source_set("bindings") {
   sources = [
+    "async_iterable.cc",
+    "async_iterable.h",
     "exception_context.cc",
     "exception_context.h",
     "exception_messages.cc",
@@ -205,6 +207,10 @@ source_set("bindings") {
     "per_isolate_data.h",
     "runtime_feature_set.cc",
     "runtime_feature_set.h",
+    "script_function.cc",
+    "script_function.h",
+    "script_promise.cc",
+    "script_promise.h",
     "script_wrappable.cc",
     "script_wrappable.h",
     "v8_conversions.cc",
