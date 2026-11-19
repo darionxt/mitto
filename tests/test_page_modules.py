@@ -223,6 +223,48 @@ _CASES["import_maps"] = Case(
     }
 )
 
+# A module and a classic script of another origin, each of which imports more: what they import names them as its
+# referrer, as Chrome sends it. The server's other name, localhost, is the other origin.
+_CORS = [("Access-Control-Allow-Origin", "*")]
+# A JSON module and a text module, each fetched once.
+_CASES["module_lines"] = Case(
+    {
+        "/": _page(
+            "<script type=module>"
+            "import './m.json' with {type: 'json'};"
+            "await import('./t.txt', {with: {type: 'text'}});"
+            "log('imported'); finish(logged);"
+            "</script>"
+        ),
+        "/m.json": Route("{}", _JSON),
+        "/t.txt": Route("some text", "text/plain"),
+    }
+)
+
+_CASES["referrers"] = Case(
+    {
+        "/": _page(
+            "<script>"
+            "window.pending = 2;"
+            "function settled(x) { log(x); if (--pending === 0) finish(logged); }"
+            "const remote = 'http://localhost:' + location.port + '/remote/';"
+            "document.head.append(Object.assign(document.createElement('script'),"
+            " {type: 'module', src: remote + 'root.js'}));"
+            "document.head.append(Object.assign(document.createElement('script'),"
+            " {crossOrigin: 'anonymous', src: remote + 'classic.js'}));"
+            "</script>"
+        ),
+        "/remote/root.js": Route(
+            "import './static.js'; await import('./dynamic.js'); settled('module');", _JAVASCRIPT, headers=_CORS
+        ),
+        "/remote/static.js": Route("", _JAVASCRIPT, headers=_CORS),
+        "/remote/dynamic.js": Route("", _JAVASCRIPT, headers=_CORS),
+        "/remote/classic.js": Route(
+            "import('./from-classic.js').then(() => settled('classic'));", _JAVASCRIPT, headers=_CORS
+        ),
+        "/remote/from-classic.js": Route("", _JAVASCRIPT, headers=_CORS),
+    }
+)
 
 # Module scripts and imports of data: URLs, which a page answers itself, with no request.
 _CASES["data_urls"] = Case(
@@ -366,3 +408,43 @@ def test_module_scripts_run_as_chrome_runs_them(session: mitto.Session, server: 
     page, logged = _run(session, server, name)
     with page:
         assert logged == _CHROME[name]
+
+
+# The Referer that Chrome 157 sent for each request of the referrers case, with the server's origins written short.
+_CHROME_REFERERS = {
+    "/remote/root.js": "{origin}/",
+    "/remote/classic.js": "{origin}/",
+    "/remote/static.js": "{other}/remote/root.js",
+    "/remote/dynamic.js": "{other}/remote/root.js",
+    "/remote/from-classic.js": "{other}/remote/classic.js",
+}
+
+
+def test_what_a_script_of_another_origin_imports_names_it_as_the_referrer(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    # The Session takes such a referrer as the final URL of a response that came whole to the document.
+    page, logged = _run(session, server, "referrers")
+    origin = server.url("").rstrip("/")
+    other = origin.replace("127.0.0.1", "localhost")
+    with page:
+        assert sorted(logged) == ["classic", "module"]
+        assert {
+            path: (referer or "").replace(origin, "{origin}").replace(other, "{other}")
+            for path, referer in server.referers.items()
+            if path.startswith("/remote/")
+        } == _CHROME_REFERERS
+
+
+def test_a_json_module_sends_the_accept_and_sec_fetch_dest_of_its_destination(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, logged = _run(session, server, "module_lines")
+    with page:
+        assert logged == ["imported"]
+        lines = {path: (h.get("accept"), h.get("sec-fetch-dest")) for path, h in server.request_headers.items()}
+        # As Windows Chrome's Baselines have module_json.
+        assert lines["/m.json"] == ("application/json,*/*;q=0.5", "json")
+        # Chrome sends text/plain,*/*;q=0.5 and text, which a text module gets once Chrome 155, which has no text
+        # modules, leaves the Supported Window: until then it goes as a module, a Known Gap.
+        assert lines["/t.txt"] == ("*/*", "script")
