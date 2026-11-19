@@ -28,6 +28,7 @@
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/xml_document.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_fetcher.h"
@@ -394,10 +395,12 @@ void ScriptRunner::PostTask(TaskType type, base::OnceClosure task) {
                                 std::move(task)));
 }
 
-Document& ScriptRunner::CommitDocument(uint64_t navigation,
-                                       const GURL& url,
-                                       base::TimeTicks navigation_start,
-                                       const PageConnection& connection) {
+Document& ScriptRunner::CommitDocument(
+    uint64_t navigation,
+    const GURL& url,
+    base::TimeTicks navigation_start,
+    const PageConnection& connection,
+    const std::optional<std::u16string>& xml_content_type) {
   const v8::HandleScope handle_scope(isolate_);
   for (const uint64_t call : waiting_calls_) {
     settled_.push_back(FailureOf(call, std::string(kContextDestroyed)));
@@ -438,7 +441,10 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
   AttachWindow(context, connection, PageDocumentSource::kNavigationResponse,
                navigation);
   const v8::Context::Scope context_scope(context);
-  Document* const document = Document::CreateHTML();
+  Document* const document =
+      xml_content_type
+          ? static_cast<Document*>(XMLDocument::Create(*xml_content_type))
+          : Document::CreateHTML();
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
   // Only a document that the Session loaded over HTTP or HTTPS has cookies
   // there; another's origin is opaque to them.

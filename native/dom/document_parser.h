@@ -44,6 +44,7 @@ namespace mitto {
 
 class DocWrittenScriptScanner;
 class Document;
+class XmlReader;
 class Element;
 class HtmlDocumentParser;
 class HtmlTreeBuilderReferences;
@@ -77,6 +78,11 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
     kJson,
     kImage,
     kMedia,
+    // XML, on libxml2 (libxml_tree_builder.h) or on the Rust xml crate's
+    // reader (xml_tree_builder.h), as Blink's Document::CreateParser() picks
+    // XMLDocumentParser or XMLDocumentParserRs by the runtime-enabled
+    // features, whose scripts run as Blink's XMLParserScriptRunner runs them.
+    kXml,
   };
 
   // The parser of `document`'s response, which `client` feeds, and which the
@@ -214,6 +220,9 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // nothing on the stack uses them, as a script that runs may still have an
   // insertion point in them once the parser has stopped.
   std::unique_ptr<HtmlDocumentParser> tree_;
+  // The XML parser's tree builder, which takes the place of the tokenizer
+  // and the HTML tree builder for an XML document.
+  std::unique_ptr<XmlReader> xml_;
   // What writes gave while the parser waits for a script, scanned as Blink's
   // insertion preload scanner does, until the parser goes on.
   std::unique_ptr<DocWrittenScriptScanner> insertion_scanner_;
