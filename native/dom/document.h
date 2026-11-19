@@ -44,6 +44,7 @@ class CDATASection;
 class Comment;
 class CacheStorageHost;
 class IndexedDbHost;
+class StorageBucketHost;
 class CookieJar;
 class DOMImplementation;
 class DocumentFragment;
@@ -416,6 +417,14 @@ class Document : public Node {
   // origin may not.
   void SetIndexedDbHost(IndexedDbHost* host) { indexed_db_host_ = host; }
   IndexedDbHost* GetIndexedDbHost() const { return indexed_db_host_; }
+  // Where the document's Storage Buckets API reaches its Session's buckets,
+  // which only a document that the Session loaded over HTTP or HTTPS has.
+  void SetStorageBucketHost(StorageBucketHost* host) {
+    storage_bucket_host_ = host;
+  }
+  StorageBucketHost* GetStorageBucketHost() const {
+    return storage_bucket_host_;
+  }
   Readiness GetReadiness() const { return readiness_; }
   // Sets the readiness, marks when it changed the first time in the load
   // timing, and fires readystatechange at the document, as Blink's
@@ -590,7 +599,9 @@ class Document : public Node {
   // LocalFrameView::ProcessUrlFragment(), as ElementFragmentAnchor::TryCreate()
   // runs it: the CSS target becomes the element that the fragment of `url`
   // indicates, or none, once the document has finished parsing and after each
-  // navigation within it.
+  // navigation within it. The indicated part is revealed: each closed details
+  // element around it opens, and each ancestor hidden "until-found" gets
+  // beforematch and shows.
   void ProcessUrlFragment(const GURL& url);
 
   // The language that the response's Content-Language and a content-language
@@ -734,6 +745,7 @@ class Document : public Node {
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
+  raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   cppgc::Member<Window> window_;
   cppgc::Member<Element> css_target_;
   cppgc::Member<HTMLCollection> images_;

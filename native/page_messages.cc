@@ -197,7 +197,9 @@ bool IsKnown(uint32_t type) {
           type <=
               static_cast<uint32_t>(PageMessage::kSameDocumentNavigation)) ||
          (type >= static_cast<uint32_t>(PageMessage::kWorkerStarted) &&
-          type <= static_cast<uint32_t>(PageMessage::kContextGone));
+          type <= static_cast<uint32_t>(PageMessage::kContextGone)) ||
+         (type >= static_cast<uint32_t>(PageMessage::kStorageBuckets) &&
+          type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer));
 }
 
 // The frame of a message that names `document`, which comes first.
@@ -1994,6 +1996,17 @@ std::string EncodeIndexedDb(uint64_t document, const PageIndexedDbCall& call) {
                              EncodeIndexedDbCall(call));
 }
 
+std::string EncodeStorageBuckets(uint64_t document,
+                                 const PageStorageBucketCall& call) {
+  return EncodeDocumentFrame(PageMessage::kStorageBuckets, document,
+                             EncodeStorageBucketCall(call));
+}
+
+std::string EncodeStorageBucketsAnswer(const PageStorageBucketAnswer& answer) {
+  return EncodeFrame(PageMessage::kStorageBucketsAnswer,
+                     EncodeStorageBucketAnswer(answer));
+}
+
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
   return EncodeFrame(PageMessage::kBroadcastReceived,
                      base::StrCat({EncodeSized(broadcast.origin),
@@ -2045,6 +2058,7 @@ bool NamesDocument(PageMessage type) {
     case PageMessage::kStorageBind:
     case PageMessage::kCacheStorage:
     case PageMessage::kIndexedDb:
+    case PageMessage::kStorageBuckets:
       return true;
     default:
       return false;
@@ -2363,6 +2377,15 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.indexed_db_call = *std::move(call);
       return frame;
     }
+    case PageMessage::kStorageBuckets: {
+      base::expected<PageStorageBucketCall, std::string> call =
+          ReadStorageBucketCall(payload);
+      if (!call.has_value()) {
+        return base::unexpected(std::move(call).error());
+      }
+      frame.storage_bucket_call = *std::move(call);
+      return frame;
+    }
     case PageMessage::kDocumentCommitted: {
       base::expected<PageDocumentCommitted, std::string> committed =
           ReadDocumentCommitted(payload);
@@ -2450,6 +2473,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kStoragePart:
     case PageMessage::kCacheStorageAnswer:
     case PageMessage::kIndexedDbCallback:
+    case PageMessage::kStorageBucketsAnswer:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -2595,6 +2619,15 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.indexed_db_callback = *std::move(callback);
       return frame;
     }
+    case PageMessage::kStorageBucketsAnswer: {
+      base::expected<PageStorageBucketAnswer, std::string> answer =
+          ReadStorageBucketAnswer(payload);
+      if (!answer.has_value()) {
+        return base::unexpected(std::move(answer).error());
+      }
+      frame.storage_bucket_answer = *std::move(answer);
+      return frame;
+    }
     case PageMessage::kStorageEntries: {
       base::expected<PageStorageEntries, std::string> entries =
           ReadStorageEntries(payload);
@@ -2637,6 +2670,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kBroadcast:
     case PageMessage::kCacheStorage:
     case PageMessage::kIndexedDb:
+    case PageMessage::kStorageBuckets:
     case PageMessage::kDocumentCommitted:
     case PageMessage::kSameDocumentNavigation:
     case PageMessage::kWorkerStarted:

@@ -267,7 +267,8 @@ CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache) {
 
 void PageCacheStorage::OnCall(PageCacheStorageCall call,
                               uint64_t context,
-                              const std::optional<std::string>& storage_key) {
+                              const std::optional<std::string>& storage_key,
+                              bool bucket_live) {
   switch (call.op) {
     case CacheStorageCallOp::kBodyPart:
       OnBodyPart(std::move(call));
@@ -283,6 +284,7 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       stored_bodies_.erase(call.body);
       return;
     case CacheStorageCallOp::kReleaseCache:
+      cache_buckets_.erase(call.cache);
       if (caches_.erase(call.cache) == 0) {
         refuse_.Run(base::StrCat({"a release of cache ",
                                   base::NumberToString(call.cache),
@@ -293,6 +295,10 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       break;
   }
   if (!Admit(call.question, storage_key)) {
+    return;
+  }
+  if (!bucket_live || CacheBucketGone(call)) {
+    AnswerGoneBucket(call);
     return;
   }
   const uint64_t question = call.question;
@@ -464,13 +470,71 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
   }
 }
 
+bool PageCacheStorage::CacheBucketGone(const PageCacheStorageCall& call) const {
+  switch (call.op) {
+    case CacheStorageCallOp::kCacheMatch:
+    case CacheStorageCallOp::kCacheMatchAll:
+    case CacheStorageCallOp::kCacheKeys:
+    case CacheStorageCallOp::kCacheBatch: {
+      const auto bucket = cache_buckets_.find(call.cache);
+      return bucket != cache_buckets_.end() &&
+             !quota_->IsBucketKeyLive(bucket->second);
+    }
+    default:
+      return false;
+  }
+}
+
+void PageCacheStorage::AnswerGoneBucket(const PageCacheStorageCall& call) {
+  // CacheStorageDispatcherHost of a bucket whose data went: CacheStorage's
+  // calls find no caches, and a cache's find no cache behind it.
+  PageCacheStorageAnswer answer;
+  answer.question = call.question;
+  switch (call.op) {
+    case CacheStorageCallOp::kOpen:
+      answer.op = CacheStorageAnswerOp::kOpened;
+      answer.error = static_cast<uint8_t>(CacheStorageError::kErrorStorage);
+      break;
+    case CacheStorageCallOp::kHas:
+      answer.op = CacheStorageAnswerOp::kBoolean;
+      answer.error = static_cast<uint8_t>(CacheStorageError::kErrorStorage);
+      break;
+    case CacheStorageCallOp::kDelete:
+      answer.op = CacheStorageAnswerOp::kBoolean;
+      answer.error = static_cast<uint8_t>(CacheStorageError::kErrorNotFound);
+      break;
+    case CacheStorageCallOp::kKeys:
+      answer.op = CacheStorageAnswerOp::kNames;
+      break;
+    case CacheStorageCallOp::kMatch:
+    case CacheStorageCallOp::kCacheMatch:
+      AnswerResponses(call.question, CacheStorageError::kErrorNotFound, {});
+      return;
+    case CacheStorageCallOp::kCacheMatchAll:
+      // CacheImpl::MatchAll() answers kErrorNotFound with no responses.
+      AnswerResponses(call.question, CacheStorageError::kSuccess, {});
+      return;
+    case CacheStorageCallOp::kCacheKeys:
+      answer.op = CacheStorageAnswerOp::kRequests;
+      answer.error = static_cast<uint8_t>(CacheStorageError::kErrorNotFound);
+      break;
+    case CacheStorageCallOp::kCacheBatch:
+      answer.op = CacheStorageAnswerOp::kBatchDone;
+      answer.error = static_cast<uint8_t>(CacheStorageError::kErrorNotFound);
+      break;
+    default:
+      NOTREACHED();
+  }
+  SendAnswer(answer);
+}
+
 void PageCacheStorage::OnOpen(PageCacheStorageCall call,
                               const std::string& storage_key) {
   context_->ForKey(storage_key)
       .OpenCache(std::move(call.cache_name),
                  base::BindOnce(
                      [](base::WeakPtr<PageCacheStorage> self, uint64_t question,
-                        CacheStorageCacheHandle handle,
+                        std::string bucket_key, CacheStorageCacheHandle handle,
                         CacheStorageError error) {
                        if (!self) {
                          return;
@@ -482,10 +546,12 @@ void PageCacheStorage::OnOpen(PageCacheStorageCall call,
                        if (error == CacheStorageError::kSuccess) {
                          answer.cache = self->next_cache_++;
                          self->caches_.emplace(answer.cache, std::move(handle));
+                         self->cache_buckets_.emplace(answer.cache,
+                                                      std::move(bucket_key));
                        }
                        self->SendAnswer(answer);
                      },
-                     weak_factory_.GetWeakPtr(), call.question));
+                     weak_factory_.GetWeakPtr(), call.question, storage_key));
 }
 
 void PageCacheStorage::OnMatch(PageCacheStorageCall call,
