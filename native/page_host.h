@@ -464,8 +464,16 @@ class PageHost final : public PageChannel::Delegate {
                     FetchChecks checks);
 
   // What a Request hears of its job.
-  void OnResponseStarted(Request& request, const RequestEvent& event);
+  void OnResponseStarted(Request& request, RequestEvent event);
   void OnBodyRead(Request& request, size_t size);
+  // A navigation whose response the Page makes no document of: it keeps its
+  // document, and the library reads the body to its end and drops it.
+  void DropNavigation(Request& request, const RequestEvent& event);
+  // Tells the Page that the response of `request` has started.
+  void StartResponse(Request& request, const RequestEvent& event);
+  // Ends the sniffing of a navigation's response: a download, or the
+  // response with what was read of its body.
+  void FinishSniffing(Request& request);
   // This deletes `request`.
   void OnRequestFinished(Request& request, int net_error);
   // Reads more of the body of `request` if the Page has given credit for it.

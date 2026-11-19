@@ -151,6 +151,8 @@ source_set("dom") {
     "event_path.h",
     "event_target.cc",
     "event_target.h",
+    "execution_context.cc",
+    "execution_context.h",
     "fetch_loader.cc",
     "fetch_loader.h",
     "fetcher.cc",
