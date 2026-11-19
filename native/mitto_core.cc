@@ -1211,7 +1211,8 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   session->quota_manager = std::make_unique<StorageQuota>(
       settings.storage_directory,
       base::SysInfo::AmountOfTotalPhysicalMemory().InBytes(),
-      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}));
+      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}),
+      session->storage->blocking_task_runner());
   session->cache_storage_context = std::make_unique<CacheStorageContext>(
       settings.storage_directory, *session->quota_manager);
   session->indexed_db_context = std::make_unique<IndexedDbContext>(
@@ -1404,7 +1405,7 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     base::WaitableEvent done;
     PostTask(base::BindOnce(
         [](MittoSession* session, bool* opened, base::WaitableEvent* done) {
-          // localStorage's database, then IndexedDB's.
+          // localStorage's database, then IndexedDB's, then the buckets.
           session->storage->Open(base::BindOnce(
               [](MittoSession* session, bool* opened, base::WaitableEvent* done,
                  bool result) {
@@ -1413,11 +1414,21 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
                   return;
                 }
                 session->indexed_db_context->Open(base::BindOnce(
-                    [](bool* opened, base::WaitableEvent* done, bool result) {
-                      *opened = result;
-                      done->Signal();
+                    [](MittoSession* session, bool* opened,
+                       base::WaitableEvent* done, bool result) {
+                      if (!result) {
+                        done->Signal();
+                        return;
+                      }
+                      session->quota_manager->Open(base::BindOnce(
+                          [](bool* opened, base::WaitableEvent* done,
+                             bool result) {
+                            *opened = result;
+                            done->Signal();
+                          },
+                          opened, done));
                     },
-                    opened, done));
+                    base::Unretained(session), opened, done));
               },
               base::Unretained(session), base::Unretained(opened),
               base::Unretained(done)));

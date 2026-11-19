@@ -1,11 +1,11 @@
 // The library's side of a Page's IndexedDB, on the network thread: it serves
 // what the Page's IDBFactory, IDBDatabase, IDBTransaction and IDBCursor ask,
 // as the browser serves a renderer over blink.mojom's interfaces, from the
-// Session's databases of the storage key of the Page's document, which the
-// library works out itself. Where Mojo hands an interface over, the Page
-// names it by a number of its own: a connection and its upgrade's
-// transaction in its open, a transaction in its creation, a cursor in its
-// opening.
+// Session's databases of the bucket that the call names, of the storage key of
+// the Page's document, which the library works out itself. Where Mojo hands an
+// interface over, the Page names it by a number of its own: a connection and
+// its upgrade's transaction in its open, a transaction in its creation, a
+// cursor in its opening.
 //
 // Upstream: content/browser/indexed_db/instance/bucket_context.cc
 // Upstream: content/browser/indexed_db/instance/connection.cc
@@ -45,11 +45,14 @@ class PageIndexedDb {
   // Closes the Page's connections, as a renderer that goes drops them.
   ~PageIndexedDb();
 
-  // A call of the Page's context `context`, whose storage key is
-  // `storage_key`, or nullopt if its origin may not reach IndexedDB.
+  // A call of the Page's context `context`. A factory's call goes to the
+  // bucket that `bucket_key` names, as BucketKey() gives it, or nullopt if
+  // the context's origin may not reach IndexedDB; `bucket_live` says whether
+  // that bucket is still there.
   void OnCall(PageIndexedDbCall call,
               uint64_t context,
-              const std::optional<std::string>& storage_key);
+              const std::optional<std::string>& bucket_key,
+              bool bucket_live = true);
 
   // The Page's contexts `contexts` have gone: their connections close, as a
   // renderer closes a context's when it goes.
@@ -61,7 +64,11 @@ class PageIndexedDb {
 
   void OnFactoryCall(PageIndexedDbCall call,
                      uint64_t context,
-                     const std::optional<std::string>& storage_key);
+                     const std::optional<std::string>& bucket_key,
+                     bool bucket_live);
+  // A factory's call of a bucket that has been deleted, which Chrome's
+  // MissingBucketErrorEndpoint answers.
+  void FailFactoryCall(PageIndexedDbCall call);
   void RunFactoryCall(PageIndexedDbCall call, IndexedDbBucket& bucket);
   void OnDatabaseCall(PageIndexedDbCall call, IndexedDbConnection& connection);
   void OnTransactionCall(PageIndexedDbCall call);

@@ -431,9 +431,11 @@ std::string EncodeIndexedDbCall(const PageIndexedDbCall& call) {
   switch (call.op) {
     case IndexedDbCallOp::kGetDatabaseInfo:
       writer.U64(call.call);
+      writer.U64(call.bucket);
       break;
     case IndexedDbCallOp::kOpen:
       writer.U64(call.call);
+      writer.U64(call.bucket);
       writer.U64(call.connection);
       writer.U64(call.transaction);
       writer.Sized16(call.name);
@@ -441,6 +443,7 @@ std::string EncodeIndexedDbCall(const PageIndexedDbCall& call) {
       break;
     case IndexedDbCallOp::kDeleteDatabase:
       writer.U64(call.call);
+      writer.U64(call.bucket);
       writer.Sized16(call.name);
       break;
     case IndexedDbCallOp::kCreateTransaction:
@@ -617,15 +620,16 @@ base::expected<PageIndexedDbCall, std::string> ReadIndexedDbCall(
   bool valid = false;
   switch (call.op) {
     case IndexedDbCallOp::kGetDatabaseInfo:
-      valid = reader.U64(call.call);
+      valid = reader.U64(call.call) && reader.U64(call.bucket);
       break;
     case IndexedDbCallOp::kOpen:
-      valid = reader.U64(call.call) && reader.U64(call.connection) &&
-              reader.U64(call.transaction) && reader.Sized16(call.name) &&
-              reader.I64(call.version);
+      valid = reader.U64(call.call) && reader.U64(call.bucket) &&
+              reader.U64(call.connection) && reader.U64(call.transaction) &&
+              reader.Sized16(call.name) && reader.I64(call.version);
       break;
     case IndexedDbCallOp::kDeleteDatabase:
-      valid = reader.U64(call.call) && reader.Sized16(call.name);
+      valid = reader.U64(call.call) && reader.U64(call.bucket) &&
+              reader.Sized16(call.name);
       break;
     case IndexedDbCallOp::kCreateTransaction: {
       uint32_t count = 0;

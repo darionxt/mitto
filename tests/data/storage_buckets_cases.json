@@ -1,0 +1,594 @@
+{
+ "shape": {
+  "manager": "[object StorageBucketManager]",
+  "sameManager": true,
+  "managerProperties": [
+   "delete",
+   "keys",
+   "open",
+   "constructor"
+  ],
+  "managerMethods": [
+   [
+    "delete",
+    1
+   ],
+   [
+    "keys",
+    0
+   ],
+   [
+    "open",
+    1
+   ],
+   [
+    "constructor",
+    0
+   ]
+  ],
+  "bucketProperties": [
+   "name",
+   "indexedDB",
+   "caches",
+   "estimate",
+   "expires",
+   "getDirectory",
+   "persisted",
+   "setExpires",
+   "constructor",
+   "persist"
+  ],
+  "bucketMethods": [
+   [
+    "estimate",
+    0
+   ],
+   [
+    "expires",
+    0
+   ],
+   [
+    "getDirectory",
+    0
+   ],
+   [
+    "persisted",
+    0
+   ],
+   [
+    "setExpires",
+    1
+   ],
+   [
+    "constructor",
+    0
+   ],
+   [
+    "persist",
+    0
+   ]
+  ],
+  "durability": false,
+  "locks": false
+ },
+ "keysAtFirst": [
+  "ok",
+  []
+ ],
+ "openNames": {
+  "\"\"": "TypeError TypeError: The bucket name '' is not a valid name.",
+  "\"a\"": [
+   "ok",
+   "a"
+  ],
+  "\"A\"": "TypeError TypeError: The bucket name 'A' is not a valid name.",
+  "\"a-b\"": [
+   "ok",
+   "a-b"
+  ],
+  "\"a_b\"": [
+   "ok",
+   "a_b"
+  ],
+  "\"-a\"": "TypeError TypeError: The bucket name '-a' is not a valid name.",
+  "\"_a\"": "TypeError TypeError: The bucket name '_a' is not a valid name.",
+  "\"0\"": [
+   "ok",
+   "0"
+  ],
+  "\"0a\"": [
+   "ok",
+   "0a"
+  ],
+  "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"": [
+   "ok",
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"": "TypeError TypeError: The bucket name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is not a valid name.",
+  "\"é\"": "TypeError TypeError: The bucket name 'é' is not a valid name.",
+  "\"a b\"": "TypeError TypeError: The bucket name 'a b' is not a valid name.",
+  "\"default\"": [
+   "ok",
+   "default"
+  ],
+  "\"_default\"": "TypeError TypeError: The bucket name '_default' is not a valid name.",
+  "\"a.b\"": "TypeError TypeError: The bucket name 'a.b' is not a valid name.",
+  "\"a\\u0000\"": "TypeError TypeError: The bucket name 'a\u0000' is not a valid name."
+ },
+ "keysAfterNames": [
+  "ok",
+  [
+   "0",
+   "0a",
+   "a",
+   "a-b",
+   "a_b",
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "default"
+  ]
+ ],
+ "deleteNames": {
+  "\"\"": "TypeError TypeError: The bucket name  is not a valid name.",
+  "\"A\"": "TypeError TypeError: The bucket name A is not a valid name.",
+  "\"-a\"": "TypeError TypeError: The bucket name -a is not a valid name.",
+  "\"nope\"": [
+   "ok",
+   "undefined"
+  ],
+  "\"a\"": [
+   "ok",
+   "undefined"
+  ],
+  "\"default\"": [
+   "ok",
+   "undefined"
+  ]
+ },
+ "keysAfterDeletes": [
+  "ok",
+  [
+   "0",
+   "0a",
+   "a-b",
+   "a_b",
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ]
+ ],
+ "options": {
+  "quotaZero": "TypeError TypeError: The bucket's quota cannot equal zero.",
+  "quotaNegative": "TypeError TypeError: Failed to execute 'open' on 'StorageBucketManager': Failed to read the 'quota' property from 'StorageBucketOptions': Value is outside the 'unsigned long long' value range.",
+  "quotaTooLarge": "TypeError TypeError: Failed to execute 'open' on 'StorageBucketManager': Failed to read the 'quota' property from 'StorageBucketOptions': Value is outside the 'unsigned long long' value range.",
+  "quotaLargest": [
+   "ok",
+   9007199254740991
+  ],
+  "expiresPast": "TypeError TypeError: The bucket expiration is invalid.",
+  "expiresEpoch": "TypeError TypeError: The bucket expiration is invalid.",
+  "expiresNaN": "TypeError TypeError: Failed to execute 'open' on 'StorageBucketManager': Failed to read the 'expires' property from 'StorageBucketOptions': The provided double value is non-finite.",
+  "durabilityIgnored": [
+   "ok",
+   "dur"
+  ],
+  "noArguments": "TypeError TypeError: Failed to execute 'open' on 'StorageBucketManager': 1 argument required, but only 0 present.",
+  "nullName": [
+   "ok",
+   "null"
+  ],
+  "undefinedOptions": [
+   "ok",
+   "uo"
+  ],
+  "notOptions": "TypeError TypeError: Failed to execute 'open' on 'StorageBucketManager': The provided value is not of type 'StorageBucketOptions'.",
+  "deleteNoArguments": "TypeError TypeError: Failed to execute 'delete' on 'StorageBucketManager': 1 argument required, but only 0 present."
+ },
+ "optionOrder": [
+  "expires",
+  "persisted",
+  "quota"
+ ],
+ "bucket": {
+  "name": "b1",
+  "tag": "[object StorageBucket]",
+  "indexedDB": "[object IDBFactory]",
+  "sameIndexedDB": true,
+  "notWindowIndexedDB": true,
+  "caches": "[object CacheStorage]",
+  "sameCaches": true,
+  "notWindowCaches": true,
+  "persisted": [
+   "ok",
+   false
+  ],
+  "persist": [
+   "ok",
+   false
+  ],
+  "estimate": [
+   "ok",
+   {
+    "quota": 12345,
+    "usage": 0,
+    "usageDetails": {}
+   }
+  ],
+  "expiresType": [
+   "ok",
+   "number"
+  ],
+  "setExpiresPast": [
+   "ok",
+   "undefined"
+  ],
+  "expiresAfterPast": [
+   "ok",
+   "number"
+  ],
+  "setExpires": [
+   "ok",
+   "undefined"
+  ],
+  "expires": [
+   "ok",
+   1000000000000000
+  ],
+  "setExpiresFraction": [
+   "ok",
+   "undefined"
+  ],
+  "expiresFraction": [
+   "ok",
+   1000000000000000.1
+  ],
+  "setExpiresHuge": [
+   "ok",
+   "undefined"
+  ],
+  "expiresHuge": [
+   "ok",
+   {
+    "number": "Infinity"
+   }
+  ],
+  "setExpiresNegative": [
+   "ok",
+   "undefined"
+  ],
+  "expiresNegative": [
+   "ok",
+   {
+    "number": "-Infinity"
+   }
+  ],
+  "setExpiresNoArguments": "TypeError TypeError: Failed to execute 'setExpires' on 'StorageBucket': 1 argument required, but only 0 present.",
+  "setExpiresNaN": "TypeError TypeError: Failed to execute 'setExpires' on 'StorageBucket': The provided double value is non-finite.",
+  "getDirectory": [
+   "ok",
+   "[object FileSystemDirectoryHandle]"
+  ]
+ },
+ "reopened": {
+  "sameObject": false,
+  "quotaKept": [
+   "ok",
+   12345
+  ],
+  "expiresChanged": [
+   "ok",
+   2000000000000000
+  ],
+  "expiresOfOld": [
+   "ok",
+   2000000000000000
+  ]
+ },
+ "plain": [
+  "ok",
+  [
+   null,
+   false,
+   {
+    "quota": 10737418240,
+    "usage": 0,
+    "usageDetails": {}
+   }
+  ]
+ ],
+ "openWithExpiresHuge": [
+  "ok",
+  {
+   "number": "Infinity"
+  }
+ ],
+ "estimateOfKey": [
+  "ok",
+  {
+   "quota": 10737418240,
+   "usage": 0,
+   "usageDetails": {}
+  }
+ ],
+ "concurrentOpens": [
+  "ok",
+  [
+   false,
+   "cc",
+   "cc"
+  ]
+ ],
+ "persistedOption": [
+  "ok",
+  [
+   false,
+   false,
+   false
+  ]
+ ],
+ "receivers": {
+  "keys": "TypeError TypeError: Failed to execute 'keys' on 'StorageBucketManager': Illegal invocation",
+  "estimate": "TypeError TypeError: Failed to execute 'estimate' on 'StorageBucket': Illegal invocation",
+  "name": "TypeError TypeError: Illegal invocation",
+  "newBucket": "TypeError TypeError: Failed to construct 'StorageBucket': Illegal constructor",
+  "newManager": "TypeError TypeError: Failed to construct 'StorageBucketManager': Illegal constructor"
+ },
+ "keysBeforeClearing": [
+  "ok",
+  [
+   "0",
+   "0a",
+   "a-b",
+   "a_b",
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "b1",
+   "cc",
+   "dur",
+   "eh",
+   "null",
+   "ord",
+   "p",
+   "plain",
+   "qm",
+   "uo"
+  ]
+ ],
+ "apart": [
+  "ok",
+  {
+   "read": [
+    "in",
+    "out"
+   ],
+   "databases": [
+    [
+     {
+      "name": "messages",
+      "version": 1
+     }
+    ],
+    []
+   ],
+   "cacheKeys": [
+    [
+     "c"
+    ],
+    [
+     "c"
+    ],
+    []
+   ],
+   "matches": [
+    "bread",
+    "undefined",
+    "undefined"
+   ]
+  }
+ ],
+ "usage": [
+  "ok",
+  {
+   "bucketUsed": true,
+   "bucketQuotaOverUsage": 10737418240,
+   "bucketDetails": {},
+   "keyCountsBuckets": true,
+   "keyDetails": [
+    "caches",
+    "indexedDB"
+   ],
+   "keyQuotaOverUsage": 10737418240,
+   "afterDelete": [
+    0,
+    {}
+   ]
+  }
+ ],
+ "bucketQuota": [
+  "ok",
+  {
+   "put": "abort QuotaExceededError QuotaExceededError: ",
+   "error": [
+    "QuotaExceededError",
+    "QuotaExceededError",
+    "",
+    null,
+    null
+   ],
+   "cacheError": [
+    "QuotaExceededError",
+    "QuotaExceededError",
+    "Quota exceeded.",
+    null,
+    null
+   ],
+   "quota": 1000
+  }
+ ],
+ "deleted": {
+  "idbOpen": "DOMException UnknownError: Internal error.",
+  "idbDatabases": "DOMException UnknownError: Internal error.",
+  "idbDeleteDatabase": "DOMException UnknownError: Internal error.",
+  "cachesOpen": "DOMException UnknownError: Failed to execute 'open' on 'CacheStorage': Unexpected internal error.",
+  "cachesKeys": [
+   "ok",
+   []
+  ],
+  "cachesHas": "DOMException UnknownError: Failed to execute 'has' on 'CacheStorage': Unexpected internal error.",
+  "cachesDelete": [
+   "ok",
+   false
+  ],
+  "cachesMatch": [
+   "ok",
+   "undefined"
+  ],
+  "persisted": "DOMException UnknownError: Unknown error occurred while getting persisted.",
+  "persist": [
+   "ok",
+   false
+  ],
+  "estimate": "DOMException UnknownError: Unknown error occurred while getting estimate.",
+  "expires": "DOMException UnknownError: Unknown error occurred while getting expires.",
+  "setExpires": "DOMException UnknownError: Unknown error occurred while setting expires.",
+  "inTurn": [
+   "ok",
+   [
+    [
+     "persist",
+     [
+      "ok",
+      false
+     ]
+    ],
+    [
+     "estimate",
+     "DOMException UnknownError: Unknown error occurred while getting estimate."
+    ],
+    [
+     "persist",
+     "DOMException UnknownError: Unknown error occurred while requesting persist."
+    ],
+    [
+     "persisted",
+     "DOMException UnknownError: Unknown error occurred while getting persisted."
+    ],
+    [
+     "persist",
+     "DOMException UnknownError: Unknown error occurred while requesting persist."
+    ],
+    [
+     "expires",
+     "DOMException UnknownError: Unknown error occurred while getting expires."
+    ]
+   ]
+  ]
+ },
+ "reopenedAfterDelete": [
+  "ok",
+  {
+   "oldIndexedDB": "DOMException UnknownError: Internal error.",
+   "oldEstimate": "DOMException UnknownError: Unknown error occurred while getting estimate.",
+   "freshEstimate": [
+    "ok",
+    {
+     "quota": 10737418240,
+     "usage": 0,
+     "usageDetails": {}
+    }
+   ],
+   "oldPersisted": "DOMException UnknownError: Unknown error occurred while getting persisted.",
+   "freshIndexedDB": [
+    "ok",
+    "success"
+   ],
+   "keys": [
+    "dead15",
+    "small"
+   ]
+  }
+ ],
+ "usedThenDeleted": [
+  "ok",
+  {
+   "idbOpen": "DOMException UnknownError: Internal error.",
+   "idbDatabases": "DOMException UnknownError: Internal error.",
+   "cachesOpen": "DOMException UnknownError: Failed to execute 'open' on 'CacheStorage': Unexpected internal error.",
+   "cachesKeys": [
+    "ok",
+    []
+   ],
+   "cachesHas": "DOMException UnknownError: Failed to execute 'has' on 'CacheStorage': Unexpected internal error.",
+   "cachesDelete": [
+    "ok",
+    false
+   ],
+   "cachesMatch": [
+    "ok",
+    "undefined"
+   ],
+   "cacheMatch": [
+    "ok",
+    "undefined"
+   ],
+   "cacheMatchAll": [
+    "ok",
+    []
+   ],
+   "cacheKeys": "DOMException NotFoundError: Failed to execute 'keys' on 'Cache': Entry was not found.",
+   "cachePut": "DOMException NotFoundError: Failed to execute 'put' on 'Cache': Entry was not found.",
+   "cacheDelete": [
+    "ok",
+    false
+   ],
+   "reopened": [
+    "ok",
+    [
+     [],
+     []
+    ]
+   ]
+  }
+ ],
+ "openWhileDeleted": [
+  "ok",
+  [
+   "complete",
+   [
+    "close",
+    "Event",
+    false,
+    false
+   ],
+   [
+    "transaction",
+    "DOMException InvalidStateError: Failed to execute 'transaction' on 'IDBDatabase': The database connection is closing."
+   ]
+  ]
+ ],
+ "idleWhileDeleted": [
+  "ok",
+  [
+   "close"
+  ]
+ ],
+ "expiry": [
+  "ok",
+  {
+   "usable": [
+    "ok",
+    [
+     "number",
+     0
+    ]
+   ],
+   "listed": false,
+   "afterKeys": "DOMException UnknownError: Unknown error occurred while getting estimate.",
+   "oldAfterReopen": "DOMException UnknownError: Unknown error occurred while getting estimate.",
+   "reopenedExpires": [
+    "ok",
+    null
+   ]
+  }
+ ],
+ "keysAtLast": [
+  "ok",
+  []
+ ]
+}
