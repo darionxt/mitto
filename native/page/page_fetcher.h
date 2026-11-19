@@ -11,6 +11,9 @@
 
 #include <map>
 #include <memory>
+#include <set>
+#include <string>
+#include <string_view>
 
 #include "base/memory/raw_ref.h"
 #include "mitto/dom/fetcher.h"
@@ -34,6 +37,7 @@ class PageFetcher final : public Fetcher {
   // Fetcher:
   void Fetch(FetchRequestData request,
              std::unique_ptr<FetchClient> client) override;
+  bool HasFinishedResponse(std::string_view url) const override;
 
  private:
   class Request;
@@ -45,6 +49,9 @@ class PageFetcher final : public Fetcher {
   std::map<uint64_t, std::unique_ptr<Request>> open_;
   // The bytes of the bodies of the open keepalive requests.
   size_t keepalive_bytes_ = 0;
+  // The final URLs of the responses that have come whole, as the Session
+  // keeps them for the document.
+  std::set<std::string, std::less<>> finished_responses_;
 };
 
 }  // namespace mitto
