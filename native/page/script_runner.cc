@@ -20,13 +20,14 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
-#include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/idle_task_controller.h"
+#include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
@@ -218,6 +219,9 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   // What the document before asked of the Session's storage goes with it.
   if (cache_storage_host_) {
     cache_storage_host_->DocumentCommitted(committed.document);
+  }
+  if (storage_bucket_host_) {
+    storage_bucket_host_->DocumentCommitted(committed.document);
   }
   if (indexed_db_host_) {
     indexed_db_host_->DocumentCommitted(committed.document);
@@ -446,6 +450,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
     document->SetCookieJar(cookie_jar_);
     document->SetCacheStorageHost(cache_storage_host_);
     document->SetIndexedDbHost(indexed_db_host_);
+    document->SetStorageBucketHost(storage_bucket_host_);
   }
   Window::Current().SetDocument(document);
   return *document;

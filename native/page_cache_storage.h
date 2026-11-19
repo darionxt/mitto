@@ -46,12 +46,15 @@ class PageCacheStorage {
   PageCacheStorage& operator=(const PageCacheStorage&) = delete;
   ~PageCacheStorage();
 
-  // A call of the document whose storage key is `storage_key`, or nullopt if
-  // its origin may not reach the Cache API.
-  // `context` is the Page's context that asks, whose puts fail when it goes.
+  // A call of the Page's context `context`, whose puts fail when it goes.
+  // CacheStorage's calls go to the bucket that `storage_key` names, as
+  // BucketKey() gives it, and navigator.storage.estimate() to the storage
+  // key, or nullopt if the context's origin may not reach the Cache API.
+  // `bucket_live` says whether the bucket is still there.
   void OnCall(PageCacheStorageCall call,
               uint64_t context,
-              const std::optional<std::string>& storage_key);
+              const std::optional<std::string>& storage_key,
+              bool bucket_live = true);
 
   // The first number that no cache or stored body has had.
   uint64_t NextNumber() const;
@@ -68,6 +71,10 @@ class PageCacheStorage {
   // reach the Cache API.
   bool Admit(uint64_t question, const std::optional<std::string>& storage_key);
   CacheStorageCache* FindCache(uint64_t cache);
+  // Whether a cache's call names a cache of a bucket that has been deleted.
+  bool CacheBucketGone(const PageCacheStorageCall& call) const;
+  // Answers a call of a bucket that has been deleted, or of one of its caches.
+  void AnswerGoneBucket(const PageCacheStorageCall& call);
 
   void OnOpen(PageCacheStorageCall call, const std::string& storage_key);
   void OnMatch(PageCacheStorageCall call, const std::string& storage_key);
@@ -99,6 +106,8 @@ class PageCacheStorage {
   uint64_t last_question_ = 0;
   // The caches the Page has open, by the number the library gave each.
   std::map<uint64_t, CacheStorageCacheHandle> caches_;
+  // The key of the bucket of each, as BucketKey() gives it.
+  std::map<uint64_t, std::string> cache_buckets_;
   uint64_t next_cache_ = 1;
   // The bodies of puts that wait for the Page, by the Page's numbers.
   std::map<uint64_t, PutBody*> put_bodies_;

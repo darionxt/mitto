@@ -18,6 +18,7 @@
 #include "mitto/dom/permissions.h"
 #include "mitto/dom/plugin_array.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/storage_bucket_manager.h"
 #include "mitto/dom/storage_manager.h"
 #include "mitto/dom/window.h"
 #include "v8/include/v8-isolate.h"
@@ -83,6 +84,7 @@ void Navigator::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(permissions_);
   visitor->Trace(geolocation_);
   visitor->Trace(storage_);
+  visitor->Trace(storage_buckets_);
   visitor->Trace(keyboard_);
   visitor->Trace(media_devices_object_);
   visitor->Trace(locks_);
@@ -242,6 +244,14 @@ StorageManager* Navigator::Storage() {
     storage_ = StorageManager::Create();
   }
   return storage_.Get();
+}
+
+// StorageBucketManager::storageBuckets(): the navigator's supplement.
+StorageBucketManager* Navigator::StorageBuckets() {
+  if (!storage_buckets_) {
+    storage_buckets_ = StorageBucketManager::Create();
+  }
+  return storage_buckets_.Get();
 }
 
 CredentialsContainer* Navigator::Credentials() {

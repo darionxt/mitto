@@ -253,6 +253,9 @@ struct PageIndexedDbCall {
   IndexedDbCallOp op = IndexedDbCallOp::kGetDatabaseInfo;
   // A factory request's number, or the number of a call that is answered.
   uint64_t call = 0;
+  // A factory's call's bucket, by the number that the Session gave its
+  // StorageBucket, or 0 for the storage key's default bucket.
+  uint64_t bucket = 0;
   uint64_t connection = 0;
   uint64_t transaction = 0;
   uint64_t cursor = 0;

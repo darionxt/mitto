@@ -29,6 +29,7 @@
 #include "mitto/page_channel.h"
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
+#include "mitto/page_storage_buckets.h"
 #include "mitto/request_client.h"
 #include "mitto/request_options.h"
 #include "mitto/storage/storage_key.h"
@@ -422,6 +423,25 @@ class PageHost final : public PageChannel::Delegate {
   void OnIndexedDb(PageIndexedDbCall call,
                    uint64_t context_id,
                    const GURL& document_url);
+  // What a context's Storage Buckets API asks, which PageStorageBuckets
+  // serves, with the storage key of the context that asks.
+  void OnStorageBuckets(PageStorageBucketCall call,
+                        uint64_t context_id,
+                        const GURL& document_url);
+  // The storage key of context `context_id`'s IndexedDB and Cache API, as
+  // ContextSerializedStorageKey() gives it, if the context is a secure one,
+  // as the Cache API and the Storage Buckets API need.
+  std::optional<std::string> SecureContextStorageKey(uint64_t context_id,
+                                                     const GURL& url);
+  // Where a call that names bucket `bucket` of context `context_id` goes, of
+  // the storage key `storage_key`: its default bucket for 0, made if it has
+  // none, as Chrome makes it once IndexedDB or the Cache API reaches it.
+  // None, after the Page has been refused, for a bucket that it was not
+  // given.
+  std::optional<PageStorageBuckets::Target> LocateBucket(
+      uint64_t bucket,
+      uint64_t context_id,
+      const std::string& storage_key);
   // What a document's localStorage and sessionStorage ask, as Chrome's
   // storage service answers a renderer: an area takes its storage key from the
   // URL that the library loaded the document at that binds it.
@@ -629,6 +649,9 @@ class PageHost final : public PageChannel::Delegate {
   uint64_t next_cache_storage_number_ = 1;
   // The document's IndexedDB, from its first call until the Page goes.
   std::unique_ptr<PageIndexedDb> indexed_db_;
+  // The Storage Buckets API of the Page's contexts, from its first call until
+  // the Page goes.
+  std::unique_ptr<PageStorageBuckets> storage_buckets_;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 
