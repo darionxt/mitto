@@ -16,6 +16,8 @@
 
 #include "base/functional/callback.h"
 #include "mitto/dom/fetcher.h"
+#include "mitto/dom/resource.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/subresource_integrity.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/garbage-collected.h"
@@ -55,7 +57,8 @@ std::optional<std::string> RefusedAsScript(const GURL& url,
 // KURL::ElidedString(), for a URL in a console message.
 std::string ElidedUrl(const GURL& url);
 
-class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
+class PendingScript final : public cppgc::GarbageCollected<PendingScript>,
+                            public ResourceClient {
  public:
   // An inline script of `element`, which is ready, whose errors name
   // `source_url`, empty for a script that the parser did not insert, and
@@ -66,22 +69,23 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
                                      GURL source_url,
                                      int start_line,
                                      int start_column);
-  // `element`'s script at `url`, which this fetches through its window's
-  // Fetcher, with the mode, credentials mode, referrer policy and priority
-  // that `request` has, as a script that blocks rendering if
-  // `render_blocking`, checks against `integrity`, and decodes as `encoding`
-  // unless its response or a byte order mark names another.
+  // `element`'s script that `params` asks for, which this fetches through its
+  // document's ResourceFetcher, with the mode, credentials mode, referrer
+  // policy and priority hint that it has, as a script that blocks rendering
+  // if it says so, and checks against its integrity metadata. It decodes as
+  // the encoding of the request that made the resource, which a request of
+  // the same URL may have made before, unless its response or a byte order
+  // mark names another.
   static PendingScript* Fetch(ScriptElementBase& element,
-                              const GURL& url,
-                              FetchRequestData request,
-                              IntegrityMetadataSet integrity,
-                              std::string encoding,
-                              bool render_blocking);
+                              const FetchParameters& params);
 
   PendingScript(ScriptElementBase& element, bool is_external);
   ~PendingScript();
 
-  void Trace(cppgc::Visitor* visitor) const;
+  void Trace(cppgc::Visitor* visitor) const override;
+
+  // ResourceClient:
+  void NotifyFinished(Resource& resource) override;
 
   Element* element() const { return element_.Get(); }
   ScriptSchedulingType scheduling_type() const { return scheduling_type_; }
@@ -108,8 +112,6 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
   void Dispose();
 
  private:
-  class FetchClient;
-  friend class FetchClient;
 
   enum class State {
     kWaitingForResource,
@@ -117,16 +119,7 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
     kErrorOccurred,
   };
 
-  void StartFetch(const GURL& url,
-                  FetchRequestData request,
-                  bool render_blocking);
-  // ClassicPendingScript::NotifyFinished(): the checks of the response.
-  void NotifyFinished(int net_error,
-                      int status,
-                      const GURL& response_url,
-                      const std::string& headers,
-                      bool opaque,
-                      std::string body);
+  void StartFetch(const FetchParameters& params);
   void AdvanceReadyState(State state);
 
   cppgc::Member<Element> element_;
@@ -146,7 +139,7 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
   bool muted_errors_ = false;
   GURL fetch_url_;
   IntegrityMetadataSet integrity_;
-  std::string encoding_;
+  cppgc::Member<Resource> resource_;
 };
 
 }  // namespace mitto

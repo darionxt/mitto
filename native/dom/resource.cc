@@ -8,6 +8,44 @@
 #include "mitto/dom/resource_fetcher.h"
 
 namespace mitto {
+namespace {
+
+// What a request's network error would be named if the Page program, with no
+// //net, could name it: a response of an error status that a resource does
+// not ignore fails as ResourceError::HttpError(),
+// net::ERR_HTTP_RESPONSE_CODE_FAILURE.
+constexpr int kHttpResponseCodeFailure = -379;
+
+// Resource::ShouldIgnoreHTTPStatusCodeErrors(): an image takes any status.
+bool IgnoresHttpStatusErrors(ResourceType type) {
+  return type == ResourceType::kImage;
+}
+
+bool HasMetadata(const std::vector<IntegrityMetadata>& set,
+                 const IntegrityMetadata& metadata) {
+  return std::ranges::any_of(set, [&metadata](const IntegrityMetadata& item) {
+    return item.algorithm == metadata.algorithm && item.value == metadata.value;
+  });
+}
+
+bool SameMetadata(const std::vector<IntegrityMetadata>& a,
+                  const std::vector<IntegrityMetadata>& b) {
+  return std::ranges::all_of(a,
+                             [&b](const IntegrityMetadata& item) {
+                               return HasMetadata(b, item);
+                             }) &&
+         std::ranges::all_of(b, [&a](const IntegrityMetadata& item) {
+           return HasMetadata(a, item);
+         });
+}
+
+}  // namespace
+
+bool IntegritySetsEqual(const IntegrityMetadataSet& a,
+                        const IntegrityMetadataSet& b) {
+  return SameMetadata(a.hashes, b.hashes) &&
+         SameMetadata(a.public_keys, b.public_keys);
+}
 
 Resource::Resource(ResourceType type,
                    GURL url,
@@ -57,8 +95,8 @@ bool Resource::HasClients() const {
                              [](ResourceClient* client) { return client; });
 }
 
-void Resource::ResponseReceived(int status, std::string mime_type) {
-  http_status_ = status;
+void Resource::ResponseReceived(FetchResponseHead head, std::string mime_type) {
+  response_ = std::move(head);
   mime_type_ = std::move(mime_type);
 }
 
@@ -75,24 +113,27 @@ void Resource::Finish(int net_error) {
   if (!IsLoading()) {
     return;
   }
+  // ResourceLoader::DidReceiveResponse(): a status of 400 or more fails a
+  // resource that does not ignore it.
+  if (!net_error && response_.status >= 400 &&
+      !IgnoresHttpStatusErrors(type_)) {
+    net_error = kHttpResponseCodeFailure;
+  }
   if (net_error) {
     status_ = ResourceStatus::kLoadError;
+    net_error_ = net_error;
     // Nothing reads what came of a load that failed.
     body_.clear();
     body_.shrink_to_fit();
+  } else if (type_ == ResourceType::kImage) {
+    // An image fails as a decode error when no decoder reads its header.
+    image_ = ReadImageHeader(body_, mime_type_);
+    status_ = image_ ? ResourceStatus::kCached : ResourceStatus::kDecodeError;
+    // The Page decodes no pixels, so nothing reads the body again.
+    body_.clear();
+    body_.shrink_to_fit();
   } else {
-    switch (type_) {
-      case ResourceType::kImage:
-        // An image ignores its response's status, as ImageResource does,
-        // and fails as a decode error when no decoder reads its header.
-        image_ = ReadImageHeader(body_, mime_type_);
-        status_ =
-            image_ ? ResourceStatus::kCached : ResourceStatus::kDecodeError;
-        // The Page decodes no pixels, so nothing reads the body again.
-        body_.clear();
-        body_.shrink_to_fit();
-        break;
-    }
+    status_ = ResourceStatus::kCached;
   }
   for (ResourceClient* client : clients_.ToVector()) {
     if (client) {

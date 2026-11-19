@@ -15,6 +15,7 @@
 #include "mitto/dom/document_write_intervention.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/script_element_base.h"
 #include "mitto/dom/subresource_integrity.h"
 #include "mitto/dom/window.h"
@@ -126,28 +127,29 @@ void QueueErrorEvent(ScriptElementBase& element) {
 // blocking rendering move.
 // Upstream: third_party/blink/renderer/core/script/script_loader.cc
 // Upstream: third_party/blink/renderer/core/html/cross_origin_attribute.cc
-FetchRequestData ClassicScriptRequest(ScriptElementBase& element,
-                                      bool parser_inserted,
-                                      bool render_blocking) {
-  FetchRequestData request;
+FetchParameters ClassicScriptParams(ScriptElementBase& element,
+                                    const GURL& url,
+                                    bool parser_inserted,
+                                    bool render_blocking) {
+  FetchParameters params;
+  params.url = url;
+  params.type = ResourceType::kScript;
   if (const std::optional<std::u16string> cross_origin =
           element.CrossOriginAttributeValue()) {
-    request.mode = FetchMode::kCors;
-    request.credentials =
+    params.mode = FetchMode::kCors;
+    params.credentials =
         base::EqualsCaseInsensitiveASCII(*cross_origin, u"use-credentials")
             ? FetchCredentialsMode::kInclude
             : FetchCredentialsMode::kSameOrigin;
   }
-  request.referrer_policy = FetchReferrerPolicyFromString(
+  params.referrer_policy = FetchReferrerPolicyFromString(
       element.ReferrerPolicyAttributeValue().value_or(u""));
-  const bool lazy = !parser_inserted || element.AsyncAttributeValue() ||
-                    element.DeferAttributeValue();
-  request.priority = ComputeFetchPriority(
-      lazy,
-      FetchPriorityHintFromAttribute(
-          element.FetchPriorityAttributeValue().value_or(u"")),
-      render_blocking);
-  return request;
+  params.lazy = !parser_inserted || element.AsyncAttributeValue() ||
+                element.DeferAttributeValue();
+  params.priority_hint = FetchPriorityHintFromAttribute(
+      element.FetchPriorityAttributeValue().value_or(u""));
+  params.render_blocking = render_blocking;
+  return params;
 }
 
 }  // namespace
@@ -360,12 +362,13 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
             !parser_inserted_ || ScriptElement().AsyncAttributeValue() ||
                 ScriptElement().DeferAttributeValue(),
             element_document);
-        prepared_pending_script_ = PendingScript::Fetch(
-            ScriptElement(), url,
-            ClassicScriptRequest(ScriptElement(), parser_inserted_,
-                                 potentially_render_blocking),
-            std::move(integrity), std::move(encoding),
-            potentially_render_blocking);
+        FetchParameters params =
+            ClassicScriptParams(ScriptElement(), url, parser_inserted_,
+                                potentially_render_blocking);
+        params.integrity = std::move(integrity);
+        params.charset = std::move(encoding);
+        prepared_pending_script_ =
+            PendingScript::Fetch(ScriptElement(), params);
         break;
     }
   } else {

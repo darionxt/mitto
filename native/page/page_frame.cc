@@ -10,6 +10,7 @@
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/document_loader.h"
+#include "mitto/page/page_fetcher.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cookie_jar.h"
@@ -69,6 +70,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   page_request.url = request.url.spec();
   page_request.user_activation = request.user_activation;
   page_request.reload = request.reload;
+  page_request.referrer_policy = ToPageReferrerPolicy(request.referrer_policy);
   const uint64_t number =
       requests_->StartNavigation(std::move(page_request), *provisional_);
   CHECK_EQ(number, provisional_->number());

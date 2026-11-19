@@ -679,7 +679,11 @@ v8::Local<v8::Promise> Window::Fetch(
     data.credentials = request->credentials();
   }
   data.referrer = request->referrer();
-  data.referrer_policy = request->referrer_policy();
+  // A request whose policy is the empty string goes with the document's.
+  data.referrer_policy =
+      request->referrer_policy() == FetchReferrerPolicy::kDefault
+          ? GetDocument().GetReferrerPolicy()
+          : request->referrer_policy();
   data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
                                        /*render_blocking=*/false);
   data.keepalive = request->keepalive();

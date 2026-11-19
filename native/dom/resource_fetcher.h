@@ -11,10 +11,12 @@
 #define MITTO_DOM_RESOURCE_FETCHER_H_
 
 #include <optional>
+#include <string>
 
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/resource.h"
+#include "mitto/dom/subresource_integrity.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/member.h"
@@ -60,6 +62,12 @@ struct FetchParameters {
   // load-blocking type does in Blink, but for an image that was lazy, which
   // FetchParameters::SetLazyImageNonBlocking() lets go.
   bool load_blocking = true;
+  // The integrity metadata that its element gives, which only a resource
+  // fetched with the same serves.
+  IntegrityMetadataSet integrity;
+  // The encoding that decodes its text unless its response or a byte order
+  // mark names another, as FetchParameters::SetCharset() gives a resource.
+  std::string charset;
 };
 
 class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
@@ -94,6 +102,10 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // The fetch of `resource` has ended, and lets the load event go if it held
   // it back.
   void LoadFinished(Resource& resource);
+  // MakePreloadedResourceBlockIfNeeded(): a link preload that a request of
+  // a load-blocking type takes while it loads holds the load event back.
+  void MakePreloadedResourceBlockIfNeeded(Resource& resource,
+                                          const FetchParameters& params);
   // Blink's AllClientsAndObserversRemoved(): a load that nothing uses is
   // cancelled from a task, unless something uses it by then.
   void ScheduleCancel(Resource& resource);

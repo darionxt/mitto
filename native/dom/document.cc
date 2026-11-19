@@ -12,6 +12,7 @@
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -1356,6 +1357,56 @@ void Document::UpdateBaseUrl() {
   if (!base_url_.is_valid()) {
     base_url_ = GURL();
   }
+}
+
+void Document::ParseAndSetReferrerPolicy(std::u16string_view policy,
+                                         ReferrerPolicySource source) {
+  FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+  bool policy_is_valid = false;
+  if (source == ReferrerPolicySource::kHttpHeader) {
+    // SecurityPolicy::ReferrerPolicyFromHeaderValue(): the last token that
+    // names a policy, and none at all if a token is not letters and hyphens.
+    policy_is_valid = true;
+    for (const std::u16string_view token : base::SplitStringPiece(
+             policy, u",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
+      const FetchReferrerPolicy parsed = FetchReferrerPolicyFromString(token);
+      if (parsed != FetchReferrerPolicy::kDefault) {
+        referrer_policy = parsed;
+      } else if (!std::ranges::all_of(token, [](char16_t c) {
+                   return base::IsAsciiAlpha(c) || c == '-';
+                 })) {
+        policy_is_valid = false;
+        break;
+      }
+    }
+    policy_is_valid =
+        policy_is_valid && referrer_policy != FetchReferrerPolicy::kDefault;
+  } else {
+    referrer_policy = FetchReferrerPolicyFromStringWithLegacyKeywords(policy);
+    policy_is_valid = referrer_policy != FetchReferrerPolicy::kDefault;
+  }
+  if (policy_is_valid) {
+    referrer_policy_ = referrer_policy;
+    return;
+  }
+  // A header that names no policy leaves the document's, with no message.
+  if (source == ReferrerPolicySource::kHttpHeader || !window_) {
+    return;
+  }
+  const std::string reason =
+      policy.find(',') != std::u16string_view::npos
+          ? "A policy specified by a meta element must contain only one token."
+          : base::StrCat(
+                {"The value '", base::UTF16ToUTF8(policy),
+                 "' is not one of 'always', 'default', 'never', "
+                 "'origin-when-crossorigin', 'no-referrer', "
+                 "'no-referrer-when-downgrade', 'origin', "
+                 "'origin-when-cross-origin', 'same-origin', 'strict-origin', "
+                 "'strict-origin-when-cross-origin', or 'unsafe-url'."});
+  window_->AddConsoleMessage(
+      ConsoleLevel::kError,
+      base::StrCat({"Failed to set referrer policy: ", reason,
+                    " The referrer policy has been left unchanged."}));
 }
 
 ResourceFetcher& Document::Fetcher() {

@@ -22,6 +22,13 @@ bool IsSupportedMimeType(std::string_view mime_type);
 // takes, JPEG XL among them, as kJXLImageFormat is on.
 bool IsSupportedImageMimeType(std::string_view mime_type);
 
+// blink::IsSupportedJavascriptMimeType(), compared without case.
+bool IsSupportedJavaScriptMimeType(std::string_view mime_type);
+
+// MIMETypeRegistry::IsSupportedFontMIMEType(): font/ and woff, woff2, otf,
+// ttf or sfnt, in any case.
+bool IsSupportedFontMimeType(std::string_view mime_type);
+
 // MIMETypeRegistry::IsSupportedImagePrefixedMIMEType(), which a source
 // element's type is held to: an image type, or SVG's.
 bool IsSupportedImagePrefixedMimeType(std::string_view mime_type);

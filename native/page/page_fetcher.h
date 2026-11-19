@@ -18,6 +18,10 @@
 
 namespace mitto {
 
+// The byte of a request's referrer policy, where kDefault leaves the
+// document's to the Session.
+PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy);
+
 class PageFetcher final : public Fetcher {
  public:
   explicit PageFetcher(PageRequests& requests);

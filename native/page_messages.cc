@@ -782,12 +782,14 @@ std::optional<std::string> CheckRequestModes(const PageRequest& request) {
       }
       return std::nullopt;
     case PageRequestKind::kXhr:
-    case PageRequestKind::kFont:
     case PageRequestKind::kModule:
       if (!is_default_mode && mode != PageRequestMode::kCors) {
         return "a request in a mode that its kind never has";
       }
       return std::nullopt;
+    // A font that a link preloads without crossorigin goes in mode no-cors,
+    // where @font-face's goes in cors.
+    case PageRequestKind::kFont:
     case PageRequestKind::kScript:
     case PageRequestKind::kImage:
     case PageRequestKind::kStyle:

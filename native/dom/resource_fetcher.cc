@@ -35,6 +35,12 @@ constexpr int kBoostedImageTarget = 5;
 // TypeToPriority().
 FetchPriority TypeToPriority(ResourceType type) {
   switch (type) {
+    case ResourceType::kCSSStyleSheet:
+    case ResourceType::kFont:
+      return FetchPriority::kVeryHigh;
+    case ResourceType::kScript:
+    case ResourceType::kRaw:
+      return FetchPriority::kHigh;
     case ResourceType::kImage:
       return FetchPriority::kLow;
   }
@@ -43,6 +49,7 @@ FetchPriority TypeToPriority(ResourceType type) {
 // AdjustPriorityWithPriorityHintAndRenderBlocking().
 FetchPriority AdjustPriorityWithPriorityHintAndRenderBlocking(
     FetchPriority priority,
+    ResourceType type,
     FetchPriorityHint hint,
     bool render_blocking) {
   switch (hint) {
@@ -52,7 +59,13 @@ FetchPriority AdjustPriorityWithPriorityHintAndRenderBlocking(
       priority = std::max(priority, FetchPriority::kHigh);
       break;
     case FetchPriorityHint::kLow:
-      priority = std::min(priority, FetchPriority::kLow);
+      // Early render-blocking CSS goes down to kHigh only.
+      if (type == ResourceType::kCSSStyleSheet &&
+          priority == FetchPriority::kVeryHigh) {
+        priority = FetchPriority::kHigh;
+      } else {
+        priority = std::min(priority, FetchPriority::kLow);
+      }
       break;
   }
   if (render_blocking) {
@@ -75,6 +88,42 @@ FetchDestination DestinationOf(ResourceType type) {
   switch (type) {
     case ResourceType::kImage:
       return FetchDestination::kImage;
+    case ResourceType::kCSSStyleSheet:
+      return FetchDestination::kStyle;
+    case ResourceType::kScript:
+      return FetchDestination::kScript;
+    case ResourceType::kFont:
+      return FetchDestination::kFont;
+    case ResourceType::kRaw:
+      return FetchDestination::kEmpty;
+  }
+}
+
+// The mode and credentials mode of a request of `type`'s Request Kind that
+// names none: @font-face's for a font, and fetch()'s for a raw request.
+std::pair<FetchMode, FetchCredentialsMode> KindModes(ResourceType type) {
+  switch (type) {
+    case ResourceType::kImage:
+    case ResourceType::kCSSStyleSheet:
+    case ResourceType::kScript:
+      return {FetchMode::kNoCors, FetchCredentialsMode::kInclude};
+    case ResourceType::kFont:
+    case ResourceType::kRaw:
+      return {FetchMode::kCors, FetchCredentialsMode::kSameOrigin};
+  }
+}
+
+// Resource::IsLoadEventBlockingResourceType(): a script holds the load event
+// back through its element instead.
+bool IsLoadEventBlockingResourceType(ResourceType type) {
+  switch (type) {
+    case ResourceType::kImage:
+    case ResourceType::kCSSStyleSheet:
+    case ResourceType::kFont:
+      return true;
+    case ResourceType::kScript:
+    case ResourceType::kRaw:
+      return false;
   }
 }
 
@@ -96,10 +145,10 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
     controller_ = &controller;
   }
   void OnResponseStarted(const FetchResponseHead& head) override {
-    resource_->ResponseReceived(
-        head.status,
+    std::string mime_type =
         GetMimeTypeAndCharset(HeaderField(head.headers, "content-type"))
-            .mime_type);
+            .mime_type;
+    resource_->ResponseReceived(head, std::move(mime_type));
   }
   void OnResponseBody(std::string bytes) override {
     resource_->AppendData(bytes);
@@ -156,6 +205,12 @@ Resource* ResourceFetcher::CachedResource(const GURL& url) const {
 
 bool ResourceFetcher::CanUse(const Resource& existing,
                              const FetchParameters& params) const {
+  // MustRefetchDueToIntegrityMetadata(): a request with integrity metadata
+  // takes only a resource fetched with the same.
+  if (!params.integrity.empty() &&
+      !IntegritySetsEqual(existing.Integrity(), params.integrity)) {
+    return false;
+  }
   if (existing.GetType() != params.type) {
     return false;
   }
@@ -168,20 +223,28 @@ bool ResourceFetcher::CanUse(const Resource& existing,
       existing.Credentials() != params.credentials) {
     return false;
   }
-  // During the initial load, one request for a URL, even one that failed.
-  const Document* const document = document_.Get();
-  if (document && !document->LoadEventFinished()) {
-    return true;
-  }
-  if (existing.IsLoading()) {
-    return true;
+  if (params.type != ResourceType::kRaw) {
+    // During the initial load, one request for a URL, even one that failed.
+    const Document* const document = document_.Get();
+    if (document && !document->LoadEventFinished()) {
+      return true;
+    }
+    if (existing.IsLoading()) {
+      return true;
+    }
   }
   if (existing.ErrorOccurred()) {
     return false;
   }
   // Images are reused without cache validation, even with no-store, as
   // kReuseNoStoreImageOnSameSrcReassignment has it.
-  return existing.GetType() == ResourceType::kImage;
+  if (existing.GetType() == ResourceType::kImage) {
+    return true;
+  }
+  // An unused preload is the one a request matches, as MatchPreload() takes
+  // it. What the HTTP cache allows of any other is the Session's: a Known
+  // Gap for no-store and validation in the memory cache.
+  return existing.IsUnusedPreload();
 }
 
 Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
@@ -192,10 +255,17 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
   }
   Resource* const existing = CachedResource(params.url);
   if (existing && CanUse(*existing, params)) {
+    if (existing->IsUnusedPreload() && !params.is_link_preload) {
+      existing->SetIsUnusedPreload(false);
+      MakePreloadedResourceBlockIfNeeded(*existing, params);
+    }
     return existing;
   }
   Resource* const resource = bindings::MakeGarbageCollected<Resource>(
       params.type, params.url, params.mode, params.credentials);
+  resource->SetIntegrity(params.integrity);
+  resource->SetCharset(params.charset);
+  resource->SetIsUnusedPreload(params.is_link_preload);
   resource->SetFetcher(this);
   resources_.push_back(resource);
   if (params.url.SchemeIs(url::kDataScheme)) {
@@ -206,7 +276,12 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
       resource->Finish(kInvalidUrl);
       return resource;
     }
-    resource->ResponseReceived(200, std::move(data->mime_type));
+    FetchResponseHead head;
+    head.status = 200;
+    head.status_text = "OK";
+    head.url = params.url.spec();
+    head.headers = "Content-Type: " + data->content_type + "\n";
+    resource->ResponseReceived(std::move(head), std::move(data->mime_type));
     resource->AppendData(data->body);
     resource->Finish(0);
   } else {
@@ -227,17 +302,29 @@ void ResourceFetcher::StartLoad(Resource& resource,
   request.method = "GET";
   request.url = params.url.spec();
   request.destination = DestinationOf(params.type);
-  request.mode = params.mode;
-  request.credentials = params.credentials;
-  request.referrer_policy = params.referrer_policy;
+  // Its modes go only where they are not its kind's own.
+  const auto [kind_mode, kind_credentials] = KindModes(params.type);
+  if (params.mode != kind_mode) {
+    request.mode = params.mode;
+  }
+  if (params.credentials != kind_credentials) {
+    request.credentials = params.credentials;
+  }
+  // One that leaves its referrer policy to the document goes with the
+  // document's.
+  request.referrer_policy =
+      params.referrer_policy == FetchReferrerPolicy::kDefault
+          ? document_->GetReferrerPolicy()
+          : params.referrer_policy;
   const FetchPriority priority = ComputeLoadPriority(params);
   if (priority != TypeToPriority(params.type)) {
     request.priority = priority;
   }
   request.render_blocking = params.render_blocking;
-  // Resource::IsLoadEventBlockingResourceType(), for a fetch that is no link
-  // preload and that nothing lets go.
-  if (params.load_blocking && !params.is_link_preload) {
+  // A fetch of a type that blocks the load event holds it back, unless it is
+  // a link preload or nothing lets it go.
+  if (IsLoadEventBlockingResourceType(params.type) && params.load_blocking &&
+      !params.is_link_preload) {
     blocking_.push_back(&resource);
     document_->IncrementLoadEventDelayCount();
   }
@@ -245,21 +332,6 @@ void ResourceFetcher::StartLoad(Resource& resource,
   resource.SetCancelLoad(
       base::BindOnce(&ResourceLoader::Cancel, loader->GetWeakPtr()));
   fetcher->Fetch(std::move(request), std::move(loader));
-}
-
-void ResourceFetcher::LoadFinished(Resource& resource) {
-  bool was_blocking = false;
-  blocking_.EraseIf([&resource, &was_blocking](Resource* item) {
-    if (was_blocking || item != &resource) {
-      return false;
-    }
-    was_blocking = true;
-    return true;
-  });
-  Document* const document = document_.Get();
-  if (was_blocking && document) {
-    document->DecrementLoadEventDelayCount();
-  }
 }
 
 void ResourceFetcher::ScheduleCancel(Resource& resource) {
@@ -297,6 +369,35 @@ void ResourceFetcher::CancelLoad(Resource& resource) {
   std::move(cancel).Run();
 }
 
+void ResourceFetcher::MakePreloadedResourceBlockIfNeeded(
+    Resource& resource,
+    const FetchParameters& params) {
+  // A preload that a request of a load-blocking type matches while it loads
+  // holds the load event back from then on.
+  if (!resource.IsLoading() || !IsLoadEventBlockingResourceType(params.type)) {
+    return;
+  }
+  blocking_.push_back(&resource);
+  if (Document* const document = document_.Get()) {
+    document->IncrementLoadEventDelayCount();
+  }
+}
+
+void ResourceFetcher::LoadFinished(Resource& resource) {
+  bool was_blocking = false;
+  blocking_.EraseIf([&resource, &was_blocking](Resource* item) {
+    if (was_blocking || item != &resource) {
+      return false;
+    }
+    was_blocking = true;
+    return true;
+  });
+  Document* const document = document_.Get();
+  if (was_blocking && document) {
+    document->DecrementLoadEventDelayCount();
+  }
+}
+
 FetchPriority ResourceFetcher::ComputeLoadPriority(
     const FetchParameters& params) {
   FetchPriority priority = TypeToPriority(params.type);
@@ -305,11 +406,31 @@ FetchPriority ResourceFetcher::ComputeLoadPriority(
   if (params.type == ResourceType::kImage && !params.is_link_preload) {
     image_fetched_ = true;
   }
-  if (params.lazy) {
+  const bool late_document_from_preload_scanner =
+      params.speculative_preload_type == SpeculativePreloadType::kInDocument &&
+      image_fetched_;
+  // A preloaded font does not take precedence over critical style sheets or
+  // parser-blocking scripts.
+  if (params.type == ResourceType::kFont && params.is_link_preload) {
+    priority = FetchPriority::kHigh;
+  }
+  if (params.type == ResourceType::kScript) {
+    // A lazy classic script, async, deferred or inserted, is kLow, and a
+    // late one that the scanner found kMedium.
+    if (params.lazy) {
+      priority = FetchPriority::kLow;
+    } else if (late_document_from_preload_scanner) {
+      priority = FetchPriority::kMedium;
+    }
+  } else if (params.type == ResourceType::kCSSStyleSheet &&
+             late_document_from_preload_scanner) {
+    // A late style sheet that the scanner found blocks no rendering.
+    priority = FetchPriority::kMedium;
+  } else if (params.lazy) {
     priority = FetchPriority::kVeryLow;
   }
   priority = AdjustPriorityWithPriorityHintAndRenderBlocking(
-      priority, params.priority_hint, params.render_blocking);
+      priority, params.type, params.priority_hint, params.render_blocking);
   // AdjustImagePriority(): the first five images that the preload scanner
   // finds in the document and that are not small go at kMedium.
   if (params.type == ResourceType::kImage) {

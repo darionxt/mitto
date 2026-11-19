@@ -158,6 +158,15 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       document_->SetHasHeaderDeliveredContentSecurityPolicy(true);
     }
   }
+  // The response's Referrer-Policy, which the browser's policy container
+  // gives the document as it commits.
+  const std::string referrer_policy =
+      HeaderField(response.headers, "referrer-policy");
+  if (!referrer_policy.empty()) {
+    document_->ParseAndSetReferrerPolicy(
+        base::UTF8ToUTF16(referrer_policy),
+        Document::ReferrerPolicySource::kHttpHeader);
+  }
   // DocumentLoader::CreateParserPostCommit(): the response's Refresh, before
   // anything of the body. A header's value is Latin-1.
   const std::string refresh = HeaderField(response.headers, "refresh");

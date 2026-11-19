@@ -21,6 +21,8 @@ enum class FetchDestination {
   kEmpty,
   kScript,
   kImage,
+  kStyle,
+  kFont,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.
