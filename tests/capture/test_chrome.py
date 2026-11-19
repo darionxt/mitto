@@ -106,6 +106,8 @@ _DOCUMENT_SITE_MODE_AND_DESTINATION = {
     "module_static_import": ("same-origin", *_MODULE_SCRIPT),
     "module_dynamic_import": ("same-origin", *_MODULE_SCRIPT),
     "module_cross_site": ("cross-site", *_MODULE_SCRIPT),
+    "module_json": ("same-origin", "cors", "json"),
+    "module_text": ("same-origin", "cors", "text"),
     "xhr_get": ("same-origin", *_CORS),
     "xhr_get_cross_site": ("cross-site", *_CORS),
     "xhr_post_text": ("same-origin", *_CORS),
@@ -333,7 +335,11 @@ def method_and_target(form: dict[str, Json], case: str) -> tuple[str, str]:
 def test_each_document_case_is_what_it_says_it_is(
     chrome: str, name: str, case: str, expected: tuple[str, str, str]
 ) -> None:
-    headers = headers_of(recorded(chrome, name), case)
+    form = recorded(chrome, name)
+    if case == "module_text" and request_of(form, case) == {"refused": True}:
+        # Chrome 155 has no text modules, and its import() rejects before any request.
+        pytest.skip("this Chrome has no text modules")
+    headers = headers_of(form, case)
 
     assert (headers["sec-fetch-site"], headers["sec-fetch-mode"], headers["sec-fetch-dest"]) == expected
     # Only a person's click counts as the user's, and what a page starts by itself does not.
