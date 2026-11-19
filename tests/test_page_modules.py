@@ -251,8 +251,39 @@ _CASES["referrers"] = Case(
     }
 )
 
+# Module scripts and imports of data: URLs, which a page answers itself, with no request.
+_CASES["data_urls"] = Case(
+    {
+        "/": _page(
+            "<script type=module src=\"data:text/javascript,log('static ' + document.readyState)\"></script>"
+            "<script>"
+            "const show = r => r.status === 'fulfilled' ? 'ok ' + JSON.stringify(r.value.default) : r.reason.name;"
+            "addEventListener('load', () => setTimeout(async () => {"
+            " for (const [name, promise] of ["
+            "  ['javascript', import('data:text/javascript,export default 42')],"
+            "  ['json', import('data:application/json,{\"a\":1}', {with: {type: 'json'}})],"
+            "  ['base64', import('data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgJ2I2NCc7')],"
+            "  ['wrong type', import('data:text/plain,export default 1')],"
+            "  ['relative', import('data:text/javascript,import \"./x.js\"')],"
+            "  ['no comma', import('data:text/javascript')],"
+            " ]) { const [result] = await Promise.allSettled([promise]); log(name + ' ' + show(result)); }"
+            " finish(logged); }, 100));"
+            "</script>"
+        ),
+    }
+)
+
 # What Chrome 157 logged for each case.
 _CHROME: dict[str, list[str]] = {
+    "data_urls": [
+        "static interactive",
+        "javascript ok 42",
+        'json ok {"a":1}',
+        'base64 ok "b64"',
+        "wrong type TypeError",
+        "relative TypeError",
+        "no comma TypeError",
+    ],
     "dynamic_import": [
         'relative ok "x"',
         "missing TypeError: Failed to fetch dynamically imported module: /sub/missing.js",

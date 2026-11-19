@@ -28,6 +28,8 @@ source_set("parser") {
     "media_query_parser.h",
     "media_values.cc",
     "media_values.h",
+    "sizes_attribute_parser.cc",
+    "sizes_attribute_parser.h",
   ]
   deps = [ "//base" ]
 }

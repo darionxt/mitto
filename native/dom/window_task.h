@@ -19,8 +19,10 @@ class Window;
 // `window`'s context.
 void PostWindowTask(Window* window, TaskType type, base::OnceClosure task);
 
-// Runs `run` now in `window`'s context, with a microtask checkpoint after it,
-// and returns whether the window still had its context.
+// Runs `run` now in `window`'s context, and returns whether the window still
+// had its context. Nothing holds microtasks back around it: as in Blink, the
+// microtasks that each listener of an event queues run once it returns,
+// before the next listener, and the rest at the task's end.
 bool RunInWindowContext(Window* window, base::FunctionRef<void()> run);
 
 }  // namespace mitto

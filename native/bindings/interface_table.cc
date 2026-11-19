@@ -302,10 +302,13 @@ void InstallTemplateFromTable(v8::Isolate* isolate,
           ToV8StringFromUtf8(isolate, "prototype"),
           static_cast<v8::Intrinsic>(info.table->parent_intrinsic));
       interface_template->Inherit(intrinsic);
+      const v8::Local<v8::String> display_string = ToV8StringFromUtf8(
+          isolate, info.table->display_name ? info.table->display_name
+                                            : info.interface_name);
       interface_template->ReadOnlyPrototype();
-      interface_template->SetClassName(class_string);
+      interface_template->SetClassName(display_string);
       interface_template->PrototypeTemplate()->Set(
-          v8::Symbol::GetToStringTag(isolate), class_string,
+          v8::Symbol::GetToStringTag(isolate), display_string,
           static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum));
       InstallOnTemplates(
           isolate,

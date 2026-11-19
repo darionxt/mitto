@@ -1,8 +1,11 @@
 // One fetch() of a page's: it settles fetch()'s promise with a Response once
-// the response starts, or rejects it, and then brings the Response its body.
-// The Fetcher owns it until the request ends. Its request's signal rejects
-// the promise with its reason and cancels the request, as Blink's
-// FetchManager::Loader::Abort() does.
+// the response starts, or rejects it, and then brings the Response its body,
+// whose bytes wait in a BodyLoaderBytesConsumer until they are read, as in a
+// data pipe, and which Blink's BufferingBytesConsumer reads 50 ms after it
+// starts unless the response has Cache-Control: no-store. The Fetcher owns it
+// until the request ends. Its request's signal rejects the promise with its
+// reason and cancels the request, as Blink's FetchManager::Loader::Abort()
+// does.
 //
 // Upstream: third_party/blink/renderer/core/fetch/fetch_manager.cc
 // Upstream: third_party/blink/renderer/core/fetch/fetch_response_data.cc
@@ -16,8 +19,8 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "mitto/dom/body_loader_bytes_consumer.h"
 #include "mitto/dom/fetcher.h"
-#include "mitto/dom/response.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-promise.h"
@@ -25,18 +28,15 @@
 namespace mitto {
 
 class AbortSignal;
-class Response;
 
 class FetchLoader final : public FetchClient, public BodyLoader {
  public:
-  // `resolver` is fetch()'s, in `context`. The response of a HEAD request,
-  // `head`, has a null body. `credentials` says that the request's
-  // credentials mode is include. `signal` is the request's, which has not
-  // aborted.
+  // `resolver` is fetch()'s, in `context`. `credentials` says that the
+  // request's credentials mode is include. `signal` is the request's, which
+  // has not aborted.
   FetchLoader(v8::Isolate* isolate,
               v8::Local<v8::Context> context,
               v8::Local<v8::Promise::Resolver> resolver,
-              bool head,
               bool credentials,
               AbortSignal* signal);
 
@@ -51,9 +51,10 @@ class FetchLoader final : public FetchClient, public BodyLoader {
   void OnResponseBody(std::string bytes) override;
   void OnResponseEnded(int net_error) override;
 
-  // BodyLoader: it cancels the request once its Response has been collected.
-  void ReaderStarted() override;
-  void ResponseCollected() override;
+  // BodyLoader: it cancels the request once the body is dropped.
+  void BodyRequested() override;
+  void BodyTaken(size_t bytes) override;
+  void BodyDropped() override;
   // The request's signal aborted. Destroys this.
   void Abort();
 
@@ -63,19 +64,12 @@ class FetchLoader final : public FetchClient, public BodyLoader {
   const raw_ptr<v8::Isolate> isolate_;
   v8::Global<v8::Context> context_;
   v8::Global<v8::Promise::Resolver> resolver_;
-  const bool head_;
   const bool credentials_;
-  // Whether the response is opaque, whose body goes untaken.
-  bool opaque_ = false;
   raw_ptr<FetchController> controller_ = nullptr;
   // The request's signal, which the request keeps while it runs.
   cppgc::Persistent<AbortSignal> signal_;
-  // The Response, which a script may let go until it reads the body.
-  cppgc::WeakPersistent<Response> response_;
-  // The Response while a script reads its body.
-  cppgc::Persistent<Response> reading_;
-  // Bytes the Response holds that the Session has no credit for yet.
-  size_t untaken_ = 0;
+  // Where the body goes, which goes with what reads it.
+  cppgc::WeakPersistent<BodyLoaderBytesConsumer> consumer_;
   base::WeakPtrFactory<FetchLoader> weak_factory_{this};
 };
 

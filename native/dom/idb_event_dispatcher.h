@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "base/functional/callback.h"
-#include "base/functional/function_ref.h"
 #include "mitto/dom/event_target.h"
 
 namespace mitto {
@@ -29,13 +28,6 @@ DispatchEventResult DispatchIDBEvent(Event& event,
 // A trusted event of `type`, as Blink's Event::Create(), CreateBubble() and
 // CreateCancelableBubble() make the events that IndexedDB fires.
 Event* MakeIDBEvent(const std::u16string& type, bool bubbles, bool cancelable);
-
-// Runs `run` now in `window`'s context, and returns whether the window still
-// had its context. Unlike RunInWindowContext(), nothing holds microtasks back
-// around it: as in Blink, where IndexedDB fires its events from tasks of its
-// own, the microtasks that each listener queues run once it returns, while
-// the request's transaction is still active, and the rest at the task's end.
-bool RunInIDBContext(Window* window, base::FunctionRef<void()> run);
 
 // Runs `task` in `window`'s context from a later task of the database access
 // queue, as Blink posts to the context's kDatabaseAccess task runner.
