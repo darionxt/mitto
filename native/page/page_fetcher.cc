@@ -191,9 +191,17 @@ void PageFetcher::Fetch(FetchRequestData data,
     keepalive_bytes_ += body_size;
   }
   PageRequest page_request;
-  page_request.kind = data.destination == FetchDestination::kScript
-                          ? PageRequestKind::kScript
-                          : PageRequestKind::kFetch;
+  switch (data.destination) {
+    case FetchDestination::kEmpty:
+      page_request.kind = PageRequestKind::kFetch;
+      break;
+    case FetchDestination::kScript:
+      page_request.kind = PageRequestKind::kScript;
+      break;
+    case FetchDestination::kImage:
+      page_request.kind = PageRequestKind::kImage;
+      break;
+  }
   page_request.url = std::move(data.url);
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);

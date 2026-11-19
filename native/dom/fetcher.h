@@ -20,6 +20,7 @@ namespace mitto {
 enum class FetchDestination {
   kEmpty,
   kScript,
+  kImage,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.
@@ -87,6 +88,23 @@ FetchPriorityHint FetchPriorityHintFromAttribute(std::u16string_view value);
 // keywords: kDefault for any other.
 // Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
 FetchReferrerPolicy FetchReferrerPolicyFromString(std::u16string_view value);
+
+// The same with the legacy keywords that an img's referrerpolicy takes:
+// "never" and "none", "always", "origin-when-crossorigin" and "default".
+FetchReferrerPolicy FetchReferrerPolicyFromStringWithLegacyKeywords(
+    std::u16string_view value);
+
+// The state of a crossorigin attribute, Blink's CrossOriginAttributeValue:
+// none without one, use-credentials for that value in any case, and
+// anonymous for any other.
+// Upstream: third_party/blink/renderer/core/html/cross_origin_attribute.cc
+enum class CrossOriginAttribute {
+  kNotSet,
+  kAnonymous,
+  kUseCredentials,
+};
+CrossOriginAttribute CrossOriginAttributeFromValue(
+    const std::optional<std::u16string>& value);
 
 // The referrer of a request that is the document's, as Blink's referrer string
 // says it, and of one that has none.

@@ -22,6 +22,8 @@
 
 namespace mitto {
 
+class CssTokenStream;
+
 // The runtime-enabled features that decide which media features parse, as
 // Chrome's stable set on Windows has them unless a Page's set says else.
 struct MediaQueryFeatures {
@@ -40,6 +42,13 @@ struct MediaQueryFeatures {
 // which matches.
 std::unique_ptr<MediaQuerySet> ParseMediaQuerySet(
     std::u16string_view input,
+    const MediaQueryFeatures& features);
+
+// MediaQueryParser::ParseMediaCondition(), for a sizes attribute: one
+// <media-condition> from where `stream` is, as a set of one query of type
+// all, "not all" if none parses, or an empty set at the end of the stream.
+std::unique_ptr<MediaQuerySet> ParseMediaCondition(
+    CssTokenStream& stream,
     const MediaQueryFeatures& features);
 
 }  // namespace mitto
