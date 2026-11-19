@@ -33,18 +33,15 @@ class ExceptionState;
 
 class IDBOpenDBRequest;
 class IndexedDbHost;
+class StorageBucket;
 class Window;
 
 class IDBFactory final : public bindings::ScriptWrappable {
  public:
   explicit IDBFactory(Window* window);
+  // The factory of `bucket`'s databases, which StorageBucket's indexedDB gives.
+  IDBFactory(Window* window, StorageBucket* bucket);
   ~IDBFactory() override;
-
-  // A factory of no window, for a Known Gap that gives one, as
-  // StorageBucket's indexedDB: its calls do what they do once a window's
-  // context has gone.
-  static bindings::ScriptWrappable* CreateForKnownGap(
-      const bindings::WrapperTypeInfo& info);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   void Trace(cppgc::Visitor* visitor) const override;
@@ -69,7 +66,12 @@ class IDBFactory final : public bindings::ScriptWrappable {
                                  int64_t version,
                                  bindings::ExceptionState& exception_state);
 
+  // The number of the bucket that each of its calls names, 0 for the default.
+  uint64_t BucketNumber() const;
+
   const cppgc::WeakMember<Window> window_;
+  // Kept for as long as the factory is, since its number names the bucket.
+  const cppgc::Member<StorageBucket> bucket_;
 };
 
 }  // namespace mitto

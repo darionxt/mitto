@@ -1,11 +1,12 @@
-// A Session's IndexedDB: the databases of each storage key, which every Page
-// of the Session shares, as Chrome's IndexedDBContextImpl keeps a profile's,
-// one bucket per storage key. A Session with a storage directory keeps them in
-// its file IndexedDB there, and loads each storage key's once, before its
-// first open, delete or list, into memory, which every commit writes through
-// to the file from, in order. Without a directory, and for a frame under a
-// top-level document of an opaque origin, they are kept in memory until the
-// Session goes, as in Incognito.
+// A Session's IndexedDB: the databases of each bucket of each storage key,
+// which every Page of the Session shares, as Chrome's IndexedDBContextImpl
+// keeps a profile's. Each bucket goes by the key that BucketKey() gives it,
+// which is the serialized storage key for a key's default bucket. A Session
+// with a storage directory keeps them in its file IndexedDB there, and loads
+// each storage key's once, before its first open, delete or list, into memory,
+// which every commit writes through to the file from, in order. Without a
+// directory, and for a frame under a top-level document of an opaque origin,
+// they are kept in memory until the Session goes, as in Incognito.
 //
 // Upstream: content/browser/indexed_db/indexed_db_context_impl.cc
 
@@ -66,6 +67,10 @@ class IndexedDbContext final : public StorageQuota::Client {
   StorageQuota::ClientType type() const override;
   void GetUsage(const std::string& storage_key,
                 base::OnceCallback<void(int64_t)> done) override;
+  // Closes the bucket's connections and cancels its requests, as Chrome's
+  // ForceClose() of a bucket that goes does, and deletes its databases.
+  void DeleteBucketData(const std::string& bucket_key,
+                        base::OnceClosure done) override;
 
  private:
   class KeyQuota;
