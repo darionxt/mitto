@@ -33,6 +33,7 @@
 #include "mitto/storage/storage_context.h"
 #include "net/base/io_buffer.h"
 #include "net/base/isolation_info.h"
+#include "net/base/mime_sniffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
 #include "net/base/url_util.h"
@@ -549,6 +550,20 @@ std::optional<std::string> HeaderValue(std::string_view lines,
   return value;
 }
 
+// The MIME type of a response, lowercased, as net::HttpUtil::ParseContentType()
+// reads Content-Type, or "" for none.
+std::string MimeTypeOf(const RequestEvent& event) {
+  std::string mime_type;
+  std::string charset;
+  bool had_charset = false;
+  if (const std::optional<std::string> content_type =
+          HeaderValue(event.headers, "Content-Type")) {
+    net::HttpUtil::ParseContentType(*content_type, &mime_type, &charset,
+                                    &had_charset, nullptr);
+  }
+  return mime_type;
+}
+
 // NavigationRequest::OnResponseStarted() and download_utils::MustDownload():
 // Chrome makes no document of a navigation's response that is a 204 or a 205,
 // nor of a download, which is one that Content-Disposition says is an
@@ -567,15 +582,30 @@ bool MakesDocument(const RequestEvent& event) {
                          .is_attachment()) {
     return false;
   }
-  std::string mime_type;
-  std::string charset;
-  bool had_charset = false;
-  if (const std::optional<std::string> content_type =
-          HeaderValue(event.headers, "Content-Type")) {
-    net::HttpUtil::ParseContentType(*content_type, &mime_type, &charset,
-                                    &had_charset, nullptr);
-  }
+  const std::string mime_type = MimeTypeOf(event);
   return mime_type.empty() || IsSupportedMimeType(mime_type);
+}
+
+// URLLoader's ShouldSniffContent() for a navigation, which asks for
+// kURLLoadOptionSniffMimeType: Chrome's network service holds back a
+// response whose MIME type net::ShouldSniffMimeType() would sniff, such as
+// text/plain or none, unless the first value of X-Content-Type-Options is
+// nosniff.
+// Upstream: services/network/url_loader.cc
+// Upstream: net/base/mime_sniffer.cc
+bool ShouldSniffContent(const RequestEvent& event,
+                        const std::string& mime_type) {
+  if (const std::optional<std::string> options =
+          HeaderValue(event.headers, "X-Content-Type-Options")) {
+    const std::string_view first = base::TrimWhitespaceASCII(
+        std::string_view(*options).substr(0, options->find(',')),
+        base::TRIM_ALL);
+    if (base::EqualsCaseInsensitiveASCII(first, "nosniff")) {
+      return false;
+    }
+  }
+  return net::ShouldSniffMimeType(GURL(event.url),
+                                  /*http_response_headers=*/nullptr, mime_type);
 }
 
 // network::ParseTimingAllowOrigin() and TimingAllowOriginCheck(): whether a
@@ -784,6 +814,45 @@ class PageHost::Request final : public RequestClient {
   // download manager reads it.
   bool keeps_document() const { return keeps_document_; }
   void set_keeps_document() { keeps_document_ = true; }
+
+  // A navigation's response that Chrome's network service holds back while
+  // it sniffs the MIME type from the start of the body, as URLLoader does.
+  struct Sniffing {
+    RequestEvent response;
+    // The MIME type before sniffing, and the one sniffed so far.
+    std::string mime_type;
+    std::string sniffed;
+    // What has been read of the body.
+    std::string body;
+  };
+  bool sniffing() const { return sniffing_.has_value(); }
+  // The response held back while it is sniffed, or null.
+  const RequestEvent* held_response() const {
+    return sniffing_ ? &sniffing_->response : nullptr;
+  }
+  void HoldForSniffing(RequestEvent response, std::string mime_type) {
+    sniffing_.emplace();
+    sniffing_->response = std::move(response);
+    sniffing_->mime_type = std::move(mime_type);
+  }
+  // Sniffs `bytes` that the body went on with, or none at its end, as
+  // URLLoader::DidRead() sniffs: until net::SniffMimeType() has decided,
+  // net::kMaxBytesToSniff bytes have come or the body has ended. Returns
+  // whether sniffing is over.
+  bool Sniff(base::span<const uint8_t> bytes, bool ended) {
+    sniffing_->body.append(base::as_string_view(bytes));
+    const std::string_view data =
+        std::string_view(sniffing_->body).substr(0, net::kMaxBytesToSniff);
+    const bool decided = net::SniffMimeType(
+        data, GURL(sniffing_->response.url), sniffing_->mime_type,
+        net::ForceSniffFileUrlsForHtml::kDisabled, &sniffing_->sniffed);
+    return decided || ended || sniffing_->body.size() >= net::kMaxBytesToSniff;
+  }
+  Sniffing TakeSniffing() {
+    Sniffing sniffing = *std::move(sniffing_);
+    sniffing_.reset();
+    return sniffing;
+  }
   // The origin of the document that asked, opaque for a navigation.
   const url::Origin& document_origin() const {
     return response_checks_.document_origin();
@@ -900,7 +969,7 @@ class PageHost::Request final : public RequestClient {
       FollowRedirect(event, document_origin());
     }
     if (event.type == MITTO_EVENT_RESPONSE_STARTED) {
-      host_->OnResponseStarted(*this, event);
+      host_->OnResponseStarted(*this, std::move(event));
     }
   }
   net::IOBuffer* read_buffer() override { return buffer_.get(); }
@@ -921,6 +990,7 @@ class PageHost::Request final : public RequestClient {
   const uint64_t number_;
   const GURL first_url_;
   bool keeps_document_ = false;
+  std::optional<Sniffing> sniffing_;
   ResponseChecks response_checks_;
   // A keepalive request's place among those in flight.
   std::unique_ptr<KeepaliveShare> keepalive_share_;
@@ -1304,10 +1374,13 @@ void PageHost::OnCancel(uint64_t number) {
     return;
   }
   // A navigation that the Page let go before its response, as when another
-  // takes its place, has ended.
+  // takes its place, has ended, and so has one whose response is held back
+  // while it is sniffed, as one that the Page let go after its response came.
   if (found->second->is_navigation() && !found->second->started()) {
     PushNavigated(found->second->first_url().possibly_invalid_spec(), 0,
                   net::ERR_ABORTED);
+  } else if (const RequestEvent* const held = found->second->held_response()) {
+    PushNavigated(held->url, 0, net::ERR_ABORTED);
   }
   // The Request abandons its job as it goes.
   requests_.erase(found);
@@ -1339,24 +1412,59 @@ void PageHost::OnCredit(const PageCredit& credit) {
   request.ReadIfCredited();
 }
 
-void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
+void PageHost::OnResponseStarted(Request& request, RequestEvent event) {
   request.set_started();
   if (request.is_navigation() && !MakesDocument(event)) {
-    // NavigationRequest::OnResponseStarted() drops a navigation whose response
-    // is no document, and the Page keeps its document. A download goes on
-    // without it.
-    request.set_keeps_document();
-    PushNavigated(event.url, event.status, net::ERR_ABORTED);
-    // The Page's frame lets its navigation go.
-    if (channel_) {
-      PageResponseEnded ended;
-      ended.number = request.number();
-      ended.net_error = net::ERR_ABORTED;
-      channel_->Send(EncodeResponseEnded(ended));
-    }
-    request.ReadIfCredited();
+    DropNavigation(request, event);
     return;
   }
+  if (request.is_navigation()) {
+    if (std::string mime_type = MimeTypeOf(event);
+        ShouldSniffContent(event, mime_type)) {
+      request.HoldForSniffing(std::move(event), std::move(mime_type));
+      request.ReadIfCredited();
+      return;
+    }
+  }
+  StartResponse(request, event);
+}
+
+void PageHost::DropNavigation(Request& request, const RequestEvent& event) {
+  // NavigationRequest::OnResponseStarted() drops a navigation whose response
+  // is no document, and the Page keeps its document. A download goes on
+  // without it.
+  request.set_keeps_document();
+  PushNavigated(event.url, event.status, net::ERR_ABORTED);
+  // The Page's frame lets its navigation go.
+  if (channel_) {
+    PageResponseEnded ended;
+    ended.number = request.number();
+    ended.net_error = net::ERR_ABORTED;
+    channel_->Send(EncodeResponseEnded(ended));
+  }
+  request.ReadIfCredited();
+}
+
+void PageHost::FinishSniffing(Request& request) {
+  Request::Sniffing sniffing = request.TakeSniffing();
+  // A sniffed type that Chrome does not show, such as application/octet-stream
+  // for text/plain that holds binary bytes, makes it a download, as
+  // download_utils::MustDownload() decides from the type that the network
+  // service sniffed. Any other sniffed type reaches the Page as the
+  // response's own.
+  if (!IsSupportedMimeType(sniffing.sniffed)) {
+    // The Page never gets what was read.
+    request.AddCredit(static_cast<uint32_t>(sniffing.body.size()));
+    DropNavigation(request, sniffing.response);
+    return;
+  }
+  StartResponse(request, sniffing.response);
+  if (channel_ && !sniffing.body.empty()) {
+    channel_->Send(EncodeResponseBody(request.number(), sniffing.body));
+  }
+}
+
+void PageHost::StartResponse(Request& request, const RequestEvent& event) {
   if (request.is_navigation()) {
     // The document that the Page makes of it, which it tells the library of,
     // and the caller hears of then.
@@ -1437,6 +1545,16 @@ void PageHost::OnBodyRead(Request& request, size_t size) {
     request.ReadIfCredited();
     return;
   }
+  if (request.sniffing()) {
+    // What is read while sniffing waits, counted against the Page's credit,
+    // until the sniffing decides whether the Page gets it.
+    if (request.Sniff(bytes, /*ended=*/false)) {
+      FinishSniffing(request);
+    } else {
+      request.ReadIfCredited();
+    }
+    return;
+  }
   if (channel_) {
     channel_->Send(
         EncodeResponseBody(request.number(), base::as_string_view(bytes)));
@@ -1446,6 +1564,12 @@ void PageHost::OnBodyRead(Request& request, size_t size) {
 
 void PageHost::OnRequestFinished(Request& request, int net_error) {
   const uint64_t number = request.number();
+  // A body that ends, or fails, while sniffing ends the sniffing with what
+  // it gave.
+  if (request.sniffing()) {
+    request.Sniff({}, /*ended=*/true);
+    FinishSniffing(request);
+  }
   // A frame's navigation, or a worker's script, that ends with no response
   // gives the Page nothing to make a context of.
   if (!request.started()) {
