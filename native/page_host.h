@@ -332,6 +332,11 @@ class PageHost final : public PageChannel::Delegate {
     // context that started a worker; kNoDocument for the top-level document.
     uint64_t parent = kNoDocument;
     bool is_worker = false;
+    // The final URLs of the context's requests that have finished, which a
+    // request of the context may name as its referrer, as a module names the
+    // module that imports it, or a style sheet the sheet that imports it, in
+    // Chrome, whose browser takes the renderer's word for a referrer.
+    std::set<GURL> response_urls;
   };
 
   // What a document's cookie calls are made for, as its frame's
