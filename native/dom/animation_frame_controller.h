@@ -26,6 +26,7 @@
 #include <optional>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -60,6 +61,12 @@ class AnimationFrameController {
   // the next frame, before its callbacks.
   void EnqueueEvent(EventTarget& target, Event& event);
 
+  // LocalFrameView's post-lifecycle steps, where an intersection observer
+  // that delivers in them, as Blink's observer of lazy images does, hears of
+  // what came near the viewport: `steps` runs at the end of the next frame,
+  // after its callbacks.
+  void RequestPostLifecycleSteps(base::OnceClosure steps);
+
   // How many callbacks and events wait for a frame.
   size_t size() const { return callbacks_.size() + events_.size(); }
 
@@ -90,6 +97,7 @@ class AnimationFrameController {
   std::vector<std::unique_ptr<FrameCallback>> callbacks_;
   std::vector<std::unique_ptr<FrameCallback>> callbacks_to_invoke_;
   std::vector<std::unique_ptr<QueuedEvent>> events_;
+  std::vector<base::OnceClosure> post_lifecycle_steps_;
   int32_t last_id_ = 0;
   bool frame_requested_ = false;
   bool lifecycle_updates_deferred_ = false;

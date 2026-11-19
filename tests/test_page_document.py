@@ -860,3 +860,183 @@ def test_svg_elements_find_their_owner_and_viewport_and_writing_suggestions_inhe
         "null,null outer,outer outer,outer inner,sym inner,img outer,outer null,outer fosvg,fosvg "
         "true,false,true,true,nope,true"
     )
+
+
+def test_markup_of_a_document_that_is_not_html_is_xml(program: Path) -> None:
+    # innerHTML, outerHTML and getHTML() write XML in a document that is not an HTML document, with the namespace that
+    # each element's context lacks declared, an element with no children closing itself, but for an HTML element that
+    # has an end tag, and the text of script escaped, as Chrome 157 gave.
+    script = """
+        const html = 'http://www.w3.org/1999/xhtml';
+        const empty = document.implementation.createDocument(null, '');
+        const xhtml = document.implementation.createDocument(html, 'html');
+        const body = xhtml.documentElement.appendChild(xhtml.createElementNS(html, 'body'));
+        body.appendChild(xhtml.createElementNS(html, 'template'));
+        body.appendChild(xhtml.createElementNS('http://www.w3.org/2000/svg', 'svg'));
+        body.appendChild(xhtml.createElementNS(html, 'img'));
+        body.appendChild(xhtml.createElementNS(html, 'script')).textContent = 'a<b&&c';
+        [empty.createElementNS(html, 'br').outerHTML, empty.createElementNS(html, 'a').outerHTML,
+         xhtml.documentElement.outerHTML, xhtml.documentElement.innerHTML, body.getHTML()].join('\\n')
+    """
+
+    assert _evaluate(program, script).split("\n") == [
+        '<br xmlns="http://www.w3.org/1999/xhtml" />',
+        '<a xmlns="http://www.w3.org/1999/xhtml"></a>',
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><template></template>'
+        '<svg xmlns="http://www.w3.org/2000/svg"/><img /><script>a&lt;b&amp;&amp;c</script></body></html>',
+        '<body xmlns="http://www.w3.org/1999/xhtml"><template></template>'
+        '<svg xmlns="http://www.w3.org/2000/svg"/><img /><script>a&lt;b&amp;&amp;c</script></body>',
+        '<template xmlns="http://www.w3.org/1999/xhtml"></template><svg xmlns="http://www.w3.org/2000/svg"/>'
+        '<img xmlns="http://www.w3.org/1999/xhtml" /><script xmlns="http://www.w3.org/1999/xhtml">'
+        "a&lt;b&amp;&amp;c</script>",
+    ]
+
+
+def test_xml_serializer_picks_prefixes_as_blink_does(program: Path) -> None:
+    # The DOM Parsing specification's namespace prefix map as Blink keeps it: a prefix in scope is kept, one declared
+    # for another namespace gives way to a generated ns1, an attribute's namespace is declared where it is first
+    # needed, and xmlns="" is written again where the element's own declaration says it, as Chrome 157 gave.
+    script = """
+        const s = (node) => new XMLSerializer().serializeToString(node);
+        const xmlns = 'http://www.w3.org/2000/xmlns/';
+        const out = [];
+        const doc = document.implementation.createDocument('urn:a', 'p:root');
+        const root = doc.documentElement;
+        root.setAttributeNS('urn:b', 'q:x', '1');
+        root.setAttributeNS('urn:a', 'y', '2');
+        root.setAttributeNS('urn:c', 'z', '3');
+        root.appendChild(doc.createElementNS('urn:a', 'child'));
+        root.appendChild(doc.createElementNS(null, 'nons'));
+        root.appendChild(doc.createElementNS('urn:d', 'd:x'));
+        out.push(s(doc));
+        const xml = new Document();
+        let e = xml.createElementNS('urn:a', 'x');
+        e.setAttributeNS(xmlns, 'xmlns', 'urn:b');
+        out.push(s(e));
+        e = xml.createElementNS('urn:a', 'p:x');
+        e.setAttributeNS(xmlns, 'xmlns:p', 'urn:other');
+        out.push(s(e));
+        e = xml.createElementNS(null, 'x');
+        e.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', 'en');
+        e.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', '#a');
+        e.setAttributeNS('http://www.w3.org/1999/xlink', 'href2', '#b');
+        out.push(s(e));
+        e = xml.createElementNS('urn:a', 'x');
+        const f = e.appendChild(xml.createElementNS('urn:a', 'y'));
+        f.setAttributeNS('urn:b', 'b:a', '1');
+        f.setAttributeNS('urn:c', 'b:c', '2');
+        out.push(s(e));
+        e = xml.createElementNS('', 'x');
+        e.setAttribute('xmlns:p', 'urn:q');
+        e.appendChild(xml.createElementNS('urn:q', 'p:y'));
+        e.appendChild(xml.createElementNS('urn:q', 'y'));
+        out.push(s(e));
+        e = xml.createElementNS('urn:a', 'x');
+        e.setAttribute('xmlns', '');
+        e.appendChild(xml.createElementNS(null, 'y'));
+        out.push(s(e));
+        out.join('\\n')
+    """
+
+    assert _evaluate(program, script).split("\n") == [
+        '<p:root xmlns:p="urn:a" xmlns:q="urn:b" q:x="1" p:y="2" xmlns:ns1="urn:c" ns1:z="3">'
+        '<p:child/><nons/><d:x xmlns:d="urn:d"/></p:root>',
+        '<x xmlns="urn:a"/>',
+        '<ns1:x xmlns:ns1="urn:a" xmlns:p="urn:other"/>',
+        '<x xml:lang="en" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#a" xlink:href2="#b"/>',
+        '<x xmlns="urn:a"><y xmlns:b="urn:b" b:a="1" xmlns:ns1="urn:c" ns1:c="2"/></x>',
+        '<x xmlns:p="urn:q"><p:y xmlns:p="urn:q"/><y xmlns="urn:q"/></x>',
+        '<x xmlns="urn:a" xmlns=""><y xmlns=""/></x>',
+    ]
+
+
+def test_xml_serializer_writes_every_kind_of_node(program: Path) -> None:
+    # An HTML element as XML, text with a no-break space as it is, an attribute's tab as a reference, a doctype with
+    # its identifiers, an attribute's node as its value and a template's contents, as Chrome 157 gave.
+    script = """
+        const s = (node) => new XMLSerializer().serializeToString(node);
+        const out = [s(document.createElement('div'))];
+        const div = document.createElement('div');
+        div.innerHTML = '<p a="1&amp;\\t">x&nbsp;<br><svg><g/></svg><!--c--></p>';
+        out.push(s(div));
+        const impl = document.implementation;
+        out.push(s(impl.createDocument(null, 'r', impl.createDocumentType('r', 'pub', 'sys'))));
+        out.push(s(impl.createDocumentType('r', '', 'sys')), s(impl.createDocumentType('r', 'pub', '')));
+        const attr = document.createAttribute('x');
+        attr.value = 'a"<&\\t';
+        out.push(s(attr));
+        const template = document.createElement('template');
+        template.innerHTML = '<p>a</p>';
+        out.push(s(template));
+        const xml = new Document();
+        const holder = xml.createElement('h');
+        holder.append(xml.createCDATASection('a<b'), xml.createProcessingInstruction('t', 'd'), xml.createComment('c'));
+        out.push(s(holder));
+        out.join('\\n')
+    """
+
+    assert _evaluate(program, script).split("\n") == [
+        '<div xmlns="http://www.w3.org/1999/xhtml"></div>',
+        '<div xmlns="http://www.w3.org/1999/xhtml"><p a="1&amp;&#9;">x\u00a0<br />'
+        '<svg xmlns="http://www.w3.org/2000/svg"><g/></svg><!--c--></p></div>',
+        '<!DOCTYPE r PUBLIC "pub" "sys"><r/>',
+        '<!DOCTYPE r SYSTEM "sys">',
+        '<!DOCTYPE r PUBLIC "pub">',
+        "a&quot;&lt;&amp;&#9;",
+        '<template xmlns="http://www.w3.org/1999/xhtml"><p>a</p></template>',
+        "<h><![CDATA[a<b]]><?t d?><!--c--></h>",
+    ]
+
+
+def test_a_document_has_the_xml_attributes_of_its_kind(program: Path) -> None:
+    # Before any XML declaration: an HTML document's version is null and any other's "1.0", and only "1.0" can be set,
+    # as Chrome 157 gave.
+    script = """
+        const attempt = (f) => { try { f(); return 'ok'; } catch (e) { return `${e.name}: ${e.message}`; } };
+        const read = (doc) => JSON.stringify([doc.xmlVersion, doc.xmlEncoding, doc.xmlStandalone]);
+        const html = document.implementation.createHTMLDocument();
+        const out = [read(document), read(html), read(new Document())];
+        out.push(attempt(() => { document.xmlVersion = '1.1'; }), attempt(() => { document.xmlVersion = null; }));
+        document.xmlVersion = '1.0';
+        document.xmlStandalone = true;
+        out.push(read(document));
+        out.join('\\n')
+    """
+
+    assert _evaluate(program, script).split("\n") == [
+        "[null,null,false]",
+        "[null,null,false]",
+        '["1.0",null,false]',
+        "NotSupportedError: Failed to set the 'xmlVersion' property on 'Document': This document does not support the "
+        "XML version '1.1'.",
+        "NotSupportedError: Failed to set the 'xmlVersion' property on 'Document': This document does not support the "
+        "XML version ''.",
+        '["1.0",null,true]',
+    ]
+
+
+def test_dom_parser_makes_an_html_document_of_no_window(program: Path) -> None:
+    # The document has the window's URL and origin and no window, so its scripts never run and noscript holds markup,
+    # and it refuses declarative shadow roots, as Chrome 157 gave.
+    script = """
+        const parse = (markup) => new DOMParser().parseFromString(markup, 'text/html');
+        let d = parse('<!doctype html><title>t</title><noscript><p>n</p></noscript><script>window.ran = 1</script>'
+                      + '<template shadowrootmode=open><b>s</b></template><body onload="x">x');
+        const out = [JSON.stringify([d.constructor.name, d.contentType, d.URL === document.URL, d.compatMode,
+                                     d.readyState, d.characterSet, d.defaultView, window.ran, d.body.onload,
+                                     d.querySelector('template').content.childNodes.length])];
+        out.push(d.documentElement.outerHTML);
+        d = parse('<p>a');
+        out.push(JSON.stringify([d.compatMode, d.childNodes.length, d.xmlVersion, d.cookie]));
+        d = parse('<meta charset=latin2><base href="http://x.test/a/"><a href=b>l</a>');
+        out.push(JSON.stringify([d.characterSet, d.baseURI, d.links[0].href]));
+        out.join('\\n')
+    """
+
+    assert _evaluate(program, script).split("\n") == [
+        '["HTMLDocument","text/html",true,"CSS1Compat","complete","UTF-8",null,null,null,1]',
+        '<html><head><title>t</title><noscript></noscript></head><body onload="x"><p>n</p>'
+        '<script>window.ran = 1</script><template shadowrootmode="open"><b>s</b></template>x</body></html>',
+        '["BackCompat",1,null,""]',
+        '["UTF-8","http://x.test/a/","http://x.test/a/b"]',
+    ]

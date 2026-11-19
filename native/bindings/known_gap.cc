@@ -14,6 +14,7 @@
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "mitto/bindings/async_iterable.h"
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/idl_conversions.h"
@@ -989,6 +990,19 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
     // for an operation that returns a promise.
     if (!IsObjectOf(isolate, *member.owner, info.This())) {
       ThrowTypeError(isolate, "Illegal invocation");
+      return;
+    }
+    // An iterator of a class's async iterable, such as ReadableStream's, runs
+    // Web IDL's steps with its source (async_iterable.h).
+    if (AsyncIterationSourceBase* const source =
+            AsyncIterationSourceOf(isolate, info.This())) {
+      const v8::Local<v8::Promise> promise =
+          (member.flags & kMemberIteratorReturn)
+              ? source->Return(isolate, info[0])
+              : source->Next(isolate);
+      if (!promise.IsEmpty()) {
+        info.GetReturnValue().Set(promise);
+      }
       return;
     }
   }
