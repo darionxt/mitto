@@ -390,17 +390,19 @@ Measured for Chromium 157.0.8103.39, in a directory where the library's build ha
 
 ### Sizes
 
-Measured for Chromium 157.0.8103.39, `mitto-chromium-157.0.8103.39-4.tar.xz`. The archive is the same for every Host: 36.0 MiB compressed, 289 MiB unpacked, 20,116 files. Of those, 17,672 are in every slice. The Windows slice alone adds 815, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API, the Linux slice alone 262 and the macOS slice alone 289.
+Measured for Chromium 157.0.8103.39, `mitto-chromium-157.0.8103.39-5.tar.xz`. The archive is the same for every Host: 36.6 MiB compressed, 293 MiB unpacked, 20,304 files. Of those, 17,851 are in every slice. The Windows slice alone adds 817, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API, the Linux slice alone 266 and the macOS slice alone 292.
 
 | Slice | Files | Unpacked |
 | --- | --- | --- |
-| Linux x86_64, from eight builds | 19,010 | 242 MiB |
-| macOS arm64, from two builds | 18,983 | 241 MiB |
-| Windows x64, from two builds | 18,545 | 267 MiB |
+| Linux x86_64, from eight builds | 19,193 | 247 MiB |
+| macOS arm64, from two builds | 19,165 | 246 MiB |
+| Windows x64, from two builds | 18,726 | 271 MiB |
 
 [The Runtime](#build-the-runtime)'s build reads 7,084 files that the native core's builds do not, 79 MiB unpacked, which make the archive 9.2 MiB larger than the 25.1 MiB of the export before it: V8, 3,122 files and 65 MiB, of which its two builtins profiles, `x64.profile` and `x64-rl.profile`, are 10.7 MB; Blink's IDL files and the scripts that read them, 2,229, with the Python projects that those scripts import, `tools/idl_parser`, ply, pyjson5, jinja2 and markupsafe; llvm-libc, 1,067; the Rust crates of V8's Temporal and libm, 547; and highway, fast_float, fp16 and dragonbox. The toolchain of Linux and macOS was measured for Chromium 157.0.8103.27, and is the same for 157.0.8103.39.
 
 SQLite, in which the native core keeps the storage of pages, adds 53 files on every Host, 10.3 MiB unpacked, which make the archive 1.7 MiB larger than the 34.3 MiB of the export before it: Chromium's `sql/`, 36 files; `third_party/sqlite`, 13, of which SQLite's amalgamation `sqlite3.c` is 9.6 MB; the `.gni` of libprotobuf-mutator that `third_party/sqlite/BUILD.gn` imports, with that project's license and README; and the histograms of `sql/`, from which `sql/BUILD.gn` generates a header.
+
+Blink's XML libraries, which the Page needs to read XML as Chrome does, add 188 files, 181 to 183 of them on each Host, 4.3 MiB unpacked, which make the archive 0.6 MiB larger than the 36.0 MiB of the export before it: libxml2, 105 files, of which its parser, `parser.c`, is 0.4 MB; libxslt, 53; and the Rust `xml` crate, 28, with Chromium's two build files for it. The patch `libxml-libxslt-visible-to-mitto.patch` lets `//mitto` depend on libxml and libxslt, whose build files let only Blink's targets see them.
 
 | Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked | Windows x64: download | unpacked |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -969,7 +971,7 @@ The script collects those paths, runs `tools/workspace/compare` on them, and the
 - `native/page` or `native/bindings` starts to depend on a target outside the Runtime's build graph, as for `native/` below;
 - `native/` starts to depend on a target outside the current build graph. Until then, `native/` can include any header that a target in the graph declares, because the export keeps those even when nothing includes them yet. A build that needs something else stops with a missing file.
 
-What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: the plain one and the Runtime's, `runtime`, on every Host, and also `asan`, `ubsan`, `fuzz`, `runtime-asan`, `runtime-ubsan` and `runtime-fuzz` on Linux. `mitto-chromium-157.0.8103.39-4.tar.xz` is the first export whose Linux slice traces the last three. Its steps took about five hours on 2026-11-14, on machines that had built the native core and the Runtime before, and most of it on the machine that runs Linux and Windows in turn. The slices took 91 minutes on Linux for its eight builds, 43 minutes on macOS with `-j 5` and 35 minutes on Windows. The builds from the archive in step 4 took 114 minutes on Linux, 30 minutes on macOS and 35 minutes on Windows, before the tests.
+What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: the plain one and the Runtime's, `runtime`, on every Host, and also `asan`, `ubsan`, `fuzz`, `runtime-asan`, `runtime-ubsan` and `runtime-fuzz` on Linux. `mitto-chromium-157.0.8103.39-4.tar.xz` is the first export whose Linux slice traces the last three. For `mitto-chromium-157.0.8103.39-5.tar.xz`, on 2026-11-18 and 19, on machines that had built the native core and the Runtime before, the slices took 94 minutes on Linux for its eight builds, 33 minutes on macOS with `-j 5` and 33 minutes on Windows, and the merge 8 minutes on macOS. The builds from the archive in step 4 took 46 minutes on Linux for `runtime-fuzz` and `runtime`, 24 minutes on macOS and 25 minutes on Windows for `runtime`, before the tests.
 
 1. On each Host, in a workspace [set up by the bootstrap script](#set-up-the-workspace), from the same commit of this repository, with the bootstrap script run again from that commit:
 
