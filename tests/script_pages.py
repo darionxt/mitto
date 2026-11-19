@@ -56,12 +56,14 @@ class ScriptServer:
     """A local server for one case at a time, which records the path of each request it gets, in order.
 
     A request for /mark/NAME sets the mark NAME, and sending a route's whole response sets served:PATH. The body of each
-    POST to /result goes to `results`.
+    POST to /result goes to `results`, and the Referer of each request to `referers`.
     """
 
     def __init__(self) -> None:
         self.case = Case({})
         self.requests: list[str] = []
+        # The Referer of each request, by its path, or None for a request without one.
+        self.referers: dict[str, str | None] = {}
         self.results: list[str] = []
         self._marks: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
@@ -104,6 +106,7 @@ class ScriptServer:
         path = handler.path
         with self._lock:
             self.requests.append(path)
+            self.referers[path] = handler.headers.get("Referer")
         if path.startswith("/mark/"):
             self.mark(path.removeprefix("/mark/")).set()
             self.answer(handler, 200, "text/plain", b"ok")
