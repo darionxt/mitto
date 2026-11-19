@@ -198,14 +198,19 @@ std::string EncodeCacheStorageCall(const PageCacheStorageCall& call) {
     case CacheStorageCallOp::kHas:
     case CacheStorageCallOp::kDelete:
       writer.U64(call.question);
+      writer.U64(call.bucket);
       writer.Sized16(call.cache_name);
       break;
     case CacheStorageCallOp::kKeys:
+      writer.U64(call.question);
+      writer.U64(call.bucket);
+      break;
     case CacheStorageCallOp::kEstimate:
       writer.U64(call.question);
       break;
     case CacheStorageCallOp::kMatch:
       writer.U64(call.question);
+      writer.U64(call.bucket);
       WriteRequest(writer, *call.request);
       WriteOptions(writer, call.options);
       writer.Bool(call.has_cache_name);
@@ -283,15 +288,19 @@ base::expected<PageCacheStorageCall, std::string> ReadCacheStorageCall(
     case CacheStorageCallOp::kOpen:
     case CacheStorageCallOp::kHas:
     case CacheStorageCallOp::kDelete:
-      valid = reader.U64(call.question) && reader.Sized16(call.cache_name);
+      valid = reader.U64(call.question) && reader.U64(call.bucket) &&
+              reader.Sized16(call.cache_name);
       break;
     case CacheStorageCallOp::kKeys:
+      valid = reader.U64(call.question) && reader.U64(call.bucket);
+      break;
     case CacheStorageCallOp::kEstimate:
       valid = reader.U64(call.question);
       break;
     case CacheStorageCallOp::kMatch:
       call.request.emplace();
-      valid = reader.U64(call.question) && ReadRequest(reader, *call.request) &&
+      valid = reader.U64(call.question) && reader.U64(call.bucket) &&
+              ReadRequest(reader, *call.request) &&
               ReadOptions(reader, call.options) &&
               reader.Bool(call.has_cache_name) &&
               (!call.has_cache_name || reader.Sized16(call.cache_name));

@@ -96,11 +96,10 @@ v8::Local<v8::Value> CacheStorageException(v8::Isolate* isolate,
           bindings::RuntimeFeature::kQuotaExceededErrorUpdate)) {
     // QuotaExceededError::Reject(): the interface of its own with
     // QuotaExceededErrorUpdate, which is on, and with neither quota nor
-    // requested.
-    return QuotaExceededError::Create(
-               base::UTF8ToUTF16(bindings::ExceptionMessages::FailedToExecute(
-                   method, interface_name, final_message)),
-               std::nullopt, std::nullopt)
+    // requested, made without the resolver's context, so its message names no
+    // call.
+    return QuotaExceededError::Create(base::UTF8ToUTF16(final_message),
+                                      std::nullopt, std::nullopt)
         ->ToV8(isolate);
   }
   return CacheCallException(

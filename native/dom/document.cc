@@ -1,7 +1,9 @@
 #include "mitto/dom/document.h"
 
 #include <algorithm>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "base/auto_reset.h"
 #include "base/check.h"
@@ -41,6 +43,7 @@
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_factory.h"
 #include "mitto/dom/html_all_collection.h"
+#include "mitto/dom/html_details_element.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/html_element_factory.h"
@@ -1105,6 +1108,76 @@ Node* FindAnchor(Document& document, std::string_view fragment) {
   return nullptr;
 }
 
+// DisplayLockUtilities::RevealAutoExpandableAncestors(), the HTML Standard's
+// ancestor revealing algorithm. From the indicated node up, an ancestor whose
+// hidden attribute is "until-found" gets a bubbling beforematch event and
+// then loses the attribute, and a closed details element opens if the way up
+// goes through its contents, innermost first. It stops at the first ancestor
+// that is no longer connected, or that a listener has already revealed or
+// changed. A Page has no shadow trees, so the node tree stands in for Blink's
+// flat tree, and a details element's contents are the children that Blink's
+// ManuallyAssignSlots() puts in its content slot: all but its first summary.
+void RevealAutoExpandableAncestors(Node& target) {
+  enum class AncestorType {
+    kDetails,
+    kHiddenUntilFound,
+  };
+  std::vector<std::pair<cppgc::Persistent<Element>, AncestorType>>
+      ancestors_to_reveal;
+  for (Node* ancestor = &target; ancestor; ancestor = ancestor->ParentNode()) {
+    if (ancestor->IsElementNode()) {
+      auto* const element = static_cast<Element*>(ancestor);
+      const std::u16string* const hidden = element->FindAttribute(u"hidden");
+      if (element->IsHTMLElement() && hidden &&
+          base::EqualsCaseInsensitiveASCII(*hidden, u"until-found")) {
+        ancestors_to_reveal.emplace_back(element,
+                                         AncestorType::kHiddenUntilFound);
+      }
+    }
+    Node* const parent = ancestor->ParentNode();
+    if (!parent || !parent->IsElementNode() ||
+        !static_cast<Element*>(parent)->HasHTMLTagName(u"details")) {
+      continue;
+    }
+    auto* const details = static_cast<HTMLDetailsElement*>(parent);
+    const bool in_content_slot =
+        (ancestor->IsElementNode() || ancestor->IsTextNode()) &&
+        ancestor != details->MainSummary();
+    if (!details->IsOpen() && in_content_slot) {
+      ancestors_to_reveal.emplace_back(details, AncestorType::kDetails);
+    }
+  }
+  for (const auto& [element, type] : ancestors_to_reveal) {
+    if (!element->IsConnected()) {
+      return;
+    }
+    if (type == AncestorType::kHiddenUntilFound) {
+      const std::u16string* hidden = element->FindAttribute(u"hidden");
+      if (!hidden ||
+          !base::EqualsCaseInsensitiveASCII(*hidden, u"until-found")) {
+        return;
+      }
+      bindings::EventInit init;
+      init.bubbles = true;
+      Event* const event = Event::Create(u"beforematch", init);
+      event->SetTrusted(true);
+      element->DispatchEvent(event);
+      hidden = element->FindAttribute(u"hidden");
+      if (!element->IsConnected() || !hidden ||
+          !base::EqualsCaseInsensitiveASCII(*hidden, u"until-found")) {
+        return;
+      }
+      element->RemoveAttribute(u"hidden");
+    } else {
+      auto* const details = static_cast<HTMLDetailsElement*>(element.Get());
+      if (details->IsOpen()) {
+        return;
+      }
+      details->SetAttributeWithoutValidation(u"open", std::u16string());
+    }
+  }
+}
+
 }  // namespace
 
 void Document::ProcessUrlFragment(const GURL& url) {
@@ -1123,6 +1196,13 @@ void Document::ProcessUrlFragment(const GURL& url) {
   css_target_ = anchor && anchor->IsElementNode()
                     ? static_cast<Element*>(anchor)
                     : nullptr;
+  // ElementFragmentAnchor::TryCreate() reveals the indicated part where the
+  // fragment may scroll to it: on every navigation but one whose scroll
+  // offset comes back from history, which a Page, without layout, never
+  // restores.
+  if (anchor) {
+    RevealAutoExpandableAncestors(*anchor);
+  }
 }
 
 Element* Document::GetElementById(const std::u16string& id) const {

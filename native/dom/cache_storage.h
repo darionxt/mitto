@@ -27,11 +27,14 @@ class ExceptionState;
 }  // namespace bindings
 
 class CacheStorageHost;
+class StorageBucket;
 class Window;
 
 class CacheStorage final : public bindings::ScriptWrappable {
  public:
-  explicit CacheStorage(Window* window);
+  // The caches of `window`'s document's storage key, of the default bucket or
+  // of `bucket`.
+  explicit CacheStorage(Window* window, StorageBucket* bucket = nullptr);
   ~CacheStorage() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -67,6 +70,8 @@ class CacheStorage final : public bindings::ScriptWrappable {
                              Settle settle);
 
   const cppgc::WeakMember<Window> window_;
+  // Kept for as long as its caches are, since its number names them.
+  const cppgc::Member<StorageBucket> bucket_;
 };
 
 }  // namespace mitto

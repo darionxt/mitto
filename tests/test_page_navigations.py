@@ -46,12 +46,14 @@ _RECORD_EVENTS = """
 
 @dataclass
 class _Route:
-    """What the server answers for one path: a status, header lines and a body. With `hold`, it answers once it is set."""
+    """What the server answers for one path: a status, header lines and a body. With `hold`, it answers once it is set,
+    and with `hold_body`, it sends the body once that is set."""
 
     body: bytes = b""
     status: int = 200
     headers: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     hold: threading.Event | None = None
+    hold_body: threading.Event | None = None
 
 
 class _Server:
@@ -79,6 +81,9 @@ class _Server:
                 if route.status not in (204, 205):
                     self.send_header("Content-Length", str(len(route.body)))
                 self.end_headers()
+                if route.hold_body is not None:
+                    self.wfile.flush()
+                    route.hold_body.wait(_TIMEOUT_SECONDS)
                 if route.status not in (204, 205):
                     self.wfile.write(route.body)
 
@@ -303,6 +308,49 @@ def test_a_204_and_a_download_keep_the_document(session: mitto.Session, server: 
         assert page.evaluate("[window.marker, document.body.textContent]") == [1, "still here"]
 
 
+def test_a_response_that_chrome_sniffs_as_binary_is_a_download(session: mitto.Session, server: _Server) -> None:
+    plain = [("Content-Type", "text/plain")]
+    server.routes["/binary"] = _Route(b"text\x00more", headers=plain)
+    server.routes["/untyped"] = _Route(b"\x00\x01\x02 binary")
+    server.routes["/nosniff"] = _Route(b"a\x00b", headers=[*plain, ("X-Content-Type-Options", "nosniff")])
+    server.routes["/late"] = _Route(b"a" * 1024 + b"\x00", headers=plain)
+    server.routes["/png"] = _Route(b"\x89PNG\r\n\x1a\n" + bytes(32), headers=plain)
+    url = server.page("/", "<body>still here")
+
+    with _open_page(session, url) as page:
+        # Chrome's network service sniffs text/plain, and a response with no type, from the first 1024 bytes of the
+        # body, and a binary byte makes application/octet-stream of it, which Chrome downloads.
+        for path in ("/binary", "/untyped"):
+            page.evaluate(f"location.href = '{path}'")
+            assert _next(page) == PageNavigation(url=server.url(path), status=200, kept_document=True)
+        assert page.url == url
+        # nosniff, a binary byte past the first 1024 and an image's magic number leave a document.
+        for path in ("/nosniff", "/late", "/png"):
+            page.evaluate(f"location.href = '{path}'")
+            assert _next(page).url == server.url(path)
+            assert page.url == server.url(path)
+
+
+def test_a_navigation_whose_response_is_held_to_be_sniffed_ends_when_another_takes_its_place(
+    session: mitto.Session, server: _Server
+) -> None:
+    held = threading.Event()
+    server.routes["/plain"] = _Route(b"plain text", headers=[("Content-Type", "text/plain")], hold_body=held)
+    fast = server.page("/fast", "<title>Fast</title>")
+    url = server.page("/", "<body>")
+
+    with _open_page(session, url) as page:
+        # The headers have come, and the library waits for the body to sniff its type when the next navigation starts.
+        page.evaluate("location.href = '/plain'")
+        assert server.wait_for("/plain")
+        time.sleep(0.5)
+        page.evaluate("location.href = '/fast'")
+        with pytest.raises(mitto.RequestError, match="ERR_ABORTED"):
+            _next(page)
+        assert _next(page).url == fast
+        held.set()
+
+
 def test_a_navigation_that_starts_while_the_document_loads_stops_its_parser(
     session: mitto.Session, server: _Server
 ) -> None:
@@ -406,6 +454,39 @@ def test_target_matches_the_element_that_the_fragment_indicates(session: mitto.S
             "other.body.append(other.adoptNode(moved)); const away = moved.matches(':target');"
             "document.body.append(document.adoptNode(moved)); [away, moved.matches(':target')]"
         ) == [False, True]
+
+
+def test_the_fragment_reveals_closed_details_and_hidden_until_found_ancestors(
+    session: mitto.Session, server: _Server
+) -> None:
+    url = server.page(
+        "/",
+        "<details id=outer><details id=inner><summary>s</summary><div id=deep>1</div></details></details>"
+        "<details id=sum><summary id=title>s</summary><p id=text>2</p></details>"
+        "<div id=found hidden=until-found><span id=hid>3</span></div>"
+        "<details id=kept><div id=held hidden=until-found><b id=last>4</b></div></details>"
+        "<script>window.seen = [];"
+        "document.addEventListener('beforematch', (e) => seen.push([e.target.id, e.bubbles, e.isTrusted]));"
+        "</script>",
+    )
+    opened = "['outer', 'inner', 'sum', 'kept'].map((id) => document.getElementById(id).open)"
+
+    # Once the document has parsed, every closed details element around the target opens.
+    with _open_page(session, url + "#deep") as page:
+        assert page.evaluate(opened) == [True, True, False, False]
+        # A navigation within the document reveals too, but not through a details element's summary, which shows.
+        assert page.evaluate(f"location.hash = 'title'; {opened}") == [True, True, False, False]
+        assert page.evaluate(f"location.hash = 'text'; {opened}") == [True, True, True, False]
+        # An ancestor hidden until found gets beforematch, which bubbles, then shows.
+        assert page.evaluate("location.hash = 'hid'; [seen.splice(0), found.hidden]") == [
+            [["found", True, True]],
+            False,
+        ]
+        # Innermost first, and a listener that hides it for good stops the rest, as in Chrome.
+        assert page.evaluate(
+            "held.addEventListener('beforematch', () => { held.hidden = true; });"
+            f"location.hash = 'last'; [seen.splice(0), held.hidden, {opened}[3]]"
+        ) == [[["held", True, True]], True, False]
 
 
 def test_lang_takes_the_content_language_header_and_a_meta_whose_removal_leaves_it(

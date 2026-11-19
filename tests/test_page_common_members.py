@@ -1,7 +1,7 @@
 """Tests of the members that pages call most, in the Page program: docs/runtime.md, "The members pages call most".
 
 Each case's expected outcome is what Chrome 157.0.8103.51 gave for the same script, headless on a file:// page, which is
-a secure context as the Page program's about:blank is. These run where MITTO_PAGE_PROGRAM names the Page program, as
+a secure context as the about:blank of the Page program's command line is. These run where MITTO_PAGE_PROGRAM names the Page program, as
 tests/test_page_program.py does.
 """
 
