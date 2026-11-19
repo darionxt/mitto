@@ -270,7 +270,8 @@ PageIndexedDb::~PageIndexedDb() {
 
 void PageIndexedDb::OnCall(PageIndexedDbCall call,
                            uint64_t context,
-                           const std::optional<std::string>& storage_key) {
+                           const std::optional<std::string>& bucket_key,
+                           bool bucket_live) {
   if (HasCallNumber(call.op)) {
     if (call.call <= last_call_) {
       RefuseCall(
@@ -284,7 +285,7 @@ void PageIndexedDb::OnCall(PageIndexedDbCall call,
     case IndexedDbCallOp::kGetDatabaseInfo:
     case IndexedDbCallOp::kOpen:
     case IndexedDbCallOp::kDeleteDatabase:
-      OnFactoryCall(std::move(call), context, storage_key);
+      OnFactoryCall(std::move(call), context, bucket_key, bucket_live);
       return;
     case IndexedDbCallOp::kCreateObjectStore:
     case IndexedDbCallOp::kDeleteObjectStore:
@@ -314,11 +315,11 @@ void PageIndexedDb::OnCall(PageIndexedDbCall call,
   OnDatabaseCall(std::move(call), *found->second);
 }
 
-void PageIndexedDb::OnFactoryCall(
-    PageIndexedDbCall call,
-    uint64_t context,
-    const std::optional<std::string>& storage_key) {
-  if (!storage_key) {
+void PageIndexedDb::OnFactoryCall(PageIndexedDbCall call,
+                                  uint64_t context,
+                                  const std::optional<std::string>& bucket_key,
+                                  bool bucket_live) {
+  if (!bucket_key) {
     RefuseCall("IndexedDB of a document whose origin may not reach it");
     return;
   }
@@ -341,12 +342,33 @@ void PageIndexedDb::OnFactoryCall(
     connection_contexts_.emplace(call.connection, context);
     transactions_.emplace(call.transaction, call.connection);
   }
-  // The databases of a storage key load from the Session's file before its
-  // first call, as Chrome's browser opens a bucket's store.
+  if (!bucket_live) {
+    FailFactoryCall(std::move(call));
+    return;
+  }
+  // The databases of a bucket load from the Session's file before its first
+  // call, as Chrome's browser opens a bucket's store.
   context_->WithBucket(
-      *storage_key,
-      base::BindOnce(&PageIndexedDb::RunFactoryCall, weak_factory_.GetWeakPtr(),
-                     std::move(call)));
+      *bucket_key, base::BindOnce(&PageIndexedDb::RunFactoryCall,
+                                  weak_factory_.GetWeakPtr(), std::move(call)));
+}
+
+void PageIndexedDb::FailFactoryCall(PageIndexedDbCall call) {
+  static constexpr char16_t kMessage[] = u"Internal error.";
+  if (call.op == IndexedDbCallOp::kGetDatabaseInfo) {
+    PageIndexedDbCallback answer;
+    answer.op = IndexedDbCallbackOp::kDatabaseInfo;
+    answer.error = IndexedDbException::kUnknownError;
+    answer.message = kMessage;
+    SendReply(call.call, std::move(answer));
+    return;
+  }
+  // The client frees an open's numbers as it goes.
+  FactoryClient client(
+      weak_factory_.GetWeakPtr(), call.call,
+      call.op == IndexedDbCallOp::kOpen ? call.connection : 0,
+      call.op == IndexedDbCallOp::kOpen ? call.transaction : 0);
+  client.Error(IndexedDbException::kUnknownError, kMessage);
 }
 
 void PageIndexedDb::RunFactoryCall(PageIndexedDbCall call,
