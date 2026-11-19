@@ -469,6 +469,43 @@
         "Sec-Fetch-Mode: no-cors",
         "Sec-Fetch-Dest: image"
       ]
+    },
+    "module_json": {
+      "credentials_mode": "same-origin",
+      "priority": "MEDIUM",
+      "priority_incremental": false,
+      "headers": [
+        "Origin: <origin>",
+        "sec-ch-ua-platform: \"Windows\"",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\", \"Google Chrome\";v=\"156\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-full-version-list: \"Not:A-Brand\";v=\"8.0.0.0\", \"Chromium\";v=\"156.0.8078.80\", \"Google Chrome\";v=\"156.0.8078.80\"",
+        "viewport-width: <machine>",
+        "device-memory: <machine>",
+        "sec-ch-dpr: <machine>",
+        "sec-ch-ua-model: \"\"",
+        "sec-ch-ua-form-factors: \"Desktop\"",
+        "sec-ch-ua-bitness: \"64\"",
+        "sec-ch-ua-wow64: ?0",
+        "sec-ch-ua-arch: \"x86\"",
+        "sec-ch-prefers-reduced-transparency: <machine>",
+        "sec-ch-ua-full-version: \"156.0.8078.80\"",
+        "sec-ch-viewport-width: <machine>",
+        "downlink: <machine>",
+        "sec-ch-viewport-height: <machine>",
+        "ect: <machine>",
+        "sec-ch-device-memory: <machine>",
+        "sec-ch-prefers-reduced-motion: <machine>",
+        "dpr: <machine>",
+        "sec-ch-prefers-color-scheme: <machine>",
+        "rtt: <machine>",
+        "sec-ch-ua-platform-version: <machine>",
+        "Accept: application/json,*/*;q=0.5",
+        "Sec-Fetch-Site: same-origin",
+        "Sec-Fetch-Mode: cors",
+        "Sec-Fetch-Dest: json"
+      ]
     }
   },
   "page_features": {
