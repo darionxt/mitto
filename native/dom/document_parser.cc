@@ -89,6 +89,13 @@ DocumentParser::DocumentParser(Document& document, Client* client)
       references_(
           bindings::MakeGarbageCollected<HtmlTreeBuilderReferences>(document)),
       tree_(std::make_unique<HtmlDocumentParser>(document, references_.Get())) {
+  // The tree stops after the token that added a style sheet that blocks the
+  // parser, which owns it.
+  tree_->SetShouldPause(base::BindRepeating(
+      [](const DocumentParser* parser) {
+        return parser->added_pending_parser_blocking_stylesheet_;
+      },
+      base::Unretained(this)));
 }
 
 DocumentParser::~DocumentParser() = default;
@@ -298,7 +305,12 @@ bool DocumentParser::PumpTokenizer() {
     return should_yield;
   };
   while (!IsStopped() && !IsPaused()) {
-    if (Element* const script = tree_->Pump()) {
+    Element* const script = tree_->Pump();
+    CheckIfBlockingStylesheetAdded();
+    if (IsPaused() && !script) {
+      break;
+    }
+    if (script) {
       ProcessScriptElement(*script);
       if (IsStopped() || IsPaused()) {
         break;
@@ -328,6 +340,31 @@ bool DocumentParser::PumpTokenizer() {
     ++times_yielded_;
   }
   return should_yield;
+}
+
+void DocumentParser::CheckIfBlockingStylesheetAdded() {
+  if (added_pending_parser_blocking_stylesheet_) {
+    added_pending_parser_blocking_stylesheet_ = false;
+    waiting_for_stylesheets_ = true;
+  }
+}
+
+void DocumentParser::ExecuteScriptsWaitingForResources() {
+  if (IsStopped()) {
+    return;
+  }
+  waiting_for_stylesheets_ = false;
+  if (IsStopping()) {
+    AttemptToRunDeferredScriptsAndEnd();
+    return;
+  }
+  // HTMLParserScriptRunner::ExecuteScriptsWaitingForResources().
+  if (parser_blocking_script_ && !IsExecutingScript()) {
+    ExecuteParsingBlockingScripts();
+  }
+  if (!IsPaused()) {
+    ResumeParsingAfterPause();
+  }
 }
 
 void DocumentParser::ResumeParsingAfterPause() {

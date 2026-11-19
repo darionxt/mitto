@@ -108,6 +108,13 @@ class Resource : public cppgc::GarbageCollected<Resource> {
   const std::string& Charset() const { return charset_; }
   void SetCharset(std::string charset) { charset_ = std::move(charset); }
 
+  // The referrer policy that its request went with, the document's for one
+  // that left it to the document, as a sheet's imports take it.
+  FetchReferrerPolicy ReferrerPolicy() const { return referrer_policy_; }
+  void SetReferrerPolicy(FetchReferrerPolicy policy) {
+    referrer_policy_ = policy;
+  }
+
   // Whether a link preload made it, and no other request has used it yet.
   bool IsUnusedPreload() const { return is_unused_preload_; }
   void SetIsUnusedPreload(bool unused) { is_unused_preload_ = unused; }
@@ -145,6 +152,7 @@ class Resource : public cppgc::GarbageCollected<Resource> {
   std::optional<ImageHeader> image_;
   IntegrityMetadataSet integrity_;
   std::string charset_;
+  FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   bool is_unused_preload_ = false;
   WeakHeapVector<ResourceClient> clients_;
   cppgc::WeakMember<ResourceFetcher> fetcher_;

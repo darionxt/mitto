@@ -1,11 +1,15 @@
 // The link element, which preloads what rel=preload names through its
-// document's ResourceFetcher, as Blink's LinkLoader and PreloadHelper do,
-// and fires load or error at the link once that ends. Style sheets, icons,
-// prefetch and the network hints are later work of #284.
+// document's ResourceFetcher, as Blink's LinkLoader and PreloadHelper do, and
+// loads the style sheet that rel=stylesheet names, as Blink's LinkStyle does,
+// with its imports, holding back scripts, rendering or the parser as the
+// sheet's place says, and fires load or error at the link once that ends.
+// Icons, prefetch and the network hints are later work of #284.
 //
 // Upstream: third_party/blink/renderer/core/html/html_link_element.h
 // Upstream: third_party/blink/renderer/core/html/html_link_element.cc
 // Upstream: third_party/blink/renderer/core/html/link_rel_attribute.cc
+// Upstream: third_party/blink/renderer/core/html/link_style.cc
+// Upstream: third_party/blink/renderer/core/css/pending_sheet_type.cc
 // Upstream: third_party/blink/renderer/core/loader/link_loader.cc
 // Upstream: third_party/blink/renderer/core/loader/preload_helper.cc
 
@@ -15,8 +19,10 @@
 #include <optional>
 #include <string>
 
+#include "mitto/dom/document.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/resource.h"
+#include "mitto/dom/style_sheet_contents.h"
 #include "v8/include/cppgc/member.h"
 
 namespace mitto {
@@ -36,7 +42,9 @@ struct LinkRelAttribute {
   bool is_expect = false;
 };
 
-class HTMLLinkElement final : public HTMLElement, public ResourceClient {
+class HTMLLinkElement final : public HTMLElement,
+                              public ResourceClient,
+                              public StyleSheetOwner {
  public:
   static HTMLLinkElement* Create(Document& document);
 
@@ -69,11 +77,44 @@ class HTMLLinkElement final : public HTMLElement, public ResourceClient {
 
   // ResourceClient:
   void NotifyFinished(Resource& resource) override;
+  // StyleSheetOwner:
+  void SheetLoaded(bool error) override;
+
+  // The parser made it, which makes its style sheet block scripts.
+  void SetCreatedByParser() { created_by_parser_ = true; }
 
  private:
+  // LinkStyle's disabled state: unset until the disabled attribute comes or
+  // goes.
+  enum class DisabledState { kUnset, kEnabledViaScript, kDisabled };
+
+  // LinkStyle::LoadStylesheetIfNeeded(): fetches the style sheet that the
+  // link names, or returns false if it names none.
+  bool LoadStylesheetIfNeeded();
+  // LinkStyle::NotifyFinished().
+  void StyleSheetFinished(Resource& resource);
+  // LinkStyle::SetDisabledState().
+  void SetDisabledState(bool disabled);
+  // Whether its sheet, or an import of it, still loads.
+  bool StyleSheetIsLoading() const;
+  // Lets go of its sheet, which tells it nothing more.
+  void ClearSheet();
+  // An alternate sheet that no script has enabled, which loads lazily and
+  // holds nothing back.
+  bool IsAlternate() const;
+  // A blocking=render link, or a style sheet's that the parser made.
+  bool IsPotentiallyRenderBlocking() const;
+  // LinkStyle's pending sheet, which the document counts.
+  void AddPendingSheet(Document::PendingSheetType type);
+  void RemovePendingSheet();
+  // HTMLLinkElement::ScheduleEvent(): load or error at the link from a task,
+  // which holds the load event back.
+  void ScheduleEvent(bool loaded);
+
   // HTMLLinkElement::Process(): loads what the link asks for, in place of
-  // what it loaded before.
-  void Process();
+  // what it loaded before. A change of media changes nothing of a sheet that
+  // has come.
+  void Process(bool media_change = false);
   bool ShouldLoadLink() const;
   // LinkLoader::Abort(): lets go of the resource that it waits for.
   void Abort();
@@ -83,6 +124,21 @@ class HTMLLinkElement final : public HTMLElement, public ResourceClient {
   void DispatchLinkEvent(bool loaded);
 
   cppgc::Member<Resource> pending_resource_;
+  // The style sheet's fetch, and once it has come, the sheet with its
+  // imports.
+  cppgc::Member<Resource> style_resource_;
+  cppgc::Member<StyleSheetContents> sheet_;
+  Document::PendingSheetType pending_sheet_type_ =
+      Document::PendingSheetType::kNone;
+  DisabledState disabled_state_ = DisabledState::kUnset;
+  // Whether a script has taken the disabled attribute away.
+  bool explicitly_enabled_ = false;
+  // Whether the sheet blocks rendering, which its imports' fetches take.
+  bool render_blocking_ = false;
+  // LinkStyle's loading_: from the sheet's fetch until it has parsed, so that
+  // an import that ends during the parse tells the link nothing yet.
+  bool loading_ = false;
+  bool created_by_parser_ = false;
   // Whether Process() is adding the resource as a client, which hears of a
   // resource that has ended at once.
   bool adding_client_ = false;

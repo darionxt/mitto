@@ -1657,6 +1657,78 @@ void Document::RemovePendingRenderBlockingScript(Element& script) {
   }
 }
 
+bool Document::AddPendingRenderBlockingSheet(Element& owner) {
+  if (!window_ || !is_html_ || Body()) {
+    return false;
+  }
+  pending_render_blocking_scripts_.push_back(&owner);
+  return true;
+}
+
+void Document::AddPendingBlockingSheet(Element& owner, PendingSheetType type) {
+  const bool is_render_blocking = AddPendingRenderBlockingSheet(owner);
+  if (type != PendingSheetType::kBlocking) {
+    return;
+  }
+  ++pending_script_blocking_stylesheets_;
+  // One in the body blocks the parser, which needs it for the style of what
+  // follows, as HTMLDocumentParser::DidAddPendingParserBlockingStylesheet()
+  // waits.
+  if (!is_render_blocking) {
+    ++pending_parser_blocking_stylesheets_;
+    if (DocumentParser* const parser = parser_.Get()) {
+      parser->DidAddPendingParserBlockingStylesheet();
+    }
+  }
+}
+
+void Document::RemovePendingBlockingSheet(Element& owner,
+                                          PendingSheetType type) {
+  bool was_render_blocking = false;
+  pending_render_blocking_scripts_.EraseIf(
+      [&owner, &was_render_blocking](Element* item) {
+        if (item != &owner || was_render_blocking) {
+          return !item;
+        }
+        was_render_blocking = true;
+        return true;
+      });
+  if (was_render_blocking && Body()) {
+    BeginLifecycleUpdatesIfRenderingReady();
+  }
+  if (type != PendingSheetType::kBlocking) {
+    return;
+  }
+  if (!was_render_blocking && pending_parser_blocking_stylesheets_ > 0 &&
+      --pending_parser_blocking_stylesheets_ == 0) {
+    if (DocumentParser* const parser = parser_.Get()) {
+      parser->DidLoadAllPendingParserBlockingStylesheets();
+    }
+  }
+  CHECK_GT(pending_script_blocking_stylesheets_, 0);
+  if (--pending_script_blocking_stylesheets_ > 0) {
+    return;
+  }
+  // DidLoadAllScriptBlockingResources(): the scripts that wait for style
+  // sheets run from a task of the networking task source.
+  WindowTasks* const tasks = window_ ? window_->GetTasks() : nullptr;
+  if (!tasks) {
+    return;
+  }
+  tasks->PostTask(
+      TaskType::kNetworking,
+      base::BindOnce(
+          [](const cppgc::WeakPersistent<Document>& document) {
+            if (!document || !document->IsScriptExecutionReady()) {
+              return;
+            }
+            if (DocumentParser* const parser = document->parser_.Get()) {
+              parser->ExecuteScriptsWaitingForResources();
+            }
+          },
+          cppgc::WeakPersistent<Document>(this)));
+}
+
 void Document::BeginLifecycleUpdatesIfRenderingReady() {
   if (!window_) {
     return;

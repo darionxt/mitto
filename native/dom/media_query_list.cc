@@ -80,6 +80,20 @@ MediaValues MediaValuesFor(const PageStart& start) {
   return values;
 }
 
+bool MediaAttributeMatches(const Document& document,
+                           const std::u16string& media) {
+  Window* const window = document.DefaultView();
+  if (media.empty() || !window) {
+    return true;
+  }
+  MediaValues values = MediaValuesFor(window->Start());
+  values.strict_mode = !document.InQuirksMode();
+  return MediaQueryEvaluator(values).Eval(*ParseMediaQuerySet(
+      media, MediaQueryFeaturesFor(
+                 bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
+                     ->features())));
+}
+
 MediaQueryFeatures MediaQueryFeaturesFor(
     const bindings::RuntimeFeatureSet& features) {
   using bindings::RuntimeFeature;

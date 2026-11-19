@@ -110,6 +110,20 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // for, and lets go of the document.
   void Detach();
 
+  // A style sheet in the body that blocks the parser came, or the last such
+  // went: the parser waits once the token that added one ends, as Blink's
+  // CheckIfBlockingStylesheetAdded() stops it.
+  void DidAddPendingParserBlockingStylesheet() {
+    added_pending_parser_blocking_stylesheet_ = true;
+  }
+  void DidLoadAllPendingParserBlockingStylesheets() {
+    added_pending_parser_blocking_stylesheet_ = false;
+  }
+  // HTMLDocumentParser::ExecuteScriptsWaitingForResources(): no style sheet
+  // blocks scripts any more, so the script that waits runs, and the parser
+  // goes on.
+  void ExecuteScriptsWaitingForResources();
+
  private:
   enum class State {
     kParsing,
@@ -140,7 +154,10 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
 
   // Whether the parser waits for a parser-blocking script. Blink's parser
   // pause flag is never set in the Engine Release.
-  bool IsPaused() const { return parser_blocking_script_; }
+  bool IsPaused() const {
+    return parser_blocking_script_ || waiting_for_stylesheets_;
+  }
+  void CheckIfBlockingStylesheetAdded();
 
   void PostTask(TaskType type, void (DocumentParser::*method)());
   void SchedulePumpTokenizer();
@@ -208,6 +225,8 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // HTMLParserScriptRunner's: the script that the parser waits for, and the
   // scripts that run after parsing, in document order.
   cppgc::Member<PendingScript> parser_blocking_script_;
+  bool added_pending_parser_blocking_stylesheet_ = false;
+  bool waiting_for_stylesheets_ = false;
   HeapVector<PendingScript> scripts_after_parsing_;
 };
 

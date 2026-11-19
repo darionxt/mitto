@@ -265,6 +265,12 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
       params.type, params.url, params.mode, params.credentials);
   resource->SetIntegrity(params.integrity);
   resource->SetCharset(params.charset);
+  // ResourceFetcher::PrepareRequest(): one that leaves its referrer policy to
+  // the document goes with the document's.
+  resource->SetReferrerPolicy(params.referrer_policy ==
+                                      FetchReferrerPolicy::kDefault
+                                  ? document->GetReferrerPolicy()
+                                  : params.referrer_policy);
   resource->SetIsUnusedPreload(params.is_link_preload);
   resource->SetFetcher(this);
   resources_.push_back(resource);
@@ -310,16 +316,12 @@ void ResourceFetcher::StartLoad(Resource& resource,
   if (params.credentials != kind_credentials) {
     request.credentials = params.credentials;
   }
-  // One that leaves its referrer policy to the document goes with the
-  // document's.
-  request.referrer_policy =
-      params.referrer_policy == FetchReferrerPolicy::kDefault
-          ? document_->GetReferrerPolicy()
-          : params.referrer_policy;
+  request.referrer_policy = resource.ReferrerPolicy();
   const FetchPriority priority = ComputeLoadPriority(params);
   if (priority != TypeToPriority(params.type)) {
     request.priority = priority;
   }
+  request.referrer = params.referrer;
   request.render_blocking = params.render_blocking;
   // A fetch of a type that blocks the load event holds it back, unless it is
   // a link preload or nothing lets it go.
