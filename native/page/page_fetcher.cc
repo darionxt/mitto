@@ -125,6 +125,7 @@ class PageFetcher::Request final : public PageRequests::Client,
     // Destroys this.
     fetcher_->Finished(number_);
   }
+  void OnRequestBodyCredit() override { client_->OnBodyRoom(); }
 
   // FetchController:
   void TookBody(size_t bytes) override {
@@ -134,6 +135,15 @@ class PageFetcher::Request final : public PageRequests::Client,
     fetcher_->requests_->Cancel(number_);
     // Destroys this.
     fetcher_->Finished(number_);
+  }
+  size_t BodyRoom() const override {
+    return fetcher_->requests_->BodyCredit(number_);
+  }
+  void SendBody(std::string_view bytes) override {
+    fetcher_->requests_->SendBodyPart(number_, bytes);
+  }
+  void EndBody(bool errored) override {
+    fetcher_->requests_->EndBody(number_, errored);
   }
 
  private:
@@ -206,6 +216,7 @@ void PageFetcher::Fetch(FetchRequestData data,
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);
   page_request.body = std::move(data.body);
+  page_request.streams_body = data.streams_body;
   if (data.mode) {
     page_request.mode = ToPageRequestMode(*data.mode);
   }

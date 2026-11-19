@@ -134,13 +134,15 @@ class PageNetwork {
  public:
   // Starts a request for a Page, which tells `client` how it goes until it
   // finishes or the client abandons it. It is the Session's, as a request of
-  // the C API's is.
+  // the C API's is. A body that streams, for `options.stream_body`, is read
+  // from `body_channel`, which the client writes.
   virtual base::WeakPtr<RunningRequest> StartPageRequest(
       RequestClient& client,
       GURL url,
       net::HttpRequestHeaders headers,
       RequestOptions options,
-      std::optional<std::vector<char>> body) = 0;
+      std::optional<std::vector<char>> body,
+      scoped_refptr<RequestChannel> body_channel) = 0;
 
   virtual net::CookieStore& cookie_store() = 0;
 
@@ -355,6 +357,14 @@ class PageHost final : public PageChannel::Delegate {
   void OnGetCookies(uint64_t question, const CookieContext& context);
   void OnSetCookie(const std::string& line, const CookieContext& context);
   void OnCancel(uint64_t number);
+  // A fetch()'s body that streams from the Page, which a request of
+  // `options.stream_body` reads.
+  void OnRequestBodyPart(const PageRequestBodyPart& part);
+  void OnRequestBodyEnded(const PageRequestBodyEnded& ended);
+  // The request of `number` whose body streams and has not ended, for `what`
+  // of it that the Page sent; null if the request has ended since, or if the
+  // Page breaks the protocol, which this refuses.
+  Request* RequestWithBodyStream(uint64_t number, std::string_view what);
   // What the document's CookieStore asks, as Chrome's RestrictedCookieManager
   // answers it, always for the document that the Session loaded.
   void OnCookieStoreGet(PageCookieStoreGet get, const CookieContext& context);
@@ -481,6 +491,7 @@ class PageHost final : public PageChannel::Delegate {
                     net::HttpRequestHeaders headers,
                     RequestOptions options,
                     std::optional<std::vector<char>> body,
+                    scoped_refptr<RequestChannel> body_channel,
                     FetchChecks checks);
 
   // What a Request hears of its job.

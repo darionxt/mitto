@@ -124,6 +124,9 @@ struct FetchRequestData {
   // The lines that the script set, each "name: value" and a line feed.
   std::string headers;
   std::optional<std::string> body;
+  // Whether its body streams, as the FetchClient sends it through its
+  // FetchController, from when the Session starts reading it.
+  bool streams_body = false;
   // The request's mode and credentials mode, if not those of its destination.
   std::optional<FetchMode> mode;
   std::optional<FetchCredentialsMode> credentials;
@@ -172,6 +175,14 @@ class FetchController {
   // client must touch nothing of itself after calling it.
   virtual void Cancel() = 0;
 
+  // For a body that streams: how many more bytes of it the Session takes now,
+  // none until it starts reading the body.
+  virtual size_t BodyRoom() const = 0;
+  // Sends `bytes` of the body, at most BodyRoom().
+  virtual void SendBody(std::string_view bytes) = 0;
+  // Ends the body, which fails the request if `errored`.
+  virtual void EndBody(bool errored) = 0;
+
  protected:
   virtual ~FetchController() = default;
 };
@@ -191,6 +202,8 @@ class FetchClient {
   // 0 when all of the body has come, and otherwise a net error, before or
   // after the response started.
   virtual void OnResponseEnded(int net_error) = 0;
+  // For a request whose body streams: the Session takes more of it.
+  virtual void OnBodyRoom() {}
 };
 
 class Fetcher {
