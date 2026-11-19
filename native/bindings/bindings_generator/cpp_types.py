@@ -338,6 +338,7 @@ class TypeMapper:
                 TypeKind.INTEGER,
                 TypeKind.CALLBACK_INTERFACE,
             )
+            or (kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES)
             or self._is_union_of_classes(idl_type)
             or self._is_union_of_values(idl_type)
         )
@@ -372,7 +373,8 @@ class TypeMapper:
             # the inherited ones first, each dictionary's in order of their names.
             return "v8::Local<v8::Object>"
         if kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES:
-            # The view, which the class makes or took, as Blink returns a NotShared<T>.
+            # The view, which the class makes or took, as Blink returns a NotShared<T>, and empty for null, as
+            # ReadableStreamBYOBRequest's view gives it.
             return f"v8::Local<v8::{idl_type.name}>"
         if kind is TypeKind.ENUMERATION:
             # The value as a page sees it, one of the enumeration's strings, where Blink returns its V8 enum class.
@@ -441,6 +443,8 @@ class TypeMapper:
             if idl_type.nullable:
                 return f"ToV8NullableString(isolate, {expression})"
             return f"ToV8String(isolate, {expression})"
+        if kind is TypeKind.BUFFER_SOURCE and idl_type.nullable:
+            return f"ToV8NullableObject(isolate, {expression})"
         if kind in (
             TypeKind.PROMISE,
             TypeKind.FROZEN_ARRAY,

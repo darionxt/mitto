@@ -107,18 +107,13 @@ bool GenerateEntropy(unsigned char* buffer, size_t size) {
   return true;
 }
 
-// Upstream: net/base/is_potentially_trustworthy.cc
-bool IsUrlPotentiallyTrustworthy(const GURL& url) {
-  if (url.IsAboutBlank() || url.IsAboutSrcdoc() ||
-      url.SchemeIs(url::kDataScheme)) {
-    return true;
-  }
-  const url::Origin origin = url::Origin::Create(url);
+// Upstream: services/network/public/cpp/is_potentially_trustworthy.cc
+bool IsOriginPotentiallyTrustworthy(const url::Origin& origin) {
   if (origin.opaque()) {
     return false;
   }
-  return GURL::SchemeIsCryptographic(origin.scheme()) || IsLocalhost(url) ||
-         origin.scheme() == url::kFileScheme;
+  return GURL::SchemeIsCryptographic(origin.scheme()) ||
+         IsLocalhost(origin.GetURL()) || origin.scheme() == url::kFileScheme;
 }
 
 ScriptRunner::ScriptRunner(v8::Isolate* isolate) : isolate_(isolate) {}
@@ -180,6 +175,10 @@ std::optional<std::string> ScriptRunner::Start(
           send_));
 
   const v8::HandleScope handle_scope(isolate_);
+  // The first document is a tab's about:blank, whose origin is opaque, so its
+  // context is no secure context, as in Chrome.
+  bindings::PerIsolateData::From(isolate_)->set_secure_context(
+      IsOriginPotentiallyTrustworthy(url::Origin()));
   const v8::Local<v8::Context> context =
       NewContext(bindings::PerIsolateData::From(isolate_)->time_origin());
   context_.Reset(isolate_, context);
@@ -434,7 +433,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
   bindings::PerIsolateData::From(isolate_)->set_time_origin(time_origin);
   // A [SecureContext] member is installed when a context is made.
   bindings::PerIsolateData::From(isolate_)->set_secure_context(
-      IsUrlPotentiallyTrustworthy(url));
+      IsOriginPotentiallyTrustworthy(url::Origin::Create(url)));
   // Chrome's site isolation locks a renderer to the site of a document at an
   // HTTP or HTTPS URL.
   MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());

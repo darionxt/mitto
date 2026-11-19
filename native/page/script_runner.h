@@ -24,6 +24,7 @@
 #include "mitto/page/page_reporter.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-function-callback.h"
 #include "v8/include/v8-local-handle.h"
@@ -54,10 +55,12 @@ class WindowTasks;
 // V8's random numbers, as Chrome's renderers do.
 bool GenerateEntropy(unsigned char* buffer, size_t size);
 
-// Whether a document at `url` is a secure context: the HTML Standard's
-// potentially trustworthy URL, as Chrome decides it with no allowlist.
-// Upstream: net/base/is_potentially_trustworthy.cc
-bool IsUrlPotentiallyTrustworthy(const GURL& url);
+// Whether a top-level document of `origin` is a secure context: the HTML
+// Standard's potentially trustworthy origin, as Chrome decides it with no
+// allowlist. An opaque origin is not one, such as that of a tab's first
+// about:blank, which has no creator to take an origin from, or of a data: URL.
+// Upstream: services/network/public/cpp/is_potentially_trustworthy.cc
+bool IsOriginPotentiallyTrustworthy(const url::Origin& origin);
 
 // The main thread is the Page's event loop: each Session frame, each step of a
 // document's loading, each timer, each part of a response and each of V8's own

@@ -42,8 +42,11 @@ bool RunInWindowContext(Window* window, base::FunctionRef<void()> run) {
     return false;
   }
   const v8::Context::Scope context_scope(context);
+  // Holds back no microtasks: a listener's own scope is the outermost one
+  // that runs them, as V8ScriptRunner::CallFunction()'s is in Blink, and the
+  // event loop runs the rest at the task's end.
   const v8::MicrotasksScope microtasks_scope(
-      context, v8::MicrotasksScope::kRunMicrotasks);
+      context, v8::MicrotasksScope::kDoNotRunMicrotasks);
   run();
   return true;
 }
