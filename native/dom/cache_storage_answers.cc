@@ -11,6 +11,7 @@
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_window.h"
+#include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/cache_body_loader.h"
 #include "mitto/dom/cache_storage_host.h"
 #include "mitto/dom/headers.h"
@@ -194,18 +195,17 @@ Response* ResponseFromCache(CacheStorageHost& host,
                                    url, response.url_list.size() > 1, headers,
                                    nullptr);
   }
-  // The loader goes to the host, and the Response holds it until it goes.
-  Response* const page_response = Response::CreateFetched(
-      type, response.status, response.status_text, url,
-      response.url_list.size() > 1, headers, nullptr);
+  // The loader goes to the host, and its consumer to the body, which drops
+  // the stored body once it goes.
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  auto loader = std::make_unique<CacheBodyLoader>(
-      host, response.body, page_response, isolate,
-      isolate->GetCurrentContext());
-  CacheBodyLoader* const loader_pointer = loader.get();
+  auto loader = std::make_unique<CacheBodyLoader>(host, response.body, isolate,
+                                                  isolate->GetCurrentContext());
+  BodyStreamBuffer* const body = BodyStreamBuffer::Create(
+      isolate, loader->consumer(), /*signal=*/nullptr);
   host.AdoptStoredBody(response.body, std::move(loader));
-  page_response->AttachBodyLoader(loader_pointer);
-  return page_response;
+  return Response::CreateFetched(type, response.status, response.status_text,
+                                 url, response.url_list.size() > 1, headers,
+                                 body);
 }
 
 bool CacheContextIsAlive(v8::Isolate* isolate,

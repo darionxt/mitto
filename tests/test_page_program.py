@@ -1285,7 +1285,7 @@ def test_a_broadcast_from_another_page_reaches_only_the_channels_of_its_origin(s
     assert session.close() == 0
 
 
-def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session) -> None:
+def test_a_no_store_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session) -> None:
     session.start()
     _loaded(session)
     session.send(
@@ -1294,10 +1294,11 @@ def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session
     # fetch() asks the Session at once, before the script that calls it returns.
     assert session.receive()[0] == _REQUEST
     assert session.evaluated() == (1, False, "null")
-    _respond(session, 1, "http://www.example.test/large", "text/plain")
+    _respond(session, 1, "http://www.example.test/large", "text/plain", headers="Cache-Control: no-store\n")
     _body(session, 1, b"x" * _BODY_WINDOW)
 
-    # The Response holds its window, and no script reads it, so the Session gets no room for more.
+    # Blink buffers no body of a no-store response, so it waits in its window, which no script reads, and the Session
+    # gets no room for more.
     assert _nothing_comes(session)
 
     session.send(_EVALUATE, struct.pack("<Q", 2) + b"response.text().then(text => text.length)")
@@ -1305,6 +1306,27 @@ def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session
     _body(session, 1, b"y" * 10)
     assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 10))
     _end(session, 1)
+    assert session.evaluated() == (2, False, str(_BODY_WINDOW + 10))
+    assert session.close() == 0
+
+
+def test_a_fetchs_body_gets_credit_once_blink_would_buffer_it(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE, struct.pack("<Q", 1) + b"window.got = fetch('/large').then(r => { window.response = r; }); null"
+    )
+    assert session.receive()[0] == _REQUEST
+    assert session.evaluated() == (1, False, "null")
+    _respond(session, 1, "http://www.example.test/large", "text/plain")
+    _body(session, 1, b"x" * _BODY_WINDOW)
+
+    # Blink's BufferingBytesConsumer takes the body 50 ms after it starts, though no script reads it.
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, _BODY_WINDOW))
+    _body(session, 1, b"y" * 10)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 10))
+    _end(session, 1)
+    session.send(_EVALUATE, struct.pack("<Q", 2) + b"got.then(() => response.text()).then(text => text.length)")
     assert session.evaluated() == (2, False, str(_BODY_WINDOW + 10))
     assert session.close() == 0
 
