@@ -439,6 +439,24 @@ class Parser {
     return std::make_unique<MediaQuerySet>(std::move(queries));
   }
 
+  // MediaQueryParser::ConsumeSingleCondition(): one <media-condition>, as a
+  // query of type all, or "not all" if none parses. It leaves the stream
+  // where the condition ends.
+  std::unique_ptr<MediaQuerySet> ParseConditionImpl(CssTokenStream& stream) {
+    stream.ConsumeWhitespace();
+    if (stream.AtEnd()) {
+      return std::make_unique<MediaQuerySet>();
+    }
+    std::vector<std::unique_ptr<MediaQuery>> queries;
+    if (NodePtr node = ConsumeCondition(stream)) {
+      queries.push_back(std::make_unique<MediaQuery>(
+          MediaQuery::RestrictorType::kNone, u"all", std::move(node)));
+    } else {
+      queries.push_back(MediaQuery::CreateNotAll());
+    }
+    return std::make_unique<MediaQuerySet>(std::move(queries));
+  }
+
  private:
   enum class ParseMode {
     kNormal,
@@ -861,6 +879,12 @@ std::unique_ptr<MediaQuerySet> ParseMediaQuerySet(
     const MediaQueryFeatures& features) {
   CssTokenStream stream(input);
   return Parser(features).ParseImpl(stream);
+}
+
+std::unique_ptr<MediaQuerySet> ParseMediaCondition(
+    CssTokenStream& stream,
+    const MediaQueryFeatures& features) {
+  return Parser(features).ParseConditionImpl(stream);
 }
 
 }  // namespace mitto

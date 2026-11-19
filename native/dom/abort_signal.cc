@@ -14,7 +14,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_abort_signal.h"
 #include "mitto/dom/event.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/execution_context.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
@@ -132,7 +132,7 @@ AbortSignal* AbortSignal::Timeout(uint64_t milliseconds) {
   AbortSignal* const signal =
       bindings::MakeGarbageCollected<AbortSignal>(SignalType::kTimeout);
   // A context that is gone runs no task.
-  if (!Window::Current().HasContext()) {
+  if (!ExecutionContext::Current().HasContext()) {
     return signal;
   }
   signal->StartTimeout(base::Milliseconds(milliseconds));
@@ -407,13 +407,14 @@ void AbortSignal::StartTimeout(base::TimeDelta delay) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timeout_context_.Reset(isolate, isolate->GetCurrentContext());
   kept_by_timeout_ = this;
-  timeout_cancel_id_ = Window::Current().AddSignalTimer(base::BindOnce(
-      [](cppgc::WeakPersistent<AbortSignal> signal) {
-        if (signal) {
-          signal->CancelTimeout();
-        }
-      },
-      cppgc::WeakPersistent<AbortSignal>(this)));
+  timeout_cancel_id_ =
+      ExecutionContext::Current().AddSignalTimer(base::BindOnce(
+          [](cppgc::WeakPersistent<AbortSignal> signal) {
+            if (signal) {
+              signal->CancelTimeout();
+            }
+          },
+          cppgc::WeakPersistent<AbortSignal>(this)));
   timeout_timer_ = std::make_unique<base::DeadlineTimer>();
   // Blink posts the task with base's default policy, which may run it late.
   timeout_timer_->Start(
@@ -430,10 +431,10 @@ void AbortSignal::TimeoutFired() {
   const v8::Local<v8::Context> context = timeout_context_.Get(isolate);
   timeout_context_.Reset();
   const v8::Context::Scope context_scope(context);
-  Window& window = Window::Current();
-  window.RemoveSignalTimer(timeout_cancel_id_);
-  // A window whose document has gone runs nothing more.
-  if (!window.HasContext()) {
+  ExecutionContext& execution_context = ExecutionContext::Current();
+  execution_context.RemoveSignalTimer(timeout_cancel_id_);
+  // A context that has gone runs nothing more.
+  if (!execution_context.HasContext()) {
     return;
   }
   SignalAbort(NewDOMException(isolate, "TimeoutError", "signal timed out"));

@@ -1,7 +1,9 @@
 #include "mitto/dom/document.h"
 
 #include <algorithm>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "base/auto_reset.h"
 #include "base/check.h"
@@ -41,6 +43,7 @@
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_factory.h"
 #include "mitto/dom/html_all_collection.h"
+#include "mitto/dom/html_details_element.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/html_element_factory.h"
@@ -58,6 +61,7 @@
 #include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/qualified_name.h"
 #include "mitto/dom/range.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/svg_element.h"
 #include "mitto/dom/svg_element_factory.h"
@@ -184,6 +188,10 @@ Document::Document(bool is_html)
     : Node(nullptr),
       is_html_(is_html),
       content_type_(is_html ? u"text/html" : u"application/xml") {
+  // An HTMLDocument clears its XML version, as Blink's does.
+  if (!is_html) {
+    xml_version_ = u"1.0";
+  }
   SetDocumentToSelf(this);
 }
 
@@ -207,6 +215,7 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(all_);
   visitor->Trace(feature_policy_);
   visitor->Trace(script_runner_);
+  visitor->Trace(fetcher_);
   current_script_stack_.Trace(visitor);
   pending_render_blocking_scripts_.Trace(visitor);
   visitor->Trace(template_document_);
@@ -627,6 +636,24 @@ std::u16string Document::Title() const {
     }
   }
   return std::u16string();
+}
+
+void Document::SetXmlVersion(const std::optional<std::u16string>& version,
+                             bindings::ExceptionState& exception_state) {
+  if (version != u"1.0") {
+    exception_state.ThrowDOMException(
+        "NotSupportedError",
+        base::StrCat({"This document does not support the XML version '",
+                      base::UTF16ToUTF8(version.value_or(u"")), "'."}));
+    return;
+  }
+  xml_version_ = version;
+}
+
+void Document::SetXmlStandalone(bool standalone,
+                                bindings::ExceptionState& exception_state) {
+  xml_standalone_ = standalone ? StandaloneStatus::kStandalone
+                               : StandaloneStatus::kNotStandalone;
 }
 
 std::u16string Document::CharacterSet() const {
@@ -1081,6 +1108,76 @@ Node* FindAnchor(Document& document, std::string_view fragment) {
   return nullptr;
 }
 
+// DisplayLockUtilities::RevealAutoExpandableAncestors(), the HTML Standard's
+// ancestor revealing algorithm. From the indicated node up, an ancestor whose
+// hidden attribute is "until-found" gets a bubbling beforematch event and
+// then loses the attribute, and a closed details element opens if the way up
+// goes through its contents, innermost first. It stops at the first ancestor
+// that is no longer connected, or that a listener has already revealed or
+// changed. A Page has no shadow trees, so the node tree stands in for Blink's
+// flat tree, and a details element's contents are the children that Blink's
+// ManuallyAssignSlots() puts in its content slot: all but its first summary.
+void RevealAutoExpandableAncestors(Node& target) {
+  enum class AncestorType {
+    kDetails,
+    kHiddenUntilFound,
+  };
+  std::vector<std::pair<cppgc::Persistent<Element>, AncestorType>>
+      ancestors_to_reveal;
+  for (Node* ancestor = &target; ancestor; ancestor = ancestor->ParentNode()) {
+    if (ancestor->IsElementNode()) {
+      auto* const element = static_cast<Element*>(ancestor);
+      const std::u16string* const hidden = element->FindAttribute(u"hidden");
+      if (element->IsHTMLElement() && hidden &&
+          base::EqualsCaseInsensitiveASCII(*hidden, u"until-found")) {
+        ancestors_to_reveal.emplace_back(element,
+                                         AncestorType::kHiddenUntilFound);
+      }
+    }
+    Node* const parent = ancestor->ParentNode();
+    if (!parent || !parent->IsElementNode() ||
+        !static_cast<Element*>(parent)->HasHTMLTagName(u"details")) {
+      continue;
+    }
+    auto* const details = static_cast<HTMLDetailsElement*>(parent);
+    const bool in_content_slot =
+        (ancestor->IsElementNode() || ancestor->IsTextNode()) &&
+        ancestor != details->MainSummary();
+    if (!details->IsOpen() && in_content_slot) {
+      ancestors_to_reveal.emplace_back(details, AncestorType::kDetails);
+    }
+  }
+  for (const auto& [element, type] : ancestors_to_reveal) {
+    if (!element->IsConnected()) {
+      return;
+    }
+    if (type == AncestorType::kHiddenUntilFound) {
+      const std::u16string* hidden = element->FindAttribute(u"hidden");
+      if (!hidden ||
+          !base::EqualsCaseInsensitiveASCII(*hidden, u"until-found")) {
+        return;
+      }
+      bindings::EventInit init;
+      init.bubbles = true;
+      Event* const event = Event::Create(u"beforematch", init);
+      event->SetTrusted(true);
+      element->DispatchEvent(event);
+      hidden = element->FindAttribute(u"hidden");
+      if (!element->IsConnected() || !hidden ||
+          !base::EqualsCaseInsensitiveASCII(*hidden, u"until-found")) {
+        return;
+      }
+      element->RemoveAttribute(u"hidden");
+    } else {
+      auto* const details = static_cast<HTMLDetailsElement*>(element.Get());
+      if (details->IsOpen()) {
+        return;
+      }
+      details->SetAttributeWithoutValidation(u"open", std::u16string());
+    }
+  }
+}
+
 }  // namespace
 
 void Document::ProcessUrlFragment(const GURL& url) {
@@ -1099,6 +1196,13 @@ void Document::ProcessUrlFragment(const GURL& url) {
   css_target_ = anchor && anchor->IsElementNode()
                     ? static_cast<Element*>(anchor)
                     : nullptr;
+  // ElementFragmentAnchor::TryCreate() reveals the indicated part where the
+  // fragment may scroll to it: on every navigation but one whose scroll
+  // offset comes back from history, which a Page, without layout, never
+  // restores.
+  if (anchor) {
+    RevealAutoExpandableAncestors(*anchor);
+  }
 }
 
 Element* Document::GetElementById(const std::u16string& id) const {
@@ -1334,6 +1438,13 @@ void Document::UpdateBaseUrl() {
   }
 }
 
+ResourceFetcher& Document::Fetcher() {
+  if (!fetcher_) {
+    fetcher_ = bindings::MakeGarbageCollected<ResourceFetcher>(*this);
+  }
+  return *fetcher_;
+}
+
 DocumentScriptRunner& Document::GetScriptRunner() {
   if (!script_runner_) {
     script_runner_ =
@@ -1377,6 +1488,13 @@ void Document::DecrementLoadEventDelayCount() {
                         document->CheckCompleted();
                       },
                       cppgc::WeakPersistent<Document>(this)));
+}
+
+void Document::DecrementLoadEventDelayCountAndCheckLoadEvent() {
+  CHECK_GT(load_event_delay_count_, 0);
+  if (--load_event_delay_count_ == 0) {
+    CheckCompleted();
+  }
 }
 
 void Document::SetLoadTiming(DocumentLoadTiming* timing) {
@@ -1652,6 +1770,10 @@ void Document::Close(bindings::ExceptionState& exception_state) {
         "Custom Element constructor should not use close().");
     return;
   }
+  Close();
+}
+
+void Document::Close() {
   // Nothing without a script-created parser that is parsing.
   if (!parser_ || !parser_->WasCreatedByScript() || !parser_->IsParsing()) {
     return;
@@ -1663,6 +1785,21 @@ void Document::Close(bindings::ExceptionState& exception_state) {
     SetReadiness(Readiness::kComplete);
   }
   CheckCompleted();
+}
+
+void Document::SetContent(const std::u16string& content) {
+  // Only once the document is ready for it.
+  if (parser_ && parser_->IsParsing() && parser_->IsExecutingScript()) {
+    return;
+  }
+  if (ignore_opens_during_unload_count_) {
+    return;
+  }
+  Open();
+  if (const cppgc::Persistent<DocumentParser> parser = parser_.Get()) {
+    parser->Insert(content);
+  }
+  Close();
 }
 
 void Document::Write(const std::vector<std::u16string>& text,

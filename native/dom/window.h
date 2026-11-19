@@ -1,8 +1,8 @@
 // The HTML Standard's Window, a Page's global object, with `window`, `self`,
-// `document`, `performance`, the timers, animation frame callbacks,
-// queueMicrotask(), fetch(), atob() and btoa(), `navigator`, `screen` and
-// `crypto`, and the window's place and size as the Session's Machine has them;
-// its other members are Known Gaps.
+// `document`, `performance`, animation frame callbacks, fetch(), `navigator`,
+// `screen` and `crypto`, and the window's place and size as the Session's
+// Machine has them, beside what every ExecutionContext has, the timers,
+// queueMicrotask(), atob() and btoa(); its other members are Known Gaps.
 //
 // A context's global object and its global proxy both wrap the Window, as in
 // Blink, so that a call whose receiver is either finds it. The window's
@@ -20,17 +20,15 @@
 #include <stdint.h>
 
 #include <array>
-#include <map>
 #include <string>
 #include <vector>
 
-#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/window_properties.h"
-#include "mitto/page_messages.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
 #include "v8/include/v8-forward.h"
@@ -55,10 +53,8 @@ class CookieStore;
 class Storage;
 class Crypto;
 class CustomElementRegistry;
-class DOMTimerCoordinator;
 class Document;
 class DocumentLoadTiming;
-class Fetcher;
 class Event;
 class History;
 class IDBFactory;
@@ -75,9 +71,8 @@ class Screen;
 class StyleMedia;
 class Viewport;
 class VisualViewport;
-class WindowTasks;
 
-class Window final : public WindowProperties {
+class Window final : public WindowProperties, public ExecutionContext {
  public:
   static Window* Create();
   // The Window of the isolate's current context.
@@ -94,27 +89,6 @@ class Window final : public WindowProperties {
   Window* Self() { return this; }
   mitto::Document* Document() const { return document_.Get(); }
   mitto::Performance* Performance();
-  int32_t SetTimeout(v8::Local<v8::Function> handler,
-                     int32_t timeout,
-                     const std::vector<v8::Local<v8::Value>>& arguments);
-  int32_t SetTimeout(const std::u16string& handler,
-                     int32_t timeout,
-                     const std::vector<v8::Local<v8::Value>>& arguments,
-                     bindings::ExceptionState& exception_state);
-  void ClearTimeout(int32_t handle);
-  int32_t SetInterval(v8::Local<v8::Function> handler,
-                      int32_t timeout,
-                      const std::vector<v8::Local<v8::Value>>& arguments);
-  int32_t SetInterval(const std::u16string& handler,
-                      int32_t timeout,
-                      const std::vector<v8::Local<v8::Value>>& arguments,
-                      bindings::ExceptionState& exception_state);
-  void ClearInterval(int32_t handle);
-  void QueueMicrotask(v8::Local<v8::Function> callback);
-  std::u16string Btoa(const std::u16string& data,
-                      bindings::ExceptionState& exception_state);
-  std::u16string Atob(const std::u16string& data,
-                      bindings::ExceptionState& exception_state);
   // DOMWindowFileSystem's: the file system of the document's origin, from a
   // task of its own, as Chrome's browser opens one for a new profile, or an
   // error for an opaque origin or a type other than TEMPORARY and PERSISTENT.
@@ -128,15 +102,15 @@ class Window final : public WindowProperties {
   mitto::Navigator* Navigator();
   mitto::Navigator* ClientInformation() { return Navigator(); }
   mitto::Screen* Screen();
-  int32_t InnerWidth() const { return start_.viewport_width; }
-  int32_t InnerHeight() const { return start_.viewport_height; }
-  int32_t ScreenX() const { return start_.window_x; }
+  int32_t InnerWidth() const { return Start().viewport_width; }
+  int32_t InnerHeight() const { return Start().viewport_height; }
+  int32_t ScreenX() const { return Start().window_x; }
   int32_t ScreenLeft() const { return ScreenX(); }
-  int32_t ScreenY() const { return start_.window_y; }
+  int32_t ScreenY() const { return Start().window_y; }
   int32_t ScreenTop() const { return ScreenY(); }
-  int32_t OuterWidth() const { return start_.window_width; }
-  int32_t OuterHeight() const { return start_.window_height; }
-  double DevicePixelRatio() const { return start_.scale; }
+  int32_t OuterWidth() const { return Start().window_width; }
+  int32_t OuterHeight() const { return Start().window_height; }
+  double DevicePixelRatio() const { return Start().scale; }
   MediaQueryList* MatchMedia(const std::u16string& query);
   // A top-level window of a tab that a Session opened: its own top, parent
   // and frames, with no opener.
@@ -215,12 +189,13 @@ class Window final : public WindowProperties {
                const std::u16string& features,
                bindings::ExceptionState& exception_state);
 
-  // Reports `e` as an error that a script left uncaught: the window's error
-  // event, then the console, as Blink's WindowOrWorkerGlobalScope does.
-  void ReportError(v8::Local<v8::Value> e);
-
   // EventTarget:
   Window* ToWindow() override;
+
+  // ExecutionContext:
+  bool IsWindow() const override;
+  // The timers of geolocation's requests count too.
+  size_t TimerCount() const override;
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -234,17 +209,6 @@ class Window final : public WindowProperties {
   // LocalWindowProxy::SetupWindowPrototypeChain() does.
   void AssociateWithContext(v8::Isolate* isolate,
                             v8::Local<v8::Context> context);
-  // The timers of the window's context, which the Page program keeps, and
-  // which go with it. Without them, as once the context is gone, a timer set
-  // is never run, and its ID is 0, as Chrome gives in a destroyed context.
-  // Setting none stops the timers of AbortSignal.timeout() too.
-  void SetTimers(DOMTimerCoordinator* timers);
-  // How many timers are set, those of AbortSignal.timeout() and the timeouts
-  // of geolocation's requests among them.
-  size_t TimerCount() const;
-  // What fetch() asks the Session through. Without one, it fails.
-  void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
-  Fetcher* GetFetcher() const { return fetcher_; }
   // What a navigation of the window's frame to another document asks the
   // Session through. Without one, as in the Page program given a script or
   // once the context is gone, such a navigation does not start.
@@ -252,10 +216,6 @@ class Window final : public WindowProperties {
     navigation_client_ = client;
   }
   NavigationClient* GetNavigationClient() const { return navigation_client_; }
-  // The tasks of the window's context, which the Page program keeps, and
-  // which go with it: without them, a task posted to the window never runs.
-  void SetTasks(WindowTasks* tasks) { tasks_ = tasks; }
-  WindowTasks* GetTasks() const { return tasks_; }
   // The idle callbacks of the window's context, which go with it, as its
   // timers do.
   void SetIdleTasks(IdleTaskController* idle_tasks) { idle_tasks_ = idle_tasks; }
@@ -272,6 +232,9 @@ class Window final : public WindowProperties {
   // callbacks, as Blink's Document::EnqueueAnimationFrameEvent() does. Nothing
   // fires in a window with no frames.
   void EnqueueAnimationFrameEvent(EventTarget& target, mitto::Event& event);
+  // `steps` runs in the post-lifecycle steps of the next animation frame,
+  // and never in a window with no frames.
+  void RequestPostLifecycleSteps(base::OnceClosure steps);
   // The window's frames wait until its document is ready to render, as
   // LocalFrameView's lifecycle updates do, from a navigation's commit until
   // Document::BeginLifecycleUpdatesIfRenderingReady().
@@ -284,52 +247,20 @@ class Window final : public WindowProperties {
   // while it calls a listener.
   mitto::Event* CurrentEvent() const { return current_event_.Get(); }
   void SetCurrentEvent(mitto::Event* event) { current_event_ = event; }
-  // Whether the Page still runs the window's context: it gives the window its
-  // timers until the context goes.
-  bool HasContext() const { return timers_ != nullptr; }
-  // The timer of an AbortSignal.timeout(), which counts among the window's
-  // timers until RemoveSignalTimer() takes it back with the ID that this
-  // returns. Its `cancel` runs once the Page lets the context go, as Blink's
-  // ContextDestroyed() cancels the signal's task.
-  uint64_t AddSignalTimer(base::OnceClosure cancel);
-  void RemoveSignalTimer(uint64_t id);
-  // What else goes with the context, such as the locks of a LockManager:
-  // `callback` runs once the Page lets the context go, as Blink's
-  // ExecutionContextLifecycleObserver::ContextDestroyed() does. It counts
-  // among no timers.
-  void AddContextDestroyedCallback(base::OnceClosure callback);
-  // What the window reads of the browser and the machine, from the Page's
-  // start, and what navigator.connection gives its document. Without them, as
-  // in the Page program given a script, it reads what a default PageStart
-  // holds.
-  void SetStart(const PageStart& start, const PageConnection& connection);
-  // What the window reads of the browser and the machine.
-  const PageStart& Start() const { return start_; }
-  // The ID by which the Page names the window's document to its Session, which
-  // each message of the document carries (page_messages.h). kNoDocument for a
-  // window that no Session loaded, as in the Page program given a script.
-  void SetDocumentId(uint64_t id) { document_id_ = id; }
-  uint64_t DocumentId() const { return document_id_; }
+  // The ID by which the Page names the window's document to its Session, the
+  // context's ID (ExecutionContext::ContextId()).
+  void SetDocumentId(uint64_t id) { SetContextId(id); }
+  uint64_t DocumentId() const { return ContextId(); }
   // How the window's document loads, which performance.timing and the
   // navigation's entry read. Without one, as in the Page program given a
   // script, the window starts one at its time origin.
   void SetDocumentLoadTiming(DocumentLoadTiming* timing);
   DocumentLoadTiming& GetDocumentLoadTiming();
-  // Where the console messages of the DOM go, such as a warning of Blink's.
-  // Without one, nowhere.
-  using ConsoleSink =
-      base::RepeatingCallback<void(ConsoleLevel level, std::string text)>;
-  void SetConsoleSink(ConsoleSink sink) { console_sink_ = std::move(sink); }
-  // ExecutionContext::AddConsoleMessage().
-  void AddConsoleMessage(ConsoleLevel level, std::string text);
   // The window's module map and the rest of its module machinery, made the
   // first time, as Blink's Modulator::From() makes the context's.
   Modulator* GetModulator();
 
  private:
-  // Runs a callback that queueMicrotask() queued, from its microtask.
-  static void RunQueuedMicrotask(void* data);
-
   // The window's bars, each an object of its own, as Blink's are.
   enum BarKind : size_t {
     kLocationbar,
@@ -366,19 +297,9 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Storage> local_storage_;
   cppgc::Member<mitto::Storage> session_storage_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
-  ConsoleSink console_sink_;
   cppgc::Member<mitto::Event> current_event_;
-  PageStart start_;
-  PageConnection connection_;
-  uint64_t document_id_ = kNoDocument;
-  raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
-  raw_ptr<Fetcher> fetcher_ = nullptr;
   raw_ptr<NavigationClient> navigation_client_ = nullptr;
-  std::map<uint64_t, base::OnceClosure> signal_timers_;
-  std::vector<base::OnceClosure> context_destroyed_callbacks_;
-  uint64_t next_signal_timer_ = 0;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
-  raw_ptr<WindowTasks> tasks_ = nullptr;
   raw_ptr<AnimationFrameController> animation_frames_ = nullptr;
 };
 

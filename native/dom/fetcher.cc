@@ -78,6 +78,35 @@ FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value) {
   return policy;
 }
 
+FetchReferrerPolicy FetchReferrerPolicyFromStringWithLegacyKeywords(
+    std::u16string_view value) {
+  if (base::EqualsCaseInsensitiveASCII(value, u"never") ||
+      base::EqualsCaseInsensitiveASCII(value, u"none")) {
+    return FetchReferrerPolicy::kNoReferrer;
+  }
+  if (base::EqualsCaseInsensitiveASCII(value, u"always")) {
+    return FetchReferrerPolicy::kUnsafeUrl;
+  }
+  if (base::EqualsCaseInsensitiveASCII(value, u"origin-when-crossorigin")) {
+    return FetchReferrerPolicy::kOriginWhenCrossOrigin;
+  }
+  // The default policy of Chrome's network service.
+  if (base::EqualsCaseInsensitiveASCII(value, u"default")) {
+    return FetchReferrerPolicy::kStrictOriginWhenCrossOrigin;
+  }
+  return FetchReferrerPolicyFromString(value);
+}
+
+CrossOriginAttribute CrossOriginAttributeFromValue(
+    const std::optional<std::u16string>& value) {
+  if (!value) {
+    return CrossOriginAttribute::kNotSet;
+  }
+  return base::EqualsCaseInsensitiveASCII(*value, u"use-credentials")
+             ? CrossOriginAttribute::kUseCredentials
+             : CrossOriginAttribute::kAnonymous;
+}
+
 FetchRequestData::FetchRequestData() = default;
 FetchRequestData::FetchRequestData(FetchRequestData&&) = default;
 FetchRequestData& FetchRequestData::operator=(FetchRequestData&&) = default;

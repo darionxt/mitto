@@ -4,9 +4,9 @@ frame tree.
 The Page program makes no frame yet, so a fake Page program stands in for it, as in tests/test_page_contexts.py: a
 Python script beside a copy of the library, which speaks the messages of native/page_messages.h. Under a top-level
 document of 127.0.0.1 it commits a frame of localhost, another site, with a frame of 127.0.0.1 in it, and a frame's
-initial about:blank of 127.0.0.1, and each binds localStorage, reads it and writes it, or lists and opens databases. A
-Session in another process, with a storage directory, opens the Page, and the test reads what the directory holds
-afterwards. Another fake Page sends a change that Blink would not write, which the library refuses.
+initial about:blank of 127.0.0.1, and each binds localStorage, reads it and writes it, lists and opens databases, or
+opens and lists buckets. A Session in another process, with a storage directory, opens the Page, and the test reads what
+the directory holds afterwards. Other fake Pages send what Blink would not, which the library refuses.
 """
 
 import http.server
@@ -36,7 +36,7 @@ pytestmark = [
 _TIMEOUT_SECONDS = 60
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 23
+_PROTOCOL_VERSION = 24
 
 _FAKE_PAGE = textwrap.dedent(
     """\
@@ -115,7 +115,8 @@ _FAKE_PAGE = textwrap.dedent(
             if payload[8] == 1:
                 return found
 
-    # IndexedDB's calls, after the document's ID, and the answers to those of them that have a number.
+    # IndexedDB's calls, after the document's ID, and the answers to those of them that have a number. A factory's call
+    # names the default bucket, 0, after its number.
     def idb(document, payload):
         send(42, struct.pack("<Q", document) + payload)
 
@@ -128,13 +129,13 @@ _FAKE_PAGE = textwrap.dedent(
     def idb_open(document, call, connection, transaction):
         # Database d at version 1, whose upgrade commits at once.
         name = "d".encode("utf-16-le")
-        idb(document, struct.pack("<BQQQI", 2, call, connection, transaction, 1) + name + struct.pack("<q", 1))
+        idb(document, struct.pack("<BQQQQI", 2, call, 0, connection, transaction, 1) + name + struct.pack("<q", 1))
         assert idb_answer(call)[0] == 3
         idb(document, struct.pack("<BQq", 25, transaction, 0))
         assert idb_answer(call)[0] == 4
 
     def idb_names(document, call):
-        idb(document, struct.pack("<BQ", 1, call))
+        idb(document, struct.pack("<BQQ", 1, call, 0))
         # After the operation, the call, the error and its message: how many databases, and each name and version.
         rest = idb_answer(call)[10:]
         rest = rest[4 + 2 * struct.unpack_from("<I", rest)[0] :]
@@ -145,6 +146,35 @@ _FAKE_PAGE = textwrap.dedent(
             size = struct.unpack_from("<I", rest)[0]
             names.append(rest[4 : 4 + 2 * size].decode("utf-16-le"))
             rest = rest[4 + 2 * size + 8 :]
+        return names
+
+    # The Storage Buckets API's calls, after the document's ID, and their answers.
+    def buckets(document, payload):
+        send(180, struct.pack("<Q", document) + payload)
+
+    def bucket_answer(question):
+        while True:
+            message_type, payload = receive()
+            if message_type == 181 and struct.unpack_from("<Q", payload, 1)[0] == question:
+                return payload
+
+    def bucket_open(document, question, name):
+        # No policies; the answer's error, then the bucket's number.
+        buckets(document, struct.pack("<BQ", 1, question) + sized(name) + b"\\x00")
+        answer = bucket_answer(question)
+        assert answer[9] == 0
+        return struct.unpack_from("<Q", answer, 10)[0]
+
+    def bucket_keys(document, question):
+        buckets(document, struct.pack("<BQ", 2, question))
+        rest = bucket_answer(question)[10:]
+        count = struct.unpack_from("<I", rest)[0]
+        rest = rest[4:]
+        names = []
+        for _ in range(count):
+            size = struct.unpack_from("<I", rest)[0]
+            names.append(rest[4 : 4 + size].decode())
+            rest = rest[4 + size :]
         return names
 
     send(1, struct.pack("<I", {version}))
@@ -203,6 +233,32 @@ _INDEXED_DB_ACTIONS = textwrap.dedent(
     idb_open(4, 5, 2, 2)
     idb_open(6, 6, 3, 3)
     send(5, struct.pack("<QB", call, 0) + json.dumps(seen).encode())
+    """
+)
+
+# A frame of the other site opens a bucket, and it and the top-level document list theirs.
+_BUCKET_ACTIONS = textwrap.dedent(
+    """\
+    frame(2, 3, 1, 4, "{frame}")
+    seen = {{}}
+    seen["frame_bucket"] = bucket_open(4, 1, b"f")
+    seen["frame_keys"] = bucket_keys(4, 2)
+    seen["top_keys"] = bucket_keys(2, 3)
+    send(5, struct.pack("<QB", call, 0) + json.dumps(seen).encode())
+    """
+)
+
+# An open of a bucket whose name Blink would not send.
+_BAD_BUCKET_NAME_ACTIONS = textwrap.dedent(
+    """\
+    buckets(2, struct.pack("<BQ", 1, 1) + sized(b"Inbox") + b"\\x00")
+    """
+)
+
+# A list of databases of a bucket that the Session never gave the Page.
+_UNGIVEN_BUCKET_ACTIONS = textwrap.dedent(
+    """\
+    idb(2, struct.pack("<BQQ", 1, 1, 7))
     """
 )
 
@@ -361,4 +417,33 @@ def test_a_change_of_a_key_that_blink_does_not_write_is_refused(tmp_path: Path, 
 
     assert seen["error"].endswith(
         "the library refused a message from the Page: a change to storage of a key or value that Blink does not write"
+    )
+
+
+def test_a_frames_buckets_are_partitioned_by_the_top_level_site(
+    tmp_path: Path, top: _Server, frame_site: _Server
+) -> None:
+    storage = tmp_path / "storage"
+    seen = _run_page(tmp_path, top, _BUCKET_ACTIONS.format(frame=frame_site.url("/frame-page")), storage)
+
+    assert seen == {"frame_bucket": 1, "frame_keys": ["f"], "top_keys": []}
+    # The file keeps the bucket under the frame's storage key, as Chrome's QuotaManager database does.
+    with closing(sqlite3.connect(storage / "QuotaManager")) as database:
+        held = database.execute("SELECT storage_key, name FROM buckets").fetchall()
+    assert held == [(f"http://localhost:{frame_site.port}/^0http://127.0.0.1", "f")]
+
+
+def test_an_open_of_a_bucket_whose_name_blink_does_not_send_is_refused(tmp_path: Path, top: _Server) -> None:
+    seen = _run_page(tmp_path, top, _BAD_BUCKET_NAME_ACTIONS, tmp_path / "storage")
+
+    assert seen["error"].endswith(
+        "the library refused a message from the Page: an open of a bucket whose name is not valid"
+    )
+
+
+def test_a_call_of_a_bucket_the_page_was_not_given_is_refused(tmp_path: Path, top: _Server) -> None:
+    seen = _run_page(tmp_path, top, _UNGIVEN_BUCKET_ACTIONS, tmp_path / "storage")
+
+    assert seen["error"].endswith(
+        "the library refused a message from the Page: a call of the storage of bucket 7, which the Page was not given"
     )

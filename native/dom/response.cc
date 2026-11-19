@@ -1,23 +1,19 @@
 #include "mitto/dom/response.h"
 
+#include <utility>
+
 #include "base/check.h"
 #include "base/compiler_specific.h"
-#include "base/containers/span.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/utf_string_conversions.h"
-#include "mitto/bindings/per_isolate_data.h"
-#include "mitto/bindings/runtime_feature_set.h"
-#include "mitto/bindings/runtime_features.h"
-#include "mitto/bindings/v8_conversions.h"
+#include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_response.h"
-#include "mitto/dom/abort_signal.h"
-#include "mitto/dom/fetch_loader.h"
+#include "mitto/dom/body_stream_buffer.h"
+#include "mitto/dom/fetch_data_loader.h"
+#include "mitto/dom/form_data_bytes_consumer.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/readable_stream.h"
 #include "mitto/dom/request.h"
-#include "v8/include/v8-array-buffer.h"
-#include "v8/include/v8-context.h"
-#include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-json.h"
 #include "v8/include/v8-primitive.h"
@@ -42,19 +38,9 @@ bool IsValidReasonPhrase(std::string_view text) {
   return true;
 }
 
-// The Encoding Standard's UTF-8 decode of a whole body: a byte order mark
-// goes, and each sequence that is not UTF-8 becomes U+FFFD.
-std::u16string DecodeUtf8(std::string_view bytes) {
-  if (bytes.starts_with("\xEF\xBB\xBF")) {
-    bytes.remove_prefix(3);
-  }
-  std::u16string text;
-  base::UTF8ToUTF16(bytes.data(), bytes.size(), &text);
-  return text;
-}
-
-// The Response constructor's steps after its body is extracted.
-Response* Initialize(std::optional<std::string> body,
+// The Response constructor's steps after its body is extracted, with `body`
+// null for a null body.
+Response* Initialize(BodyStreamBuffer* body,
                      std::optional<std::string> content_type,
                      const bindings::ResponseInit& init,
                      bindings::ExceptionState& exception_state) {
@@ -76,60 +62,76 @@ Response* Initialize(std::optional<std::string> body,
       return nullptr;
     }
   }
-  if (body && IsNullBodyStatus(status)) {
-    exception_state.ThrowTypeError(
-        "Response with null body status cannot have body");
-    return nullptr;
-  }
-  if (content_type && !headers->GetValue("content-type")) {
-    headers->AppendLine("Content-Type", *content_type);
-  }
-  Response* const response = Response::CreateFetched(
-      Response::ResponseType::kDefault, status, init.status_text,
-      std::u16string(),
-      /*redirected=*/false, headers, /*loader=*/nullptr);
   if (body) {
-    response->AppendBody(*body);
-    response->EndBody(0);
+    if (IsNullBodyStatus(status)) {
+      exception_state.ThrowTypeError(
+          "Response with null body status cannot have body");
+      return nullptr;
+    }
+    // Extracting a ReadableStream: if it is disturbed or locked, throw a
+    // TypeError. A body of anything else is neither.
+    if (body->IsStreamLocked() || body->IsStreamDisturbed()) {
+      exception_state.ThrowTypeError(
+          "Response body object should not be disturbed or locked");
+      return nullptr;
+    }
+    if (content_type && !headers->GetValue("content-type")) {
+      headers->AppendLine("Content-Type", *content_type);
+    }
   }
-  return response;
+  return Response::CreateFetched(Response::ResponseType::kDefault, status,
+                                 init.status_text, std::u16string(),
+                                 /*redirected=*/false, headers, body);
 }
 
-}  // namespace
-
-// The abort algorithm of a fetched body, as Blink's BodyStreamBuffer adds one.
-class AbortBodyAlgorithm final : public AbortSignal::Algorithm {
+// What ReadAll() reads the body with. An abort and then the loader's failure
+// may both come, as a promise of Blink's settles once whatever settles it
+// after.
+class ReadAllClient final : public cppgc::GarbageCollected<ReadAllClient>,
+                            public FetchDataLoader::Client {
  public:
-  explicit AbortBodyAlgorithm(Response* response) : response_(response) {}
+  explicit ReadAllClient(
+      base::OnceCallback<void(std::optional<std::string>)> done)
+      : done_(std::move(done)) {}
 
-  void Run() override {
-    if (Response* const response = response_.Get()) {
-      response->AbortBody();
+  void DidFetchDataLoadedArrayBuffer(std::string bytes) override {
+    Done(std::move(bytes));
+  }
+  void DidFetchDataLoadFailed() override { Done(std::nullopt); }
+  void Abort(v8::Local<v8::Value> reason) override { Done(std::nullopt); }
+
+ private:
+  void Done(std::optional<std::string> body) {
+    if (done_) {
+      std::move(done_).Run(std::move(body));
     }
   }
 
-  void Trace(cppgc::Visitor* visitor) const override {
-    AbortSignal::Algorithm::Trace(visitor);
-    visitor->Trace(response_);
-  }
-
- private:
-  const cppgc::WeakMember<Response> response_;
+  base::OnceCallback<void(std::optional<std::string>)> done_;
 };
+
+}  // namespace
 
 // static
 Response* Response::Create(const std::optional<v8::Local<v8::Value>>& body,
                            const bindings::ResponseInit& init,
                            bindings::ExceptionState& exception_state) {
-  std::optional<std::string> bytes;
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  BodyStreamBuffer* body_buffer = nullptr;
   std::optional<std::string> content_type;
   if (body && !(*body)->IsNullOrUndefined()) {
-    bytes = ExtractBody(v8::Isolate::GetCurrent(), *body, &content_type);
-    if (!bytes) {
-      return nullptr;
+    if (ReadableStream* const stream =
+            bindings::V8ReadableStream::ToWrappable(isolate, *body)) {
+      body_buffer =
+          bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate, stream);
+    } else {
+      body_buffer = ExtractBody(isolate, *body, &content_type, exception_state);
+      if (!body_buffer) {
+        return nullptr;
+      }
     }
   }
-  return Initialize(std::move(bytes), std::move(content_type), init,
+  return Initialize(body_buffer, std::move(content_type), init,
                     exception_state);
 }
 
@@ -150,8 +152,11 @@ Response* Response::StaticJson(v8::Local<v8::Value> data,
     exception_state.ThrowTypeError("The data is not JSON serializable");
     return nullptr;
   }
-  return Initialize(std::move(bytes), "application/json", init,
-                    exception_state);
+  BodyStreamBuffer* const body_buffer = BodyStreamBuffer::Create(
+      isolate,
+      bindings::MakeGarbageCollected<FormDataBytesConsumer>(std::move(bytes)),
+      /*signal=*/nullptr);
+  return Initialize(body_buffer, "application/json", init, exception_state);
 }
 
 // static
@@ -161,7 +166,7 @@ Response* Response::CreateFetched(ResponseType type,
                                   std::u16string url,
                                   bool redirected,
                                   mitto::Headers* headers,
-                                  BodyLoader* loader) {
+                                  BodyStreamBuffer* body) {
   Response* const response = bindings::MakeGarbageCollected<Response>();
   response->type_ = type;
   response->status_ = status;
@@ -169,21 +174,20 @@ Response* Response::CreateFetched(ResponseType type,
   response->url_ = std::move(url);
   response->redirected_ = redirected;
   response->headers_ = headers;
-  if (loader) {
-    response->body_state_ =
-        type == ResponseType::kOpaque ? BodyState::kNull : BodyState::kLoading;
-    response->loader_ = loader;
+  if (type == ResponseType::kOpaque) {
+    response->internal_body_buffer_ = body;
+  } else {
+    response->body_buffer_ = body;
   }
   return response;
 }
 
-void Response::AttachBodyLoader(BodyLoader* loader) {
-  body_state_ = BodyState::kLoading;
-  loader_ = loader;
-}
-
 Response::Response() = default;
 Response::~Response() = default;
+
+BodyStreamBuffer* Response::BodyBuffer() const {
+  return body_buffer_.Get();
+}
 
 const bindings::WrapperTypeInfo* Response::GetWrapperTypeInfo() const {
   return &bindings::V8Response::kWrapperTypeInfo;
@@ -192,9 +196,8 @@ const bindings::WrapperTypeInfo* Response::GetWrapperTypeInfo() const {
 void Response::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(headers_);
-  visitor->Trace(reader_);
-  visitor->Trace(signal_);
-  visitor->Trace(abort_reason_);
+  visitor->Trace(body_buffer_);
+  visitor->Trace(internal_body_buffer_);
 }
 
 std::u16string Response::Type() const {
@@ -210,211 +213,22 @@ std::u16string Response::Type() const {
   }
 }
 
-v8::Local<v8::Promise> Response::ArrayBuffer(
-    bindings::ExceptionState& exception_state) {
-  return Read(ReadAs::kArrayBuffer, exception_state);
-}
-
-v8::Local<v8::Promise> Response::Json(
-    bindings::ExceptionState& exception_state) {
-  return Read(ReadAs::kJson, exception_state);
-}
-
-v8::Local<v8::Promise> Response::Text(
-    bindings::ExceptionState& exception_state) {
-  return Read(ReadAs::kText, exception_state);
-}
-
-void Response::FollowSignal(AbortSignal* signal) {
-  signal_ = signal;
-  signal->AddAlgorithm(
-      bindings::MakeGarbageCollected<AbortBodyAlgorithm>(this));
-}
-
-void Response::AbortBody() {
-  // A body that a script has read all of stays so. Chrome's body of a HEAD
-  // request or a null body status is an empty stream, which a read uses up,
-  // so a null body that no script read aborts too. An opaque response's body
-  // is null in Chrome too, which nothing errors.
-  if (type_ == ResponseType::kOpaque ||
-      (body_state_ == BodyState::kNull && null_body_read_) ||
-      (body_used_ && reader_.IsEmpty() && whole_body_reader_.is_null())) {
-    return;
-  }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  const v8::HandleScope handle_scope(isolate);
-  // Blink errors the body with the signal's reason under
-  // ForwardReasonToFetchBodyAbort, and before it with an AbortError of its
-  // own.
-  const v8::Local<v8::Value> reason =
-      bindings::PerIsolateData::From(isolate)->features().IsEnabled(
-          bindings::RuntimeFeature::kForwardReasonToFetchBodyAbort)
-          ? signal_->Reason()
-          : bindings::PerIsolateData::From(isolate)
-                ->dom_exception_hooks()
-                .create(isolate, "AbortError", "BodyStreamBuffer was aborted");
-  body_state_ = BodyState::kAborted;
-  body_.clear();
-  abort_reason_.Reset(isolate, reason);
-  if (!whole_body_reader_.is_null()) {
-    std::move(whole_body_reader_).Run(std::nullopt);
-  }
-  if (!reader_.IsEmpty()) {
-    const v8::Local<v8::Promise::Resolver> resolver = reader_.Get(isolate);
-    reader_.Reset();
-    std::ignore = resolver->Reject(isolate->GetCurrentContext(), reason);
-  }
-}
-
-void Response::AppendBody(std::string_view bytes) {
-  body_.append(bytes);
-  if (body_state_ == BodyState::kNull) {
-    body_state_ = BodyState::kLoading;
-  }
-}
-
-void Response::EndBody(int net_error) {
-  // A null body stays one, whenever the end comes, and an aborted one so.
-  if (body_state_ == BodyState::kNull || body_state_ == BodyState::kAborted) {
-    return;
-  }
-  body_state_ = net_error == 0 ? BodyState::kComplete : BodyState::kFailed;
-  if (!whole_body_reader_.is_null()) {
-    std::move(whole_body_reader_).Run(TakeBody());
-    return;
-  }
-  if (reader_.IsEmpty()) {
-    return;
-  }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  const v8::HandleScope handle_scope(isolate);
-  const v8::Local<v8::Promise::Resolver> resolver = reader_.Get(isolate);
-  reader_.Reset();
-  Settle(resolver, reader_read_as_);
-}
-
-v8::Local<v8::Promise> Response::Read(
-    ReadAs read_as,
-    bindings::ExceptionState& exception_state) {
-  // Upstream: third_party/blink/renderer/core/fetch/body.cc
-  if (body_used_) {
-    exception_state.ThrowTypeError("body stream already read");
-    return v8::Local<v8::Promise>();
-  }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  v8::Local<v8::Promise::Resolver> resolver;
-  if (!v8::Promise::Resolver::New(isolate->GetCurrentContext())
-           .ToLocal(&resolver)) {
-    return v8::Local<v8::Promise>();
-  }
-  // An aborted body rejects each read with its reason, and is not used, as
-  // Blink's BodyStreamBuffer stops before it locks its stream.
-  if (body_state_ == BodyState::kAborted) {
-    std::ignore = resolver->Reject(isolate->GetCurrentContext(),
-                                   abort_reason_.Get(isolate));
-    return resolver->GetPromise();
-  }
-  // A null body is never used, and reads as empty each time.
-  if (body_state_ != BodyState::kNull) {
-    body_used_ = true;
-  } else {
-    null_body_read_ = true;
-  }
-  if (body_state_ == BodyState::kLoading) {
-    reader_.Reset(isolate, resolver);
-    reader_read_as_ = read_as;
-    if (loader_) {
-      loader_->ReaderStarted();
-    }
-  } else {
-    Settle(resolver, read_as);
-  }
-  return resolver->GetPromise();
-}
-
 void Response::ReadAll(
     base::OnceCallback<void(std::optional<std::string> body)> done) {
-  CHECK(!body_used_);
-  if (body_state_ == BodyState::kNull) {
-    null_body_read_ = true;
+  CHECK(!IsBodyLocked() && !IsBodyUsed());
+  if (!body_buffer_) {
     std::move(done).Run(std::string());
     return;
   }
-  if (body_state_ == BodyState::kAborted) {
-    std::move(done).Run(std::nullopt);
-    return;
-  }
-  body_used_ = true;
-  if (body_state_ != BodyState::kLoading) {
-    std::move(done).Run(TakeBody());
-    return;
-  }
-  whole_body_reader_ = std::move(done);
-  if (loader_) {
-    loader_->ReaderStarted();
-  }
-}
-
-std::optional<std::string> Response::TakeBody() {
-  if (body_state_ == BodyState::kFailed || body_state_ == BodyState::kAborted) {
-    return std::nullopt;
-  }
-  std::string body;
-  body.swap(body_);
-  return body;
-}
-
-void Response::Settle(v8::Local<v8::Promise::Resolver> resolver,
-                      ReadAs read_as) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  if (body_state_ == BodyState::kFailed) {
-    // Upstream: third_party/blink/renderer/core/fetch/body.cc
-    std::ignore = resolver->Reject(
-        context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                     isolate, "Failed to fetch")));
-    return;
-  }
-  std::string body;
-  body.swap(body_);
-  switch (read_as) {
-    case ReadAs::kArrayBuffer: {
-      const v8::Local<v8::ArrayBuffer> buffer =
-          v8::ArrayBuffer::New(isolate, body.size());
-      if (!body.empty()) {
-        // SAFETY: the new buffer holds body.size() bytes.
-        UNSAFE_BUFFERS(
-            base::span(static_cast<uint8_t*>(buffer->Data()), body.size()))
-            .copy_from(base::as_byte_span(body));
-      }
-      std::ignore = resolver->Resolve(context, buffer);
-      return;
-    }
-    case ReadAs::kText:
-      std::ignore = resolver->Resolve(
-          context, bindings::ToV8String(isolate, DecodeUtf8(body)));
-      return;
-    case ReadAs::kJson: {
-      const v8::TryCatch try_catch(isolate);
-      v8::Local<v8::Value> value;
-      if (!v8::JSON::Parse(context,
-                           bindings::ToV8String(isolate, DecodeUtf8(body)))
-               .ToLocal(&value)) {
-        if (try_catch.HasCaught()) {
-          std::ignore = resolver->Reject(context, try_catch.Exception());
-        }
-        return;
-      }
-      std::ignore = resolver->Resolve(context, value);
-      return;
-    }
-  }
-}
-
-void Response::Dispose() {
-  if (loader_) {
-    loader_->ResponseCollected();
-    loader_ = nullptr;
+  auto* const client =
+      bindings::MakeGarbageCollected<ReadAllClient>(std::move(done));
+  bindings::ExceptionState exception_state(isolate);
+  const v8::TryCatch try_catch(isolate);
+  body_buffer_->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(),
+                             client, exception_state);
+  if (exception_state.HadException()) {
+    client->DidFetchDataLoadFailed();
   }
 }
 

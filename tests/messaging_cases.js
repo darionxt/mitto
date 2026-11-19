@@ -676,5 +676,46 @@
     b.close();
     out.broadcastChannel.wasmModule = got;
   }
+  {
+    // The microtasks that a listener queues run once it returns, before the
+    // next listener of the same event runs.
+    out.listenerMicrotasks = {};
+    const listen = (target, order) => {
+      const listeners = [1, 2].map((n) => () => {
+        order.push(`listener ${n}`);
+        Promise.resolve().then(() => order.push(`microtask ${n}`));
+      });
+      for (const listener of listeners) target.addEventListener("message", listener);
+      return () => {
+        for (const listener of listeners) target.removeEventListener("message", listener);
+      };
+    };
+    await hop();
+    let order = [];
+    const stopWindow = listen(window, order);
+    postMessage("listeners", "*");
+    await tick(30);
+    stopWindow();
+    out.listenerMicrotasks.window = order;
+
+    order = [];
+    const channel = new MessageChannel();
+    listen(channel.port1, order);
+    channel.port1.start();
+    channel.port2.postMessage(0);
+    await tick(30);
+    channel.port1.close();
+    out.listenerMicrotasks.messagePort = order;
+
+    order = [];
+    const a = new BroadcastChannel("listeners");
+    const b = new BroadcastChannel("listeners");
+    listen(b, order);
+    a.postMessage(0);
+    await tick(30);
+    a.close();
+    b.close();
+    out.listenerMicrotasks.broadcastChannel = order;
+  }
   return out;
 })()

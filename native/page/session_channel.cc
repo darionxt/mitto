@@ -29,9 +29,10 @@
 #include "mitto/dom/window.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cache_storage.h"
-#include "mitto/page/session_indexed_db.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "mitto/page/session_indexed_db.h"
 #include "mitto/page/session_storage_backend.h"
+#include "mitto/page/session_storage_buckets.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_messages.h"
 #include "v8/include/v8-callbacks.h"
@@ -88,6 +89,7 @@ class SessionLink final : public PageChannel::Delegate
               SessionCookieJar& cookie_jar,
               SessionCacheStorage& cache_storage,
               SessionIndexedDb& indexed_db,
+              SessionStorageBuckets& storage_buckets,
               SessionStorageBackend& storage_backend)
       : main_thread_(std::move(main_thread)),
         inspector_(std::move(inspector)),
@@ -98,6 +100,7 @@ class SessionLink final : public PageChannel::Delegate
         cookie_jar_(cookie_jar),
         cache_storage_(cache_storage),
         indexed_db_(indexed_db),
+        storage_buckets_(storage_buckets),
         storage_backend_(storage_backend) {}
 
   SessionLink(const SessionLink&) = delete;
@@ -294,6 +297,17 @@ class SessionLink final : public PageChannel::Delegate
                            base::Unretained(&*cache_storage_),
                            std::move(frame->cache_storage_answer)));
         return;
+      case PageMessage::kStorageBucketsAnswer:
+        if (!started_) {
+          Refuse("a Storage Buckets answer came before the start");
+          return;
+        }
+        // Blink binds StorageBucketManager to this queue.
+        misc_platform_api_->PostTask(
+            FROM_HERE, base::BindOnce(&SessionStorageBuckets::OnAnswer,
+                                      base::Unretained(&*storage_buckets_),
+                                      std::move(frame->storage_bucket_answer)));
+        return;
       case PageMessage::kIndexedDbCallback:
         if (!started_) {
           Refuse("an IndexedDB callback came before the start");
@@ -323,6 +337,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kBroadcast:
       case PageMessage::kCacheStorage:
       case PageMessage::kIndexedDb:
+      case PageMessage::kStorageBuckets:
       case PageMessage::kDocumentCommitted:
       case PageMessage::kSameDocumentNavigation:
       case PageMessage::kWorkerStarted:
@@ -401,12 +416,14 @@ class SessionLink final : public PageChannel::Delegate
         send));
     cache_storage_->SetSend(send, refuse);
     indexed_db_->SetSend(send, refuse);
+    storage_buckets_->SetSend(send, refuse);
     // What the document's localStorage and sessionStorage ask of the Session.
     storage_backend_->SetSend(send);
     StorageBackend::Set(&*storage_backend_);
     runner_ = std::make_unique<ScriptRunner>(*isolate);
     runner_->SetCacheStorageHost(*cache_storage_);
     runner_->SetIndexedDbHost(*indexed_db_);
+    runner_->SetStorageBucketHost(*storage_buckets_);
     if (std::optional<std::string> why = runner_->Start(
             start, std::move(send), std::move(refuse), *cookie_jar_)) {
       io_thread->PostTask(FROM_HERE,
@@ -503,6 +520,7 @@ class SessionLink final : public PageChannel::Delegate
   const raw_ref<SessionCookieJar> cookie_jar_;
   const raw_ref<SessionCacheStorage> cache_storage_;
   const raw_ref<SessionIndexedDb> indexed_db_;
+  const raw_ref<SessionStorageBuckets> storage_buckets_;
   const raw_ref<SessionStorageBackend> storage_backend_;
   std::unique_ptr<PageChannel> channel_;
   bool hello_received_ = false;
@@ -548,6 +566,7 @@ void ServeSession(SessionArgument session, StartV8Callback start_v8) {
   SessionCookieJar cookie_jar;
   SessionCacheStorage cache_storage;
   SessionIndexedDb indexed_db;
+  SessionStorageBuckets storage_buckets;
   SessionStorageBackend storage_backend;
 
   // Reads the channel while a script runs, so that the Page process ends when
@@ -569,7 +588,7 @@ void ServeSession(SessionArgument session, StartV8Callback start_v8) {
           event_loop->TaskRunner(TaskType::kMiscPlatformAPI),
           event_loop->TaskRunner(TaskType::kDatabaseAccess),
           std::move(start_v8), cookie_jar, cache_storage, indexed_db,
-          storage_backend)
+          storage_buckets, storage_backend)
           .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),

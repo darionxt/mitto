@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notreached.h"
 #include "mitto/page_messages.h"
 
 namespace mitto {
@@ -155,22 +156,27 @@ namespace {
 // The Request Kind of a request: a module script, or what one imports, by
 // its destination, where a text module, whose Request Kind comes once Chrome
 // 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
-// send a JavaScript module's lines, Known Gaps; a classic script; or a fetch.
+// send a JavaScript module's lines, Known Gaps; a classic script; an image;
+// or a fetch.
 PageRequestKind KindOf(const FetchRequestData& data) {
   if (data.is_module) {
-    switch (data.destination) {
-      case FetchDestination::kJson:
-        return PageRequestKind::kModuleJson;
-      case FetchDestination::kEmpty:
-      case FetchDestination::kScript:
-      case FetchDestination::kStyle:
-      case FetchDestination::kText:
-        return PageRequestKind::kModule;
-    }
+    return data.destination == FetchDestination::kJson
+               ? PageRequestKind::kModuleJson
+               : PageRequestKind::kModule;
   }
-  return data.destination == FetchDestination::kScript
-             ? PageRequestKind::kScript
-             : PageRequestKind::kFetch;
+  switch (data.destination) {
+    case FetchDestination::kEmpty:
+      return PageRequestKind::kFetch;
+    case FetchDestination::kScript:
+      return PageRequestKind::kScript;
+    case FetchDestination::kImage:
+      return PageRequestKind::kImage;
+    case FetchDestination::kJson:
+    case FetchDestination::kStyle:
+    case FetchDestination::kText:
+      // Only a module's fetch has these destinations.
+      NOTREACHED();
+  }
 }
 
 }  // namespace

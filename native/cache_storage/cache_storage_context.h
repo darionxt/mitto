@@ -1,7 +1,9 @@
-// A Session's Cache API: the caches of each storage key, which every Page of
-// the Session shares, as Chrome's CacheStorageManager keeps a profile's. In a
-// directory, each storage key's caches go into CacheStorage/ there, in a
-// directory named after a hash of the key; without one, and for a frame under
+// A Session's Cache API: the caches of each bucket of each storage key, which
+// every Page of the Session shares, as Chrome's CacheStorageManager keeps a
+// profile's. Each bucket goes by the key that BucketKey() gives it, which is
+// the serialized storage key for a key's default bucket. In a directory, each
+// bucket's caches go into CacheStorage/ there, in a directory named after a
+// hash of its key; without one, and for a frame under
 // a top-level document of an opaque origin, they are kept in memory until the
 // Session goes.
 //
@@ -14,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
@@ -48,6 +51,11 @@ class CacheStorageContext final : public StorageQuota::Client {
   StorageQuota::ClientType type() const override;
   void GetUsage(const std::string& storage_key,
                 base::OnceCallback<void(int64_t)> done) override;
+  // Closes the bucket's caches and deletes their directory. What a Page still
+  // holds of them stays, closed, until the Session goes, so that no handle or
+  // stored body finds nothing behind it.
+  void DeleteBucketData(const std::string& bucket_key,
+                        base::OnceClosure done) override;
 
  private:
   class KeyQuota;
@@ -57,6 +65,8 @@ class CacheStorageContext final : public StorageQuota::Client {
   const raw_ref<StorageQuota> quota_;
   const scoped_refptr<base::SequencedTaskRunner> file_runner_;
   std::map<std::string, std::unique_ptr<Key>> keys_;
+  // The caches of buckets that have been deleted.
+  std::vector<std::unique_ptr<Key>> deleted_;
   base::WeakPtrFactory<CacheStorageContext> weak_factory_{this};
 };
 
