@@ -212,7 +212,7 @@ std::string EncodeDocumentFrame(PageMessage type,
 
 bool IsRequestKind(uint8_t kind) {
   return kind >= static_cast<uint8_t>(PageRequestKind::kScript) &&
-         kind <= static_cast<uint8_t>(PageRequestKind::kFavicon);
+         kind <= static_cast<uint8_t>(PageRequestKind::kModuleJson);
 }
 
 // The flags of a request.
@@ -786,6 +786,7 @@ std::optional<std::string> CheckRequestModes(const PageRequest& request) {
     case PageRequestKind::kXhr:
     case PageRequestKind::kFont:
     case PageRequestKind::kModule:
+    case PageRequestKind::kModuleJson:
       if (!is_default_mode && mode != PageRequestMode::kCors) {
         return "a request in a mode that its kind never has";
       }
