@@ -90,8 +90,11 @@ $WireDebuggingPort = '--remote-debugging-port=0'
 $ScriptDebuggingPort = '--remote-debugging-port=9207'
 # The studies of the variations seed that split what a page sees by user data directory, which #207 found in the seed of
 # 2026-11-11 for Chrome 155, 156 and 157. A Baseline of the Script Fingerprint comes from a directory in none of their
-# groups but Default, as most installations are.
+# groups but Default, as most installations are, or one that sees what Default does: from the seed of 2026-11-18, Chrome
+# 157 puts each directory in Enabled or Control of UniversalOptOutSettings, and only Enabled adds
+# navigator.globalPrivacyControl (#272).
 $PageStudies = @('FencedFramesDeprecation', 'UniversalOptOutSettings', 'V8Turbolev')
+$AsDefault = @{ 'UniversalOptOutSettings' = 'Control_*' }
 $TaskPrefix = 'mitto-baselines'
 $SeedTimeoutSeconds = 360
 $FirstStartWithoutSeedSeconds = 15
@@ -428,7 +431,9 @@ try {
         if ($isBaseline -and $run.fingerprint -eq 'script' -and $pages.ContainsKey($run.name)) {
             # A group of these is a choice of the directory, which a new one draws again.
             $groups = Get-PageStudyGroups $pages[$run.name]
-            $drawn = @($groups.Keys | Where-Object { $groups[$_] -notin 'Default', 'none' } | ForEach-Object { "$_/$($groups[$_])" })
+            $drawn = @($groups.Keys | Where-Object {
+                    $groups[$_] -notin 'Default', 'none' -and -not ($AsDefault.Contains($_) -and $groups[$_] -like $AsDefault[$_])
+                } | ForEach-Object { "$_/$($groups[$_])" })
             if ($drawn.Count -gt 0) {
                 throw "This directory drew $($drawn -join ', '), which changes what a page sees. Record again from a new user data directory."
             }
