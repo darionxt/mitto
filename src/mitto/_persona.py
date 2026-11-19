@@ -63,6 +63,7 @@ class RequestKind(StrEnum):
         FONT: A font that a stylesheet's @font-face asks for.
         MODULE: A module script, or what one imports.
         MODULE_JSON: A JSON module that a module imports with `with {type: "json"}`.
+        PREFETCH: What a link with rel="prefetch" asks for, at the lowest priority.
         XHR: A page's XMLHttpRequest.
         WORKER: The script of a dedicated worker, which the browser asks for.
         BEACON: A page's navigator.sendBeacon().
@@ -83,6 +84,7 @@ class RequestKind(StrEnum):
     IFRAME = "iframe"
     FAVICON = "favicon"
     MODULE_JSON = "module_json"
+    PREFETCH = "prefetch"
 
 
 class RequestDefaults(TypedDict):
