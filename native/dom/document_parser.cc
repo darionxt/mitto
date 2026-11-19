@@ -8,6 +8,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ref.h"
 #include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -17,11 +18,13 @@
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/resource.h"
 #include "mitto/dom/script_element_base.h"
 #include "mitto/dom/script_loader.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
+#include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
@@ -99,6 +102,7 @@ DocumentParser::~DocumentParser() = default;
 void DocumentParser::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
   visitor->Trace(json_pre_);
+  visitor->Trace(image_resource_);
   visitor->Trace(references_);
   visitor->Trace(parser_blocking_script_);
   scripts_after_parsing_.Trace(visitor);
@@ -117,16 +121,34 @@ void DocumentParser::DidReceiveData() {
   SchedulePumpTokenizer();
 }
 
-void DocumentParser::WillAppendBytes() {
-  if (IsDetached() || started_) {
+void DocumentParser::AppendBytes(const std::string& bytes) {
+  if (IsDetached()) {
     return;
   }
-  if (kind_ == Kind::kText) {
+  if (kind_ == Kind::kText && !started_) {
     started_ = true;
     tree_->StartTextDocument();
-  } else if (kind_ == Kind::kImage) {
+    return;
+  }
+  if (kind_ != Kind::kImage) {
+    return;
+  }
+  if (!image_resource_) {
     started_ = true;
-    BuildImageDocument(*document_);
+    image_resource_ = bindings::MakeGarbageCollected<Resource>(
+        ResourceType::kImage, GURL(document_->UrlForBinding()),
+        FetchMode::kNoCors, FetchCredentialsMode::kOmit);
+    BuildImageDocument(*document_, *image_resource_);
+    if (IsStopped()) {
+      return;
+    }
+    // The response's type; an image takes no notice of its status.
+    image_resource_->ResponseReceived(
+        0, base::UTF16ToUTF8(document_->ContentType()));
+  }
+  // Nothing more goes to an image that has failed to decode.
+  if (image_resource_->GetStatus() != ResourceStatus::kDecodeError) {
+    image_resource_->AppendData(bytes);
   }
 }
 
@@ -170,8 +192,13 @@ void DocumentParser::FinishData() {
     return;
   }
   if (kind_ == Kind::kImage) {
-    if (started_) {
-      ImageDocumentLoaded(*document_);
+    if (image_resource_) {
+      // ImageDocumentParser::Finish(): all of the body is the image's.
+      const cppgc::Persistent<Resource> content = image_resource_.Get();
+      content->Finish(0);
+      if (!IsDetached()) {
+        ImageDocumentLoaded(*document_, *content);
+      }
     }
     return;
   }

@@ -270,7 +270,7 @@ bool DocumentLoader::FeedParser() {
     const std::string bytes = std::move(waiting_body_.front());
     waiting_body_.pop_front();
     if (!bytes.empty()) {
-      parser_->WillAppendBytes();
+      parser_->AppendBytes(bytes);
     }
     // Starting the tree may have stopped the parser.
     if (parser_) {

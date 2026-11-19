@@ -29,6 +29,7 @@
 #define MITTO_DOM_DOCUMENT_PARSER_H_
 
 #include <memory>
+#include <string>
 #include <string_view>
 
 #include "base/memory/raw_ptr.h"
@@ -47,6 +48,7 @@ class Element;
 class HtmlDocumentParser;
 class HtmlTreeBuilderReferences;
 class PendingScript;
+class Resource;
 
 class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
  public:
@@ -90,8 +92,9 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // takes it from a task of the networking task source.
   void DidReceiveData();
   // In FeedParser(): a piece of the body that is not empty has come, before
-  // it is decoded, which starts a text or an image document's tree.
-  void WillAppendBytes();
+  // it is decoded, which starts a text or an image document's tree, and is an
+  // image document's image, as ImageDocumentParser::AppendBytes() feeds it.
+  void AppendBytes(const std::string& bytes);
   // In FeedParser(): adds what was decoded, and ends the input.
   void AppendData(std::u16string_view text);
   void FinishData();
@@ -198,6 +201,8 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // pre.
   bool started_ = false;
   cppgc::Member<Element> json_pre_;
+  // An image document's image, the response's body.
+  cppgc::Member<Resource> image_resource_;
   // The loader that feeds the parser of a response, which outlives it while
   // it is attached; null for a script-created parser.
   raw_ptr<Client> client_;

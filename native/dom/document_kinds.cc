@@ -1,15 +1,23 @@
 #include "mitto/dom/document_kinds.h"
 
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_element.h"
+#include "mitto/dom/html_image_element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/image_header.h"
+#include "mitto/dom/resource.h"
 #include "url/gurl.h"
+#include "url/third_party/mozilla/url_parse.h"
+#include "url/url_util.h"
 #include "v8/include/v8-isolate.h"
 
 namespace mitto {
@@ -55,7 +63,7 @@ Element& BuildJsonDocument(Document& document) {
   return *pre;
 }
 
-void BuildImageDocument(Document& document) {
+void BuildImageDocument(Document& document, Resource& content) {
   Element* const html = Make(document, u"html", {{u"style", u"height: 100%;"}});
   Append(document, html);
   Element* const head = Make(document, u"head");
@@ -69,16 +77,41 @@ void BuildImageDocument(Document& document) {
   document.WillInsertBody();
   // UpdateImageStyle() before the image's size is known, for a frame that
   // shrinks it to fit with the desktop's mode.
-  Append(*body,
-         Make(document, u"img",
-              {{u"style",
-                u"display: block;-webkit-user-select: none;margin: auto;"},
-               {u"src", document.UrlForBinding()}}));
+  Element* const image = Make(
+      document, u"img",
+      {{u"style", u"display: block;-webkit-user-select: none;margin: auto;"}});
+  static_cast<HTMLImageElement*>(image)->StartLoadingImageDocument(content);
+  Append(*body, image);
   Append(*html, head);
   Append(*html, body);
 }
 
-void ImageDocumentLoaded(Document& document) {
+void ImageDocumentLoaded(Document& document, const Resource& content) {
+  // UpdateTitle(): the decoded name of the URL's file, or else its host.
+  if (content.HasImage() && content.Image()->width) {
+    const GURL& url = content.Url();
+    const std::string_view spec = url.possibly_invalid_spec();
+    url::Component path = url.parsed_for_possibly_invalid_spec().path;
+    // KURL::LastPathComponent(): "bar" of "/foo/bar/" too.
+    if (path.len > 0 && spec[path.end() - 1] == '/') {
+      --path.len;
+    }
+    url::Component file;
+    url::ExtractFileName(spec, path, &file);
+    std::u16string title;
+    if (file.is_nonempty()) {
+      title = url::UrlEscapeDecoder(spec.substr(file.begin, file.len),
+                                    url::DecodeUrlMode::kUtf8OrIsomorphic)
+                  .view();
+    }
+    if (title.empty()) {
+      title = base::UTF8ToUTF16(url.host());
+    }
+    // ImageTitle(): "name (width×height)".
+    title += u" (" + base::NumberToString16(content.Image()->width) +
+             u"\u00D7" + base::NumberToString16(content.Image()->height) + u")";
+    document.SetTitle(title);
+  }
   Element* const body = document.Body();
   Element* const image = body ? body->FirstElementChild() : nullptr;
   if (!image || !image->HasHTMLTagName(u"img")) {

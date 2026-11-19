@@ -164,6 +164,18 @@ bool IsJsonMimeType(std::string_view mime_type) {
 
 }  // namespace
 
+bool IsSupportedImageMimeType(std::string_view mime_type) {
+  const std::string lower = base::ToLowerASCII(mime_type);
+  return lower == "image/jxl" || kSupportedImageTypes.contains(lower);
+}
+
+bool IsSupportedImagePrefixedMimeType(std::string_view mime_type) {
+  const std::string lower = base::ToLowerASCII(mime_type);
+  return IsSupportedImageMimeType(lower) ||
+         (lower.starts_with("image/") &&
+          kSupportedNonImageTypes.contains(lower));
+}
+
 DocumentKind DocumentKindOf(std::string_view mime_type) {
   const std::string lower = base::ToLowerASCII(mime_type);
   if (lower == "text/html") {
@@ -175,8 +187,7 @@ DocumentKind DocumentKindOf(std::string_view mime_type) {
   if (lower == "image/svg+xml") {
     return DocumentKind::kSvg;
   }
-  if (kSupportedImageTypes.contains(lower) ||
-      lower == "multipart/x-mixed-replace") {
+  if (IsSupportedImageMimeType(lower) || lower == "multipart/x-mixed-replace") {
     return DocumentKind::kImage;
   }
   if (kSupportedMediaTypes.contains(lower)) {
@@ -199,7 +210,7 @@ DocumentKind DocumentKindOf(std::string_view mime_type) {
 
 bool IsSupportedMimeType(std::string_view mime_type) {
   const std::string lower = base::ToLowerASCII(mime_type);
-  return kSupportedImageTypes.contains(lower) ||
+  return IsSupportedImageMimeType(lower) ||
          kSupportedNonImageTypes.contains(lower) ||
          kSupportedJavascriptTypes.contains(lower) ||
          kSupportedMediaTypes.contains(lower) || kPdfTypes.contains(lower) ||

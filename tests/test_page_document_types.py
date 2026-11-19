@@ -6,6 +6,7 @@ responses in a top-level tab. They need a native library with the Page program b
 every Host.
 """
 
+import collections
 import http.server
 import threading
 import time
@@ -37,12 +38,14 @@ class _Server:
 
     def __init__(self) -> None:
         self.routes: dict[str, tuple[str | None, list[bytes]]] = {}
+        self.hits: collections.Counter[str] = collections.Counter()
         server = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
             def do_GET(self) -> None:
+                server.hits[self.path] += 1
                 content_type, pieces = server.routes.get(self.path, ("text/plain", [b"not here"]))
                 self.send_response(200 if self.path in server.routes else 404)
                 if content_type is not None:
@@ -175,9 +178,8 @@ def test_a_media_response_is_a_video_element_that_would_play_it(session: mitto.S
 
 
 def test_an_image_response_is_an_img_of_its_url(session: mitto.Session, server: _Server) -> None:
-    # The tree and the inline styles that Chrome gives the image's document before the image has decoded. Once it has,
-    # Chrome titles the document with the file's name and the image's size and gives the img a background, which a Page
-    # that decodes no image lacks.
+    # The tree and the inline styles that Chrome gives the image's document, whose img takes the response itself and
+    # fetches nothing. A PNG that stops after its signature has no size, so the document keeps its title.
     url = server.serve("/i.png", "image/png", b"\x89PNG\r\n\x1a\n")
     empty = server.serve("/e.png", "image/png")
 
@@ -197,6 +199,12 @@ def test_an_image_response_is_an_img_of_its_url(session: mitto.Session, server: 
             1,
             url,
         ]
+        assert page.evaluate("[document.title, document.images[0].complete, document.images[0].naturalWidth]") == [
+            "",
+            True,
+            0,
+        ]
+    assert server.hits["/i.png"] == 1
     # An empty image has no tree at all.
     with _open_page(session, empty) as page:
         assert page.evaluate("[document.childNodes.length, document.readyState, document.compatMode]") == [
@@ -204,6 +212,31 @@ def test_an_image_response_is_an_img_of_its_url(session: mitto.Session, server: 
             "complete",
             "CSS1Compat",
         ]
+
+
+def test_an_image_documents_title_has_its_files_name_and_size(session: mitto.Session, server: _Server) -> None:
+    # A 3x2 PNG, as Chrome titles its document once the image has loaded: the URL's file, decoded, or the last part of a
+    # path that ends in a slash, then the size.
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x03\x00\x00\x00\x02\x08\x02\x00\x00\x00\x12\x16\xf1M\x00\x00\x00\x10IDATx\x9cc\xf8\xcf\xc0\x00A\x0cp\x16\x00A\xd2\x05\xfb\x87\xf0\xb9H\x00\x00\x00\x00IEND\xaeB`\x82"
+    named = server.serve("/a%C3%A9%20b.png", "image/png", png)
+    directory = server.serve("/dir/", "image/png", png)
+
+    for url, title in ((named, "a\u00e9 b.png (3\u00d72)"), (directory, "dir (3\u00d72)")):
+        with _open_page(session, url) as page:
+            assert page.evaluate(
+                "[document.title, document.head.outerHTML, document.images[0].complete,"
+                " document.images[0].naturalWidth, document.images[0].naturalHeight, document.images[0].src]"
+            ) == [
+                title,
+                '<head><meta name="viewport" content="width=device-width, minimum-scale=0.1">'
+                f"<title>{title}</title></head>",
+                True,
+                3,
+                2,
+                url,
+            ]
+    assert server.hits["/a%C3%A9%20b.png"] == 1
+    assert server.hits["/dir/"] == 1
 
 
 def test_a_response_of_another_type_that_chrome_shows_is_read_as_html(session: mitto.Session, server: _Server) -> None:
