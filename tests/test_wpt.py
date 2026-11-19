@@ -62,7 +62,9 @@ def test_each_test_belongs_to_one_part_at_most() -> None:
     assert part_of("html/semantics/scripting-1/the-script-element/module/a.html") == next(
         p for p in PARTS if p.ticket == "#272"
     )
-    assert part_of("encoding/streams/decode-utf8.any.html") is None
+    # encoding/ is #268's but for its streams, which are #379's with streams/ and compression/.
+    assert part_of("encoding/streams/decode-utf8.any.html") == next(p for p in PARTS if p.ticket == "#379")
+    assert part_of("streams/piping/general.any.html") == next(p for p in PARTS if p.ticket == "#379")
     assert part_of("fetch/http-cache/basic-auth-cache-test.html") is None
     for part in PARTS:
         for prefix in part.include:

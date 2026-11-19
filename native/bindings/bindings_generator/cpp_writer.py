@@ -94,6 +94,8 @@ WRITTEN = frozenset(
         "Exposed",
         "Global",
         "HTMLConstructor",
+        # The iterator's table gives it return(), which the class's iteration source runs (async_iterable.h).
+        "HasAsyncIteratorReturnAlgorithm",
         # The global object's install function installs the factory function, which the class's bindings write.
         "LegacyFactoryFunction",
         "LegacyFactoryFunction_RaisesException",
@@ -579,11 +581,21 @@ class _InterfaceWriter:
 
     def _collection_with_behaviour(self) -> CollectionLike | None:
         """The interface's maplike or setlike declaration, when its class names it: the writer writes its members, which
-        read the class's MaplikeEntries() or SetlikeValues(), as Blink's classes give their iteration source."""
+        read the class's MaplikeEntries() or SetlikeValues(), as Blink's classes give their iteration source. Or its
+        value async iterable declaration, unless the class lists it as missing or names only other members: the
+        writer writes values(), which takes the iterator's source from the class's CreateAsyncIterationSource()."""
         collection = self.interface.collection
-        if collection is None or collection.kind not in (self.implemented.implemented or ()):
+        if collection is None:
             return None
         where = f"{collection.kind} of {self.interface.name}"
+        if collection.kind == "async iterable":
+            if not self.implemented.has_behaviour(collection.kind):
+                return None
+            if collection.key_type is not None:
+                raise UnhandledError(f"{where}: the C++ writer handles the behaviour of value async iterables only")
+            return collection
+        if collection.kind not in (self.implemented.implemented or ()):
+            return None
         if collection.kind not in ("maplike", "setlike") or collection.value_type is None:
             raise UnhandledError(f"{where}: the C++ writer handles the behaviour of read-only maplike and setlike only")
         if any(group.name in ("set", "add", "delete", "clear") for group in collection.operation_groups):
@@ -604,9 +616,36 @@ class _InterfaceWriter:
         key = self.types.to_v8(collection.key_type, "item.first")
         return "for (const auto& item : impl->MaplikeEntries()) {", [], key, self.types.to_v8(value_type, "item.second")
 
-    def _collection_member(self, collection: CollectionLike, name: str, member: Attribute | OperationGroup) -> str:
-        """The callback of one member of a read-only maplike or setlike declaration with behaviour."""
+    def _async_iterable_member(self, collection: CollectionLike, name: str, member: OperationGroup) -> str:
+        """The callback of values() of a value async iterable with behaviour, as bind_gen's valuesForBinding(): the
+        class makes the iterator's source from the converted arguments, and the bindings make the iterator."""
         where = f"{collection.kind} of {self.interface.name}"
+        operation = member.only_overload(f"{where}: {member.name}()")
+        assert collection.iterator is not None
+        body = [*self._receiver(), self._exception_state()]
+        conversions, passed = self._arguments(operation.arguments, f"operation {self.where(member.name)}")
+        body += conversions
+        body += [
+            "const v8::Local<v8::Context> context = isolate->GetCurrentContext();",
+            "AsyncIterationSourceBase* const source =",
+            f"    impl->CreateAsyncIterationSource({', '.join([*passed, 'exception_state'])});",
+            "if (exception_state.HadException()) {",
+            "  return;",
+            "}",
+            "v8::Local<v8::Value> iterator;",
+            f"if (NewAsyncIterator(context, V8{collection.iterator}::kWrapperTypeInfo, source).ToLocal(&iterator)) {{",
+            "  info.GetReturnValue().Set(iterator);",
+            "}",
+        ]
+        return self._add_callback(name, body)
+
+    def _collection_member(self, collection: CollectionLike, name: str, member: Attribute | OperationGroup) -> str:
+        """The callback of one member of a read-only maplike or setlike declaration with behaviour, or of a value async
+        iterable's."""
+        where = f"{collection.kind} of {self.interface.name}"
+        if collection.kind == "async iterable":
+            assert isinstance(member, OperationGroup)
+            return self._async_iterable_member(collection, name, member)
         loop, _, key, value = self._collection_items(collection, where)
         if isinstance(member, Attribute):
             # size
@@ -1537,12 +1576,13 @@ class _InterfaceWriter:
                 f'prototype_template->SetIntrinsicDataProperty(v8::String::NewFromUtf8Literal(isolate, "{property_.name}"),',
                 f"                                             {_ARRAY_INTRINSICS[property_.name]}, {self._attributes(property_)});",
             ]
-        if property_.name == "@@iterator":
+        if property_.name in ("@@iterator", "@@asyncIterator"):
             collection = self.interface.collection
             if not on_objects or collection is None or collection.iterator_operation is None:
                 raise UnhandledError(
-                    f"{self.where(property_.name)}: the C++ writer installs @@iterator of iterables only"
+                    f"{self.where(property_.name)}: the C++ writer installs {property_.name} of iterables only"
                 )
+            symbol = "GetIterator" if property_.name == "@@iterator" else "GetAsyncIterator"
             # Blink's _make_install_prototype_object(): the same function as the operation it is, such as entries().
             return [
                 "{",
@@ -1550,7 +1590,7 @@ class _InterfaceWriter:
                 "  if (prototype_object",
                 f'          ->Get(context, v8::String::NewFromUtf8Literal(isolate, "{collection.iterator_operation}"))',
                 "          .ToLocal(&iterator_function)) {",
-                "    std::ignore = prototype_object->DefineOwnProperty(context, v8::Symbol::GetIterator(isolate),",
+                f"    std::ignore = prototype_object->DefineOwnProperty(context, v8::Symbol::{symbol}(isolate),",
                 "                                                      iterator_function, v8::DontEnum);",
                 "  }",
                 "}",
@@ -1870,9 +1910,12 @@ class _InterfaceWriter:
             includes.add(
                 header_of(construct.target) if self.has_class(construct.target) else f"mitto/bindings/{TABLES_HEADER}"
             )
-        if self._collection_with_behaviour() is not None:
+        collection = self._collection_with_behaviour()
+        if collection is not None:
             # Its iterator's WrapperTypeInfo.
             includes.add(f"mitto/bindings/{TABLES_HEADER}")
+            if collection.kind == "async iterable":
+                includes.add("mitto/bindings/async_iterable.h")
         source = [
             _BANNER,
             f'#include "mitto/bindings/{base}.h"',
@@ -2110,7 +2153,9 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         if any(a.name not in bodies for a in _dictionary_chain(name, definitions.dictionaries)[:-1]):
             pending.append(name)
             continue
-        bodies[name] = _write_dictionary(definitions.dictionaries[name], types)
+        chain = _dictionary_chain(name, definitions.dictionaries)
+        has_required = any(member.is_required for level in chain for member in level.own_members)
+        bodies[name] = _write_dictionary(definitions.dictionaries[name], types, has_required)
         ordered.append(name)
         pending += [n for n in types.used_dictionaries if n not in bodies and n not in pending]
 
@@ -2233,7 +2278,11 @@ def _declaration_order(dictionaries: list[str], definitions: Definitions, types:
     return order
 
 
-def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[str], list[str]]:
+def _write_dictionary(
+    dictionary: Dictionary, types: TypeMapper, has_required: bool = False
+) -> tuple[list[str], list[str]]:
+    """The struct of a dictionary and its conversion. One with a required member, its own or inherited, takes no
+    undefined or null, as bind_gen's conversion of it throws that the value is not of its type."""
     where = f"dictionary {dictionary.name}"
     _check_written(where, dictionary.extended_attributes)
     parent = f" : {dictionary.parent}" if dictionary.parent else ""
@@ -2319,9 +2368,15 @@ def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[s
         f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, "
         f"{dictionary.name}* dictionary) {{",
         *defaults,
-        "  if (value->IsNullOrUndefined()) {",
-        "    return true;",
-        "  }",
+        *(
+            []
+            if has_required
+            else [
+                "  if (value->IsNullOrUndefined()) {",
+                "    return true;",
+                "  }",
+            ]
+        ),
         "  if (!value->IsObject()) {",
         f'    exception_state.ThrowTypeError(ExceptionMessages::ValueNotOfType("{dictionary.name}"));',
         "    return false;",

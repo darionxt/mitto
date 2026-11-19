@@ -231,6 +231,9 @@ class Window final : public WindowProperties, public ExecutionContext {
   // callbacks, as Blink's Document::EnqueueAnimationFrameEvent() does. Nothing
   // fires in a window with no frames.
   void EnqueueAnimationFrameEvent(EventTarget& target, mitto::Event& event);
+  // `steps` runs in the post-lifecycle steps of the next animation frame,
+  // and never in a window with no frames.
+  void RequestPostLifecycleSteps(base::OnceClosure steps);
   // The window's frames wait until its document is ready to render, as
   // LocalFrameView's lifecycle updates do, from a navigation's commit until
   // Document::BeginLifecycleUpdatesIfRenderingReady().
