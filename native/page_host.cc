@@ -826,6 +826,10 @@ class PageHost::Request final : public RequestClient {
     std::string body;
   };
   bool sniffing() const { return sniffing_.has_value(); }
+  // The response held back while it is sniffed, or null.
+  const RequestEvent* held_response() const {
+    return sniffing_ ? &sniffing_->response : nullptr;
+  }
   void HoldForSniffing(RequestEvent response, std::string mime_type) {
     sniffing_.emplace();
     sniffing_->response = std::move(response);
@@ -1370,10 +1374,13 @@ void PageHost::OnCancel(uint64_t number) {
     return;
   }
   // A navigation that the Page let go before its response, as when another
-  // takes its place, has ended.
+  // takes its place, has ended, and so has one whose response is held back
+  // while it is sniffed, as one that the Page let go after its response came.
   if (found->second->is_navigation() && !found->second->started()) {
     PushNavigated(found->second->first_url().possibly_invalid_spec(), 0,
                   net::ERR_ABORTED);
+  } else if (const RequestEvent* const held = found->second->held_response()) {
+    PushNavigated(held->url, 0, net::ERR_ABORTED);
   }
   // The Request abandons its job as it goes.
   requests_.erase(found);

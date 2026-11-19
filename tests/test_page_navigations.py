@@ -46,12 +46,14 @@ _RECORD_EVENTS = """
 
 @dataclass
 class _Route:
-    """What the server answers for one path: a status, header lines and a body. With `hold`, it answers once it is set."""
+    """What the server answers for one path: a status, header lines and a body. With `hold`, it answers once it is set,
+    and with `hold_body`, it sends the body once that is set."""
 
     body: bytes = b""
     status: int = 200
     headers: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     hold: threading.Event | None = None
+    hold_body: threading.Event | None = None
 
 
 class _Server:
@@ -79,6 +81,9 @@ class _Server:
                 if route.status not in (204, 205):
                     self.send_header("Content-Length", str(len(route.body)))
                 self.end_headers()
+                if route.hold_body is not None:
+                    self.wfile.flush()
+                    route.hold_body.wait(_TIMEOUT_SECONDS)
                 if route.status not in (204, 205):
                     self.wfile.write(route.body)
 
@@ -324,6 +329,26 @@ def test_a_response_that_chrome_sniffs_as_binary_is_a_download(session: mitto.Se
             page.evaluate(f"location.href = '{path}'")
             assert _next(page).url == server.url(path)
             assert page.url == server.url(path)
+
+
+def test_a_navigation_whose_response_is_held_to_be_sniffed_ends_when_another_takes_its_place(
+    session: mitto.Session, server: _Server
+) -> None:
+    held = threading.Event()
+    server.routes["/plain"] = _Route(b"plain text", headers=[("Content-Type", "text/plain")], hold_body=held)
+    fast = server.page("/fast", "<title>Fast</title>")
+    url = server.page("/", "<body>")
+
+    with _open_page(session, url) as page:
+        # The headers have come, and the library waits for the body to sniff its type when the next navigation starts.
+        page.evaluate("location.href = '/plain'")
+        assert server.wait_for("/plain")
+        time.sleep(0.5)
+        page.evaluate("location.href = '/fast'")
+        with pytest.raises(mitto.RequestError, match="ERR_ABORTED"):
+            _next(page)
+        assert _next(page).url == fast
+        held.set()
 
 
 def test_a_navigation_that_starts_while_the_document_loads_stops_its_parser(
