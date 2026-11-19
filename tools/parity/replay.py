@@ -318,6 +318,11 @@ def _document_replays() -> dict[str, Replay]:
             RequestKind.SCRIPT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
         ),
         "favicon": Replay(RequestKind.FAVICON, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        # What a link with rel="prefetch" asks for, which the document's script adds once it has loaded.
+        "prefetch": Replay(RequestKind.PREFETCH, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        "prefetch_cross_site": Replay(
+            RequestKind.PREFETCH, host=CROSS_SITE_HOST, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
         "navigation_form_get": Replay(RequestKind.NAVIGATION, page=DOCUMENTS_FORMS_PATH),
         "navigation_form_text": Replay(
             RequestKind.NAVIGATION,

@@ -88,6 +88,30 @@ def test_each_preload_goes_as_a_callers_request_of_its_kind(session: mitto.Sessi
     assert warnings == ["<link rel=preload> must have a valid `as` value"]
 
 
+def test_a_prefetch_goes_as_a_callers_request_of_the_kind_prefetch_and_fires_load_at_its_link(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    server.route("/next.html", b"<p>next</p>", "text/html")
+    url = server.page("/", "<p>prefetch</p>")
+
+    with _open_page(session, url) as page:
+        event = page.evaluate(
+            """new Promise(resolve => {
+              const link = Object.assign(document.createElement('link'), {rel: 'prefetch', href: 'next.html'});
+              link.onload = () => resolve('load');
+              link.onerror = () => resolve('error');
+              document.head.append(link);
+            })""",
+            timeout=TIMEOUT_SECONDS,
+        )
+
+    assert event == "load"
+    session.get(server.url("/next.html"), kind="prefetch", initiator=url)
+    page_lines, caller_lines = server.headers_of("/next.html")
+    assert page_lines == caller_lines
+    assert _value(page_lines, "Sec-Purpose") == "prefetch"
+
+
 def test_a_preload_fires_load_or_error_at_its_link(session: mitto.Session, server: RecordingServer) -> None:
     server.route("/found.css", b"p {}", _CSS)
     url = server.page("/", "<p>events</p>")

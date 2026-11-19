@@ -44,6 +44,8 @@ FetchPriority TypeToPriority(ResourceType type) {
       return FetchPriority::kHigh;
     case ResourceType::kImage:
       return FetchPriority::kLow;
+    case ResourceType::kLinkPrefetch:
+      return FetchPriority::kVeryLow;
   }
 }
 
@@ -97,6 +99,8 @@ FetchDestination DestinationOf(ResourceType type) {
       return FetchDestination::kFont;
     case ResourceType::kRaw:
       return FetchDestination::kEmpty;
+    case ResourceType::kLinkPrefetch:
+      return FetchDestination::kPrefetch;
   }
 }
 
@@ -107,6 +111,7 @@ std::pair<FetchMode, FetchCredentialsMode> KindModes(ResourceType type) {
     case ResourceType::kImage:
     case ResourceType::kCSSStyleSheet:
     case ResourceType::kScript:
+    case ResourceType::kLinkPrefetch:
       return {FetchMode::kNoCors, FetchCredentialsMode::kInclude};
     case ResourceType::kFont:
     case ResourceType::kRaw:
@@ -124,6 +129,7 @@ bool IsLoadEventBlockingResourceType(ResourceType type) {
       return true;
     case ResourceType::kScript:
     case ResourceType::kRaw:
+    case ResourceType::kLinkPrefetch:
       return false;
   }
 }
