@@ -5,6 +5,7 @@ native job installs it on every Host. The rest need nothing.
 """
 
 import concurrent.futures
+import http.server
 import json
 import os
 import shutil
@@ -27,9 +28,11 @@ from mitto._native import ConsoleMessage, KnownGap, PageEnded, PageErrorCode, Pa
 from mitto._page import KEPT_REPORTS, Page, PageRecord, outcome_of
 from mitto._persona import WINDOWS_PERSONAS, load_persona
 from mitto._timeout import to_seconds
+from tests.local_server import QuietServer
 from tests.page_processes import process_is_gone, wait_until_gone
 
-# A Page that navigates nowhere, so that these tests need no server. tests/test_page_loading.py loads documents.
+# A Page that navigates nowhere, so that these tests need no server, but for one that needs a secure context, which
+# about:blank is not. tests/test_page_loading.py loads documents.
 _URL = "about:blank"
 # Long enough for a Page process to answer on a busy runner, and short enough to keep the tests quick.
 _SHORT_TIMEOUT = 0.3
@@ -114,11 +117,38 @@ def test_a_page_reports_the_time_zone_of_its_machine_and_the_locale_of_its_perso
         assert page.evaluate(_TIME_ZONE_AND_LOCALE) == expected
 
 
+@pytest.fixture
+def secure_url() -> Iterator[str]:
+    """A blank page of a local server on 127.0.0.1, which is a secure context, for what Web IDL's [SecureContext] puts
+    behind one: about:blank's opaque origin is none, as in Chrome."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            body = b"<!doctype html><title>secure</title>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
+
+    server = QuietServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/"
+    server.shutdown()
+    server.server_close()
+
+
 @pytest.mark.parametrize(("camera", "kinds"), [(True, ["audioinput", "videoinput", "audiooutput"]), (False, [])])
-def test_a_page_lists_the_media_devices_of_its_machine(page_program: None, camera: bool, kinds: list[str]) -> None:
+def test_a_page_lists_the_media_devices_of_its_machine(
+    page_program: None, secure_url: str, camera: bool, kinds: list[str]
+) -> None:
     machine = mitto.Machine.draw(seed=1, audio_input=camera, video_input=camera, audio_output=camera)
     script = "navigator.mediaDevices.enumerateDevices().then((devices) => devices.map((device) => device.kind))"
-    with mitto.Session(machine=machine) as session, _open_page(session) as page:
+    with mitto.Session(machine=machine) as session, _open_page(session, secure_url) as page:
         assert page.evaluate(script) == kinds
 
 
