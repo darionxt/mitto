@@ -124,9 +124,21 @@ constexpr auto kPdfTypes = base::MakeFixedFlatSet<std::string_view>({
 
 }  // namespace
 
+bool IsSupportedImageMimeType(std::string_view mime_type) {
+  const std::string lower = base::ToLowerASCII(mime_type);
+  return lower == "image/jxl" || kSupportedImageTypes.contains(lower);
+}
+
+bool IsSupportedImagePrefixedMimeType(std::string_view mime_type) {
+  const std::string lower = base::ToLowerASCII(mime_type);
+  return IsSupportedImageMimeType(lower) ||
+         (lower.starts_with("image/") &&
+          kSupportedNonImageTypes.contains(lower));
+}
+
 bool IsSupportedMimeType(std::string_view mime_type) {
   const std::string lower = base::ToLowerASCII(mime_type);
-  return kSupportedImageTypes.contains(lower) ||
+  return IsSupportedImageMimeType(lower) ||
          kSupportedNonImageTypes.contains(lower) ||
          kSupportedJavascriptTypes.contains(lower) ||
          kSupportedMediaTypes.contains(lower) || kPdfTypes.contains(lower) ||

@@ -75,6 +75,17 @@ v8::Local<v8::FunctionTemplate> PerIsolateData::InterfaceTemplate(
   return interface_template;
 }
 
+v8::Local<v8::ObjectTemplate> PerIsolateData::HolderTemplate(
+    v8::Isolate* isolate) {
+  if (holder_template_.IsEmpty()) {
+    // The instances of a function template's, which are API objects that V8
+    // can wrap a C++ object in, as a plain object template's are not.
+    holder_template_.Set(isolate,
+                         v8::FunctionTemplate::New(isolate)->InstanceTemplate());
+  }
+  return holder_template_.Get(isolate);
+}
+
 v8::Local<v8::ObjectTemplate> PerIsolateData::NamespaceTemplate(
     v8::Isolate* isolate,
     const WrapperTypeInfo* info) {

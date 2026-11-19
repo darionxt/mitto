@@ -127,9 +127,10 @@ class PerIsolateData {
   }
 
   // Whether the Page's context is a secure context, which decides whether it
-  // gets the members that Web IDL's [SecureContext] puts behind one. A Page's
-  // first document is about:blank, which is. The document it loads decides it
-  // for the context made for that document.
+  // gets the members that Web IDL's [SecureContext] puts behind one. Each
+  // document's origin decides it for the context made for that document, and
+  // a Session's Page's first, about:blank with an opaque origin, is none. The
+  // Page program's command line keeps it, as a file: page is one.
   bool secure_context() const { return secure_context_; }
   void set_secure_context(bool secure_context) {
     secure_context_ = secure_context;
@@ -140,6 +141,11 @@ class PerIsolateData {
   v8::Local<v8::FunctionTemplate> InterfaceTemplate(
       v8::Isolate* isolate,
       const WrapperTypeInfo* info);
+
+  // The template of the plain objects that wrap a C++ object of the bindings'
+  // own, such as the data of a ScriptFunction's function, which this makes the
+  // first time.
+  v8::Local<v8::ObjectTemplate> HolderTemplate(v8::Isolate* isolate);
 
   // The template of a namespace, which this makes the first time.
   v8::Local<v8::ObjectTemplate> NamespaceTemplate(v8::Isolate* isolate,
@@ -207,6 +213,7 @@ class PerIsolateData {
   ExceptionReporter exception_reporter_;
   bool secure_context_ = true;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::Template>> templates_;
+  v8::Eternal<v8::ObjectTemplate> holder_template_;
   std::map<const ExposedConstructInfo*, v8::Eternal<v8::FunctionTemplate>>
       factory_function_templates_;
   DOMExceptionHooks dom_exception_hooks_;
