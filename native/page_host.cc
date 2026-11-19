@@ -941,6 +941,9 @@ class PageHost::Request final : public RequestClient {
   uint64_t context() const { return context_; }
   void set_context(uint64_t context) { context_ = context; }
   void set_started() { started_ = true; }
+  // The URL of the response, after any redirects, once it has started.
+  const GURL& response_url() const { return response_url_; }
+  void set_response_url(GURL url) { response_url_ = std::move(url); }
   void AddCredit(uint32_t bytes) { credit_ += bytes; }
   base::span<const uint8_t> TakeRead(size_t size) {
     credit_ -= static_cast<uint32_t>(size);
@@ -996,6 +999,7 @@ class PageHost::Request final : public RequestClient {
   // A keepalive request's place among those in flight.
   std::unique_ptr<KeepaliveShare> keepalive_share_;
   uint64_t context_ = kNoDocument;
+  GURL response_url_;
   const base::TimeTicks start_;
   const scoped_refptr<net::IOBufferWithSize> buffer_;
   base::WeakPtr<RunningRequest> job_;
@@ -1238,12 +1242,17 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
                                                 : nullptr;
   GURL url(asked.url);
   // The Page names only a referrer of its document's origin, as Fetch makes
-  // any other the document's own URL.
+  // any other the document's own URL, or the final URL of an earlier request
+  // of the context that has finished, as for what a module or a style sheet
+  // of another origin imports.
   GURL referrer;
   if (!asked.referrer.empty()) {
     referrer = GURL(asked.referrer);
-    if (!referrer.is_valid() || !document_origin.IsSameOriginWith(referrer)) {
-      Refuse("a request whose referrer is not a URL of its document's origin");
+    if (!referrer.is_valid() || (!document_origin.IsSameOriginWith(referrer) &&
+                                 !context.response_urls.contains(referrer))) {
+      Refuse(
+          "a request whose referrer is neither a URL of its document's origin "
+          "nor that of a response it has had");
       return;
     }
   }
@@ -1415,6 +1424,7 @@ void PageHost::OnCredit(const PageCredit& credit) {
 
 void PageHost::OnResponseStarted(Request& request, RequestEvent event) {
   request.set_started();
+  request.set_response_url(GURL(event.url));
   if (request.is_navigation() && !MakesDocument(event)) {
     DropNavigation(request, event);
     return;
@@ -1590,6 +1600,14 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
       channel_->Send(EncodeResponseEnded(ended));
     }
   } else if (channel_) {
+    // A response that has come whole is one the context may name as the
+    // referrer of what it imports.
+    if (net_error == net::OK && request.started()) {
+      if (const auto context = contexts_.find(request.context());
+          context != contexts_.end()) {
+        context->second.response_urls.insert(request.response_url());
+      }
+    }
     PageResponseEnded ended;
     ended.number = number;
     ended.net_error = net_error;
