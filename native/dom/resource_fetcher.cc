@@ -10,6 +10,7 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/resource_load_scheduler.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/encoding/content_type.h"
@@ -132,8 +133,12 @@ bool IsLoadEventBlockingResourceType(ResourceType type) {
 // What a resource's fetch hears, which keeps the resource until it ends.
 class ResourceFetcher::ResourceLoader final : public FetchClient {
  public:
-  ResourceLoader(Resource& resource, ResourceFetcher& fetcher)
-      : resource_(&resource), fetcher_(&fetcher) {}
+  ResourceLoader(Resource& resource,
+                 ResourceFetcher& fetcher,
+                 ResourceLoadScheduler::ClientId scheduler_client_id)
+      : resource_(&resource),
+        fetcher_(&fetcher),
+        scheduler_client_id_(scheduler_client_id) {}
 
   ResourceLoader(const ResourceLoader&) = delete;
   ResourceLoader& operator=(const ResourceLoader&) = delete;
@@ -160,22 +165,56 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
     resource_->Finish(net_error);
     if (ResourceFetcher* const fetcher = fetcher_.Get()) {
       fetcher->LoadFinished(*resource_);
+      // DidFinishLoading() and DidFail(): the next fetch that waits starts.
+      fetcher->scheduler_.Release(scheduler_client_id_, /*schedule=*/true);
     }
   }
 
-  // Ends the fetch, and destroys this before it returns.
-  void Cancel() { controller_->Cancel(); }
+  // Ends the fetch, and destroys this before it returns, then lets the next
+  // fetch that waits start.
+  void Cancel() {
+    const cppgc::WeakPersistent<ResourceFetcher> fetcher = fetcher_;
+    const ResourceLoadScheduler::ClientId id = scheduler_client_id_;
+    controller_->Cancel();
+    if (fetcher) {
+      fetcher->scheduler_.Release(id, /*schedule=*/true);
+    }
+  }
 
   base::WeakPtr<ResourceLoader> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
+  }
+  ResourceLoadScheduler::ClientId scheduler_client_id() const {
+    return scheduler_client_id_;
   }
 
  private:
   const cppgc::Persistent<Resource> resource_;
   const cppgc::WeakPersistent<ResourceFetcher> fetcher_;
+  const ResourceLoadScheduler::ClientId scheduler_client_id_;
   raw_ptr<FetchController> controller_ = nullptr;
   base::WeakPtrFactory<ResourceLoader> weak_factory_{this};
 };
+
+std::optional<ResourceType> ResourceTypeFromAsAttribute(
+    std::u16string_view as) {
+  if (as == u"image") {
+    return ResourceType::kImage;
+  }
+  if (as == u"script") {
+    return ResourceType::kScript;
+  }
+  if (as == u"style") {
+    return ResourceType::kCSSStyleSheet;
+  }
+  if (as == u"font") {
+    return ResourceType::kFont;
+  }
+  if (as == u"fetch") {
+    return ResourceType::kRaw;
+  }
+  return std::nullopt;
+}
 
 FetchParameters::FetchParameters() = default;
 FetchParameters::FetchParameters(const FetchParameters&) = default;
@@ -255,9 +294,14 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
   }
   Resource* const existing = CachedResource(params.url);
   if (existing && CanUse(*existing, params)) {
-    if (existing->IsUnusedPreload() && !params.is_link_preload) {
+    // MatchPreload(): an element's request takes a preload.
+    if (existing->IsUnusedPreload() && !params.is_link_preload &&
+        params.speculative_preload_type ==
+            SpeculativePreloadType::kNotSpeculative) {
       existing->SetIsUnusedPreload(false);
-      MakePreloadedResourceBlockIfNeeded(*existing, params);
+      if (existing->IsLinkPreload()) {
+        MakePreloadedResourceBlockIfNeeded(*existing, params);
+      }
     }
     return existing;
   }
@@ -271,7 +315,10 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
                                       FetchReferrerPolicy::kDefault
                                   ? document->GetReferrerPolicy()
                                   : params.referrer_policy);
-  resource->SetIsUnusedPreload(params.is_link_preload);
+  resource->SetIsUnusedPreload(params.is_link_preload ||
+                               params.speculative_preload_type !=
+                                   SpeculativePreloadType::kNotSpeculative);
+  resource->SetIsLinkPreload(params.is_link_preload);
   resource->SetFetcher(this);
   resources_.push_back(resource);
   if (params.url.SchemeIs(url::kDataScheme)) {
@@ -330,7 +377,51 @@ void ResourceFetcher::StartLoad(Resource& resource,
     blocking_.push_back(&resource);
     document_->IncrementLoadEventDelayCount();
   }
-  auto loader = std::make_unique<ResourceLoader>(resource, *this);
+  // ResourceLoader::Start(): the fetch waits for the scheduler, unless its
+  // URL is not HTTP or HTTPS. One cancelled while it waits never starts.
+  const ResourceLoadScheduler::ClientId id = scheduler_.GenerateClientId();
+  auto loader = std::make_unique<ResourceLoader>(resource, *this, id);
+  resource.SetCancelLoad(base::BindOnce(
+      [](const cppgc::WeakPersistent<ResourceFetcher>& self,
+         ResourceLoadScheduler::ClientId id) {
+        if (self) {
+          self->scheduler_.Release(id, /*schedule=*/true);
+        }
+      },
+      cppgc::WeakPersistent<ResourceFetcher>(this), id));
+  scheduler_.Request(
+      id,
+      base::BindOnce(
+          [](const cppgc::WeakPersistent<ResourceFetcher>& self,
+             const cppgc::Persistent<Resource>& resource,
+             FetchRequestData request, std::unique_ptr<ResourceLoader> loader) {
+            if (self) {
+              self->RunLoad(*resource, std::move(request), std::move(loader));
+            }
+          },
+          cppgc::WeakPersistent<ResourceFetcher>(this),
+          cppgc::Persistent<Resource>(&resource), std::move(request),
+          std::move(loader)),
+      params.url.SchemeIsHTTPOrHTTPS()
+          ? ResourceLoadScheduler::ThrottleOption::kThrottleable
+          : ResourceLoadScheduler::ThrottleOption::kCanNotBeStoppedOrThrottled,
+      priority);
+}
+
+void ResourceFetcher::RunLoad(Resource& resource,
+                              FetchRequestData request,
+                              std::unique_ptr<ResourceLoader> loader) {
+  Document* const document = document_.Get();
+  Window* const window = document ? document->DefaultView() : nullptr;
+  Fetcher* const fetcher = window ? window->GetFetcher() : nullptr;
+  if (!fetcher) {
+    // The window lost its Session while the fetch waited.
+    resource.SetCancelLoad(base::OnceClosure());
+    resource.Finish(kInvalidUrl);
+    LoadFinished(resource);
+    scheduler_.Release(loader->scheduler_client_id(), /*schedule=*/true);
+    return;
+  }
   resource.SetCancelLoad(
       base::BindOnce(&ResourceLoader::Cancel, loader->GetWeakPtr()));
   fetcher->Fetch(std::move(request), std::move(loader));

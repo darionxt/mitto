@@ -115,9 +115,14 @@ class Resource : public cppgc::GarbageCollected<Resource> {
     referrer_policy_ = policy;
   }
 
-  // Whether a link preload made it, and no other request has used it yet.
+  // Whether a link preload or the preload scanner made it, and no other
+  // request has used it yet.
   bool IsUnusedPreload() const { return is_unused_preload_; }
   void SetIsUnusedPreload(bool unused) { is_unused_preload_ = unused; }
+  // Whether a link preload made it, which holds the load event back only
+  // once a request takes it.
+  bool IsLinkPreload() const { return is_link_preload_; }
+  void SetIsLinkPreload(bool link_preload) { is_link_preload_ = link_preload; }
 
   void AddClient(ResourceClient* client);
   // Removes one of `client`. A load that loses its last client is cancelled
@@ -154,6 +159,7 @@ class Resource : public cppgc::GarbageCollected<Resource> {
   std::string charset_;
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   bool is_unused_preload_ = false;
+  bool is_link_preload_ = false;
   WeakHeapVector<ResourceClient> clients_;
   cppgc::WeakMember<ResourceFetcher> fetcher_;
   base::OnceClosure cancel_load_;

@@ -446,6 +446,15 @@ struct InsertionLocation {
 // HTMLConstructionSite have it, without the parts of Blink's that a Page has
 // no use for: the sanitizer, document patching, custom elements and the
 // counters of its use.
+bool IsForeignContentBreakoutStartTag(const HtmlToken& token) {
+  if (token.name == u"font") {
+    return FindTokenAttribute(token, u"color") ||
+           FindTokenAttribute(token, u"face") ||
+           FindTokenAttribute(token, u"size");
+  }
+  return IsOneOf(token.name, kForeignContentBreakoutNames);
+}
+
 class HtmlTreeBuilder {
  public:
   // For a document. What the builder refers to stays in `references`, which
@@ -3130,12 +3139,7 @@ class HtmlTreeBuilder {
   }
 
   static bool IsForeignContentBreakout(const HtmlToken& token) {
-    if (token.name == u"font") {
-      return FindTokenAttribute(token, u"color") ||
-             FindTokenAttribute(token, u"face") ||
-             FindTokenAttribute(token, u"size");
-    }
-    return IsOneOf(token.name, kForeignContentBreakoutNames);
+    return IsForeignContentBreakoutStartTag(token);
   }
 
   void ProcessTokenInForeignContent(HtmlToken& token) {
@@ -3345,6 +3349,10 @@ bool HtmlDocumentParser::HasInsertionPoint() const {
 
 void HtmlDocumentParser::Insert(std::u16string_view markup) {
   tokenizer_->Insert(markup);
+}
+
+std::u16string_view HtmlDocumentParser::UnreadInput() const {
+  return tokenizer_->UnreadInput();
 }
 
 Element* HtmlDocumentParser::Pump() {

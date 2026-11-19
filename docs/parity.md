@@ -69,9 +69,10 @@ A Session replays the cases of documents as a caller would make them. A page mak
 | `xhr_get_sync`, `xhr_post_text_sync` | That the request is synchronous, which Blink gives the highest priority | [#283](https://github.com/darionxt/mitto/issues/283) |
 | `worker_import_scripts`, `worker_fetch`, `worker_blob_fetch` | That a worker asks for it, which sends no hints, at the worker's priority, and with no `Referer` from a `blob:` worker | [#289](https://github.com/darionxt/mitto/issues/289) |
 | `frame_script`, `frame_image`, `frame_fetch`, `frame_nested_fetch` | That a frame of another site asks for it, whose site for cookies is no site | [#285](https://github.com/darionxt/mitto/issues/285) |
-| `document_*` | The priority that Blink gives what a document's markup asks for, and over HTTP/2 and HTTP/3 the order in which it asks | [#284](https://github.com/darionxt/mitto/issues/284) |
 
 The other cases of documents, the frames' own navigations, `frame_nested` and `favicon` among them, have checks now, and what a Session cannot replay of them yet is in the known-gaps list, as for any case.
+
+The `document_*` cases, what a document's markup asks for, replay through a Page that opens the document's page and stays until its own script asks for its last path (`until` in their `Replay`), so that a Page's preload scanner and load scheduler give each request Blink's priority, and over HTTP/2 and HTTP/3 Blink's order.
 
 `order`, which a normal form of documents holds over HTTP/2 and HTTP/3, belongs to the fingerprint of each case it names, and to no other, so it shows only in the `document_*` cases.
 

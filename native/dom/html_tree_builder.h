@@ -41,6 +41,7 @@ namespace mitto {
 class Document;
 class Element;
 class HtmlTokenizer;
+struct HtmlToken;
 class HtmlTreeBuilder;
 
 // What Blink's HTMLParserOptions holds of a parse.
@@ -118,6 +119,8 @@ class HtmlDocumentParser {
   void PopInsertionPoint();
   bool HasInsertionPoint() const;
   void Insert(std::u16string_view markup);
+  // What of the markup the tokenizer has not read yet.
+  std::u16string_view UnreadInput() const;
 
   // Builds the tree from the markup so far. Returns the script element whose
   // end tag it reached, where the standard would run the script before it
@@ -178,6 +181,10 @@ NodeVector ParseHtmlFragment(
     const HtmlParserOptions& options,
     std::vector<std::string>* skipped_rules = nullptr,
     FragmentScripts scripts = FragmentScripts::kAlreadyStarted);
+
+// Blink's IsForeignContentBreakoutStartTag(): whether a start tag ends
+// foreign content, as the preload scanner asks too.
+bool IsForeignContentBreakoutStartTag(const HtmlToken& token);
 
 }  // namespace mitto
 

@@ -48,6 +48,8 @@ DOCUMENTS_START_PATH = "/case/documents-start"
 _DOCUMENT_DONE_PATH = "/case/documents-done"
 DOCUMENTS_FRAMES_PATH = "/case/documents-frames"
 DOCUMENT_PATH = "/case/document"
+# What the document's own script asks for last, three seconds after its load event, once it has asked for all else.
+DOCUMENT_LAST_PATH = "/case/favicon-not-asked"
 DOCUMENTS_FORMS_PATH = "/case/documents-forms"
 CREDENTIALS_COOKIE_SET_PATH = "/case/credentials-cookie-set"
 _HISTORY_NEXT_PATH = "/case/history-next"
@@ -217,7 +219,7 @@ _DOCUMENT_IMAGE_SMALL = _case("document_image_small")
 _DOCUMENT_IMAGE = _case("document_image")
 _DOCUMENT_STYLE_BODY = _case("document_style_body")
 _DOCUMENT_SCRIPT_DEFERRED = _case("document_script_deferred")
-_FAVICON_NOT_ASKED_PATH = "/case/favicon-not-asked"
+_FAVICON_NOT_ASKED_PATH = DOCUMENT_LAST_PATH
 # Chrome asks for it by itself, at a path of its own, if it asks at all.
 _FAVICON = Case("favicon", "/favicon.ico", refused_path=_FAVICON_NOT_ASKED_PATH)
 _URLENCODED_QUERY = "name=mitto&a+b%26c=d+e%26f%2Bg"

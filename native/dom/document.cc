@@ -1632,6 +1632,10 @@ void Document::FinishedParsing() {
 }
 
 void Document::WillInsertBody() {
+  // The fetches that wait for the body start.
+  if (window_) {
+    Fetcher().LoosenLoadThrottlingPolicy();
+  }
   BeginLifecycleUpdatesIfRenderingReady();
 }
 

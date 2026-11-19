@@ -43,27 +43,6 @@ Window* ActiveWindowOf(const Document& document) {
   return window;
 }
 
-// PreloadHelper::GetResourceTypeFromAsAttribute(), of what a Page fetches:
-// track, which Blink preloads too, has no Request Kind yet, a Known Gap.
-std::optional<ResourceType> ResourceTypeFromAs(std::u16string_view as) {
-  if (as == u"image") {
-    return ResourceType::kImage;
-  }
-  if (as == u"script") {
-    return ResourceType::kScript;
-  }
-  if (as == u"style") {
-    return ResourceType::kCSSStyleSheet;
-  }
-  if (as == u"font") {
-    return ResourceType::kFont;
-  }
-  if (as == u"fetch") {
-    return ResourceType::kRaw;
-  }
-  return std::nullopt;
-}
-
 // IsValidButUnsupportedAsAttribute(), and track, which Blink supports.
 bool IsValidButUnsupportedAs(std::u16string_view as) {
   return as == u"audio" || as == u"audioworklet" || as == u"document" ||
@@ -534,7 +513,7 @@ Resource* HTMLLinkElement::PreloadIfNeeded() {
   }
   Document& document = GetDocument();
   const std::u16string as = base::ToLowerASCII(AttributeOrEmpty(*this, u"as"));
-  const std::optional<ResourceType> type = ResourceTypeFromAs(as);
+  const std::optional<ResourceType> type = ResourceTypeFromAsAttribute(as);
   const std::u16string_view href =
       StripHTMLSpaces(AttributeOrEmpty(*this, u"href"));
   GURL url = href.empty() ? GURL() : document.CompleteUrl(href);
