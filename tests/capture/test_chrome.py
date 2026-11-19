@@ -336,9 +336,7 @@ def test_each_document_case_is_what_it_says_it_is(
     chrome: str, name: str, case: str, expected: tuple[str, str, str]
 ) -> None:
     form = recorded(chrome, name)
-    requests = form["requests"]
-    assert isinstance(requests, dict)
-    if case == "module_text" and case not in requests:
+    if case == "module_text" and request_of(form, case) == {"refused": True}:
         # Chrome 155 has no text modules, and its import() rejects before any request.
         pytest.skip("this Chrome has no text modules")
     headers = headers_of(form, case)

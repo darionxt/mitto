@@ -174,7 +174,9 @@ _MODULE_STATIC_IMPORT = _case("module_static_import")
 _MODULE_DYNAMIC_IMPORT = _case("module_dynamic_import")
 _MODULE_CROSS_SITE = _case("module_cross_site")
 _MODULE_JSON = _case("module_json")
-_MODULE_TEXT = _case("module_text")
+# Chrome 155 has no text modules: its import() of one rejects before any request.
+_MODULE_TEXT_REFUSED_PATH = "/case/module-text-refused"
+_MODULE_TEXT = _case("module_text", refused_path=_MODULE_TEXT_REFUSED_PATH)
 _XHR_GET = _case("xhr_get")
 _XHR_GET_CROSS_SITE = _case("xhr_get_cross_site")
 _XHR_POST_TEXT = _case("xhr_post_text")
@@ -968,10 +970,10 @@ _DOCUMENTS_START_SCRIPT = """
 # A module that imports two more, a JSON module and a text module, and then says so to the page. The page waits for
 # its event before it goes on. Chrome 155 has no text modules: a static import of one would fail the whole module, and
 # its import() rejects before any request, so this takes the text module with import(), whose request carries the same
-# lines as a static import's, and goes on without it.
+# lines as a static import's, and says so when it is refused.
 _MODULE_SOURCE = f"""import "{_MODULE_STATIC_IMPORT.path}";
 import "{_MODULE_JSON.path}" with {{type: "json"}};
-await import("{_MODULE_TEXT.path}", {{with: {{type: "text"}}}}).catch(() => {{}});
+await import("{_MODULE_TEXT.path}", {{with: {{type: "text"}}}}).catch(() => fetch("{_MODULE_TEXT_REFUSED_PATH}"));
 await import("{_MODULE_DYNAMIC_IMPORT.path}");
 dispatchEvent(new Event("mitto-module"));
 """
@@ -1180,6 +1182,7 @@ def _document_responses(
         _MODULE_CROSS_SITE.path: script,
         _MODULE_JSON.path: _case_response(_JSON, b"{}\n"),
         _MODULE_TEXT.path: text,
+        _MODULE_TEXT_REFUSED_PATH: text,
         _XHR_GET.path: text,
         _XHR_GET_CROSS_SITE.path: text,
         _XHR_POST_TEXT.path: text,
