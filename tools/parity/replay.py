@@ -317,7 +317,7 @@ def _document_replays() -> dict[str, Replay]:
         "document_script_deferred": Replay(
             RequestKind.SCRIPT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
         ),
-        "favicon": Replay(RequestKind.FAVICON, page=DOCUMENT_PATH),
+        "favicon": Replay(RequestKind.FAVICON, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
         "navigation_form_get": Replay(RequestKind.NAVIGATION, page=DOCUMENTS_FORMS_PATH),
         "navigation_form_text": Replay(
             RequestKind.NAVIGATION,

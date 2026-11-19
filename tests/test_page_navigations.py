@@ -20,6 +20,7 @@ from mitto import _native
 from mitto._errors import ScriptError
 from mitto._page import Page, PageNavigation
 from tests.local_server import QuietServer, refused_port
+from tests.page_server import without_favicon
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -101,8 +102,9 @@ class _Server:
         return self.url(path)
 
     def paths(self) -> list[str]:
+        """Return the path of each request, in the order they came, but for the favicon after a document's load."""
         with self.requested:
-            return [path for path, _ in self.requests]
+            return without_favicon(path for path, _ in self.requests)
 
     def headers_of(self, path: str) -> list[list[tuple[str, str]]]:
         """Return the header lines of each request for `path`, in the order they came."""

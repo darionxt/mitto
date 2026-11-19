@@ -49,10 +49,15 @@ uint64_t PageRequests::Start(PageRequestKind kind,
 
 uint64_t PageRequests::Start(PageRequest request,
                              Client& client,
-                             bool render_blocking) {
+                             bool render_blocking,
+                             bool resource_timing) {
   request.number = next_number_++;
   Open& open = open_[request.number];
   open.client = &client;
+  if (!resource_timing) {
+    send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
+    return request.number;
+  }
   // ResourceFetcher::RecordResourceTimingInfo(), when the page asks.
   Timed& timed = open.timed.emplace();
   timed.start_time = base::TimeTicks::Now();
@@ -94,6 +99,10 @@ void PageRequests::Cancel(uint64_t number) {
   // meanwhile still counts against its credit.
   found->second.client = nullptr;
   send_.Run(EncodeCancel(number));
+}
+
+void PageRequests::Hint(const PageNetworkHint& hint) {
+  send_.Run(EncodeNetworkHint(Window::Current().DocumentId(), hint));
 }
 
 void PageRequests::LetGo(uint64_t number) {

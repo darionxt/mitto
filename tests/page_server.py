@@ -5,6 +5,7 @@ import http.server
 import struct
 import threading
 import zlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,6 +16,13 @@ TIMEOUT_SECONDS = 30.0
 
 HTML = "text/html; charset=utf-8"
 PNG = "image/png"
+# What a Page asks for once its document has loaded, as Chrome's favicon driver does, for a document that names no icon.
+FAVICON_PATH = "/favicon.ico"
+
+
+def without_favicon(paths: Iterable[str]) -> list[str]:
+    """Return `paths` but for the favicon, which comes after the document's load, before or after a test looks."""
+    return [path for path in paths if path != FAVICON_PATH]
 
 
 def png(width: int, height: int) -> bytes:

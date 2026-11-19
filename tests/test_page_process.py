@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 24
+_PROTOCOL_VERSION = 25
 
 
 def _script_request(number: int, url: str) -> str:
@@ -513,6 +513,36 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             f"{_HELLO}\nsend(32, struct.pack('<Q', 3))",
             "the library refused a message from the Page: a storage area that is not bound",
             id="storage-unbound-unbind",
+        ),
+        pytest.param(
+            "hint-of-unknown-type",
+            f"{_HELLO}\nsend(140, struct.pack('<QBB', 1, 2, 0) + b'http://a.test/')",
+            "the library refused a message from the Page: a network hint of type 2",
+            id="hint-of-unknown-type",
+        ),
+        pytest.param(
+            "dns-prefetch-with-credentials",
+            f"{_HELLO}\nsend(140, struct.pack('<QBB', 1, 0, 1) + b'http://a.test/')",
+            "the library refused a message from the Page: a network hint whose credentials byte is 1",
+            id="dns-prefetch-with-credentials",
+        ),
+        pytest.param(
+            "hint-of-no-origin",
+            f"{_HELLO}\nsend(140, struct.pack('<QBB', 1, 1, 1) + b'http://a.test/path')",
+            "the library refused a message from the Page: a network hint that is not an HTTP or HTTPS origin",
+            id="hint-of-no-origin",
+        ),
+        pytest.param(
+            "hint-of-another-scheme",
+            f"{_HELLO}\nsend(140, struct.pack('<QBB', 1, 0, 0) + b'ftp://a.test/')",
+            "the library refused a message from the Page: a network hint that is not an HTTP or HTTPS origin",
+            id="hint-of-another-scheme",
+        ),
+        pytest.param(
+            "worker-hints",
+            f"{_HELLO}\n{_DATA_WORKER}\nsend(140, struct.pack('<QBB', 2, 1, 1) + b'http://a.test/')",
+            "the library refused a message from the Page: message type 140 of a worker, which only a document sends",
+            id="worker-hints",
         ),
         pytest.param(
             "page-refuses",

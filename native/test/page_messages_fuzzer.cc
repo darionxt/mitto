@@ -232,6 +232,17 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kStorageUnbind:
           CHECK_EQ(payload.size(), 8u);
           break;
+        case mitto::PageMessage::kNetworkHint: {
+          const mitto::PageNetworkHint& hint = frame->network_hint;
+          // Only a preconnect may carry credentials.
+          CHECK(!hint.allow_credentials ||
+                hint.type == mitto::PageNetworkHintType::kPreconnect);
+          CHECK(base::IsStringUTF8AllowingNoncharacters(hint.url));
+          CHECK_EQ(mitto::EncodeNetworkHint(frame->document, hint)
+                       .substr(mitto::kFrameHeaderSize),
+                   payload);
+          break;
+        }
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
         case mitto::PageMessage::kResponseStarted:

@@ -72,10 +72,12 @@ class PageRequests {
                  std::string url,
                  Client& client,
                  bool render_blocking = false);
-  // The same for `request`, whose number this sets.
+  // The same for `request`, whose number this sets, with no entry in the
+  // Performance Timeline unless `resource_timing`.
   uint64_t Start(PageRequest request,
                  Client& client,
-                 bool render_blocking = false);
+                 bool render_blocking = false,
+                 bool resource_timing = true);
 
   // Asks the Session for `request`, a navigation that the current window's
   // document starts, whose number this sets, and returns it. Its response is
@@ -95,6 +97,9 @@ class PageRequests {
   // entry of it. The Session lets it outlive the document, and ends it for
   // the Page, once it hears of the next document.
   void LetGo(uint64_t number);
+
+  // Sends the Session a network hint of the current window's document.
+  void Hint(const PageNetworkHint& hint);
 
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);

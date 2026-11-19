@@ -349,6 +349,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kStorageDeleteAll:
       case PageMessage::kStorageUnbind:
       case PageMessage::kStoragePart:
+      case PageMessage::kNetworkHint:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }

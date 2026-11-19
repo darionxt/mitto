@@ -19,6 +19,7 @@
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/encoding/text_resource_decoder_builder.h"
 #include "mitto/header_rules.h"
+#include "mitto/page/favicon_loader.h"
 #include "mitto/page/page_frame.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
@@ -266,6 +267,12 @@ void DocumentLoader::ParserDetached() {
 
 void DocumentLoader::DidDispatchLoadEvent() {
   send_.Run(EncodeLoaded(document_id_));
+  // The browser's favicon driver fetches the icon once the top-level
+  // document's load event is done.
+  if (!favicon_fetched_ && document_) {
+    favicon_fetched_ = true;
+    FetchFavicon(*document_);
+  }
 }
 
 }  // namespace mitto
