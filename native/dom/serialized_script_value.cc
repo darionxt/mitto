@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -32,11 +33,19 @@
 #include "mitto/bindings/v8_dom_rect_read_only.h"
 #include "mitto/bindings/v8_message_port.h"
 #include "mitto/bindings/v8_quota_exceeded_error.h"
+#include "mitto/bindings/v8_readable_stream.h"
+#include "mitto/bindings/v8_transform_stream.h"
+#include "mitto/bindings/v8_window.h"
+#include "mitto/bindings/v8_writable_stream.h"
 #include "mitto/dom/dom_exception.h"
 #include "mitto/dom/dom_rect.h"
 #include "mitto/dom/dom_rect_read_only.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/quota_exceeded_error.h"
+#include "mitto/dom/readable_stream.h"
+#include "mitto/dom/transform_stream.h"
+#include "mitto/dom/window.h"
+#include "mitto/dom/writable_stream.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -57,6 +66,9 @@ constexpr uint8_t kDOMRectTag = 'E';
 constexpr uint8_t kDOMRectReadOnlyTag = 'R';
 constexpr uint8_t kDOMExceptionTag = 'x';
 constexpr uint8_t kQuotaExceededErrorTag = 'q';
+constexpr uint8_t kReadableStreamTransferTag = 'r';
+constexpr uint8_t kTransformStreamTransferTag = 'm';
+constexpr uint8_t kWritableStreamTransferTag = 'w';
 // The Runtime's own, which Blink does not use: an object of one of
 // kCopiedWithoutClass, by its index there.
 constexpr uint8_t kObjectWithoutClassTag = '?';
@@ -128,7 +140,8 @@ class Serializer final : public v8::ValueSerializer::Delegate {
   bool Serialize(v8::Local<v8::Value> value,
                  std::vector<uint8_t>& data,
                  std::vector<std::shared_ptr<v8::BackingStore>>& array_buffers,
-                 std::vector<v8::CompiledWasmModule>& wasm_modules) {
+                 std::vector<v8::CompiledWasmModule>& wasm_modules,
+                 std::vector<MessagePortChannel>& stream_channels) {
     // PrepareTransfer().
     if (transferables_) {
       for (size_t i = 0; i < transferables_->array_buffers.size(); ++i) {
@@ -178,6 +191,12 @@ class Serializer final : public v8::ValueSerializer::Delegate {
           return false;
         }
         array_buffers.push_back(std::move(contents));
+      }
+      // TransferReadableStreams(), TransferWritableStreams() and
+      // TransferTransformStreams(), in this order, which the indexes that
+      // WriteDOMObject() wrote count on.
+      if (!TransferStreams(stream_channels)) {
+        return false;
       }
     }
     // A Page is never cross-origin isolated, so the SharedArrayBuffers that
@@ -355,6 +374,15 @@ class Serializer final : public v8::ValueSerializer::Delegate {
       thrown_ = true;
       return false;
     }
+    if (info == &bindings::V8ReadableStream::kWrapperTypeInfo) {
+      return WriteReadableStream(static_cast<ReadableStream&>(wrappable));
+    }
+    if (info == &bindings::V8WritableStream::kWrapperTypeInfo) {
+      return WriteWritableStream(static_cast<WritableStream&>(wrappable));
+    }
+    if (info == &bindings::V8TransformStream::kWrapperTypeInfo) {
+      return WriteTransformStream(static_cast<TransformStream&>(wrappable));
+    }
     if (info == &bindings::V8DOMException::kWrapperTypeInfo) {
       const auto& exception = static_cast<const DOMException&>(wrappable);
       WriteAndRequireInterfaceTag(kDOMExceptionTag);
@@ -385,6 +413,150 @@ class Serializer final : public v8::ValueSerializer::Delegate {
       }
     }
     return false;
+  }
+
+  // The index of `object` in `list`, or `list`'s size if it is not there.
+  template <typename T>
+  static size_t IndexIn(const std::vector<cppgc::Persistent<T>>& list,
+                        const T* object) {
+    size_t index = 0;
+    while (index < list.size() && list[index].Get() != object) {
+      ++index;
+    }
+    return index;
+  }
+
+  // Throws a DataCloneError with `message` where Blink does, and remembers
+  // that it threw.
+  bool RefuseDOMObject(std::string_view message) {
+    mitto::ThrowDataCloneError(isolate_, message);
+    thrown_ = true;
+    return false;
+  }
+
+  // WriteReadableStream().
+  bool WriteReadableStream(ReadableStream& stream) {
+    const size_t index =
+        transferables_ ? IndexIn(transferables_->readable_streams, &stream) : 0;
+    if (!transferables_ || index == transferables_->readable_streams.size()) {
+      return RefuseDOMObject(
+          "A ReadableStream could not be cloned because it was not "
+          "transferred.");
+    }
+    if (stream.IsLocked()) {
+      return RefuseDOMObject(
+          "A ReadableStream could not be cloned because it was locked");
+    }
+    WriteAndRequireInterfaceTag(kReadableStreamTransferTag);
+    serializer_.WriteUint32(base::checked_cast<uint32_t>(index));
+    return true;
+  }
+
+  // WriteWritableStream().
+  bool WriteWritableStream(WritableStream& stream) {
+    const size_t index =
+        transferables_ ? IndexIn(transferables_->writable_streams, &stream) : 0;
+    if (!transferables_ || index == transferables_->writable_streams.size()) {
+      return RefuseDOMObject(
+          "A WritableStream could not be cloned because it was not "
+          "transferred.");
+    }
+    if (stream.Locked()) {
+      return RefuseDOMObject(
+          "A WritableStream could not be cloned because it was locked");
+    }
+    WriteAndRequireInterfaceTag(kWritableStreamTransferTag);
+    // The index counts on TransferReadableStreams() coming first.
+    serializer_.WriteUint32(base::checked_cast<uint32_t>(
+        index + transferables_->readable_streams.size()));
+    return true;
+  }
+
+  // What WriteDOMObject() writes of a TransformStream.
+  bool WriteTransformStream(TransformStream& stream) {
+    const size_t index =
+        transferables_ ? IndexIn(transferables_->transform_streams, &stream)
+                       : 0;
+    if (!transferables_ || index == transferables_->transform_streams.size()) {
+      return RefuseDOMObject(
+          "A TransformStream could not be cloned because it was not "
+          "transferred.");
+    }
+    // https://streams.spec.whatwg.org/#ts-transfer
+    // 3. If ! IsReadableStreamLocked(readable) is true, throw a
+    //    "DataCloneError" DOMException.
+    // 4. If ! IsWritableStreamLocked(writable) is true, throw a
+    //    "DataCloneError" DOMException.
+    if (stream.Readable()->Locked() || stream.Writable()->Locked()) {
+      return RefuseDOMObject(
+          "A TransformStream could not be cloned because it was locked");
+    }
+    WriteAndRequireInterfaceTag(kTransformStreamTransferTag);
+    // TransformStreams use two ports each. The stored index is the index of
+    // the first one. The first TransformStream is stored in the array after
+    // all the ReadableStreams and WritableStreams.
+    serializer_.WriteUint32(base::checked_cast<uint32_t>(
+        index * 2 + transferables_->readable_streams.size() +
+        transferables_->writable_streams.size()));
+    return true;
+  }
+
+  // AddStreamChannel(): a new port of the window's, entangled with the end
+  // that `stream_channels` gets, which the value carries.
+  MessagePort* AddStreamChannel(
+      Window* window,
+      std::vector<MessagePortChannel>& stream_channels) {
+    // 2. Let port1 be a new MessagePort in the current Realm.
+    // 3. Let port2 be a new MessagePort in the current Realm.
+    auto [local, remote] = MessagePortChannel::CreatePair();
+    auto* const local_port =
+        bindings::MakeGarbageCollected<MessagePort>(window);
+    // 4. Entangle port1 and port2.
+    local_port->Entangle(std::move(local), nullptr);
+    // 9. Set dataHolder.[[port]] to ! StructuredSerializeWithTransfer(port2,
+    //    « port2 »).
+    stream_channels.push_back(std::move(remote));
+    return local_port;
+  }
+
+  // The streams of the transfer list, each serialized over a new port, as
+  // SerializedScriptValue::TransferReadableStream() and its kin do: false
+  // after throwing.
+  bool TransferStreams(std::vector<MessagePortChannel>& stream_channels) {
+    Window* const window = bindings::V8Window::ToWrappable(
+        isolate_, isolate_->GetCurrentContext()->Global());
+    // What a stream's Serialize() throws stays on the isolate for the caller.
+    bindings::ExceptionState exception_state(isolate_);
+    for (const cppgc::Persistent<ReadableStream>& stream :
+         transferables_->readable_streams) {
+      stream->Serialize(isolate_, AddStreamChannel(window, stream_channels),
+                        exception_state);
+      if (exception_state.HadException()) {
+        return false;
+      }
+    }
+    for (const cppgc::Persistent<WritableStream>& stream :
+         transferables_->writable_streams) {
+      stream->Serialize(isolate_, AddStreamChannel(window, stream_channels),
+                        exception_state);
+      if (exception_state.HadException()) {
+        return false;
+      }
+    }
+    for (const cppgc::Persistent<TransformStream>& stream :
+         transferables_->transform_streams) {
+      stream->Readable()->Serialize(
+          isolate_, AddStreamChannel(window, stream_channels), exception_state);
+      if (exception_state.HadException()) {
+        return false;
+      }
+      stream->Writable()->Serialize(
+          isolate_, AddStreamChannel(window, stream_channels), exception_state);
+      if (exception_state.HadException()) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // Whether `object`, which wraps nothing, is of one of the interfaces that
@@ -483,6 +655,12 @@ const bindings::WrapperTypeInfo* InterfaceOfTag(uint8_t tag) {
       return &bindings::V8QuotaExceededError::kWrapperTypeInfo;
     case kMessagePortTag:
       return &bindings::V8MessagePort::kWrapperTypeInfo;
+    case kReadableStreamTransferTag:
+      return &bindings::V8ReadableStream::kWrapperTypeInfo;
+    case kWritableStreamTransferTag:
+      return &bindings::V8WritableStream::kWrapperTypeInfo;
+    case kTransformStreamTransferTag:
+      return &bindings::V8TransformStream::kWrapperTypeInfo;
     default:
       for (const CopiedWithoutClass& copied : CopiedWithoutClassInterfaces()) {
         if (copied.blink_tag == tag) {
@@ -499,12 +677,14 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
   Deserializer(v8::Isolate* isolate,
                const std::vector<uint8_t>& data,
                const std::vector<MessagePort*>& ports,
-               const std::vector<v8::CompiledWasmModule>& wasm_modules)
+               const std::vector<v8::CompiledWasmModule>& wasm_modules,
+               std::vector<MessagePortChannel>* stream_channels)
       : isolate_(isolate),
         deserializer_(isolate, data.data(), data.size(), this),
         data_(data),
         ports_(ports),
-        wasm_modules_(wasm_modules) {}
+        wasm_modules_(wasm_modules),
+        stream_channels_(stream_channels) {}
   ~Deserializer() override = default;
 
   v8::MaybeLocal<v8::Value> Deserialize(
@@ -595,6 +775,20 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
     return base::UTF8ToUTF16(static_cast<const char*>(bytes), size, &text);
   }
 
+  // CreateEntangledPort(): a new port of the window's that holds the end of
+  // the port of the stream at `index`, or null if there is none.
+  MessagePort* TakeStreamPort(uint32_t index) {
+    if (!stream_channels_ || index >= stream_channels_->size() ||
+        !(*stream_channels_)[index].is_valid()) {
+      return nullptr;
+    }
+    Window* const window = bindings::V8Window::ToWrappable(
+        isolate_, isolate_->GetCurrentContext()->Global());
+    auto* const port = bindings::MakeGarbageCollected<MessagePort>(window);
+    port->Entangle(std::move((*stream_channels_)[index]), nullptr);
+    return port;
+  }
+
   // A new object of the interface `info`, whose interface object the context
   // made before V8 started to read, or nothing if the trailer did not name it.
   v8::MaybeLocal<v8::Object> NewInstance(
@@ -648,6 +842,72 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
         // Its wrapper was made before V8 started to read.
         return (*ports_)[index]->ToV8(isolate_);
       }
+      case kReadableStreamTransferTag: {
+        uint32_t index = 0;
+        MessagePort* port = nullptr;
+        if (!deserializer_.ReadUint32(&index) ||
+            !(port = TakeStreamPort(index))) {
+          return {};
+        }
+        bindings::ExceptionState exception_state(isolate_);
+        ReadableStream* const readable =
+            ReadableStream::Deserialize(isolate_, port, exception_state);
+        if (!readable) {
+          return {};
+        }
+        return NewWrapper(readable);
+      }
+      case kWritableStreamTransferTag: {
+        uint32_t index = 0;
+        MessagePort* port = nullptr;
+        if (!deserializer_.ReadUint32(&index) ||
+            !(port = TakeStreamPort(index))) {
+          return {};
+        }
+        bindings::ExceptionState exception_state(isolate_);
+        WritableStream* const writable =
+            WritableStream::Deserialize(isolate_, port, exception_state);
+        if (!writable) {
+          return {};
+        }
+        return NewWrapper(writable);
+      }
+      case kTransformStreamTransferTag: {
+        uint32_t index = 0;
+        if (!deserializer_.ReadUint32(&index) ||
+            index == std::numeric_limits<uint32_t>::max()) {
+          return {};
+        }
+        MessagePort* const port_for_readable = TakeStreamPort(index);
+        MessagePort* const port_for_writable = TakeStreamPort(index + 1);
+        if (!port_for_readable || !port_for_writable) {
+          return {};
+        }
+        // https://streams.spec.whatwg.org/#ts-transfer
+        // 1. Let readableRecord be !
+        //    StructuredDeserializeWithTransfer(dataHolder.[[readable]], the
+        //    current Realm).
+        bindings::ExceptionState exception_state(isolate_);
+        ReadableStream* const readable = ReadableStream::Deserialize(
+            isolate_, port_for_readable, exception_state);
+        if (!readable) {
+          return {};
+        }
+        // 2. Let writableRecord be !
+        //    StructuredDeserializeWithTransfer(dataHolder.[[writable]], the
+        //    current Realm).
+        WritableStream* const writable = WritableStream::Deserialize(
+            isolate_, port_for_writable, exception_state);
+        if (!writable) {
+          return {};
+        }
+        // 3. Set value.[[readable]] to readableRecord.[[Deserialized]].
+        // 4. Set value.[[writable]] to writableRecord.[[Deserialized]].
+        // 5. Set value.[[backpressure]], value.[[backpressureChangePromise]],
+        //    and value.[[controller]] to undefined.
+        return NewWrapper(bindings::MakeGarbageCollected<TransformStream>(
+            readable, writable));
+      }
       case kDOMExceptionTag: {
         std::u16string name;
         std::u16string message;
@@ -696,6 +956,9 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
   const raw_ref<const std::vector<uint8_t>> data_;
   const raw_ref<const std::vector<MessagePort*>> ports_;
   const raw_ref<const std::vector<v8::CompiledWasmModule>> wasm_modules_;
+  // The other ends of the ports of the streams that the value transferred,
+  // which reading takes, or null for none.
+  const raw_ptr<std::vector<MessagePortChannel>> stream_channels_;
   // The interfaces whose interface objects the context made before V8
   // started to read.
   std::vector<const bindings::WrapperTypeInfo*> prepared_;
@@ -705,6 +968,10 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
 
 Transferables::Transferables() = default;
 Transferables::~Transferables() = default;
+
+struct SerializedScriptValue::StreamChannels {
+  std::vector<MessagePortChannel> channels;
+};
 
 // static
 bool SerializedScriptValue::ExtractTransferables(
@@ -743,9 +1010,53 @@ bool SerializedScriptValue::ExtractTransferables(
       transferables.array_buffers.emplace_back(isolate, buffer);
       continue;
     }
-    // ImageBitmap, OffscreenCanvas and the streams, which Blink transfers,
-    // have no class in the Runtime, and so no object of theirs moves: a Known
-    // Gap.
+    if (ReadableStream* const stream =
+            bindings::V8ReadableStream::ToWrappable(isolate, object)) {
+      for (const cppgc::Persistent<ReadableStream>& earlier :
+           transferables.readable_streams) {
+        if (earlier.Get() == stream) {
+          ThrowDataCloneError(
+              isolate,
+              base::StrCat({"ReadableStream at index ", IndexText(i),
+                            " is a duplicate of an earlier ReadableStream."}));
+          return false;
+        }
+      }
+      transferables.readable_streams.emplace_back(stream);
+      continue;
+    }
+    if (WritableStream* const stream =
+            bindings::V8WritableStream::ToWrappable(isolate, object)) {
+      for (const cppgc::Persistent<WritableStream>& earlier :
+           transferables.writable_streams) {
+        if (earlier.Get() == stream) {
+          ThrowDataCloneError(
+              isolate,
+              base::StrCat({"WritableStream at index ", IndexText(i),
+                            " is a duplicate of an earlier WritableStream."}));
+          return false;
+        }
+      }
+      transferables.writable_streams.emplace_back(stream);
+      continue;
+    }
+    if (TransformStream* const stream =
+            bindings::V8TransformStream::ToWrappable(isolate, object)) {
+      for (const cppgc::Persistent<TransformStream>& earlier :
+           transferables.transform_streams) {
+        if (earlier.Get() == stream) {
+          ThrowDataCloneError(
+              isolate,
+              base::StrCat({"TransformStream at index ", IndexText(i),
+                            " is a duplicate of an earlier TransformStream."}));
+          return false;
+        }
+      }
+      transferables.transform_streams.emplace_back(stream);
+      continue;
+    }
+    // ImageBitmap and OffscreenCanvas, which Blink transfers, have no class
+    // in the Runtime, and so no object of theirs moves: a Known Gap.
     ThrowDataCloneError(isolate,
                         base::StrCat({"Value at index ", IndexText(i),
                                       " does not have a transferable type."}));
@@ -778,9 +1089,14 @@ std::optional<SerializedScriptValue> SerializedScriptValue::SerializeWith(
   SerializedScriptValue serialized;
   Serializer serializer(isolate, transferables, for_storage);
   std::vector<v8::CompiledWasmModule> wasm_modules;
+  std::vector<MessagePortChannel> stream_channels;
   if (!serializer.Serialize(value, serialized.data_, serialized.array_buffers_,
-                            wasm_modules)) {
+                            wasm_modules, stream_channels)) {
     return std::nullopt;
+  }
+  if (!stream_channels.empty()) {
+    serialized.streams_ = std::make_shared<StreamChannels>();
+    serialized.streams_->channels = std::move(stream_channels);
   }
   if (!wasm_modules.empty()) {
     serialized.wasm_modules_ =
@@ -816,7 +1132,8 @@ v8::Local<v8::Value> SerializedScriptValue::Deserialize(
   v8::TryCatch try_catch(isolate);
   static const base::NoDestructor<std::vector<v8::CompiledWasmModule>> kNone;
   Deserializer deserializer(isolate, data_, ports,
-                            wasm_modules_ ? *wasm_modules_ : *kNone);
+                            wasm_modules_ ? *wasm_modules_ : *kNone,
+                            streams_ ? &streams_->channels : nullptr);
   v8::Local<v8::Value> value;
   if (!deserializer.Deserialize(array_buffers_).ToLocal(&value)) {
     return handle_scope.Escape(v8::Null(isolate));

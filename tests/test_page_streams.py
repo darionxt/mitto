@@ -2,9 +2,9 @@
 
 ReadableStream, WritableStream and TransformStream have Blink's behaviour, ported in native/dom from Blink's core/streams:
 their controllers and readers, byte streams and BYOB readers, queuing strategies, tee(), pipeTo(), pipeThrough() and async
-iteration, the streams of encodings and compression, and the bodies of Response and Request. Each expected value is what
-Chrome 157.0.8103.79 gave for the same script, in a page of its own. These run where MITTO_PAGE_PROGRAM names the Page
-program, as tests/test_page_program.py does.
+iteration, the streams of encodings and compression, the bodies of Response and Request, and transferring streams. Each
+expected value is what Chrome 157.0.8103.79 gave for the same script, in a page of its own. These run where
+MITTO_PAGE_PROGRAM names the Page program, as tests/test_page_program.py does.
 """
 
 import os
@@ -634,6 +634,130 @@ BODIES = {
 }
 
 
+# Helpers that the scripts of TRANSFER share beside _PRELUDE's.
+_TRANSFER_PRELUDE = (
+    "const source = (chunks) => new ReadableStream({ start(c) { for (const chunk of chunks) c.enqueue(chunk);"
+    " c.close(); } });"
+)
+
+# Each script that transfers a stream, with structuredClone(), a MessageChannel or window.postMessage(), and what Chrome
+# 157.0.8103.79 gave for it, as _evaluate() writes it.
+TRANSFER = {
+    "a transferred readable stream": (
+        "const rs = source(['a', 1, { b: 2 }]); const clone = structuredClone(rs, { transfer: [rs] }); const chunks = "
+        "await readAll(clone); return [Object.prototype.toString.call(clone), clone === rs, rs.locked, "
+        "JSON.stringify(chunks)].join(' / ')",
+        'value: [object ReadableStream] / false / false / ["a",1,{"b":2}]',
+    ),
+    "a stream not transferred": (
+        "try { structuredClone(new ReadableStream()); } catch (e) { return [e.name, e.message].join(': '); }",
+        "value: DataCloneError: Failed to execute 'structuredClone' on 'Window': A ReadableStream could not be cloned "
+        "because it was not transferred.",
+    ),
+    "a locked stream in the value": (
+        "const rs = new ReadableStream(); rs.getReader(); try { structuredClone(rs, { transfer: [rs] }); } catch (e) { "
+        "return [e.name, e.message].join(': '); }",
+        "value: DataCloneError: Failed to execute 'structuredClone' on 'Window': A ReadableStream could not be cloned "
+        "because it was locked",
+    ),
+    "a locked stream only in the list": (
+        "const rs = new ReadableStream(); rs.getReader(); try { structuredClone(null, { transfer: [rs] }); } catch (e) "
+        "{ return [e.name, e.message].join(': '); }",
+        "value: TypeError: Failed to execute 'structuredClone' on 'Window': Cannot transfer a locked stream",
+    ),
+    "a duplicate stream": (
+        "const rs = new ReadableStream(); try { structuredClone(rs, { transfer: [rs, rs] }); } catch (e) { return "
+        "[e.name, e.message].join(': '); }",
+        "value: DataCloneError: Failed to execute 'structuredClone' on 'Window': ReadableStream at index 1 is a "
+        "duplicate of an earlier ReadableStream.",
+    ),
+    "a duplicate writable and transform": (
+        "const ws = new WritableStream(); const ts = new TransformStream(); const out = []; for (const list of [[ws, "
+        "ws], [ts, ts]]) { try { structuredClone(null, { transfer: list }); } catch (e) { out.push(e.message); } } "
+        "return out.join(' / ')",
+        "value: Failed to execute 'structuredClone' on 'Window': WritableStream at index 1 is a duplicate of an "
+        "earlier WritableStream. / Failed to execute 'structuredClone' on 'Window': TransformStream at index 1 is a "
+        "duplicate of an earlier TransformStream.",
+    ),
+    "a writable not transferred and locked": (
+        "const out = []; try { structuredClone(new WritableStream()); } catch (e) { out.push(e.message); } const ws = "
+        "new WritableStream(); ws.getWriter(); try { structuredClone(ws, { transfer: [ws] }); } catch (e) { "
+        "out.push(e.message); } const ts = new TransformStream(); ts.readable.getReader(); try { structuredClone(ts, { "
+        "transfer: [ts] }); } catch (e) { out.push(e.message); } try { structuredClone(new TransformStream()); } catch "
+        "(e) { out.push(e.message); } return out.join(' / ')",
+        "value: Failed to execute 'structuredClone' on 'Window': A WritableStream could not be cloned because it was "
+        "not transferred. / Failed to execute 'structuredClone' on 'Window': A WritableStream could not be cloned "
+        "because it was locked / Failed to execute 'structuredClone' on 'Window': A TransformStream could not be "
+        "cloned because it was locked / Failed to execute 'structuredClone' on 'Window': A TransformStream could not "
+        "be cloned because it was not transferred.",
+    ),
+    "a transferred writable stream": (
+        "const got = []; let closed = false; const ws = new WritableStream({ write(c) { got.push(c); }, close() { "
+        "closed = true; } }); const clone = structuredClone(ws, { transfer: [ws] }); const writer = clone.getWriter(); "
+        "await writer.write('x'); await writer.write([1, 2]); await writer.close(); await new Promise((r) => "
+        "setTimeout(r, 50)); return [Object.prototype.toString.call(clone), ws.locked, JSON.stringify(got), "
+        "closed].join(' / ')",
+        'value: [object WritableStream] / false / ["x",[1,2]] / true',
+    ),
+    "a transferred transform stream": (
+        "const ts = new TransformStream({ transform(c, ctl) { ctl.enqueue(String(c).toUpperCase()); } }); const clone "
+        "= structuredClone(ts, { transfer: [ts] }); const writer = clone.writable.getWriter(); writer.write('ab'); "
+        "writer.write('cd'); writer.close(); const chunks = await readAll(clone.readable); return "
+        "[Object.prototype.toString.call(clone), ts.readable.locked, ts.writable.locked, "
+        "JSON.stringify(chunks)].join(' / ')",
+        'value: [object TransformStream] / false / false / ["AB","CD"]',
+    ),
+    "a stream over a MessageChannel": (
+        "const { port1, port2 } = new MessageChannel(); const got = new Promise((resolve) => { port2.onmessage = (e) "
+        "=> resolve(e.data); }); const rs = source(['p', 'q']); port1.postMessage({ s: rs }, [rs]); const data = await "
+        "got; return [Object.prototype.toString.call(data.s), JSON.stringify(await readAll(data.s))].join(' / ')",
+        'value: [object ReadableStream] / ["p","q"]',
+    ),
+    "a stream through window.postMessage": (
+        "const got = new Promise((resolve) => { window.addEventListener('message', (e) => resolve(e.data), { once: "
+        "true }); }); const rs = source([7]); window.postMessage(rs, '*', [rs]); const data = await got; return "
+        "[Object.prototype.toString.call(data), JSON.stringify(await readAll(data))].join(' / ')",
+        "value: [object ReadableStream] / [7]",
+    ),
+    "cancelling a transferred stream": (
+        "let reason; const rs = new ReadableStream({ cancel(r) { reason = r; } }); const clone = structuredClone(rs, { "
+        "transfer: [rs] }); await clone.cancel('stop'); await new Promise((r) => setTimeout(r, 50)); return "
+        "String(reason)",
+        "value: stop",
+    ),
+    "an error crosses": (
+        "const rs = new ReadableStream({ start(c) { c.error(new TypeError('bad')); } }); const clone = "
+        "structuredClone(rs, { transfer: [rs] }); return await settle(clone.getReader().read())",
+        "value: rejected TypeError: bad",
+    ),
+    "a chunk that cannot be cloned": (
+        "const ws = new WritableStream(); const clone = structuredClone(ws, { transfer: [ws] }); const writer = "
+        "clone.getWriter(); const r = await settle(writer.write(() => 1)); return [r, await "
+        "settle(writer.closed)].join(' / ')",
+        "value: rejected DataCloneError: () => 1 could not be cloned. / rejected DataCloneError: () => 1 could not be "
+        "cloned.",
+    ),
+    "a transferred stream's chunks are copies": (
+        "const obj = { n: 1 }; const rs = source([obj]); const clone = structuredClone(rs, { transfer: [rs] }); const "
+        "[chunk] = await readAll(clone); return [chunk === obj, chunk.n].join()",
+        "value: false,1",
+    ),
+    "an error the readable side cannot clone": (
+        "const rs = new ReadableStream({ start(c) { c.error(() => 1); } }); const clone = structuredClone(rs, { "
+        "transfer: [rs] }); return await settle(clone.getReader().read())",
+        "value: rejected DataCloneError: () => 1 could not be cloned.",
+    ),
+    "backpressure on a transferred writable": (
+        "const seen = []; const ws = new WritableStream({ write(c) { seen.push('sink ' + c); return new Promise((r) => "
+        "setTimeout(r, 20)); } }, { highWaterMark: 1 }); const clone = structuredClone(ws, { transfer: [ws] }); const "
+        "writer = clone.getWriter(); seen.push('desired ' + writer.desiredSize); const p1 = writer.write(1); "
+        "seen.push('desired ' + writer.desiredSize); await p1; seen.push('after 1 ' + writer.desiredSize); await "
+        "writer.write(2); await writer.close(); await new Promise((r) => setTimeout(r, 80)); return seen.join(', ')",
+        "value: desired 1, desired 0, after 1 1, sink 1, sink 2",
+    ),
+}
+
+
 @pytest.fixture(scope="module")
 def program() -> Path:
     value = os.environ.get(_PROGRAM_ENV_VAR)
@@ -668,3 +792,8 @@ def test_streams_do_what_chrome_does(program: Path, script: str, chrome: str) ->
 @pytest.mark.parametrize(("script", "chrome"), BODIES.values(), ids=BODIES.keys())
 def test_bodies_are_streams_as_in_chrome(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script) == chrome
+
+
+@pytest.mark.parametrize(("script", "chrome"), TRANSFER.values(), ids=TRANSFER.keys())
+def test_transferred_streams_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, _TRANSFER_PRELUDE + script) == chrome

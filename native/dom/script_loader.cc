@@ -10,12 +10,19 @@
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_script_runner.h"
 #include "mitto/dom/document_write_intervention.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/modulator.h"
+#include "mitto/dom/module_pending_script.h"
+#include "mitto/dom/module_script.h"
+#include "mitto/dom/pending_import_map.h"
 #include "mitto/dom/script_element_base.h"
+#include "mitto/dom/script_fetch_options.h"
 #include "mitto/dom/subresource_integrity.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
@@ -148,6 +155,16 @@ FetchRequestData ClassicScriptRequest(ScriptElementBase& element,
           element.FetchPriorityAttributeValue().value_or(u"")),
       render_blocking);
   return request;
+}
+
+// ModuleScriptCredentialsMode(): the credentials mode of step 22, which the
+// crossorigin attribute gives a module script and its imports.
+FetchCredentialsMode ModuleScriptCredentialsMode(
+    const std::optional<std::u16string>& cross_origin) {
+  return cross_origin && base::EqualsCaseInsensitiveASCII(*cross_origin,
+                                                          u"use-credentials")
+             ? FetchCredentialsMode::kInclude
+             : FetchCredentialsMode::kSameOrigin;
 }
 
 }  // namespace
@@ -287,9 +304,9 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
   // Step 24, with Blink's console errors for what the integrity attribute
   // skips.
   IntegrityMetadataSet integrity;
+  const std::optional<std::u16string> integrity_attribute =
+      ScriptElement().IntegrityAttributeValue();
   if (src) {
-    const std::optional<std::u16string> integrity_attribute =
-        ScriptElement().IntegrityAttributeValue();
     if (integrity_attribute && !integrity_attribute->empty()) {
       std::vector<std::string> messages;
       integrity = ParseIntegrityAttribute(*integrity_attribute, &messages);
@@ -309,6 +326,26 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
   }
   const bool potentially_render_blocking =
       ScriptElement().IsPotentiallyRenderBlocking();
+  // Step 29: the script fetch options, which a module script and the
+  // import() calls of any script take: the nonce, the integrity metadata,
+  // the parser metadata, the module script credentials mode of step 22, the
+  // referrer policy and the fetch priority.
+  ScriptFetchOptions options;
+  options.nonce = element_->Nonce();
+  options.integrity_metadata = integrity;
+  options.integrity_attribute = integrity_attribute;
+  options.parser_state = parser_inserted_
+                             ? ParserDisposition::kParserInserted
+                             : ParserDisposition::kNotParserInserted;
+  options.credentials_mode =
+      ModuleScriptCredentialsMode(ScriptElement().CrossOriginAttributeValue());
+  options.referrer_policy = FetchReferrerPolicyFromString(
+      ScriptElement().ReferrerPolicyAttributeValue().value_or(u""));
+  options.fetch_priority_hint = FetchPriorityHintFromAttribute(
+      ScriptElement().FetchPriorityAttributeValue().value_or(u""));
+  options.render_blocking = potentially_render_blocking
+                                ? RenderBlockingBehavior::kBlocking
+                                : RenderBlockingBehavior::kNonBlocking;
 
   if (src) {
     // Step 31.
@@ -342,13 +379,33 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
             ConsoleLevel::kError, "External webbundle is not yet supported.");
         QueueErrorEvent(ScriptElement());
         return nullptr;
-      case ScriptTypeAtPrepare::kModule:
-        // Module scripts are a Known Gap.
-        return nullptr;
+      case ScriptTypeAtPrepare::kModule: {
+        // Step 31.7: block rendering on el.
+        if (potentially_render_blocking) {
+          element_document.AddPendingRenderBlockingScript(
+              ScriptElement().AsElement());
+        }
+        // Step 31.11.B: fetch an external module script graph, whose
+        // integrity metadata is the import map's for the URL without an
+        // integrity attribute.
+        Modulator* const modulator = context_window->GetModulator();
+        if (!integrity_attribute) {
+          options.integrity_metadata = modulator->GetIntegrityMetadata(url);
+          options.integrity_attribute =
+              modulator->GetIntegrityMetadataString(url);
+        }
+        auto* const module_tree_client =
+            bindings::MakeGarbageCollected<ModulePendingScriptTreeClient>();
+        modulator->FetchTree(url, ModuleType::kJavaScriptOrWasm, options,
+                             module_tree_client);
+        prepared_pending_script_ =
+            bindings::MakeGarbageCollected<ModulePendingScript>(
+                ScriptElement(), *module_tree_client, is_external_script_);
+        break;
+      }
       case ScriptTypeAtPrepare::kClassic:
         // Step 31.7: block rendering on el, which Blink does ahead of the
-        // steps of each type. A module script, a Known Gap that never runs,
-        // blocks nothing.
+        // steps of each type.
         if (potentially_render_blocking) {
           element_document.AddPendingRenderBlockingScript(
               ScriptElement().AsElement());
@@ -360,38 +417,69 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
             !parser_inserted_ || ScriptElement().AsyncAttributeValue() ||
                 ScriptElement().DeferAttributeValue(),
             element_document);
-        prepared_pending_script_ = PendingScript::Fetch(
+        prepared_pending_script_ = ClassicPendingScript::Fetch(
             ScriptElement(), url,
             ClassicScriptRequest(ScriptElement(), parser_inserted_,
                                  potentially_render_blocking),
-            std::move(integrity), std::move(encoding),
+            options, std::move(integrity), std::move(encoding),
             potentially_render_blocking);
         break;
     }
   } else {
-    // Step 32.
+    // Step 32: the base URL is the document's base URL. DevTools names an
+    // inline script that the parser inserted after its document, with its
+    // errors counted from where its text starts, and one that the DOM
+    // inserted, or that document.write() wrote, after nothing, from its
+    // start, as Blink resets the position in a write.
+    const GURL base_url = element_document.BaseUrl();
+    const bool named =
+        parser_inserted_ && !element_document.IsInDocumentWrite();
+    GURL source_url = named ? GURL(element_document.UrlForBinding()) : GURL();
+    const int start_line = named ? ScriptElement().StartLine() : 0;
+    const int start_column = named ? ScriptElement().StartColumn() : 0;
     switch (script_type_) {
       case ScriptTypeAtPrepare::kInvalid:
         NOTREACHED();
       case ScriptTypeAtPrepare::kImportMap:
+        // Step 32.2.C: an import map parse result, registered at once, as
+        // Blink has only inline import maps.
+        PendingImportMap::CreateInline(ScriptElement(), source_text, base_url)
+            ->RegisterImportMap();
+        return nullptr;
       case ScriptTypeAtPrepare::kWebBundle:
       case ScriptTypeAtPrepare::kSpeculationRules:
-      case ScriptTypeAtPrepare::kModule:
-        // Import maps, web bundles, speculation rules and module scripts are
-        // Known Gaps.
+        // Web bundles and speculation rules are Known Gaps.
         return nullptr;
-      case ScriptTypeAtPrepare::kClassic: {
-        // DevTools names an inline script that the parser inserted after its
-        // document, with its errors counted from where its text starts, and
-        // one that the DOM inserted, or that document.write() wrote, after
-        // nothing, from its start, as Blink resets the position in a write.
-        const bool named =
-            parser_inserted_ && !element_document.IsInDocumentWrite();
-        prepared_pending_script_ = PendingScript::CreateInline(
-            ScriptElement(), source_text,
-            named ? GURL(element_document.UrlForBinding()) : GURL(),
-            named ? ScriptElement().StartLine() : 0,
-            named ? ScriptElement().StartColumn() : 0);
+      case ScriptTypeAtPrepare::kClassic:
+        prepared_pending_script_ = ClassicPendingScript::CreateInline(
+            ScriptElement(), source_text, std::move(source_url), base_url,
+            options, start_line, start_column);
+        break;
+      case ScriptTypeAtPrepare::kModule: {
+        // Step 32.2.B: fetch an inline module script graph. DevTools gets
+        // its source URL without a fragment.
+        GURL::Replacements no_fragment;
+        no_fragment.ClearRef();
+        ModuleScriptCreationParams params;
+        params.source_url = source_url.ReplaceComponents(no_fragment);
+        params.base_url = base_url;
+        params.module_type = ResolvedModuleType::kJavaScript;
+        params.source_text = source_text;
+        Modulator* const modulator = context_window->GetModulator();
+        ModuleScript* const module_script = JSModuleScript::Create(
+            params, modulator, options, start_line, start_column);
+        // Step 31.7: block rendering on el.
+        if (potentially_render_blocking) {
+          element_document.AddPendingRenderBlockingScript(
+              ScriptElement().AsElement());
+        }
+        auto* const module_tree_client =
+            bindings::MakeGarbageCollected<ModulePendingScriptTreeClient>();
+        modulator->FetchDescendantsForInlineScript(module_script,
+                                                   module_tree_client);
+        prepared_pending_script_ =
+            bindings::MakeGarbageCollected<ModulePendingScript>(
+                ScriptElement(), *module_tree_client, is_external_script_);
         break;
       }
     }
@@ -421,15 +509,16 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
 ScriptSchedulingType ScriptLoader::GetScriptSchedulingTypePerSpec(
     Document& element_document,
     ParserBlockingInlineOption option) const {
-  // Step 31 for an external classic script.
-  if (is_external_script_) {
+  // Step 31 for an external classic script, or a module script.
+  if (is_external_script_ || script_type_ == ScriptTypeAtPrepare::kModule) {
     if (ScriptElement().AsyncAttributeValue() || force_async_) {
       return ScriptSchedulingType::kAsync;
     }
     if (!parser_inserted_) {
       return ScriptSchedulingType::kInOrder;
     }
-    if (ScriptElement().DeferAttributeValue()) {
+    if (ScriptElement().DeferAttributeValue() ||
+        script_type_ == ScriptTypeAtPrepare::kModule) {
       return ScriptSchedulingType::kDefer;
     }
     return ScriptSchedulingType::kParserBlocking;
