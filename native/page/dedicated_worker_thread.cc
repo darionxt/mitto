@@ -32,6 +32,8 @@
 #include "mitto/dom/module_script.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/referrer_script_info.h"
+#include "mitto/dom/script_fetch_options.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/encoding/content_type.h"
@@ -445,8 +447,13 @@ void DedicatedWorkerThread::Scope::RunClassicScript(ScriptResponse response) {
             isolate_, reinterpret_cast<const uint16_t*>(source.data()),
             v8::NewStringType::kNormal, base::checked_cast<int>(source.size()))
             .ToLocal(&code)) {
-      v8::ScriptOrigin origin =
-          ClassicScriptOrigin(name, /*muted_errors=*/false);
+      // A classic worker script's base URL, which its import() resolves
+      // against, is its response's, with the default fetch options.
+      v8::ScriptOrigin origin = ClassicScriptOrigin(
+          name, /*muted_errors=*/false, /*line_offset=*/0,
+          /*column_offset=*/0,
+          ReferrerScriptInfo(response.url, ScriptFetchOptions())
+              .ToV8HostDefinedOptions(isolate_, response.url));
       v8::ScriptCompiler::Source script_source(code, origin);
       if (v8::ScriptCompiler::Compile(context, &script_source)
               .ToLocal(&script)) {

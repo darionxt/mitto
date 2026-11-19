@@ -182,6 +182,13 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"import('./dynamic.js').then((m) => postMessage(m.z), (e) => postMessage(String(e)));",
     ),
+    "/imports-a-module.js": (
+        "text/javascript",
+        b"importScripts('/sub/runs-import.js');"
+        b"self.run().then((m) => postMessage(m.where), (e) => postMessage(String(e)));",
+    ),
+    "/sub/runs-import.js": ("text/javascript", b"self.run = () => import('./where.js');"),
+    "/sub/where.js": ("text/javascript", b"export const where = 'beside the imported script';"),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -640,6 +647,16 @@ def test_a_classic_worker_imports_a_module(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == "imported dynamically"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_import_in_an_imported_script_resolves_against_that_script(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/imports-a-module.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "beside the imported script"
 
 
 @pytest.mark.usefixtures("page_program")
