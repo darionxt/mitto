@@ -37,6 +37,7 @@ class ExceptionState;
 class CacheStorage;
 class CacheStorageHost;
 class IDBFactory;
+class Modulator;
 class IndexedDbHost;
 class StorageBucketHost;
 class Crypto;
@@ -91,6 +92,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   CacheStorageHost* GetCacheStorageHost() const override;
   IndexedDbHost* GetIndexedDbHost() const override;
   StorageBucketHost* GetStorageBucketHost() const override;
+  Modulator* GetModulator() override;
 
   // What the Page uses.
   // Where the worker's Cache API reaches the Session: none for a worker of an
@@ -137,6 +139,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   cppgc::Member<mitto::Scheduler> scheduler_;
   cppgc::Member<mitto::CacheStorage> caches_;
   cppgc::Member<IDBFactory> indexed_db_;
+  cppgc::Member<Modulator> modulator_;
   GURL url_;
   url::Origin origin_;
   raw_ptr<ImportedScriptLoader> imported_script_loader_ = nullptr;

@@ -217,6 +217,7 @@ void PageFetcher::Fetch(FetchRequestData data,
       case FetchDestination::kJson:
       case FetchDestination::kStyle:
       case FetchDestination::kText:
+      case FetchDestination::kWorker:
         // Only a module's fetch has these destinations.
         NOTREACHED();
     }

@@ -77,6 +77,8 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     url::Origin origin;
     std::u16string name;
     bool module = false;
+    // A module worker's credentials mode, which its graph's fetches take.
+    FetchCredentialsMode credentials = FetchCredentialsMode::kSameOrigin;
     // Whether its creator is a worker, which holds the script to Blink's
     // strict check of its MIME type.
     bool strict_mime_type = false;

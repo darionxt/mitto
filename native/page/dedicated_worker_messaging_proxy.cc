@@ -142,6 +142,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   params_.origin = context.GetSecurityOrigin();
   params_.name = options.name;
   params_.module = options.module;
+  params_.credentials = options.credentials;
   params_.strict_mime_type = !context.IsWindow();
   params_.secure_context = data->secure_context();
   params_.begin_frames = context.IsWindow();

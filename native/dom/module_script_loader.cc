@@ -11,9 +11,9 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/pending_script.h"
-#include "mitto/dom/window.h"
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
@@ -70,8 +70,9 @@ bool IsJsonMimeType(std::string_view mime_type) {
 }
 
 // The destination that a module of `type` is fetched as: the fetch
-// destination from module type, as kFetchDestinationJsonCssModules has it.
-FetchDestination DestinationOf(ModuleType type) {
+// destination from module type, as kFetchDestinationJsonCssModules has it,
+// and for a JavaScript module its graph's, `destination`.
+FetchDestination DestinationOf(ModuleType type, FetchDestination destination) {
   switch (type) {
     case ModuleType::kJSON:
       return FetchDestination::kJson;
@@ -81,7 +82,7 @@ FetchDestination DestinationOf(ModuleType type) {
       return FetchDestination::kText;
     case ModuleType::kJavaScriptOrWasm:
     case ModuleType::kInvalid:
-      return FetchDestination::kScript;
+      return destination;
   }
 }
 
@@ -198,8 +199,17 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
         /*opaque=*/false, std::move(response->body));
     return;
   }
-  Window* const window = modulator_->GetWindow();
-  Fetcher* const fetcher = window ? window->GetFetcher() : nullptr;
+  // The root of a module worker's graph is the response that its creator
+  // took, as WorkerModuleScriptFetcher hands it over.
+  if (request.main_script) {
+    const ModuleWorkerMainScript& main_script = *request.main_script;
+    NotifyFetchFinished(/*net_error=*/0, main_script.status, main_script.url,
+                        main_script.headers, /*opaque=*/false,
+                        main_script.body);
+    return;
+  }
+  ExecutionContext* const context = modulator_->GetExecutionContext();
+  Fetcher* const fetcher = context ? context->GetFetcher() : nullptr;
   if (!fetcher) {
     // A window with no Session to fetch through, as the Page program's
     // given a script: a network error.
@@ -212,7 +222,8 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   FetchRequestData data;
   data.method = "GET";
   data.url = request.url.spec();
-  data.destination = DestinationOf(request.expected_module_type);
+  data.destination =
+      DestinationOf(request.expected_module_type, request.destination);
   data.is_module = true;
   data.mode = FetchMode::kCors;
   data.credentials = options_.credentials_mode;
@@ -227,8 +238,7 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   } else if (request.referrer != kClientReferrer) {
     const GURL referrer(request.referrer);
     if (referrer.is_valid() &&
-        (url::Origin::Create(referrer).IsSameOriginWith(
-             GURL(window->GetDocument().UrlForBinding())) ||
+        (url::Origin::Create(referrer).IsSameOriginWith(GURL(context->Url())) ||
          fetcher->HasFinishedResponse(referrer.spec()))) {
       data.referrer = referrer.spec();
     }
@@ -251,8 +261,8 @@ void ModuleScriptLoader::NotifyFetchFinished(int net_error,
                                              bool opaque,
                                              std::string body) {
   // Abort the steps if the browsing context is discarded.
-  Window* const window = modulator_->GetWindow();
-  if (!modulator_->HasValidContext() || !window) {
+  ExecutionContext* const context = modulator_->GetExecutionContext();
+  if (!modulator_->HasValidContext() || !context) {
     Finish(nullptr);
     return;
   }
@@ -267,7 +277,7 @@ void ModuleScriptLoader::NotifyFetchFinished(int net_error,
                                                   !opaque, headers, messages);
   }
   for (std::string& message : messages) {
-    window->AddConsoleMessage(ConsoleLevel::kError, std::move(message));
+    context->AddConsoleMessage(ConsoleLevel::kError, std::move(message));
   }
   if (net_error != 0 || integrity_failed || status < 200 || status > 299) {
     Finish(nullptr);
@@ -277,7 +287,7 @@ void ModuleScriptLoader::NotifyFetchFinished(int net_error,
   const std::optional<ResolvedModuleType> resolved_type =
       ResolveFetchedModuleType(headers, expected_module_type_, &mime_message);
   if (!resolved_type) {
-    window->AddConsoleMessage(ConsoleLevel::kError, std::move(mime_message));
+    context->AddConsoleMessage(ConsoleLevel::kError, std::move(mime_message));
     Finish(nullptr);
     return;
   }

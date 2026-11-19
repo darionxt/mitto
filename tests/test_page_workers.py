@@ -167,6 +167,21 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"  postMessage([bucket.name, await navigator.storageBuckets.keys()]);"
         b"})().catch((e) => postMessage(String(e)));",
     ),
+    "/module.js": (
+        "text/javascript",
+        b"import {x} from './exports.js'; const {z} = await import('./dynamic.js');"
+        b"const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return String(e); } };"
+        b"postMessage([x, z, import.meta.url.replace(location.origin, ''), outcome(() => importScripts('/lib.js'))]);",
+    ),
+    "/exports.js": ("text/javascript", b"export const x = 'imported';"),
+    "/dynamic.js": ("text/javascript", b"export const z = 'imported dynamically';"),
+    "/broken-graph.js": ("text/javascript", b"import './missing.js'; postMessage('ran');"),
+    "/module-syntax.js": ("text/javascript", b"export const = 1;"),
+    "/module-throws.js": ("text/javascript", b"throw new Error('in a module');"),
+    "/classic-import.js": (
+        "text/javascript",
+        b"import('./dynamic.js').then((m) => postMessage(m.z), (e) => postMessage(String(e)));",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -573,6 +588,58 @@ def test_a_worker_opens_the_storage_buckets_of_its_origin(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == [["drafts", ["drafts"]], ["drafts"], "in the bucket"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_module_worker_runs_its_graph(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/module.js', {type: 'module'});
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == [
+        "imported",
+        "imported dynamically",
+        "/module.js",
+        "TypeError: Failed to execute 'importScripts' on 'WorkerGlobalScope': Module scripts don't support "
+        "importScripts().",
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+@pytest.mark.parametrize("path", ["/broken-graph.js", "/module-syntax.js", "/image.js"])
+def test_a_module_worker_whose_graph_fails_fires_a_plain_error(server: str, path: str) -> None:
+    script = f"""new Promise((resolve) => {{
+        const worker = new Worker('{path}', {{type: 'module'}});
+        worker.onmessage = (e) => resolve(e.data);
+        worker.onerror = (e) => resolve([e.constructor.name, e.cancelable, 'message' in e]);
+    }})"""
+
+    assert _evaluate(server, script) == ["Event", True, False]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_error_that_a_module_worker_throws_reaches_its_worker(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/module-throws.js', {type: 'module'});
+        worker.onerror = (e) => {
+            e.preventDefault();
+            resolve([e.constructor.name, e.message, e.filename.replace(location.origin, ''), e.lineno]);
+        };
+    })"""
+
+    assert _evaluate(server, script) == ["ErrorEvent", "Uncaught Error: in a module", "/module-throws.js", 1]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_classic_worker_imports_a_module(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/classic-import.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "imported dynamically"
 
 
 @pytest.mark.usefixtures("page_program")

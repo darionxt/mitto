@@ -1,13 +1,15 @@
-// A window's module machinery, as Blink's Modulator, ModulatorImplBase and
-// DocumentModulatorImpl have it for a document: its module map, which keeps
-// each module script once fetched, keyed by URL and module type; resolving a
-// module specifier, through the window's import maps; fetching a module graph
-// and an import()'s; import.meta; and, as Blink's ModuleRecordResolverImpl,
-// which module script a V8 module record is, for linking.
+// The module machinery of a window or a dedicated worker, as Blink's
+// Modulator, ModulatorImplBase, DocumentModulatorImpl and WorkerModulatorImpl
+// have it: its module map, which keeps each module script once fetched, keyed
+// by URL and module type; resolving a module specifier, through a window's
+// import maps; fetching a module graph and an import()'s; import.meta; and, as
+// Blink's ModuleRecordResolverImpl, which module script a V8 module record is,
+// for linking.
 //
 // Upstream: third_party/blink/renderer/core/script/modulator.h
 // Upstream: third_party/blink/renderer/core/script/modulator_impl_base.cc
 // Upstream: third_party/blink/renderer/core/script/document_modulator_impl.cc
+// Upstream: third_party/blink/renderer/core/script/worker_modulator_impl.cc
 // Upstream: third_party/blink/renderer/core/script/module_record_resolver_impl.cc
 // Upstream: third_party/blink/renderer/core/loader/modulescript/module_script_fetch_request.h
 // Upstream: third_party/blink/renderer/core/loader/modulescript/module_tree_linker_registry.cc
@@ -46,8 +48,8 @@ class DynamicModuleResolver;
 class ImportMap;
 class ModuleMap;
 class ModuleTreeLinker;
+class ExecutionContext;
 class ReferrerScriptInfo;
-class Window;
 
 // Hears that one module script has been fetched, or null for one that
 // failed.
@@ -72,11 +74,23 @@ enum class ModuleGraphLevel {
   kDependentModuleFetch,
 };
 
+// The response of a module worker's script, which its creator's fetch took,
+// as Blink's WorkerModuleScriptFetcher hands the browser's over: the root of
+// the worker's graph comes from it, with no request of its own.
+struct ModuleWorkerMainScript {
+  // Where the response ended up.
+  GURL url;
+  int status = 0;
+  std::string headers;
+  std::string body;
+};
+
 // What to fetch one module script with.
 struct ModuleScriptFetchRequest {
   ModuleScriptFetchRequest();
   ModuleScriptFetchRequest(const GURL& url,
                            ModuleType expected_module_type,
+                           FetchDestination destination,
                            const ScriptFetchOptions& options,
                            std::string referrer);
   ModuleScriptFetchRequest(const ModuleScriptFetchRequest&);
@@ -85,9 +99,16 @@ struct ModuleScriptFetchRequest {
 
   GURL url;
   ModuleType expected_module_type = ModuleType::kJavaScriptOrWasm;
+  // The graph's destination, which a JavaScript module is fetched with:
+  // script, or worker for a module worker's. A JSON, CSS or text module has
+  // its own.
+  FetchDestination destination = FetchDestination::kScript;
   ScriptFetchOptions options;
   // kClientReferrer, or the URL of the script that imports it.
   std::string referrer = kClientReferrer;
+  // For the root of a module worker's graph, the response that its creator
+  // took.
+  std::shared_ptr<const ModuleWorkerMainScript> main_script;
 };
 
 class Modulator final : public cppgc::GarbageCollected<Modulator> {
@@ -99,29 +120,39 @@ class Modulator final : public cppgc::GarbageCollected<Modulator> {
     kAfterModuleScriptLoad,
   };
 
-  // The modulator of the window of `context`, or null once the window's
+  // The modulator of the window or worker of `context`, or null once its
   // context has gone, as Blink's is the context's data.
   static Modulator* From(v8::Local<v8::Context> context);
 
-  explicit Modulator(Window& window);
+  // A window's, as DocumentModulatorImpl, or a dedicated worker's, as
+  // WorkerModulatorImpl.
+  explicit Modulator(ExecutionContext& context);
   ~Modulator();
 
   void Trace(cppgc::Visitor* visitor) const;
 
-  Window* GetWindow() const { return window_.Get(); }
-  // Whether the window still has its context.
+  ExecutionContext* GetExecutionContext() const { return context_.Get(); }
+  // Whether the window or worker still has its context.
   bool HasValidContext() const;
-  // Runs `task` from a task of the networking task source, in the window's
-  // context.
+  // Runs `task` from a task of the networking task source, in the context.
   void PostTask(base::OnceClosure task);
 
   // Fetch a module script graph, from `url`, as `module_type`, with
-  // `options`, as import() and a script element's module do.
+  // `options`, as import() and a script element's module do, of
+  // `destination`.
   void FetchTree(const GURL& url,
                  ModuleType module_type,
                  const ScriptFetchOptions& options,
                  ModuleTreeClient* client,
-                 std::string referrer = kClientReferrer);
+                 std::string referrer = kClientReferrer,
+                 FetchDestination destination = FetchDestination::kScript);
+  // Fetch a module worker's script graph, from `main_script`, the response
+  // that its creator took, of the destination worker, as
+  // WorkerGlobalScope::FetchModuleTopLevelScript() does.
+  void FetchWorkerScriptTree(
+      std::shared_ptr<const ModuleWorkerMainScript> main_script,
+      const ScriptFetchOptions& options,
+      ModuleTreeClient* client);
   // Fetch the descendants of an inline module script, and link it.
   void FetchDescendantsForInlineScript(ModuleScript* module_script,
                                        ModuleTreeClient* client);
@@ -186,7 +217,7 @@ class Modulator final : public cppgc::GarbageCollected<Modulator> {
                                     const std::u16string& specifier);
   void AddLinker(ModuleTreeLinker* linker);
 
-  cppgc::WeakMember<Window> window_;
+  cppgc::WeakMember<ExecutionContext> context_;
   cppgc::Member<ModuleMap> map_;
   cppgc::Member<DynamicModuleResolver> dynamic_module_resolver_;
   HeapVector<ModuleTreeLinker> tree_linkers_;

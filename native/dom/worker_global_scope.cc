@@ -14,12 +14,13 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_worker_global_scope.h"
 #include "mitto/dom/cache_storage.h"
+#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/crypto.h"
 #include "mitto/dom/dedicated_worker_messaging.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/idb_factory.h"
 #include "mitto/dom/message_port.h"
-#include "mitto/dom/classic_pending_script.h"
+#include "mitto/dom/modulator.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/scheduler.h"
@@ -60,6 +61,7 @@ void WorkerGlobalScope::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(scheduler_);
   visitor->Trace(caches_);
   visitor->Trace(indexed_db_);
+  visitor->Trace(modulator_);
 }
 
 mitto::Crypto* WorkerGlobalScope::Crypto() {
@@ -107,6 +109,14 @@ IndexedDbHost* WorkerGlobalScope::GetIndexedDbHost() const {
 
 StorageBucketHost* WorkerGlobalScope::GetStorageBucketHost() const {
   return storage_bucket_host_;
+}
+
+// WorkerModulatorImpl, made the first time.
+Modulator* WorkerGlobalScope::GetModulator() {
+  if (!modulator_) {
+    modulator_ = bindings::MakeGarbageCollected<Modulator>(*this);
+  }
+  return modulator_.Get();
 }
 
 WorkerNavigator* WorkerGlobalScope::Navigator() {
