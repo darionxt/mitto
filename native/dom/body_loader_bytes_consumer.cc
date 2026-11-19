@@ -3,7 +3,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "mitto/dom/event_loop.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/persistent.h"
 
@@ -15,8 +15,8 @@ namespace mitto {
 // together, since the body's last bytes and its end come in that order.
 
 BodyLoaderBytesConsumer::BodyLoaderBytesConsumer(BodyLoader* loader,
-                                                 Window* window)
-    : loader_(loader), window_(window) {}
+                                                 ExecutionContext* context)
+    : loader_(loader), context_(context) {}
 
 BodyLoaderBytesConsumer::~BodyLoaderBytesConsumer() = default;
 
@@ -123,7 +123,7 @@ BytesConsumer::PublicState BodyLoaderBytesConsumer::GetPublicState() const {
 }
 
 void BodyLoaderBytesConsumer::Trace(cppgc::Visitor* visitor) const {
-  visitor->Trace(window_);
+  visitor->Trace(context_);
   visitor->Trace(client_);
   BytesConsumer::Trace(visitor);
 }
@@ -177,14 +177,15 @@ void BodyLoaderBytesConsumer::SignalError() {
 }
 
 void BodyLoaderBytesConsumer::SignalErrorLater() {
-  PostWindowTask(window_.Get(), TaskType::kNetworking,
-                 base::BindOnce(
-                     [](cppgc::WeakPersistent<BodyLoaderBytesConsumer> self) {
-                       if (self) {
-                         self->SignalError();
-                       }
-                     },
-                     cppgc::WeakPersistent<BodyLoaderBytesConsumer>(this)));
+  PostTaskInContext(
+      context_.Get(), TaskType::kNetworking,
+      base::BindOnce(
+          [](cppgc::WeakPersistent<BodyLoaderBytesConsumer> self) {
+            if (self) {
+              self->SignalError();
+            }
+          },
+          cppgc::WeakPersistent<BodyLoaderBytesConsumer>(this)));
 }
 
 void BodyLoaderBytesConsumer::SetError() {
@@ -227,14 +228,15 @@ void BodyLoaderBytesConsumer::Notify() {
 
 void BodyLoaderBytesConsumer::ScheduleNotify() {
   // The watcher's task, on the networking task runner of the window.
-  PostWindowTask(window_.Get(), TaskType::kNetworking,
-                 base::BindOnce(
-                     [](cppgc::WeakPersistent<BodyLoaderBytesConsumer> self) {
-                       if (self) {
-                         self->Notify();
-                       }
-                     },
-                     cppgc::WeakPersistent<BodyLoaderBytesConsumer>(this)));
+  PostTaskInContext(
+      context_.Get(), TaskType::kNetworking,
+      base::BindOnce(
+          [](cppgc::WeakPersistent<BodyLoaderBytesConsumer> self) {
+            if (self) {
+              self->Notify();
+            }
+          },
+          cppgc::WeakPersistent<BodyLoaderBytesConsumer>(this)));
 }
 
 void BodyLoaderBytesConsumer::Dispose() {

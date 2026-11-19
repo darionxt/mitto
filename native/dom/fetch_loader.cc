@@ -11,11 +11,11 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/buffering_bytes_consumer.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/response.h"
 #include "mitto/header_rules.h"
@@ -173,10 +173,9 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
                       std::string(line.substr(colon + 2)));
     }
   }
-  Window* const window =
-      bindings::V8Window::ToWrappable(isolate_, context->Global());
   auto* const consumer =
-      bindings::MakeGarbageCollected<BodyLoaderBytesConsumer>(this, window);
+      bindings::MakeGarbageCollected<BodyLoaderBytesConsumer>(
+          this, ExecutionContext::From(isolate_, context));
   consumer_ = consumer;
   const std::optional<std::string> cache_control =
       all->GetValue("cache-control");

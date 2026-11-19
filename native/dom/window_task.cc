@@ -19,16 +19,23 @@
 namespace mitto {
 
 void PostWindowTask(Window* window, TaskType type, base::OnceClosure task) {
+  PostTaskInContext(window, type, std::move(task));
+}
+
+void PostTaskInContext(ExecutionContext* context,
+                       TaskType type,
+                       base::OnceClosure task) {
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
   event_loop->TaskRunner(type)->PostTask(
       FROM_HERE,
       base::BindOnce(
-          [](cppgc::WeakPersistent<Window> window, base::OnceClosure task) {
-            RunInWindowContext(window.Get(), [&] { std::move(task).Run(); });
+          [](cppgc::WeakPersistent<ExecutionContext> context,
+             base::OnceClosure task) {
+            RunInContext(context.Get(), [&] { std::move(task).Run(); });
           },
-          cppgc::WeakPersistent<Window>(window), std::move(task)));
+          cppgc::WeakPersistent<ExecutionContext>(context), std::move(task)));
 }
 
 bool RunInWindowContext(Window* window, base::FunctionRef<void()> run) {
