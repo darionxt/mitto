@@ -15,7 +15,10 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_writable_stream.h"
 #include "mitto/dom/miscellaneous_operations.h"
+#include "mitto/dom/pipe_options.h"
+#include "mitto/dom/readable_stream.h"
 #include "mitto/dom/stream_algorithms.h"
+#include "mitto/dom/transferable_streams.h"
 #include "mitto/dom/writable_stream_default_controller.h"
 #include "mitto/dom/writable_stream_default_writer.h"
 #include "v8/include/cppgc/garbage-collected.h"
@@ -195,6 +198,52 @@ WritableStream* WritableStream::Create(
 }
 
 // static
+void WritableStream::Serialize(v8::Isolate* isolate,
+                               MessagePort* port,
+                               bindings::ExceptionState& exception_state) {
+  // https://streams.spec.whatwg.org/#ws-transfer
+  // 1. If ! IsWritableStreamLocked(value) is true, throw a "DataCloneError"
+  //    DOMException.
+  if (IsLocked(this)) {
+    exception_state.ThrowTypeError("Cannot transfer a locked stream");
+    return;
+  }
+  // Done by SerializedScriptValue's transfer of the stream:
+  // 2. Let port1 be a new MessagePort in the current Realm.
+  // 3. Let port2 be a new MessagePort in the current Realm.
+  // 4. Entangle port1 and port2.
+  // 5. Let readable be a new ReadableStream in the current Realm.
+  // 6. Perform ! SetUpCrossRealmTransformReadable(readable, port1).
+  ReadableStream* const readable =
+      CreateCrossRealmTransformReadable(isolate, port, exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
+  // 7. Let promise be ! ReadableStreamPipeTo(readable, value, false, false,
+  //    false).
+  const v8::Local<v8::Promise> promise = ReadableStream::PipeTo(
+      isolate, readable, this, bindings::MakeGarbageCollected<PipeOptions>(),
+      exception_state);
+  // 8. Set promise.[[PromiseIsHandled]] to true.
+  if (!promise.IsEmpty()) {
+    promise->MarkAsHandled();
+  }
+}
+
+// static
+WritableStream* WritableStream::Deserialize(
+    v8::Isolate* isolate,
+    MessagePort* port,
+    bindings::ExceptionState& exception_state) {
+  // https://streams.spec.whatwg.org/#ws-transfer
+  // Steps 1 and 2 are done by the deserializer, which gives `port`.
+  // We need to execute JavaScript to call "Then" on v8::Promises, inside the
+  // deserializer, which forbids it. We will not run author code.
+  const v8::Isolate::AllowJavascriptExecutionScope allow_javascript(isolate);
+  // 3. Perform ! SetUpCrossRealmTransformWritable(value, port).
+  return CreateCrossRealmTransformWritable(isolate, port, exception_state);
+}
+
 WritableStreamDefaultWriter* WritableStream::AcquireDefaultWriter(
     v8::Isolate* isolate,
     WritableStream* stream,

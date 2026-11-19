@@ -54,7 +54,6 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
@@ -345,9 +344,28 @@ base::expected<v8::Isolate*, std::string> StartV8ForSession(
 class CommandLineLoop final : public base::TaskObserver {
  public:
   CommandLineLoop(v8::Isolate* isolate, base::RunLoop& run_loop)
-      : isolate_(isolate), run_loop_(run_loop) {
+      : isolate_(isolate), run_loop_(&run_loop) {
     base::CurrentThread::Get()->AddTaskObserver(this);
   }
+
+  // Whether nothing waits that a later task would run: a timer, or in a
+  // window an idle callback, an animation frame or a scheduled task too.
+  static bool NothingWaits() {
+    mitto::ExecutionContext& context = mitto::ExecutionContext::Current();
+    if (context.TimerCount() != 0) {
+      return false;
+    }
+    if (!context.IsWindow()) {
+      return true;
+    }
+    mitto::Window& window = mitto::Window::Current();
+    return window.IdleCallbackCount() == 0 &&
+           window.AnimationFrameCallbackCount() == 0 &&
+           window.ScheduledTaskCount() == 0;
+  }
+
+  // The loop that the next task that leaves nothing waiting ends.
+  void SetRunLoop(base::RunLoop& run_loop) { run_loop_ = &run_loop; }
 
   CommandLineLoop(const CommandLineLoop&) = delete;
   CommandLineLoop& operator=(const CommandLineLoop&) = delete;
@@ -362,24 +380,14 @@ class CommandLineLoop final : public base::TaskObserver {
   void DidProcessTask(const base::PendingTask& pending_task) override {
     const v8::HandleScope handle_scope(isolate_);
     v8::MicrotasksScope::PerformCheckpoint(isolate_);
-    mitto::ExecutionContext& context = mitto::ExecutionContext::Current();
-    if (context.TimerCount() != 0) {
-      return;
+    if (NothingWaits()) {
+      run_loop_->QuitWhenIdle();
     }
-    if (context.IsWindow()) {
-      mitto::Window& window = mitto::Window::Current();
-      if (window.IdleCallbackCount() != 0 ||
-          window.AnimationFrameCallbackCount() != 0 ||
-          window.ScheduledTaskCount() != 0) {
-        return;
-      }
-    }
-    run_loop_->QuitWhenIdle();
   }
 
  private:
   const raw_ptr<v8::Isolate> isolate_;
-  const raw_ref<base::RunLoop> run_loop_;
+  raw_ptr<base::RunLoop> run_loop_;
 };
 
 // Runs `source` in a new context, a window's whose document `html` builds or,
@@ -432,7 +440,7 @@ bool RunScript(v8::Isolate* isolate,
   v8::Global<v8::Value> exception;
   bool threw = false;
   base::RunLoop run_loop;
-  const CommandLineLoop loop(isolate, run_loop);
+  CommandLineLoop loop(isolate, run_loop);
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(
@@ -472,6 +480,15 @@ bool RunScript(v8::Isolate* isolate,
           },
           isolate, source, &result, &exception, &threw));
   run_loop.Run();
+  // A loop ends once it is idle after a task that left nothing waiting, even
+  // if a later task set a timer before it was idle, as a script that sets its
+  // first timer after a message has come does. The loop goes on until nothing
+  // waits.
+  while (!CommandLineLoop::NothingWaits()) {
+    base::RunLoop more;
+    loop.SetRunLoop(more);
+    more.Run();
+  }
   mitto::ExecutionContext::Current().SetTimers(nullptr);
   if (!worker) {
     mitto::Window::Current().SetIdleTasks(nullptr);

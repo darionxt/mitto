@@ -16,6 +16,7 @@
 #include "mitto/dom/dedicated_worker_messaging.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/message_port.h"
+#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/serialized_script_value.h"

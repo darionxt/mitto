@@ -370,7 +370,7 @@ def test_a_deferred_script_runs_after_parsing_and_before_domcontentloaded(
         assert page.evaluate("seen") == ["inline", "deferred sees #end: true", "dcl"]
 
 
-def test_scripts_that_are_not_classic_ones_do_not_run(session: mitto.Session, server: _PageServer) -> None:
+def test_a_script_runs_by_its_type_and_a_module_after_parsing(session: mitto.Session, server: _PageServer) -> None:
     url = server.page(
         "/",
         "<script>window.seen = [];</script>"
@@ -382,7 +382,7 @@ def test_scripts_that_are_not_classic_ones_do_not_run(session: mitto.Session, se
     )
 
     with _open_page(session, url) as page:
-        assert page.evaluate("seen") == ["javascript type", "javascript language"]
+        assert page.evaluate("seen") == ["javascript type", "javascript language", "module"]
 
 
 def test_an_error_that_a_script_leaves_uncaught_is_reported_and_the_parser_goes_on(
@@ -686,12 +686,40 @@ def test_a_fetchs_signal_aborts_it_as_in_chrome(session: mitto.Session, server: 
     assert outcomes == {name: chrome for name, (_, chrome) in _FETCH_ABORTS.items()}
 
 
-def test_a_body_that_no_script_reads_holds_the_server_back_until_one_does(
+def test_a_body_that_no_script_reads_is_taken_as_chrome_buffers_it(session: mitto.Session, server: _PageServer) -> None:
+    # Chrome's BufferingBytesConsumer reads a fetch's body 50 ms after it starts, whether a script reads it or not, up to
+    # 55 MiB, so the Page gives its Session credit for it and the server sends all of a body larger than what the
+    # system's socket buffers take, which on Windows' loopback is more than 16 MiB.
+    piece = b"x" * (1024 * 1024)
+    pieces = 32
+    written = threading.Event()
+
+    def write(handler: http.server.BaseHTTPRequestHandler) -> None:
+        for _ in range(pieces):
+            handler.wfile.write(piece)
+        written.set()
+
+    server.routes["/large"] = _Route(headers=[("Content-Type", "text/plain")], write=write)
+    url = server.page("/", "<p>large</p>")
+
+    with _open_page(session, url) as page:
+        page.evaluate("window.pending = fetch('/large'); null")
+        assert written.wait(_TIMEOUT_SECONDS)
+        assert (
+            page.evaluate(
+                "pending.then(response => response.arrayBuffer()).then(buffer => buffer.byteLength)", timeout=120
+            )
+            == len(piece) * pieces
+        )
+
+
+def test_a_no_store_body_that_no_script_reads_holds_the_server_back_until_one_does(
     session: mitto.Session, server: _PageServer
 ) -> None:
-    # A Page gives its Session credit for a body only as a script reads it, so a large body that nothing reads stops
-    # the server, as a full Mojo data pipe does in Chrome. The system's socket buffers take some first, which on
-    # Windows' loopback is more than 16 MiB, so the body is far larger, and the server writes it a piece at a time.
+    # A response with Cache-Control: no-store is not buffered, so the Page gives its Session credit for its body only as
+    # a script reads it, and a large body that nothing reads stops the server, as a full Mojo data pipe does in Chrome.
+    # The system's socket buffers take some first, which on Windows' loopback is more than 16 MiB, so the body is far
+    # larger, and the server writes it a piece at a time.
     piece = b"x" * (1024 * 1024)
     pieces = 64
     progress = {"written": 0}
@@ -707,7 +735,9 @@ def test_a_body_that_no_script_reads_holds_the_server_back_until_one_does(
         time.sleep(seconds)
         return progress["written"]
 
-    server.routes["/large"] = _Route(headers=[("Content-Type", "text/plain")], write=write)
+    server.routes["/large"] = _Route(
+        headers=[("Content-Type", "text/plain"), ("Cache-Control", "private, No-Store")], write=write
+    )
     url = server.page("/", "<p>large</p>")
 
     with _open_page(session, url) as page:
@@ -724,6 +754,94 @@ def test_a_body_that_no_script_reads_holds_the_server_back_until_one_does(
             == len(piece) * pieces
         )
         assert written.wait(_TIMEOUT_SECONDS)
+
+
+# Helpers that the scripts of _FETCH_BODIES share.
+_BODY_PRELUDE = (
+    "const readAll = async (stream) => { const reader = stream.getReader(); const chunks = [];"
+    " for (;;) { const { value, done } = await reader.read(); if (done) return chunks; chunks.push(value); } };"
+    " const settle = (promise) => promise.then((v) => 'fulfilled ' + String(v), (e) => 'rejected ' + String(e));"
+)
+
+# What Chrome 157.0.8103.79 gave for each script that reads a fetched body as a stream, from a page of a local server
+# whose /status/200 sends "xyz", /status/204 nothing, /bytes/100000 that many bytes, and /echo the body it got.
+_FETCH_BODIES = {
+    "a fetched body's stream": (
+        "const r = await fetch('/bytes/100000'); const s = r.body; const chunks = await readAll(s); return "
+        "[Object.prototype.toString.call(s), chunks.reduce((n, c) => n + c.length, 0), chunks.every((c) => c "
+        "instanceof Uint8Array), r.bodyUsed, s.locked].join()",
+        "value: [object ReadableStream],100000,true,true,true",
+    ),
+    "a BYOB read of a fetched body": (
+        "const r = await fetch('/status/200'); const reader = r.body.getReader({ mode: 'byob' }); const a = await "
+        "reader.read(new Uint8Array(2)); const b = await reader.read(new Uint8Array(8)); const c = await "
+        "reader.read(new Uint8Array(8)); return [Array.from(a.value), Array.from(b.value), c.done].join(' / ')",
+        "value: 120,121 / 122 / true",
+    ),
+    "a HEAD response's body": (
+        "const r = await fetch('/status/200', { method: 'HEAD' }); const s = r.body; return "
+        "[Object.prototype.toString.call(s), JSON.stringify(await r.text()), r.bodyUsed].join()",
+        'value: [object ReadableStream],"",true',
+    ),
+    "a 204 response's body": (
+        "const r = await fetch('/status/204'); const reader = r.body.getReader(); const first = await reader.read(); "
+        "return [first.done, r.bodyUsed].join()",
+        "value: true,true",
+    ),
+    "cancelling a fetched body": (
+        "const r = await fetch('/bytes/100000'); await r.body.cancel('enough'); return [r.bodyUsed, await "
+        "settle(r.text())].join(' / ')",
+        "value: true / rejected TypeError: Failed to execute 'text' on 'Response': body stream already read",
+    ),
+    "textStream() of a fetched body": (
+        "const r = await fetch('/status/200'); return JSON.stringify(await readAll(r.textStream()))",
+        'value: ["xyz"]',
+    ),
+    "fetch() takes a Request's body": (
+        "const a = new Request('/echo', { method: 'POST', body: 'hi' }); const r = await fetch(a); return [a.bodyUsed, "
+        "a.body.locked, await r.text()].join(' / ')",
+        "value: true / true / hi",
+    ),
+    "fetch() with a body over a Request's": (
+        "const a = new Request('/echo', { method: 'POST', body: 'hi' }); const r = await fetch(a, { body: 'other' }); "
+        "return [a.bodyUsed, await r.text()].join(' / ')",
+        "value: false / other",
+    ),
+    "fetch() with a used Request": (
+        "const a = new Request('/echo', { method: 'POST', body: 'hi' }); await a.text(); return await settle(fetch(a))",
+        "value: rejected TypeError: Failed to execute 'fetch' on 'Window': Cannot construct a Request with a Request "
+        "object that has already been used.",
+    ),
+    "a stream body over HTTP/1.1": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([104])); c.close(); } }); const p = "
+        "fetch('/echo', { method: 'POST', body: s, duplex: 'half' }); return [await settle(p), s.locked].join(' / ')",
+        "value: rejected TypeError: Failed to fetch / true",
+    ),
+}
+
+
+def test_a_fetched_body_is_a_stream_as_in_chrome(session: mitto.Session, server: _PageServer) -> None:
+    def echo(handler: http.server.BaseHTTPRequestHandler) -> None:
+        with server.requested:
+            handler.wfile.write(server.bodies["/echo"][-1])
+
+    server.routes["/status/200"] = _Route(b"xyz", headers=[("Content-Type", "text/plain")])
+    server.routes["/status/204"] = _Route(status=204)
+    server.routes["/bytes/100000"] = _Route(b"a" * 100000, headers=[("Content-Type", "text/plain")])
+    server.routes["/echo"] = _Route(headers=[("Content-Type", "text/plain")], write=echo)
+    url = server.page("/", "<p>bodies</p>")
+
+    with _open_page(session, url) as page:
+        outcomes = {
+            name: page.evaluate(
+                f"(async () => {{ {_BODY_PRELUDE} try {{ const value = await (async () => {{ {script} }})();"
+                " return 'value: ' + value; } catch (error) { return 'threw: ' + error; } })()",
+                timeout=_TIMEOUT_SECONDS,
+            )
+            for name, (script, _) in _FETCH_BODIES.items()
+        }
+        assert page.uncaught_errors == []
+    assert outcomes == {name: chrome for name, (_, chrome) in _FETCH_BODIES.items()}
 
 
 def test_a_cross_origin_fetch_reaches_the_page_only_through_the_cors_check(
@@ -916,20 +1034,35 @@ def test_a_request_that_needs_a_preflight_at_another_origin_goes_there_only_if_i
         assert len(other.headers_of("OPTIONS /dest")) == 1
 
 
-def test_a_null_body_reads_as_empty_and_stays_unused_after_the_request_ends(
-    session: mitto.Session, server: _PageServer
-) -> None:
+# What Chrome 157.0.8103.79 gives for a fetched response whose body is null in the Fetch Standard: an empty stream, which
+# the first read uses.
+_EMPTY_BODY_READ_TWICE = [
+    "",
+    True,
+    "TypeError: Failed to execute 'text' on 'Response': body stream already read",
+]
+
+
+def _read_twice(fetch: str) -> str:
+    return (
+        f"{fetch}.then(async response => {{"
+        "  await new Promise(resolve => setTimeout(resolve, 50));"
+        "  const out = [response.status, await response.text(), response.bodyUsed];"
+        "  try { out.push(await response.text()); } catch (e) { out.push(String(e)); }"
+        "  return out;"
+        "})"
+    )
+
+
+def test_a_null_body_status_gives_an_empty_stream_as_chrome_does(session: mitto.Session, server: _PageServer) -> None:
     server.routes["/empty"] = _Route(status=204)
     url = server.page("/", "<p>empty</p>")
 
     with _open_page(session, url) as page:
-        script = (
-            "fetch('/empty').then(async response => {"
-            "  await new Promise(resolve => setTimeout(resolve, 50));"
-            "  return [response.status, await response.text(), response.bodyUsed, await response.text()];"
-            "})"
-        )
-        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [204, "", False, ""]
+        assert page.evaluate(_read_twice("fetch('/empty')"), timeout=_TIMEOUT_SECONDS) == [
+            204,
+            *_EMPTY_BODY_READ_TWICE,
+        ]
 
 
 def test_a_same_origin_fetch_does_not_follow_a_redirect_to_another_origin(
@@ -953,18 +1086,15 @@ def test_a_same_origin_fetch_does_not_follow_a_redirect_to_another_origin(
         assert other.headers_of("/dest") == []
 
 
-def test_a_head_request_gives_a_null_body(session: mitto.Session, server: _PageServer) -> None:
+def test_a_head_request_gives_an_empty_stream_as_chrome_does(session: mitto.Session, server: _PageServer) -> None:
     server.routes["/thing"] = _Route(b"", headers=[("Content-Type", "text/plain")])
     url = server.page("/", "<p>head</p>")
 
     with _open_page(session, url) as page:
-        script = (
-            "fetch('/thing', {method: 'HEAD'}).then(async response => {"
-            "  await new Promise(resolve => setTimeout(resolve, 50));"
-            "  return [response.status, await response.text(), response.bodyUsed, await response.text()];"
-            "})"
-        )
-        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [200, "", False, ""]
+        assert page.evaluate(_read_twice("fetch('/thing', {method: 'HEAD'})"), timeout=_TIMEOUT_SECONDS) == [
+            200,
+            *_EMPTY_BODY_READ_TWICE,
+        ]
 
 
 def test_a_document_resolves_its_urls_against_its_first_base_element_with_an_href_as_chrome_does(

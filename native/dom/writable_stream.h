@@ -33,6 +33,7 @@ class ScriptPromiseResolver;
 
 class StrategySizeAlgorithm;
 class StreamAlgorithm;
+class MessagePort;
 class StreamStartAlgorithm;
 class WritableStreamDefaultController;
 class WritableStreamDefaultWriter;
@@ -87,6 +88,18 @@ class WritableStream : public bindings::ScriptWrappable {
   static bool IsLocked(const WritableStream* stream) {
     return stream->writer_ != nullptr;
   }
+
+  // The steps of transferring it
+  // (https://streams.spec.whatwg.org/#ws-transfer), whose other end `port`
+  // holds: a cross-realm readable stream over `port` pipes into it. Throws for
+  // a locked stream.
+  void Serialize(v8::Isolate* isolate,
+                 MessagePort* port,
+                 bindings::ExceptionState& exception_state);
+  // The stream that a transfer gives where it arrives, over `port`.
+  static WritableStream* Deserialize(v8::Isolate* isolate,
+                                     MessagePort* port,
+                                     bindings::ExceptionState& exception_state);
 
   // For ReadableStream's pipeTo().
   //

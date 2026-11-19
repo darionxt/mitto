@@ -135,6 +135,38 @@ void IndexedDbContext::GetUsage(const std::string& storage_key,
           std::move(done)));
 }
 
+void IndexedDbContext::DeleteBucketData(const std::string& bucket_key,
+                                        base::OnceClosure done) {
+  // A bucket whose databases are loading goes once they have.
+  if (loading_.contains(bucket_key)) {
+    WithBucket(
+        bucket_key,
+        base::BindOnce(
+            [](base::WeakPtr<IndexedDbContext> self, std::string bucket_key,
+               base::OnceClosure done, IndexedDbBucket&) {
+              if (self) {
+                self->DeleteBucketData(bucket_key, std::move(done));
+              }
+            },
+            weak_factory_.GetWeakPtr(), bucket_key, std::move(done)));
+    return;
+  }
+  if (const auto found = buckets_.find(bucket_key); found != buckets_.end()) {
+    // Out of the map first, so that what the closing commits writes nothing.
+    std::unique_ptr<IndexedDbBucket> bucket = std::move(found->second);
+    buckets_.erase(found);
+    bucket->ForceClose("Force close delete origin");
+  }
+  if (!KeptInFile(bucket_key)) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                             std::move(done));
+    return;
+  }
+  file_.AsyncCall(base::IgnoreResult(&IndexedDbFile::Delete))
+      .WithArgs(bucket_key)
+      .Then(std::move(done));
+}
+
 bool IndexedDbContext::KeptInFile(const std::string& storage_key) const {
   return file_ && !IsSerializedUnderOpaqueTop(storage_key);
 }
@@ -172,8 +204,9 @@ void IndexedDbContext::Loaded(const std::string& storage_key,
 
 void IndexedDbContext::Write(const std::string& storage_key,
                              const KvBatch& batch) {
-  // Nothing commits once the Session closes, which closes the file.
-  if (!file_) {
+  // Nothing commits once the Session closes, which closes the file, or once
+  // the bucket has been deleted.
+  if (!file_ || !buckets_.contains(storage_key)) {
     return;
   }
   // Chrome's commit fails when LevelDB cannot write. Here the transaction has

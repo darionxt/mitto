@@ -27,7 +27,6 @@
 #include "mitto/dom/document_named_properties.h"
 #include "mitto/dom/dom_file_system.h"
 #include "mitto/dom/event.h"
-#include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/history.h"
@@ -35,6 +34,7 @@
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
 #include "mitto/dom/media_query_list.h"
+#include "mitto/dom/modulator.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigator.h"
 #include "mitto/dom/performance.h"
@@ -95,6 +95,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(viewport_);
   visitor->Trace(style_media_);
   visitor->Trace(navigation_);
+  visitor->Trace(modulator_);
   visitor->Trace(custom_elements_);
   visitor->Trace(crypto_);
   visitor->Trace(scheduler_);
@@ -276,6 +277,13 @@ mitto::Navigation* Window::Navigation() {
     navigation_ = Navigation::Create(this);
   }
   return navigation_.Get();
+}
+
+Modulator* Window::GetModulator() {
+  if (!modulator_) {
+    modulator_ = bindings::MakeGarbageCollected<Modulator>(*this);
+  }
+  return modulator_.Get();
 }
 
 mitto::Crypto* Window::Crypto() {
