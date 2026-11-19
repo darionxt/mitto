@@ -118,17 +118,11 @@ def test_another_session_has_caches_of_its_own(server_origin: str) -> None:
 
 
 @pytest.mark.usefixtures("page_program")
-def test_a_document_of_an_opaque_origin_may_not_reach_caches(server_origin: str) -> None:
+def test_about_blank_is_no_secure_context_so_it_has_no_caches() -> None:
+    # A Page's first document is a tab's about:blank, whose opaque origin is not potentially trustworthy, so it has no
+    # caches, as a new tab in Chrome 157 has none.
     with mitto.Session() as session, session._open_page("about:blank", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-        outcome = page.evaluate(
-            "(() => { try { return String(caches); } catch (e) { return `${e.name}: ${e.message}`; } })()",
-            timeout=_TIMEOUT_SECONDS,
-        )
-
-    assert (
-        outcome
-        == "SecurityError: Failed to read the 'caches' property from 'Window': Access to cache storage is denied."
-    )
+        assert page.evaluate("[isSecureContext, typeof caches]", timeout=_TIMEOUT_SECONDS) == [False, "undefined"]
 
 
 @pytest.mark.usefixtures("page_program")

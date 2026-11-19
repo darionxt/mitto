@@ -2,12 +2,14 @@
 // StructuredDeserialize() reads back as a copy: what Blink's
 // SerializedScriptValue holds. It is V8's own serializer, as Blink's is
 // beneath it, inside Blink's envelope, with the objects of the Runtime's that
-// Blink copies or transfers: transferred ArrayBuffers and MessagePorts,
-// DOMRect, DOMRectReadOnly, DOMException and QuotaExceededError, and
-// WebAssembly modules. An object of an interface that Blink copies but the
-// Runtime has no class for, such as DOMPoint or Blob, comes back as an object
-// of that interface with nothing behind it, as a Known Gap's. Every other
-// object that wraps a C++ object is refused with Chrome's DataCloneError.
+// Blink copies or transfers: transferred ArrayBuffers, MessagePorts and
+// streams, DOMRect, DOMRectReadOnly, DOMException and QuotaExceededError, and
+// WebAssembly modules. A transferred stream goes as Blink's does, over a
+// MessagePort of its own whose other end the value carries. An object of an
+// interface that Blink copies but the Runtime has no class for, such as
+// DOMPoint or Blob, comes back as an object of that interface with nothing
+// behind it, as a Known Gap's. Every other object that wraps a C++ object is
+// refused with Chrome's DataCloneError.
 //
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/v8_script_value_serializer.cc
@@ -32,9 +34,12 @@
 namespace mitto {
 
 class MessagePort;
+class ReadableStream;
+class TransformStream;
+class WritableStream;
 
-// What a serialization transfers, as Blink's Transferables: the ArrayBuffers
-// and MessagePorts of a transfer list, each in the order of the list.
+// What a serialization transfers, as Blink's Transferables: the ArrayBuffers,
+// MessagePorts and streams of a transfer list, each in the order of the list.
 struct Transferables {
   Transferables();
   Transferables(const Transferables&) = delete;
@@ -43,6 +48,9 @@ struct Transferables {
 
   std::vector<v8::Global<v8::ArrayBuffer>> array_buffers;
   std::vector<cppgc::Persistent<MessagePort>> message_ports;
+  std::vector<cppgc::Persistent<ReadableStream>> readable_streams;
+  std::vector<cppgc::Persistent<WritableStream>> writable_streams;
+  std::vector<cppgc::Persistent<TransformStream>> transform_streams;
 };
 
 class SerializedScriptValue {
@@ -57,9 +65,10 @@ class SerializedScriptValue {
       Transferables& transferables);
 
   // Serializes `value`, transferring the ArrayBuffers of `transferables`,
-  // which it detaches, and writing its MessagePorts by their index. Or throws
-  // on the isolate and returns nullopt: a DataCloneError for what cannot be
-  // copied, or what a page's getter threw.
+  // which it detaches, writing its MessagePorts by their index, and
+  // transferring its streams, each over a new pair of ports. Or throws on the
+  // isolate and returns nullopt: a DataCloneError for what cannot be copied,
+  // or what a page's getter threw.
   static std::optional<SerializedScriptValue> Serialize(
       v8::Isolate* isolate,
       v8::Local<v8::Value> value,
@@ -86,9 +95,9 @@ class SerializedScriptValue {
 
   // A new copy of the value, in the isolate's current context, with `ports`
   // for the MessagePorts it was written with, or null if it cannot be read
-  // back, as Blink gives null then. The ArrayBuffers it transferred go to the
-  // first copy, which is the only one that a structured clone or a message
-  // makes.
+  // back, as Blink gives null then. The ArrayBuffers and streams it
+  // transferred go to the first copy, which is the only one that a structured
+  // clone or a message makes.
   v8::Local<v8::Value> Deserialize(
       v8::Isolate* isolate,
       const std::vector<MessagePort*>& ports = {}) const;
@@ -115,6 +124,10 @@ class SerializedScriptValue {
   // None if the value holds no module. CompiledWasmModule cannot be assigned,
   // so copies share the list.
   std::shared_ptr<const std::vector<v8::CompiledWasmModule>> wasm_modules_;
+  // The other ends of the ports of the streams it transferred, as Blink's
+  // streams_, or none. Copies share them, and the first copy read takes them.
+  struct StreamChannels;
+  std::shared_ptr<StreamChannels> streams_;
 };
 
 }  // namespace mitto

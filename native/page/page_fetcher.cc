@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notreached.h"
 #include "mitto/page_messages.h"
 
 namespace mitto {
@@ -191,16 +192,28 @@ void PageFetcher::Fetch(FetchRequestData data,
     keepalive_bytes_ += body_size;
   }
   PageRequest page_request;
-  switch (data.destination) {
-    case FetchDestination::kEmpty:
-      page_request.kind = PageRequestKind::kFetch;
-      break;
-    case FetchDestination::kScript:
-      page_request.kind = PageRequestKind::kScript;
-      break;
-    case FetchDestination::kImage:
-      page_request.kind = PageRequestKind::kImage;
-      break;
+  // A module script and what one imports go as a module, whatever their
+  // destination: the json, style and text ones send a JavaScript module's
+  // lines, a Known Gap.
+  if (data.is_module) {
+    page_request.kind = PageRequestKind::kModule;
+  } else {
+    switch (data.destination) {
+      case FetchDestination::kEmpty:
+        page_request.kind = PageRequestKind::kFetch;
+        break;
+      case FetchDestination::kScript:
+        page_request.kind = PageRequestKind::kScript;
+        break;
+      case FetchDestination::kImage:
+        page_request.kind = PageRequestKind::kImage;
+        break;
+      case FetchDestination::kJson:
+      case FetchDestination::kStyle:
+      case FetchDestination::kText:
+        // Only a module's fetch has these destinations.
+        NOTREACHED();
+    }
   }
   page_request.url = std::move(data.url);
   page_request.method = std::move(data.method);

@@ -18,6 +18,7 @@
 #include "mitto/dom/request.h"
 #include "mitto/dom/response.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/storage_bucket.h"
 #include "url/gurl.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
@@ -41,7 +42,8 @@ Request* RequestOf(const bindings::RequestOrUSVString& input,
 
 }  // namespace
 
-CacheStorage::CacheStorage(ExecutionContext* context) : context_(context) {}
+CacheStorage::CacheStorage(ExecutionContext* context, StorageBucket* bucket)
+    : context_(context), bucket_(bucket) {}
 
 CacheStorage::~CacheStorage() = default;
 
@@ -52,6 +54,7 @@ const bindings::WrapperTypeInfo* CacheStorage::GetWrapperTypeInfo() const {
 void CacheStorage::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(context_);
+  visitor->Trace(bucket_);
 }
 
 CacheStorageHost* CacheStorage::Host() const {
@@ -79,6 +82,8 @@ v8::Local<v8::Promise> CacheStorage::Ask(PageCacheStorageCall call,
                                     "CacheStorage"));
     return resolver->GetPromise();
   }
+  // Each of CacheStorage's calls names its bucket.
+  call.bucket = bucket_ ? bucket_->bucket() : 0;
   host->Ask(
       std::move(call),
       base::BindOnce(

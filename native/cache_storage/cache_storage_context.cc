@@ -5,6 +5,7 @@
 #include "base/barrier_closure.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -99,6 +100,41 @@ void CacheStorageContext::Close(base::OnceClosure done) {
   for (auto& [storage_key, key] : keys_) {
     key->caches.Close(barrier);
   }
+}
+
+void CacheStorageContext::DeleteBucketData(const std::string& bucket_key,
+                                           base::OnceClosure done) {
+  const auto found = keys_.find(bucket_key);
+  base::FilePath directory;
+  if (directory_ && !IsSerializedUnderOpaqueTop(bucket_key)) {
+    directory = directory_->AppendASCII(kCacheStorageDirectoryName)
+                    .AppendASCII(KeyDirectoryName(bucket_key));
+  }
+  // Deletes the directory once the caches have closed, after their last
+  // writes on the same sequence.
+  auto delete_directory = base::BindOnce(
+      [](scoped_refptr<base::SequencedTaskRunner> file_runner,
+         base::FilePath directory, base::OnceClosure done) {
+        if (directory.empty()) {
+          std::move(done).Run();
+          return;
+        }
+        file_runner->PostTaskAndReply(
+            FROM_HERE,
+            base::BindOnce(base::IgnoreResult(&base::DeletePathRecursively),
+                           directory),
+            std::move(done));
+      },
+      file_runner_, std::move(directory), std::move(done));
+  if (found == keys_.end()) {
+    std::move(delete_directory).Run();
+    return;
+  }
+  std::unique_ptr<Key> key = std::move(found->second);
+  keys_.erase(found);
+  CacheStorage& caches = key->caches;
+  deleted_.push_back(std::move(key));
+  caches.Close(std::move(delete_directory));
 }
 
 StorageQuota::ClientType CacheStorageContext::type() const {

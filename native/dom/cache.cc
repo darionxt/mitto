@@ -588,7 +588,7 @@ void Cache::OnResponse(uint64_t barrier,
                                    state->member, "Cache"));
     return;
   }
-  if (response->BodyUsed()) {
+  if (response->IsBodyLocked() || response->IsBodyUsed()) {
     FailBarrier(barrier,
                 CacheCallException(isolate, "", "Response body is already used",
                                    state->member, "Cache"));

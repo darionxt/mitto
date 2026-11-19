@@ -28,10 +28,14 @@ class ExceptionState;
 
 class CacheStorageHost;
 class ExecutionContext;
+class StorageBucket;
 
 class CacheStorage final : public bindings::ScriptWrappable {
  public:
-  explicit CacheStorage(ExecutionContext* context);
+  // The caches of `context`'s storage key, a window's or a worker's, of the
+  // default bucket or of `bucket`.
+  explicit CacheStorage(ExecutionContext* context,
+                        StorageBucket* bucket = nullptr);
   ~CacheStorage() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -66,6 +70,8 @@ class CacheStorage final : public bindings::ScriptWrappable {
                              Settle settle);
 
   const cppgc::WeakMember<ExecutionContext> context_;
+  // Kept for as long as its caches are, since its number names them.
+  const cppgc::Member<StorageBucket> bucket_;
 };
 
 }  // namespace mitto

@@ -19,6 +19,11 @@ class Window;
 // Runs `task` from a later task of the Page's event loop, of `type`, in
 // `window`'s context.
 void PostWindowTask(Window* window, TaskType type, base::OnceClosure task);
+// The same for any context, a window's or a worker's, from a later task of
+// its own thread's event loop.
+void PostTaskInContext(ExecutionContext* context,
+                       TaskType type,
+                       base::OnceClosure task);
 
 // Runs `run` now in `window`'s context, and returns whether the window still
 // had its context. Nothing holds microtasks back around it: as in Blink, the

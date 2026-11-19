@@ -2,9 +2,9 @@
 
 ReadableStream, WritableStream and TransformStream have Blink's behaviour, ported in native/dom from Blink's core/streams:
 their controllers and readers, byte streams and BYOB readers, queuing strategies, tee(), pipeTo(), pipeThrough() and async
-iteration, and the streams of encodings and compression. Each expected value is what Chrome 157.0.8103.79 gave for the
-same script, in a page of its own. These run where MITTO_PAGE_PROGRAM names the Page program, as
-tests/test_page_program.py does.
+iteration, the streams of encodings and compression, the bodies of Response and Request, and transferring streams. Each
+expected value is what Chrome 157.0.8103.79 gave for the same script, in a page of its own. These run where
+MITTO_PAGE_PROGRAM names the Page program, as tests/test_page_program.py does.
 """
 
 import os
@@ -426,6 +426,337 @@ STREAMS = {
     ),
 }
 
+# Each script on the bodies of Response and Request and what Chrome 157.0.8103.79 gave for it, as _evaluate() writes it.
+# Their URLs are absolute, since the Page program's document is about:blank.
+BODIES = {
+    "a response's body is a byte stream": (
+        "const r = new Response('abc'); const s = r.body; return [Object.prototype.toString.call(s), s === r.body, "
+        "s.locked, r.bodyUsed, Object.prototype.toString.call(s.getReader({ mode: 'byob' }))].join()",
+        "value: [object ReadableStream],true,false,false,[object ReadableStreamBYOBReader]",
+    ),
+    "a null body": (
+        "const r = new Response(); const n = new Response(null, { status: 204 }); return [r.body, n.body, r.bodyUsed, "
+        "await r.text() === '', (await r.arrayBuffer()).byteLength, r.bodyUsed, await settle(r.json())].join(' / ')",
+        "value:  /  / false / true / 0 / false / rejected SyntaxError: Unexpected end of input",
+    ),
+    "reading a body's stream": (
+        "const r = new Response('hello'); const chunks = await readAll(r.body); return [chunks.map((c) => "
+        "Object.prototype.toString.call(c) + Array.from(c)).join(';'), r.bodyUsed, r.body.locked].join(' / ')",
+        "value: [object Uint8Array]104,101,108,108,111 / true / true",
+    ),
+    "an empty body's stream": (
+        "const r = new Response(''); const reader = r.body.getReader(); const first = await reader.read(); return "
+        "[first.done, String(first.value), r.bodyUsed].join()",
+        "value: true,undefined,true",
+    ),
+    "a BYOB read of a body": (
+        "const r = new Response(new Uint8Array([1, 2, 3, 4, 5])); const reader = r.body.getReader({ mode: 'byob' }); "
+        "const a = await reader.read(new Uint8Array(2)); const b = await reader.read(new Uint8Array(8)); const c = "
+        "await reader.read(new Uint8Array(8)); return [Array.from(a.value), Array.from(b.value), c.done, "
+        "c.value.byteLength].join(' / ')",
+        "value: 1,2 / 3,4,5 / true / 0",
+    ),
+    "text() locks and disturbs": (
+        "const r = new Response('abc'); const p = r.text(); return [r.bodyUsed, r.body.locked, await p].join()",
+        "value: true,true,abc",
+    ),
+    "text() twice": (
+        "const r = new Response('abc'); r.text(); try { await r.text(); } catch (e) { return e.constructor.name + ': ' "
+        "+ e.message; }",
+        "value: TypeError: Failed to execute 'text' on 'Response': body stream already read",
+    ),
+    "text() after a reader": (
+        "const r = new Response('abc'); r.body.getReader(); try { r.text(); } catch (e) { return [e.message, "
+        "r.bodyUsed].join(' / '); }",
+        "value: undefined",
+    ),
+    "text() after a read": (
+        "const r = new Response('abc'); const reader = r.body.getReader(); await reader.read(); reader.releaseLock(); "
+        "try { r.json(); } catch (e) { return [e.message, r.bodyUsed, r.body.locked].join(' / '); }",
+        "value: undefined",
+    ),
+    "a read after cancel": (
+        "const r = new Response('abc'); await r.body.cancel('no'); return [r.bodyUsed, await settle(r.text())].join(' "
+        "/ ')",
+        "value: true / rejected TypeError: Failed to execute 'text' on 'Response': body stream already read",
+    ),
+    "text() settles from a later task": (
+        "const r = new Response('abc'); r.text().then(() => log.push('text')); Promise.resolve().then(() => "
+        "log.push('micro')); setTimeout(() => log.push('timeout'), 0); await new Promise((resolve) => "
+        "setTimeout(resolve, 20)); return log.join()",
+        "value: micro,text,timeout",
+    ),
+    "json() parse errors reject at once": (
+        "const r = new Response('{'); r.json().catch((e) => log.push(e.name)); setTimeout(() => log.push('timeout'), "
+        "0); await Promise.resolve(); await Promise.resolve(); log.push('micro'); await new Promise((resolve) => "
+        "setTimeout(resolve, 20)); return log.join()",
+        "value: SyntaxError,micro,timeout",
+    ),
+    "text() decodes UTF-8": (
+        "const bytes = new Uint8Array([0xEF, 0xBB, 0xBF, 0x68, 0xC3, 0xA9, 0xFF, 0x21]); return JSON.stringify(await "
+        "new Response(bytes).text())",
+        'value: "hé�!"',
+    ),
+    "arrayBuffer() of a stream's body": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.enqueue(new Uint8Array([3])); "
+        "c.close(); } }); const r = new Response(s); return [r.body === s, Array.from(new Uint8Array(await "
+        "r.arrayBuffer())), r.bodyUsed, s.locked].join(' / ')",
+        "value: true / 1,2,3 / true / true",
+    ),
+    "a stream's body of strings": (
+        "const s = new ReadableStream({ start(c) { c.enqueue('abc'); c.close(); } }); return await settle(new "
+        "Response(s).text())",
+        "value: rejected TypeError: Failed to fetch",
+    ),
+    "a stream's body that errors": (
+        "const s = new ReadableStream({ start(c) { c.error(new Error('bad')); } }); return await settle(new "
+        "Response(s).text())",
+        "value: rejected TypeError: Failed to fetch",
+    ),
+    "a locked stream as a body": (
+        "const s = new ReadableStream(); s.getReader(); try { new Response(s); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Response': Response body object should not be disturbed or locked",
+    ),
+    "a disturbed stream as a body": (
+        "const s = new ReadableStream(); await s.cancel(); try { new Response(s); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Response': Response body object should not be disturbed or locked",
+    ),
+    "a stream with a null body status": (
+        "try { new Response(new ReadableStream(), { status: 204 }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Response': Response with null body status cannot have body",
+    ),
+    "a stream body has no Content-Type": (
+        "const r = new Response(new ReadableStream()); const t = new Response('x'); return "
+        "[r.headers.get('content-type'), t.headers.get('content-type')].join(' / ')",
+        "value:  / text/plain;charset=UTF-8",
+    ),
+    "textStream()": (
+        "const r = new Response(new Uint8Array([0xEF, 0xBB, 0xBF, 0x68, 0xC3])); const s = r.textStream(); const "
+        "chunks = await readAll(s); return [Object.prototype.toString.call(s), JSON.stringify(chunks), r.bodyUsed, s "
+        "=== r.body].join(' / ')",
+        'value: [object ReadableStream] / ["h","�"] / true / false',
+    ),
+    "textStream() of a null body": (
+        "const r = new Response(); const s = r.textStream(); const chunks = await readAll(s); return [chunks.length, "
+        "r.bodyUsed, s === r.textStream()].join()",
+        "value: 0,false,false",
+    ),
+    "textStream() of a used body": (
+        "const r = new Response('x'); await r.text(); try { r.textStream(); } catch (e) { return e.message; }",
+        "value: Failed to execute 'textStream' on 'Response': body stream already read",
+    ),
+    "a request's body": (
+        "const q = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); const s = q.body; return "
+        "[Object.prototype.toString.call(s), q.bodyUsed, await q.text(), q.bodyUsed, q.duplex, "
+        "q.headers.get('content-type')].join(' / ')",
+        "value: [object ReadableStream] / false / hi / true / half / text/plain;charset=UTF-8",
+    ),
+    "a request without a body": (
+        "const q = new Request('https://example.com/x'); return [q.body, q.bodyUsed, await q.text() === '', "
+        "q.duplex].join(' / ')",
+        "value:  / false / true / half",
+    ),
+    "a request's stream body needs duplex": (
+        "try { new Request('https://example.com/x', { method: 'POST', body: new ReadableStream() }); } catch (e) { "
+        "return e.message; }",
+        "value: Failed to construct 'Request': The `duplex` member must be specified for a request with a streaming "
+        "body",
+    ),
+    "a request's stream body": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([104, 105])); c.close(); } }); const q = "
+        "new Request('https://example.com/x', { method: 'POST', body: s, duplex: 'half' }); return [q.body === s, "
+        "await q.text(), q.headers.get('content-type')].join(' / ')",
+        "value: true / hi / ",
+    ),
+    "a keepalive request's stream body": (
+        "try { new Request('https://example.com/x', { method: 'POST', body: new ReadableStream(), duplex: 'half', "
+        "keepalive: true }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': Keepalive request cannot have a ReadableStream body.",
+    ),
+    "a no-cors request's stream body": (
+        "try { new Request('https://example.com/x', { method: 'POST', body: new ReadableStream(), duplex: 'half', "
+        "mode: 'no-cors' }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': If request is made from ReadableStream, mode should be\"same-origin\" "
+        'or "cors"',
+    ),
+    "a locked stream as a request's body": (
+        "const s = new ReadableStream(); s.getReader(); try { new Request('https://example.com/x', { method: 'POST', "
+        "body: s, duplex: 'half' }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': The provided ReadableStream is locked",
+    ),
+    "a disturbed stream as a request's body": (
+        "const s = new ReadableStream(); await s.cancel(); try { new Request('https://example.com/x', { method: "
+        "'POST', body: s, duplex: 'half' }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': The provided ReadableStream is disturbed",
+    ),
+    "a request from a request": (
+        "const a = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); const b = new Request(a); "
+        "return [a.bodyUsed, a.body.locked, b.bodyUsed, await b.text()].join(' / ')",
+        "value: true / true / false / hi",
+    ),
+    "a request from a used request": (
+        "const a = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); await a.text(); try { new "
+        "Request(a); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': Cannot construct a Request with a Request object that has already been "
+        "used.",
+    ),
+    "a request from a request with a body of its own": (
+        "const a = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); const b = new Request(a, { "
+        "body: 'other' }); return [a.bodyUsed, await b.text(), await a.text()].join(' / ')",
+        "value: false / other / hi",
+    ),
+    "a request from a stream request": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([104])); c.close(); } }); const a = new "
+        "Request('https://example.com/x', { method: 'POST', body: s, duplex: 'half' }); const b = new Request(a); "
+        "return [a.bodyUsed, s.locked, b.body === s, await b.text()].join(' / ')",
+        "value: true / true / false / h",
+    ),
+    "a GET request from a request with a body": (
+        "const a = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); try { new Request(a, { "
+        "method: 'GET' }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': Request with GET/HEAD method cannot have body.",
+    ),
+    "an empty chunk through a proxy's body": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(0)); c.enqueue(new Uint8Array([1, 2])); "
+        "c.close(); } }); const a = new Request('https://example.com/x', { method: 'POST', body: s, duplex: 'half' }); "
+        "const b = new Request(a); const reader = b.body.getReader(); const out = []; for (;;) { const r = await "
+        "reader.read(); if (r.done) { out.push('done'); break; } out.push(r.value.length); } return out.join()",
+        "value: 0,2,done",
+    ),
+    "an empty chunk stops a BYOB read of a proxy's body": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(0)); c.enqueue(new Uint8Array([1, 2])); "
+        "c.close(); } }); const a = new Request('https://example.com/x', { method: 'POST', body: s, duplex: 'half' }); "
+        "const b = new Request(a); const reader = b.body.getReader({ mode: 'byob' }); const r = await "
+        "Promise.race([reader.read(new Uint8Array(4)), new Promise((resolve) => setTimeout(() => resolve('pending'), "
+        "500))]); return r === 'pending' ? r : [r.done, Array.from(r.value)].join()",
+        "value: pending",
+    ),
+}
+
+
+# Helpers that the scripts of TRANSFER share beside _PRELUDE's.
+_TRANSFER_PRELUDE = (
+    "const source = (chunks) => new ReadableStream({ start(c) { for (const chunk of chunks) c.enqueue(chunk);"
+    " c.close(); } });"
+)
+
+# Each script that transfers a stream, with structuredClone(), a MessageChannel or window.postMessage(), and what Chrome
+# 157.0.8103.79 gave for it, as _evaluate() writes it.
+TRANSFER = {
+    "a transferred readable stream": (
+        "const rs = source(['a', 1, { b: 2 }]); const clone = structuredClone(rs, { transfer: [rs] }); const chunks = "
+        "await readAll(clone); return [Object.prototype.toString.call(clone), clone === rs, rs.locked, "
+        "JSON.stringify(chunks)].join(' / ')",
+        'value: [object ReadableStream] / false / false / ["a",1,{"b":2}]',
+    ),
+    "a stream not transferred": (
+        "try { structuredClone(new ReadableStream()); } catch (e) { return [e.name, e.message].join(': '); }",
+        "value: DataCloneError: Failed to execute 'structuredClone' on 'Window': A ReadableStream could not be cloned "
+        "because it was not transferred.",
+    ),
+    "a locked stream in the value": (
+        "const rs = new ReadableStream(); rs.getReader(); try { structuredClone(rs, { transfer: [rs] }); } catch (e) { "
+        "return [e.name, e.message].join(': '); }",
+        "value: DataCloneError: Failed to execute 'structuredClone' on 'Window': A ReadableStream could not be cloned "
+        "because it was locked",
+    ),
+    "a locked stream only in the list": (
+        "const rs = new ReadableStream(); rs.getReader(); try { structuredClone(null, { transfer: [rs] }); } catch (e) "
+        "{ return [e.name, e.message].join(': '); }",
+        "value: TypeError: Failed to execute 'structuredClone' on 'Window': Cannot transfer a locked stream",
+    ),
+    "a duplicate stream": (
+        "const rs = new ReadableStream(); try { structuredClone(rs, { transfer: [rs, rs] }); } catch (e) { return "
+        "[e.name, e.message].join(': '); }",
+        "value: DataCloneError: Failed to execute 'structuredClone' on 'Window': ReadableStream at index 1 is a "
+        "duplicate of an earlier ReadableStream.",
+    ),
+    "a duplicate writable and transform": (
+        "const ws = new WritableStream(); const ts = new TransformStream(); const out = []; for (const list of [[ws, "
+        "ws], [ts, ts]]) { try { structuredClone(null, { transfer: list }); } catch (e) { out.push(e.message); } } "
+        "return out.join(' / ')",
+        "value: Failed to execute 'structuredClone' on 'Window': WritableStream at index 1 is a duplicate of an "
+        "earlier WritableStream. / Failed to execute 'structuredClone' on 'Window': TransformStream at index 1 is a "
+        "duplicate of an earlier TransformStream.",
+    ),
+    "a writable not transferred and locked": (
+        "const out = []; try { structuredClone(new WritableStream()); } catch (e) { out.push(e.message); } const ws = "
+        "new WritableStream(); ws.getWriter(); try { structuredClone(ws, { transfer: [ws] }); } catch (e) { "
+        "out.push(e.message); } const ts = new TransformStream(); ts.readable.getReader(); try { structuredClone(ts, { "
+        "transfer: [ts] }); } catch (e) { out.push(e.message); } try { structuredClone(new TransformStream()); } catch "
+        "(e) { out.push(e.message); } return out.join(' / ')",
+        "value: Failed to execute 'structuredClone' on 'Window': A WritableStream could not be cloned because it was "
+        "not transferred. / Failed to execute 'structuredClone' on 'Window': A WritableStream could not be cloned "
+        "because it was locked / Failed to execute 'structuredClone' on 'Window': A TransformStream could not be "
+        "cloned because it was locked / Failed to execute 'structuredClone' on 'Window': A TransformStream could not "
+        "be cloned because it was not transferred.",
+    ),
+    "a transferred writable stream": (
+        "const got = []; let closed = false; const ws = new WritableStream({ write(c) { got.push(c); }, close() { "
+        "closed = true; } }); const clone = structuredClone(ws, { transfer: [ws] }); const writer = clone.getWriter(); "
+        "await writer.write('x'); await writer.write([1, 2]); await writer.close(); await new Promise((r) => "
+        "setTimeout(r, 50)); return [Object.prototype.toString.call(clone), ws.locked, JSON.stringify(got), "
+        "closed].join(' / ')",
+        'value: [object WritableStream] / false / ["x",[1,2]] / true',
+    ),
+    "a transferred transform stream": (
+        "const ts = new TransformStream({ transform(c, ctl) { ctl.enqueue(String(c).toUpperCase()); } }); const clone "
+        "= structuredClone(ts, { transfer: [ts] }); const writer = clone.writable.getWriter(); writer.write('ab'); "
+        "writer.write('cd'); writer.close(); const chunks = await readAll(clone.readable); return "
+        "[Object.prototype.toString.call(clone), ts.readable.locked, ts.writable.locked, "
+        "JSON.stringify(chunks)].join(' / ')",
+        'value: [object TransformStream] / false / false / ["AB","CD"]',
+    ),
+    "a stream over a MessageChannel": (
+        "const { port1, port2 } = new MessageChannel(); const got = new Promise((resolve) => { port2.onmessage = (e) "
+        "=> resolve(e.data); }); const rs = source(['p', 'q']); port1.postMessage({ s: rs }, [rs]); const data = await "
+        "got; return [Object.prototype.toString.call(data.s), JSON.stringify(await readAll(data.s))].join(' / ')",
+        'value: [object ReadableStream] / ["p","q"]',
+    ),
+    "a stream through window.postMessage": (
+        "const got = new Promise((resolve) => { window.addEventListener('message', (e) => resolve(e.data), { once: "
+        "true }); }); const rs = source([7]); window.postMessage(rs, '*', [rs]); const data = await got; return "
+        "[Object.prototype.toString.call(data), JSON.stringify(await readAll(data))].join(' / ')",
+        "value: [object ReadableStream] / [7]",
+    ),
+    "cancelling a transferred stream": (
+        "let reason; const rs = new ReadableStream({ cancel(r) { reason = r; } }); const clone = structuredClone(rs, { "
+        "transfer: [rs] }); await clone.cancel('stop'); await new Promise((r) => setTimeout(r, 50)); return "
+        "String(reason)",
+        "value: stop",
+    ),
+    "an error crosses": (
+        "const rs = new ReadableStream({ start(c) { c.error(new TypeError('bad')); } }); const clone = "
+        "structuredClone(rs, { transfer: [rs] }); return await settle(clone.getReader().read())",
+        "value: rejected TypeError: bad",
+    ),
+    "a chunk that cannot be cloned": (
+        "const ws = new WritableStream(); const clone = structuredClone(ws, { transfer: [ws] }); const writer = "
+        "clone.getWriter(); const r = await settle(writer.write(() => 1)); return [r, await "
+        "settle(writer.closed)].join(' / ')",
+        "value: rejected DataCloneError: () => 1 could not be cloned. / rejected DataCloneError: () => 1 could not be "
+        "cloned.",
+    ),
+    "a transferred stream's chunks are copies": (
+        "const obj = { n: 1 }; const rs = source([obj]); const clone = structuredClone(rs, { transfer: [rs] }); const "
+        "[chunk] = await readAll(clone); return [chunk === obj, chunk.n].join()",
+        "value: false,1",
+    ),
+    "an error the readable side cannot clone": (
+        "const rs = new ReadableStream({ start(c) { c.error(() => 1); } }); const clone = structuredClone(rs, { "
+        "transfer: [rs] }); return await settle(clone.getReader().read())",
+        "value: rejected DataCloneError: () => 1 could not be cloned.",
+    ),
+    "backpressure on a transferred writable": (
+        "const seen = []; const ws = new WritableStream({ write(c) { seen.push('sink ' + c); return new Promise((r) => "
+        "setTimeout(r, 20)); } }, { highWaterMark: 1 }); const clone = structuredClone(ws, { transfer: [ws] }); const "
+        "writer = clone.getWriter(); seen.push('desired ' + writer.desiredSize); const p1 = writer.write(1); "
+        "seen.push('desired ' + writer.desiredSize); await p1; seen.push('after 1 ' + writer.desiredSize); await "
+        "writer.write(2); await writer.close(); await new Promise((r) => setTimeout(r, 80)); return seen.join(', ')",
+        "value: desired 1, desired 0, after 1 1, sink 1, sink 2",
+    ),
+}
+
 
 @pytest.fixture(scope="module")
 def program() -> Path:
@@ -456,3 +787,13 @@ def _evaluate(program: Path, script: str) -> str:
 @pytest.mark.parametrize(("script", "chrome"), STREAMS.values(), ids=STREAMS.keys())
 def test_streams_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script) == chrome
+
+
+@pytest.mark.parametrize(("script", "chrome"), BODIES.values(), ids=BODIES.keys())
+def test_bodies_are_streams_as_in_chrome(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, script) == chrome
+
+
+@pytest.mark.parametrize(("script", "chrome"), TRANSFER.values(), ids=TRANSFER.keys())
+def test_transferred_streams_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, _TRANSFER_PRELUDE + script) == chrome

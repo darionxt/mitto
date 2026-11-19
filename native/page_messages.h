@@ -22,6 +22,7 @@
 #include "base/types/expected.h"
 #include "mitto/cache_storage_messages.h"
 #include "mitto/indexed_db_messages.h"
+#include "mitto/storage_bucket_messages.h"
 
 namespace base {
 class DictValue;
@@ -32,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 22;
+inline constexpr uint32_t kPageProtocolVersion = 23;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -233,6 +234,12 @@ enum class PageMessage : uint32_t {
   // frame's document that its element let go or a worker that ended, which
   // the Page names no more. The contexts under it go with it.
   kContextGone = 101,
+  // To the Session: what the document's StorageBucketManager or one of its
+  // StorageBuckets asks, as storage_bucket_messages.h says.
+  kStorageBuckets = 180,
+  // To the Page: what the Session answers the Storage Buckets API, as
+  // storage_bucket_messages.h says.
+  kStorageBucketsAnswer = 181,
 };
 
 // The quota of an area of localStorage or sessionStorage, as Blink's
@@ -1034,6 +1041,8 @@ struct FrameFromPage {
   PageCacheStorageCall cache_storage_call;
   // kIndexedDb.
   PageIndexedDbCall indexed_db_call;
+  // kStorageBuckets.
+  PageStorageBucketCall storage_bucket_call;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
   // kWorkerStarted.
@@ -1093,6 +1102,8 @@ struct FrameFromSession {
   PageCacheStorageAnswer cache_storage_answer;
   // kIndexedDbCallback.
   PageIndexedDbCallback indexed_db_callback;
+  // kStorageBucketsAnswer.
+  PageStorageBucketAnswer storage_bucket_answer;
   // kStorageEntries.
   PageStorageEntries storage_entries;
   // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
@@ -1164,6 +1175,11 @@ std::string EncodeCacheStorage(uint64_t document,
                                const PageCacheStorageCall& call);
 // The frame of a call of document `document`'s IndexedDB.
 std::string EncodeIndexedDb(uint64_t document, const PageIndexedDbCall& call);
+// The frame of a call of document `document`'s Storage Buckets API.
+std::string EncodeStorageBuckets(uint64_t document,
+                                 const PageStorageBucketCall& call);
+// The frame of an answer of the Storage Buckets API, which fits.
+std::string EncodeStorageBucketsAnswer(const PageStorageBucketAnswer& answer);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
 std::string EncodeWorkerStarted(const PageWorkerStarted& started);

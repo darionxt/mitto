@@ -10,6 +10,7 @@
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_dom_exception.h"
+#include "mitto/dom/modulator.h"
 #include "mitto/dom/time_clamper.h"
 #include "mitto/page/wasm_response_extensions.h"
 #include "v8/include/v8-array-buffer.h"
@@ -151,6 +152,9 @@ void InitializePageIsolate(v8::Isolate* isolate) {
   isolate->SetSharedArrayBufferConstructorEnabledCallback(
       &SharedArrayBufferConstructorEnabled);
   isolate->SetIsJSApiWrapperNativeErrorCallback(&IsDOMExceptionWrapper);
+  isolate->SetHostImportModuleDynamicallyCallback(&HostImportModuleDynamically);
+  isolate->SetHostInitializeImportMetaObjectCallback(
+      &HostInitializeImportMetaObject);
   InitializeWasmResponseExtensions(isolate);
 }
 

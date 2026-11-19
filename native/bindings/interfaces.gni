@@ -1290,10 +1290,8 @@ mitto_bindings_interfaces = [
     ]
   },
   {
-    # StorageBucket's indexedDB, a Known Gap, gives one of no window.
     name = "IDBFactory"
     file = "idb_factory"
-    made_by_known_gaps = true
   },
   {
     name = "IDBIndex"
@@ -1560,6 +1558,7 @@ mitto_bindings_interfaces = [
       "permissions",
       "geolocation",
       "storage",
+      "storageBuckets",
       "getGamepads",
       "locks",
       "getBattery",
@@ -1882,6 +1881,13 @@ mitto_bindings_interfaces = [
       "url",
       "headers",
       "signal",
+      "duplex",
+      "body",
+      "bodyUsed",
+      "arrayBuffer",
+      "json",
+      "text",
+      "textStream",
     ]
   },
   {
@@ -1895,10 +1901,12 @@ mitto_bindings_interfaces = [
       "ok",
       "statusText",
       "headers",
+      "body",
       "bodyUsed",
       "arrayBuffer",
       "json",
       "text",
+      "textStream",
     ]
   },
   {
@@ -2854,6 +2862,20 @@ mitto_bindings_interfaces = [
   {
     name = "StorageEvent"
     file = "storage_event"
+  },
+  {
+    # Its getDirectory() answers as navigator.storage's does, and locks is
+    # behind StorageBucketsLocks, which is off in stable.
+    name = "StorageBucket"
+    file = "storage_bucket"
+    missing = [
+      "getDirectory",
+      "locks",
+    ]
+  },
+  {
+    name = "StorageBucketManager"
+    file = "storage_bucket_manager"
   },
   {
     name = "StorageManager"

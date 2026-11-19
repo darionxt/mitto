@@ -38,6 +38,7 @@ struct ReadableWritablePair;
 struct StreamPipeOptions;
 }  // namespace bindings
 
+class MessagePort;
 class PipeOptions;
 class ReadableByteStreamController;
 class ReadableStreamBYOBReader;
@@ -129,6 +130,18 @@ class ReadableStream : public bindings::ScriptWrappable {
   bindings::AsyncIterationSourceBase* CreateAsyncIterationSource(
       const bindings::ReadableStreamIteratorOptions& options,
       bindings::ExceptionState& exception_state);
+
+  // The steps of transferring it
+  // (https://streams.spec.whatwg.org/#rs-transfer), whose other end `port`
+  // holds: it pipes into a cross-realm writable stream over `port`. Throws for
+  // a locked stream.
+  void Serialize(v8::Isolate* isolate,
+                 MessagePort* port,
+                 bindings::ExceptionState& exception_state);
+  // The stream that a transfer gives where it arrives, over `port`.
+  static ReadableStream* Deserialize(v8::Isolate* isolate,
+                                     MessagePort* port,
+                                     bindings::ExceptionState& exception_state);
 
   // ReadableStreamDefaultTee(), with cloneForBranch2.
   void Tee(v8::Isolate* isolate,

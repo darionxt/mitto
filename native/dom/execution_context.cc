@@ -15,10 +15,12 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/bindings/v8_worker_global_scope.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/worker_global_scope.h"
@@ -222,6 +224,12 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   if (!request) {
     return v8::Local<v8::Promise>();
   }
+  // The request's body goes to the fetch, and the Request keeps one that is
+  // used, as Blink's PassRequestData() leaves it.
+  BodyStreamBuffer* const body = request->PassBody(exception_state);
+  if (exception_state.HadException()) {
+    return v8::Local<v8::Promise>();
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::Promise::Resolver> resolver;
@@ -250,10 +258,27 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     return resolver->GetPromise();
   }
   FetchRequestData data;
+  // A body of bytes that a script gave whole goes as they are. A stream's
+  // would go as the Session reads it, which the Runtime does not do yet, so
+  // such a fetch fails as Chrome's fails over HTTP/1.1, with the stream
+  // locked to the reader of its upload: a Known Gap.
+  if (body && request->Method() != "GET" && request->Method() != "HEAD") {
+    data.body = body->DrainAsBytes(exception_state);
+    if (exception_state.HadException()) {
+      return v8::Local<v8::Promise>();
+    }
+    if (!data.body && body->IsMadeFromReadableStream()) {
+      bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
+          isolate, body->Stream());
+      std::ignore = resolver->Reject(
+          context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                       isolate, "Failed to fetch")));
+      return resolver->GetPromise();
+    }
+  }
   data.method = request->Method();
   data.url = request->url().spec();
   data.headers = request->GetHeaders()->ToLines();
-  data.body = request->body();
   // A fetch's own are mode cors and credentials same-origin.
   if (request->mode() != FetchMode::kCors) {
     data.mode = request->mode();
@@ -268,7 +293,6 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   data.keepalive = request->keepalive();
   fetcher->Fetch(std::move(data), std::make_unique<FetchLoader>(
                                       isolate, context, resolver,
-                                      /*head=*/request->Method() == "HEAD",
                                       /*credentials=*/request->credentials() ==
                                           FetchCredentialsMode::kInclude,
                                       signal));

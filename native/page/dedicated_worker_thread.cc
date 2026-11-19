@@ -27,6 +27,7 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/window_tasks.h"
