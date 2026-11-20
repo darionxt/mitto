@@ -243,12 +243,15 @@ def _document_replays() -> dict[str, Replay]:
         ),
         "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start, mode="no-cors"),
         # The start page asks for web fonts, modules, workers and beacons before its script sets location, so the
-        # Page takes that last step itself. Each later page navigates on its own: a click, a refresh, location.
+        # Page takes that last step itself, once the module says that it has run, as the page's script waits for it.
+        # The window's load event does not wait for the module's import()s, and a navigation that commits while one
+        # is still open cancels it, which over HTTP/3 opens the QPACK decoder stream that Chrome's run never opened.
+        # Each later page navigates on its own: a click, a refresh, location.
         "navigation_location": Replay(
             RequestKind.NAVIGATION,
             page=start,
             through_page=True,
-            page_script="location.href = urls.navigation_location",
+            page_script="void moduleRan.then(() => { location.href = urls.navigation_location; })",
         ),
         "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"], through_page=True),
         "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"], through_page=True),
