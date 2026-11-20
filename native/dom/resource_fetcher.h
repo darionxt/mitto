@@ -103,6 +103,9 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
  private:
   class ResourceLoader;
 
+  // The newest link preload of `url`, its fragment aside, and `type` that
+  // nothing has used, as Blink keys its preloads by both.
+  Resource* UnusedPreload(const GURL& url, ResourceType type) const;
   // Whether Blink's DetermineRevalidationPolicy() uses `existing` for
   // `params`.
   bool CanUse(const Resource& existing, const FetchParameters& params) const;

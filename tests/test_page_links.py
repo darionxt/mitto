@@ -107,6 +107,28 @@ def test_a_preload_fires_load_or_error_at_its_link(session: mitto.Session, serve
     assert events == ["load", "error"]
 
 
+def test_a_preload_of_another_type_of_the_same_url_hides_no_preload(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    server.route("/both.js", b"window.count = (window.count || 0) + 1;", _JS, [("Cache-Control", "no-store")])
+    url = server.page(
+        "/",
+        '<link rel="preload" href="both.js" as="script">'
+        '<link rel="preload" href="both.js" as="fetch" crossorigin>'
+        '<script src="both.js"></script>',
+    )
+
+    with _open_page(session, url) as page:
+        result = page.evaluate(
+            "fetch('both.js').then(response => response.text()).then(text => [window.count, text.length > 0])",
+            timeout=TIMEOUT_SECONDS,
+        )
+
+    # The script and fetch() each take their own preload, as Blink keys its preloads by URL and type.
+    assert result == [1, True]
+    assert server.paths().count("/both.js") == 2
+
+
 def test_a_fetch_takes_a_preload_as_fetch_of_its_mode_and_credentials_mode(
     session: mitto.Session, server: RecordingServer
 ) -> None:
