@@ -2,8 +2,11 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -40,8 +43,11 @@
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigator.h"
 #include "mitto/dom/performance.h"
+#include "mitto/dom/preloaded_fetch.h"
 #include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/request.h"
+#include "mitto/dom/resource.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/scheduler.h"
 #include "mitto/dom/screen.h"
 #include "mitto/dom/script_values.h"
@@ -523,15 +529,44 @@ v8::Local<v8::Promise> Window::Fetch(
     data.credentials = request->credentials();
   }
   data.referrer = request->referrer();
-  data.referrer_policy = request->referrer_policy();
+  // A request whose policy is the empty string goes with the document's.
+  data.referrer_policy =
+      request->referrer_policy() == FetchReferrerPolicy::kDefault
+          ? GetDocument().GetReferrerPolicy()
+          : request->referrer_policy();
   data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
                                        /*render_blocking=*/false);
   data.keepalive = request->keepalive();
-  fetcher->Fetch(std::move(data), std::make_unique<FetchLoader>(
-                                      isolate, context, resolver,
-                                      /*credentials=*/request->credentials() ==
-                                          FetchCredentialsMode::kInclude,
-                                      signal));
+  auto loader = std::make_unique<FetchLoader>(
+      isolate, context, resolver,
+      /*credentials=*/request->credentials() == FetchCredentialsMode::kInclude,
+      signal);
+  // A GET takes what a link preloaded as fetch, as Blink's ThreadableLoader
+  // asks the document's ResourceFetcher for a resource of type kRaw, with
+  // what Resource::CanReuse() wants of the request beside its mode and
+  // credentials mode: no keepalive, and no header of a conditional request.
+  WindowTasks* const tasks = GetTasks();
+  const Headers& headers = *request->GetHeaders();
+  if (tasks && data.method == "GET" && !data.keepalive &&
+      std::ranges::none_of(
+          std::to_array<std::string_view>({"if-match", "if-modified-since",
+                                           "if-none-match", "if-range",
+                                           "if-unmodified-since"}),
+          [&headers](std::string_view name) {
+            return headers.GetValue(name).has_value();
+          })) {
+    FetchParameters params;
+    params.url = request->url();
+    params.type = ResourceType::kRaw;
+    params.mode = request->mode();
+    params.credentials = request->credentials();
+    if (Resource* const preload =
+            GetDocument().Fetcher().MatchPreload(params)) {
+      PreloadedFetch::Start(*preload, std::move(loader), *tasks);
+      return resolver->GetPromise();
+    }
+  }
+  fetcher->Fetch(std::move(data), std::move(loader));
   return resolver->GetPromise();
 }
 

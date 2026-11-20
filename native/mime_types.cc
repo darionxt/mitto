@@ -169,6 +169,20 @@ bool IsSupportedImageMimeType(std::string_view mime_type) {
   return lower == "image/jxl" || kSupportedImageTypes.contains(lower);
 }
 
+bool IsSupportedJavaScriptMimeType(std::string_view mime_type) {
+  return kSupportedJavascriptTypes.contains(base::ToLowerASCII(mime_type));
+}
+
+bool IsSupportedFontMimeType(std::string_view mime_type) {
+  const std::string lower = base::ToLowerASCII(mime_type);
+  if (!lower.starts_with("font/")) {
+    return false;
+  }
+  const std::string_view sub_type = std::string_view(lower).substr(5);
+  return sub_type == "woff" || sub_type == "woff2" || sub_type == "otf" ||
+         sub_type == "ttf" || sub_type == "sfnt";
+}
+
 bool IsSupportedImagePrefixedMimeType(std::string_view mime_type) {
   const std::string lower = base::ToLowerASCII(mime_type);
   return IsSupportedImageMimeType(lower) ||

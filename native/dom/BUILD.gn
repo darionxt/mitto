@@ -483,6 +483,8 @@ source_set("dom") {
     "pop_state_event.h",
     "popover_data.cc",
     "popover_data.h",
+    "preloaded_fetch.cc",
+    "preloaded_fetch.h",
     "presentation_availability.cc",
     "presentation_availability.h",
     "presentation_request.cc",

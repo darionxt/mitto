@@ -18,6 +18,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_kinds.h"
 #include "mitto/dom/document_write_intervention.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/libxml_tree_builder.h"
@@ -171,9 +172,11 @@ void DocumentParser::AppendBytes(const std::string& bytes) {
     if (IsStopped()) {
       return;
     }
-    // The response's type; an image takes no notice of its status.
+    // The response's type and URL; an image takes no notice of its status.
+    FetchResponseHead head;
+    head.url = base::UTF16ToUTF8(document_->UrlForBinding());
     image_resource_->ResponseReceived(
-        0, base::UTF16ToUTF8(document_->ContentType()));
+        std::move(head), base::UTF16ToUTF8(document_->ContentType()));
   }
   // Nothing more goes to an image that has failed to decode.
   if (image_resource_->GetStatus() != ResourceStatus::kDecodeError) {

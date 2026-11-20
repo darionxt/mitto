@@ -93,6 +93,9 @@ class PendingScript : public cppgc::GarbageCollected<PendingScript> {
   // Runs the script's script in the current context. It is called after
   // Dispose(), which keeps what the script needs.
   virtual void RunScript() = 0;
+  // What the subclass lets go of when the script is disposed of, such as its
+  // fetch.
+  virtual void DisposeInternal() {}
 
   // Tells the one that watches it that it is ready.
   void PendingScriptFinished();

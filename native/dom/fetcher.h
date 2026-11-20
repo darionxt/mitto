@@ -24,6 +24,7 @@ enum class FetchDestination {
   kImage,
   kJson,
   kStyle,
+  kFont,
   kText,
 };
 

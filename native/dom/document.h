@@ -13,8 +13,8 @@
 #ifndef MITTO_DOM_DOCUMENT_H_
 #define MITTO_DOM_DOCUMENT_H_
 
-#include <memory>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,6 +26,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/time/time.h"
 #include "mitto/dom/document_parser.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/markup_position.h"
@@ -485,6 +486,21 @@ class Document : public Node {
   //
   // The async and in-order scripts, which it makes the first time.
   DocumentScriptRunner& GetScriptRunner();
+  // Where a referrer policy comes from, as Blink's ReferrerPolicySource.
+  enum class ReferrerPolicySource {
+    kHttpHeader,
+    kMetaTag,
+  };
+  // The document's referrer policy, which a request that leaves its own to
+  // the document goes with: kDefault, Chrome's, unless the response's
+  // Referrer-Policy or a meta element named referrer set one.
+  FetchReferrerPolicy GetReferrerPolicy() const { return referrer_policy_; }
+  // ExecutionContext::ParseAndSetReferrerPolicy(): a header's last policy
+  // that it names, or a meta element's one, with the legacy keywords, and
+  // Chrome's console error for one that names none.
+  void ParseAndSetReferrerPolicy(std::u16string_view policy,
+                                 ReferrerPolicySource source);
+
   // What fetches the document's subresources, such as its images.
   ResourceFetcher& Fetcher();
   bool HasFetcher() const { return fetcher_.Get() != nullptr; }
@@ -784,6 +800,7 @@ class Document : public Node {
   GURL base_url_ = GURL("about:blank");
   cppgc::Member<DocumentScriptRunner> script_runner_;
   cppgc::Member<ResourceFetcher> fetcher_;
+  FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;

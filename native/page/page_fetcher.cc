@@ -39,6 +39,28 @@ PageCredentialsMode ToPageCredentialsMode(FetchCredentialsMode credentials) {
   }
 }
 
+// A request's priority byte: one more than the net::RequestPriority that
+// Blink's WebURLRequest::ConvertToNetPriority() gives, which the Page program,
+// with no //net, names by number: IDLE 1, LOWEST 2, LOW 3, MEDIUM 4 and
+// HIGHEST 5.
+// Upstream: third_party/blink/renderer/platform/exported/web_url_request.cc
+uint8_t ToPagePriority(FetchPriority priority) {
+  switch (priority) {
+    case FetchPriority::kVeryLow:
+      return 1 + 1;
+    case FetchPriority::kLow:
+      return 1 + 2;
+    case FetchPriority::kMedium:
+      return 1 + 3;
+    case FetchPriority::kHigh:
+      return 1 + 4;
+    case FetchPriority::kVeryHigh:
+      return 1 + 5;
+  }
+}
+
+}  // namespace
+
 PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy) {
   switch (policy) {
     case FetchReferrerPolicy::kDefault:
@@ -61,28 +83,6 @@ PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy) {
       return PageReferrerPolicy::kUnsafeUrl;
   }
 }
-
-// A request's priority byte: one more than the net::RequestPriority that
-// Blink's WebURLRequest::ConvertToNetPriority() gives, which the Page program,
-// with no //net, names by number: IDLE 1, LOWEST 2, LOW 3, MEDIUM 4 and
-// HIGHEST 5.
-// Upstream: third_party/blink/renderer/platform/exported/web_url_request.cc
-uint8_t ToPagePriority(FetchPriority priority) {
-  switch (priority) {
-    case FetchPriority::kVeryLow:
-      return 1 + 1;
-    case FetchPriority::kLow:
-      return 1 + 2;
-    case FetchPriority::kMedium:
-      return 1 + 3;
-    case FetchPriority::kHigh:
-      return 1 + 4;
-    case FetchPriority::kVeryHigh:
-      return 1 + 5;
-  }
-}
-
-}  // namespace
 
 // One fetch, between the Page's requests and the DOM's client.
 class PageFetcher::Request final : public PageRequests::Client,
@@ -157,7 +157,7 @@ namespace {
 // its destination, where a text module, whose Request Kind comes once Chrome
 // 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
 // send a JavaScript module's lines, Known Gaps; a classic script; an image;
-// or a fetch.
+// a style sheet; a font; or a fetch.
 PageRequestKind KindOf(const FetchRequestData& data) {
   if (data.is_module) {
     return data.destination == FetchDestination::kJson
@@ -171,8 +171,11 @@ PageRequestKind KindOf(const FetchRequestData& data) {
       return PageRequestKind::kScript;
     case FetchDestination::kImage:
       return PageRequestKind::kImage;
-    case FetchDestination::kJson:
     case FetchDestination::kStyle:
+      return PageRequestKind::kStyle;
+    case FetchDestination::kFont:
+      return PageRequestKind::kFont;
+    case FetchDestination::kJson:
     case FetchDestination::kText:
       // Only a module's fetch has these destinations.
       NOTREACHED();
