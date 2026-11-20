@@ -46,6 +46,9 @@ void Append(Node& parent, Node* child) {
 }  // namespace
 
 Element& BuildJsonDocument(Document& document) {
+  // JSONDocumentParser::CreateDocumentStructure() calls no WillInsertBody(),
+  // and a JSON document is an HTML one, so its lifecycle updates wait for
+  // FinishedParsing(), as in Chrome.
   Element* const html = Make(document, u"html");
   document.ParserAppendChild(html);
   Element* const head = Make(document, u"head");
