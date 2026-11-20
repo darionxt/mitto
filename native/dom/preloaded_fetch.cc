@@ -49,7 +49,12 @@ void PreloadedFetch::Start(Resource& resource,
   auto fetch =
       base::WrapUnique(new PreloadedFetch(resource, std::move(client)));
   fetch->client_->OnStarted(*fetch);
-  // Resource::AddClient() tells a client of what has come from a task.
+  // It is the resource's client at once, as ThreadableLoader is, which keeps
+  // a load going that nothing else uses, and hears of what has come from a
+  // task, as Resource::AddClient() tells a client.
+  fetch->observer_ = bindings::MakeGarbageCollected<Observer>(
+      fetch->weak_factory_.GetWeakPtr());
+  resource.AddClient(fetch->observer_.Get());
   tasks.PostTask(TaskType::kNetworking,
                  base::BindOnce(&PreloadedFetch::Attach, std::move(fetch)));
 }
@@ -58,7 +63,11 @@ PreloadedFetch::PreloadedFetch(Resource& resource,
                                std::unique_ptr<FetchClient> client)
     : resource_(&resource), client_(std::move(client)) {}
 
-PreloadedFetch::~PreloadedFetch() = default;
+PreloadedFetch::~PreloadedFetch() {
+  if (Observer* const observer = observer_.Get()) {
+    resource_->RemoveClient(observer);
+  }
+}
 
 // static
 void PreloadedFetch::Attach(std::unique_ptr<PreloadedFetch> fetch) {
@@ -67,16 +76,18 @@ void PreloadedFetch::Attach(std::unique_ptr<PreloadedFetch> fetch) {
     return;
   }
   PreloadedFetch* const self = fetch.release();
-  const base::WeakPtr<PreloadedFetch> weak = self->weak_factory_.GetWeakPtr();
-  self->observer_ = bindings::MakeGarbageCollected<Observer>(weak);
-  // A resource that has ended tells its client at once.
-  self->resource_->AddClient(self->observer_.Get());
-  if (weak) {
+  self->delivering_ = true;
+  if (self->resource_->IsLoaded()) {
+    self->NotifyFinished();
+  } else {
     self->Forward();
   }
 }
 
 void PreloadedFetch::NotifyFinished() {
+  if (!delivering_) {
+    return;
+  }
   const base::WeakPtr<PreloadedFetch> weak = weak_factory_.GetWeakPtr();
   const Resource& resource = *resource_;
   if (!resource.ErrorOccurred()) {
@@ -89,23 +100,26 @@ void PreloadedFetch::NotifyFinished() {
   const std::unique_ptr<FetchClient> client = std::move(client_);
   client->OnResponseEnded(resource.ErrorOccurred() ? resource.NetError() : 0);
   if (weak) {
-    End();
+    delete this;
   }
 }
 
 void PreloadedFetch::Cancel() {
-  if (!observer_) {
-    // Before the task, which destroys this.
+  if (!delivering_) {
+    // Before the task, which destroys this: the resource may let its load go
+    // now.
+    resource_->RemoveClient(observer_.Get());
+    observer_.Clear();
     client_.reset();
     return;
   }
-  End();
+  delete this;
 }
 
 void PreloadedFetch::Forward() {
   const base::WeakPtr<PreloadedFetch> weak = weak_factory_.GetWeakPtr();
   const Resource& resource = *resource_;
-  if (!client_) {
+  if (!delivering_ || !client_) {
     return;
   }
   if (!response_started_) {
@@ -125,11 +139,6 @@ void PreloadedFetch::Forward() {
     body_sent_ = body.size();
     client_->OnResponseBody(std::move(bytes));
   }
-}
-
-void PreloadedFetch::End() {
-  resource_->RemoveClient(observer_.Get());
-  delete this;
 }
 
 }  // namespace mitto

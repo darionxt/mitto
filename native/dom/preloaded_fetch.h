@@ -47,16 +47,19 @@ class PreloadedFetch final : public FetchController {
   PreloadedFetch(Resource& resource, std::unique_ptr<FetchClient> client);
 
   static void Attach(std::unique_ptr<PreloadedFetch> fetch);
+  // The client hears of the end, and then this is destroyed.
   void NotifyFinished();
   // Tells the client of the response, once it has started, and of the body
   // that it has not heard of yet.
   void Forward();
-  // Stops being the resource's client, and destroys this.
-  void End();
 
   cppgc::Persistent<Resource> resource_;
+  // The resource's client while this lives, but for one that the client
+  // cancelled before the task.
   cppgc::Persistent<Observer> observer_;
   std::unique_ptr<FetchClient> client_;
+  // Whether the task has come, after which the client hears what comes.
+  bool delivering_ = false;
   bool response_started_ = false;
   size_t body_sent_ = 0;
   base::WeakPtrFactory<PreloadedFetch> weak_factory_{this};

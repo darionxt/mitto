@@ -6,6 +6,7 @@ origin. Where a caller can ask for the same request, the lines that the Page sen
 the Session's Request Kinds make both. Each test needs a native library with the Page program beside it.
 """
 
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -14,7 +15,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page
-from tests.page_server import TIMEOUT_SECONDS, RecordingServer, png
+from tests.page_server import TIMEOUT_SECONDS, RecordingServer, Route, png
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -105,6 +106,26 @@ def test_a_preload_fires_load_or_error_at_its_link(session: mitto.Session, serve
 
     # A style sheet fails on an error status, as Blink's CSSStyleSheetResource does.
     assert events == ["load", "error"]
+
+
+def test_a_fetch_keeps_a_loading_preload_whose_link_goes_in_the_same_task(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    hold = threading.Event()
+    server.routes["/slow"] = Route(
+        b"slow", headers=[("Content-Type", "text/plain"), ("Cache-Control", "no-store")], hold=hold
+    )
+    url = server.page("/", '<link id="slow" rel="preload" href="/slow" as="fetch" crossorigin>')
+
+    with _open_page(session, url) as page:
+        assert server.wait_for_path("/slow")
+        page.evaluate("document.getElementById('slow').remove(); window.slow = fetch('/slow'); true")
+        hold.set()
+        text = page.evaluate("window.slow.then(response => response.text())", timeout=TIMEOUT_SECONDS)
+
+    # fetch() is the resource's client at once, as ThreadableLoader is, so the load that the link let go goes on.
+    assert text == "slow"
+    assert server.paths().count("/slow") == 1
 
 
 def test_a_preload_of_another_type_of_the_same_url_hides_no_preload(
