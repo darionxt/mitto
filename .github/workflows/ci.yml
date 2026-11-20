@@ -144,9 +144,9 @@ jobs:
           "image=-image$env:ImageVersion" >> $env:GITHUB_OUTPUT
       # What the export compiles to changes only with tools/workspace, and on Windows with the image, so main and pull
       # requests reuse the build directory that main saved first with them, and rebuild only native/. A run on an image
-      # that main has not built on yet starts from main's build directory with the same MSVC, or else from its newest,
-      # and ninja rebuilds what differs. The nightly run builds from nothing, which shows a mistake in an incremental
-      # build.
+      # that main has not built on yet starts from main's build directory with the same MSVC, or else from another of
+      # main's, and ninja rebuilds what differs. The nightly run builds from nothing, which shows a mistake in an
+      # incremental build.
       - id: cached-objects
         if: steps.cached-library.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
