@@ -107,6 +107,34 @@ def test_a_preload_fires_load_or_error_at_its_link(session: mitto.Session, serve
     assert events == ["load", "error"]
 
 
+def test_a_link_processed_again_or_removed_drops_the_event_of_a_preload_that_had_ended(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", "<p>events</p>")
+
+    with _open_page(session, url) as page:
+        events = page.evaluate(
+            """new Promise(resolve => {
+              const events = [];
+              const preload = (name, onload) => {
+                const link = Object.assign(document.createElement('link'),
+                                           {rel: 'preload', as: 'style', href: `data:text/css,${name}{}`});
+                link.onload = onload || (() => events.push(name));
+                document.head.append(link);
+                return link;
+              };
+              // A data: URL's resource has ended at once, so each link's event waits for a task.
+              preload('a').href = 'data:text/css,b{}';
+              preload('c').remove();
+              preload('d', () => resolve([...events, 'd']));
+            })""",
+            timeout=TIMEOUT_SECONDS,
+        )
+
+    # LinkLoader::Abort() disposes the finish observer whose task was posted, so it fires nothing.
+    assert events == ["a", "d"]
+
+
 def test_a_script_takes_its_preload_and_two_scripts_of_one_url_take_one_request(
     session: mitto.Session, server: RecordingServer
 ) -> None:

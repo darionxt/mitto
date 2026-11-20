@@ -12,6 +12,7 @@
 #ifndef MITTO_DOM_HTML_LINK_ELEMENT_H_
 #define MITTO_DOM_HTML_LINK_ELEMENT_H_
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -75,7 +76,8 @@ class HTMLLinkElement final : public HTMLElement, public ResourceClient {
   // what it loaded before.
   void Process();
   bool ShouldLoadLink() const;
-  // LinkLoader::Abort(): lets go of the resource that it waits for.
+  // LinkLoader::Abort(): lets go of the resource that it waits for, and of
+  // an event that a task will fire for one that has ended.
   void Abort();
   // PreloadHelper::PreloadIfNeeded().
   Resource* PreloadIfNeeded();
@@ -86,6 +88,10 @@ class HTMLLinkElement final : public HTMLElement, public ResourceClient {
   // Whether Process() is adding the resource as a client, which hears of a
   // resource that has ended at once.
   bool adding_client_ = false;
+  // How many times Abort() has run. A task that fires the event of a
+  // resource that had ended fires nothing once it differs, as Blink's
+  // PendingLinkPreload::FinishObserver, disposed, hears nothing.
+  uint64_t load_generation_ = 0;
 };
 
 }  // namespace mitto
