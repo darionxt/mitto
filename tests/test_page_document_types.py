@@ -335,6 +335,46 @@ def test_an_xml_or_xhtml_response_is_an_xml_document_of_libxml2(session: mitto.S
         )
 
 
+def test_an_xml_documents_parser_drops_a_module_script_that_would_wait_for_its_end(
+    session: mitto.Session, server: _Server
+) -> None:
+    # Blink's XML parser takes no deferred script: a module script that would wait for the end of parsing is fetched but
+    # never runs, with Blink's console error, in XHTML and SVG alike, while an async one runs, and a deferred classic
+    # script blocks the parser.
+    server.serve("/m.js", "text/javascript", b"seen.push('external module')")
+    server.serve("/d.js", "text/javascript", b"seen.push(", b"'defer ' + !!document.getElementById('last'))")
+    scripts = (
+        "<script>window.seen = [];</script><script type=\"module\">seen.push('inline module')</script>"
+        '<script type="module" {src}="/m.js"/><script type="module" async="">seen.push(\'async module\')</script>'
+        "{deferred}<script id=\"last\">seen.push('classic ' + document.readyState)</script>"
+    )
+    xhtml = server.serve(
+        "/m.xhtml",
+        "application/xhtml+xml",
+        (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+            + scripts.format(src="src", deferred='<script defer="" src="/d.js"/>')
+            + "</head><body/></html>"
+        ).encode(),
+    )
+    svg = server.serve(
+        "/m.svg",
+        "image/svg+xml",
+        ('<svg xmlns="http://www.w3.org/2000/svg">' + scripts.format(src="href", deferred="") + "</svg>").encode(),
+    )
+    dropped = "Module scripts in XML documents are currently not supported. See crbug.com/717643"
+
+    for url, seen in (
+        (xhtml, ["async module", "defer false", "classic loading"]),
+        (svg, ["classic loading", "async module"]),
+    ):
+        server.hits.clear()
+        with _open_page(session, url) as page:
+            assert page.evaluate("seen") == seen
+            assert [message.text for message in page.console_messages if message.level == "error"] == [dropped] * 2
+        assert server.hits["/m.js"] == 1
+
+
 def test_a_byte_that_an_xml_responses_encoding_cannot_decode_stops_its_parse(
     session: mitto.Session, server: _Server
 ) -> None:

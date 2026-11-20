@@ -602,6 +602,17 @@ void DocumentParser::ProcessScriptElementInternal(Element& element) {
   if (!pending_script) {
     return;
   }
+  // XMLParserScriptRunner::ProcessScriptElement(): the XML parser takes no
+  // deferred script, so it drops a module script that waits for the end of
+  // parsing, which never runs, as in Chrome.
+  if (xml_ && pending_script->IsModule()) {
+    if (Window* const window = document_->DefaultView()) {
+      window->AddConsoleMessage(ConsoleLevel::kError,
+                                "Module scripts in XML documents are currently "
+                                "not supported. See crbug.com/717643");
+    }
+    return;
+  }
   switch (pending_script->scheduling_type()) {
     case ScriptSchedulingType::kDefer:
       // The XML parser's script runner takes a deferred script as one that

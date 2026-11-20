@@ -68,6 +68,7 @@ class ClassicPendingScript final : public PendingScript {
 
   // PendingScript:
   bool IsExternal() const override;
+  bool IsModule() const override;
   bool IsReady() const override;
   bool IsEligibleForLowPriorityAsyncScriptExecution() const override;
 
@@ -83,7 +84,6 @@ class ClassicPendingScript final : public PendingScript {
 
   // PendingScript:
   bool HasScript() const override;
-  bool IsModule() const override;
   void RunScript() override;
 
   void StartFetch(const GURL& url,
