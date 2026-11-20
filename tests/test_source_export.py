@@ -985,14 +985,14 @@ def test_a_sanitized_runtime_build_adds_the_sanitizers_args_to_the_runtimes(
     assert [host for host in export.HOSTS if config in host.configs] == [export.LINUX]
 
 
-def test_the_tree_builders_fuzz_build_adds_the_fuzz_builds_args_to_the_runtimes(tmp_path: Path) -> None:
+def test_the_runtimes_fuzz_build_adds_the_fuzz_builds_args_to_the_runtimes(tmp_path: Path) -> None:
     export.write_args(export.RUNTIME_FUZZ, tmp_path)
 
     assert (tmp_path / "args.gn").read_text() == (
         export.ARGS_GN.read_text() + export.RUNTIME_ARGS_GN.read_text() + export.FUZZ.args + "v8_use_perfetto = true\n"
     )
     assert (export.RUNTIME_FUZZ.target, export.RUNTIME_FUZZ.output(export.LINUX)) == (
-        "mitto/dom:html_tree_builder_fuzzer",
+        "mitto/dom:runtime_fuzzers",
         "html_tree_builder_fuzzer",
     )
     assert [host for host in export.HOSTS if export.RUNTIME_FUZZ in host.configs] == [export.LINUX]

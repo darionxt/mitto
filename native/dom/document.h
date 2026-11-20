@@ -64,6 +64,7 @@ class NodeIterator;
 class PermissionsPolicy;
 class ProcessingInstruction;
 class Range;
+class SVGSVGElement;
 class Text;
 class TreeWalker;
 class Window;
@@ -145,6 +146,9 @@ class Document : public Node {
                         bindings::ExceptionState& exception_state);
   DocumentType* Doctype() const;
   Element* DocumentElement() const { return FirstElementChild(); }
+  // SVG's rootElement: the document's element if it is an svg element of
+  // SVG's namespace, as Blink's SVGDocumentExtensions::rootElement() has it.
+  SVGSVGElement* RootElement() const;
   std::u16string Title() const;
   void SetTitle(const std::u16string& title);
   // The html element's dir, "" for a document element that is not one.
@@ -215,8 +219,6 @@ class Document : public Node {
   bool FullscreenEnabled() const { return window_; }
   bool PictureInPictureEnabled() const { return window_; }
   Element* FullscreenElement() const { return nullptr; }
-  // An SVG document's root, which an HTML document lacks.
-  bindings::ScriptWrappable* RootElement() const { return nullptr; }
   // The window's custom elements, and none for a document of no window.
   mitto::CustomElementRegistry* CustomElementRegistry() const;
   // When the response says it last changed, or else now, in the local time of
@@ -396,11 +398,17 @@ class Document : public Node {
   bool EncodingWasDetectedHeuristically() const {
     return encoding_detected_heuristically_;
   }
+  // Whether the decoder of the document's body met a byte that its encoding
+  // cannot decode, which stops the decoder of XML.
+  bool SawDecodingError() const { return saw_decoding_error_; }
   // Sets the encoding as the decoder of the document's body has it after each
-  // piece, as Blink's Document::SetEncodingData() does. When a <meta> found
-  // late changes windows-1252 to another, the text of the document's <title>,
-  // decoded as windows-1252 already, decodes again with the new one.
-  void SetEncoding(std::string_view encoding, bool detected_heuristically);
+  // piece, and whether it met an error, as Blink's Document::SetEncodingData()
+  // does. When a <meta> found late changes windows-1252 to another, the text
+  // of the document's <title>, decoded as windows-1252 already, decodes again
+  // with the new one.
+  void SetEncoding(std::string_view encoding,
+                   bool detected_heuristically,
+                   bool saw_decoding_error);
   // The time of its response's Last-Modified, which lastModified gives.
   void SetLastModified(base::Time time) { last_modified_ = time; }
   // The referrer of the navigation that loaded the document, which referrer
@@ -542,6 +550,16 @@ class Document : public Node {
   // What runs each time the window's load event has been dispatched.
   void SetDidDispatchLoadEvent(base::RepeatingClosure did_dispatch) {
     did_dispatch_load_event_ = std::move(did_dispatch);
+  }
+  // What runs once, just before the window's next load event, as the XML
+  // tree viewer's isolated world's onload does in Blink.
+  void RunBeforeLoadEvent(base::OnceClosure closure) {
+    run_before_load_event_ = std::move(closure);
+  }
+  // Whether the document has made an element of the HTML, SVG or MathML
+  // namespace, as Blink's SawElementsInKnownNamespaces() says.
+  bool SawElementsInKnownNamespaces() const {
+    return saw_elements_in_known_namespaces_;
   }
   // Whether write() or writeln() runs.
   bool IsInDocumentWrite() const { return write_recursion_depth_ > 0; }
@@ -714,6 +732,8 @@ class Document : public Node {
   StandaloneStatus xml_standalone_ = StandaloneStatus::kStandaloneUnspecified;
   bool has_xml_declaration_ = false;
   bool allow_declarative_shadow_roots_ = true;
+  bool saw_elements_in_known_namespaces_ = false;
+  base::OnceClosure run_before_load_event_;
   // How many times each named item was added and not yet removed, and the
   // named items in the order in which they came.
   std::map<std::u16string, int> named_item_counts_;
@@ -727,6 +747,7 @@ class Document : public Node {
   std::u16string url_ = u"about:blank";
   std::string encoding_ = "UTF-8";
   bool encoding_detected_heuristically_ = false;
+  bool saw_decoding_error_ = false;
   std::optional<base::Time> last_modified_;
   // A document that no parser is loading is complete, as Blink's starts.
   Readiness readiness_ = Readiness::kComplete;

@@ -26,6 +26,7 @@
 
 namespace mitto {
 
+
 DocumentLoader::DocumentLoader(ScriptRunner& runner,
                                PageRequests& requests,
                                SendFrame send,
@@ -65,11 +66,29 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // window for a tab's first navigation, whose about:blank has an opaque
   // origin, and for each later one.
   url_ = GURL(response.url);
+  const MimeTypeAndCharset content_type =
+      GetMimeTypeAndCharset(HeaderField(response.headers, "content-type"));
+  std::string mime_type =
+      content_type.mime_type.empty() ? "text/html" : content_type.mime_type;
+  // URLLoader::StartReading(): Chrome's network service gives a feed's
+  // response as text/plain.
+  if (mime_type == "application/rss+xml" ||
+      mime_type == "application/atom+xml") {
+    mime_type = "text/plain";
+  }
+  const DocumentKind document_kind = DocumentKindOf(mime_type);
+  // An XML, XHTML or SVG response makes an XMLDocument of its MIME type, as
+  // Blink's DocumentInit does, which the XML parser reads.
+  const bool xml = document_kind == DocumentKind::kXhtml ||
+                   document_kind == DocumentKind::kSvg ||
+                   document_kind == DocumentKind::kXml;
   // The Session's base::TimeTicks, which the Page's clock shares.
   document_ = &frame_->CommitNavigation(
       *this, url_,
       base::TimeTicks() + base::Microseconds(response.navigation_start),
-      response.connection);
+      response.connection,
+      xml ? std::optional<std::u16string>(base::ASCIIToUTF16(mime_type))
+          : std::nullopt);
   document_id_ = document_->DefaultView()->DocumentId();
   // The Referer that the navigation's last hop sent, as //net kept it through
   // its redirects.
@@ -120,16 +139,6 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // document of a browser in the Persona's locale. A response with no MIME
   // type is HTML here, as the parser reads it, where Chrome's network service
   // sniffs one.
-  const MimeTypeAndCharset content_type =
-      GetMimeTypeAndCharset(HeaderField(response.headers, "content-type"));
-  std::string mime_type =
-      content_type.mime_type.empty() ? "text/html" : content_type.mime_type;
-  // URLLoader::StartReading(): Chrome's network service gives a feed's
-  // response as text/plain.
-  if (mime_type == "application/rss+xml" ||
-      mime_type == "application/atom+xml") {
-    mime_type = "text/plain";
-  }
   decoder_ = BuildTextResourceDecoder(url_, mime_type, content_type.charset,
                                       document_->DefaultView()->Start().locale,
                                       /*parent=*/nullptr);
@@ -137,13 +146,13 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       &DocumentLoader::DidDispatchLoadEvent, weak_factory_.GetWeakPtr()));
   // DocumentInit::CreateDocument(): the kind of document of the MIME type,
   // whose contentType it is. A text, JSON, image or media document stays in
-  // no-quirks mode. XML documents are a Known Gap, which the HTML parser
-  // reads.
+  // no-quirks mode.
   DocumentParser::Kind parser_kind = DocumentParser::Kind::kHtml;
-  switch (DocumentKindOf(mime_type)) {
+  switch (document_kind) {
     case DocumentKind::kXhtml:
     case DocumentKind::kSvg:
     case DocumentKind::kXml:
+      // Its XMLDocument has the XML parser (Document::ImplicitOpen()).
       break;
     case DocumentKind::kHtml:
       document_->SetContentType(base::ASCIIToUTF16(mime_type));
@@ -220,7 +229,8 @@ void DocumentLoader::AppendDecoded(std::u16string text) {
   // The document's encoding is the decoder's after each piece, as
   // DecodedDataDocumentParser::UpdateDocument() sets it.
   document_->SetEncoding(decoder_->encoding(),
-                         decoder_->EncodingWasDetectedHeuristically());
+                         decoder_->EncodingWasDetectedHeuristically(),
+                         decoder_->saw_error());
   parser_->AppendData(text);
 }
 

@@ -65,6 +65,7 @@
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/svg_element.h"
 #include "mitto/dom/svg_element_factory.h"
+#include "mitto/dom/svg_elements.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/tree_walker.h"
 #include "mitto/dom/window.h"
@@ -170,11 +171,18 @@ std::u16string StripAndCollapseWhitespace(const std::u16string& text) {
 
 // static
 Document* Document::Create() {
-  // new Document(): the origin of the current window's document.
+  // new Document(): the origin of the current window's document. A context
+  // that is no window's, as the XML fuzz target's, whose fragments make
+  // template documents, gives none.
   Document* const document = bindings::MakeGarbageCollected<Document>(false);
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (isolate && isolate->InContext() && Window::Current().HasDocument()) {
-    document->SetOrigin(Window::Current().GetDocument().GetOrigin());
+  if (!isolate || !isolate->InContext()) {
+    return document;
+  }
+  const Window* const window = bindings::V8Window::ToWrappable(
+      isolate, isolate->GetCurrentContext()->Global());
+  if (window && window->HasDocument()) {
+    document->SetOrigin(window->GetDocument().GetOrigin());
   }
   return document;
 }
@@ -270,6 +278,15 @@ void Document::SetDesignMode(const std::u16string& value) {
 
 // Blink's ScrollingElementNoLayout(): the root element in standards mode, and
 // in quirks mode the body, which nothing lays out as a scroll container.
+SVGSVGElement* Document::RootElement() const {
+  Element* const element = DocumentElement();
+  if (!element || element->NamespaceURI() != html_names::kSvgNamespace ||
+      element->LocalName() != u"svg") {
+    return nullptr;
+  }
+  return static_cast<SVGSVGElement*>(element);
+}
+
 Element* Document::ScrollingElement() const {
   if (!InQuirksMode()) {
     return DocumentElement();
@@ -661,7 +678,8 @@ std::u16string Document::CharacterSet() const {
 }
 
 void Document::SetEncoding(std::string_view encoding,
-                           bool detected_heuristically) {
+                           bool detected_heuristically,
+                           bool saw_decoding_error) {
   DCHECK(!encoding.empty());
   // The loader sets the encoding after each piece of the body, so the tree is
   // searched only when windows-1252 gives way to another.
@@ -693,6 +711,7 @@ void Document::SetEncoding(std::string_view encoding,
   }
   encoding_ = std::string(encoding);
   encoding_detected_heuristically_ = detected_heuristically;
+  saw_decoding_error_ = saw_decoding_error;
 }
 
 void Document::SetTitle(const std::u16string& title) {
@@ -1324,6 +1343,7 @@ Element* Document::CreateElement(
   } else {
     return Element::Create(*this, namespace_uri, prefix, local_name);
   }
+  saw_elements_in_known_namespaces_ = true;
   if (prefix) {
     element->SetPrefixForCreateElementNS(prefix);
   }
@@ -1511,8 +1531,12 @@ DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client,
   RemoveChildren();
   SetCompatibilityMode(CompatibilityMode::kNoQuirks);
   DetachParser();
-  parser_ =
-      bindings::MakeGarbageCollected<DocumentParser>(*this, client, kind);
+  // Document::CreateParser(): a document that is not HTML has the XML
+  // parser.
+  if (!is_html_) {
+    kind = DocumentParser::Kind::kXml;
+  }
+  parser_ = bindings::MakeGarbageCollected<DocumentParser>(*this, client, kind);
   // The parser may run scripts before this returns, so it is held here.
   const cppgc::Persistent<DocumentParser> parser = parser_.Get();
   parsing_state_ = ParsingState::kParsing;
@@ -1641,6 +1665,9 @@ void Document::DispatchLoadEventAndFinalize() {
   load_event_progress_ = LoadEventProgress::kLoadEventInProgress;
   // The parser goes, in case the load event's listeners write.
   DetachParser();
+  if (run_before_load_event_) {
+    std::move(run_before_load_event_).Run();
+  }
   if (Window* const window = window_.Get()) {
     // LocalDOMWindow::DispatchLoadEvent(): load at the window, with the
     // document as its target, its times marked the first time.

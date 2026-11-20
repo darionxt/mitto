@@ -246,3 +246,200 @@ def test_a_response_of_another_type_that_chrome_shows_is_read_as_html(session: m
             "text/xsl",
             "<html><head></head><body><b>x</b></body></html>",
         ]
+
+
+def test_an_svg_response_is_an_xml_document_whose_scripts_run(session: mitto.Session, server: _Server) -> None:
+    # Chrome 157 parses an SVG document with the Rust xml crate: its scripts run at their end tags, an external one, and
+    # a deferred one too, before the parser reads on, and an error stops the parse with Blink's error block, which
+    # moves the SVG root into an HTML body.
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:h="http://www.w3.org/1999/xhtml">'
+    server.serve("/s.js", "text/javascript", b"seen.push('external ' + !!document.querySelector('rect'));")
+    first = server.serve(
+        "/a.svg",
+        "image/svg+xml",
+        (
+            f'<?xml version="1.0" standalone="yes"?>\n{svg}<title>Pic</title><script>'
+            "window.seen = [document.readyState, document.documentElement.localName];"
+            "document.addEventListener('DOMContentLoaded', () => seen.push('dcl ' + document.readyState));"
+            "window.addEventListener('load', () => seen.push('load ' + document.readyState));"
+            "</script><h:script>seen.push('html script');</h:script><rect width=\"1\"/></svg>"
+        ).encode(),
+    )
+    blocking = server.serve(
+        "/b.svg",
+        "image/svg+xml",
+        (
+            f"{svg}<script>window.seen = ['first']</script><script href=\"/s.js\"/>"
+            '<script defer="" href="/s.js"/><rect/><script>seen.push(\'last\')</script></svg>'
+        ).encode(),
+    )
+    broken = server.serve("/c.svg", "image/svg+xml", f"{svg}<g><script>window.ran = 1</script></svg>".encode())
+
+    with _open_page(session, first) as page:
+        assert page.evaluate(
+            "[document.constructor.name, document.contentType, document.title, document.readyState,"
+            " document.xmlStandalone, document.characterSet, seen]"
+        ) == [
+            "XMLDocument",
+            "image/svg+xml",
+            "Pic",
+            "complete",
+            True,
+            "UTF-8",
+            ["loading", "svg", "html script", "dcl interactive", "load complete"],
+        ]
+    with _open_page(session, blocking) as page:
+        assert page.evaluate("seen") == ["first", "external false", "external false", "last"]
+    with _open_page(session, broken) as page:
+        assert page.evaluate(
+            "[window.ran, document.documentElement.localName, document.body.firstChild.localName, document.readyState]"
+        ) == [1, "html", "parsererror", "complete"]
+
+
+def test_an_xml_or_xhtml_response_is_an_xml_document_of_libxml2(session: mitto.Session, server: _Server) -> None:
+    # Every Persona's seed has Chrome 157 parse a navigation's XML on libxml2: an XHTML document runs its scripts, an
+    # external one before the parser reads on, and knows the XHTML DTD's entities; markup that is not well formed
+    # stops with Blink's error block first in the document's element, the text that waited dropped.
+    server.serve("/s.js", "text/javascript", b"seen.push('ext');")
+    xhtml = server.serve(
+        "/x.xhtml",
+        "application/xhtml+xml",
+        b'<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "x"><html xmlns="http://www.w3.org/1999/xhtml">'
+        b"<head><title>X</title><script>window.seen = [document.readyState, document.compatMode];</script></head>"
+        b'<body>&nbsp;<p>t</p><script src="/s.js"/><script>seen.push(document.body.childNodes.length)</script></body>'
+        b"</html>",
+    )
+    broken = server.serve(
+        "/y.xhtml", "application/xhtml+xml", b'<html xmlns="http://www.w3.org/1999/xhtml"><body><p>a</b></body></html>'
+    )
+
+    with _open_page(session, xhtml) as page:
+        assert page.evaluate(
+            "[document.constructor.name, document.contentType, document.title, seen, document.body.firstChild.data,"
+            " document.doctype.publicId]"
+        ) == [
+            "XMLDocument",
+            "application/xhtml+xml",
+            "X",
+            ["loading", "CSS1Compat", "ext", 4],
+            "\u00a0",
+            "-//W3C//DTD XHTML 1.0 Strict//EN",
+        ]
+    with _open_page(session, broken) as page:
+        assert page.evaluate("new XMLSerializer().serializeToString(document)") == (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><parsererror style="display: block; white-space: pre; border: '
+            '2px solid #c77; padding: 0 1em 0 1em; margin: 1em; background-color: #fdd; color: black"><h3>This page '
+            'contains the following errors:</h3><div style="font-family:monospace;font-size:12px">error on line 1 at '
+            "column 58: Opening and ending tag mismatch: p line 1 and b\n</div><h3>Below is a rendering of the page up "
+            "to the first error.</h3></parsererror><body><p></p></body></html>"
+        )
+
+
+def test_an_xml_documents_parser_drops_a_module_script_that_would_wait_for_its_end(
+    session: mitto.Session, server: _Server
+) -> None:
+    # Blink's XML parser takes no deferred script: a module script that would wait for the end of parsing is fetched but
+    # never runs, with Blink's console error, in XHTML and SVG alike, while an async one runs, and a deferred classic
+    # script blocks the parser.
+    server.serve("/m.js", "text/javascript", b"seen.push('external module')")
+    server.serve("/d.js", "text/javascript", b"seen.push(", b"'defer ' + !!document.getElementById('last'))")
+    scripts = (
+        "<script>window.seen = [];</script><script type=\"module\">seen.push('inline module')</script>"
+        '<script type="module" {src}="/m.js"/><script type="module" async="">seen.push(\'async module\')</script>'
+        "{deferred}<script id=\"last\">seen.push('classic ' + document.readyState)</script>"
+    )
+    xhtml = server.serve(
+        "/m.xhtml",
+        "application/xhtml+xml",
+        (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+            + scripts.format(src="src", deferred='<script defer="" src="/d.js"/>')
+            + "</head><body/></html>"
+        ).encode(),
+    )
+    svg = server.serve(
+        "/m.svg",
+        "image/svg+xml",
+        ('<svg xmlns="http://www.w3.org/2000/svg">' + scripts.format(src="href", deferred="") + "</svg>").encode(),
+    )
+    dropped = "Module scripts in XML documents are currently not supported. See crbug.com/717643"
+
+    for url, seen in (
+        (xhtml, ["async module", "defer false", "classic loading"]),
+        (svg, ["classic loading", "async module"]),
+    ):
+        server.hits.clear()
+        with _open_page(session, url) as page:
+            assert page.evaluate("seen") == seen
+            assert [message.text for message in page.console_messages if message.level == "error"] == [dropped] * 2
+        assert server.hits["/m.js"] == 1
+
+
+def test_a_byte_that_an_xml_responses_encoding_cannot_decode_stops_its_parse(
+    session: mitto.Session, server: _Server
+) -> None:
+    # Chrome 157's decoder of XML stops at such a byte, and libxml2 reports a fatal encoding error where it has got to
+    # once it has read the text before it. A piece that decodes to no text gives libxml2 nothing to read, so the parse
+    # runs to the end of the input, and a response in windows-1252 decodes every byte.
+    prefix = b"<!--abcdefghij--><r><s>a</s>"
+    whole = server.serve("/a.xml", "application/xml", b"<r>\n<s>a\xe2\x82b</s></r>")
+    after_text = server.serve("/b.xml", "application/xml", prefix, b"b\xff</r>")
+    first_byte = server.serve("/c.xml", "application/xml", prefix, b"\xffb</r>")
+    latin = server.serve("/d.xml", "application/xml; charset=windows-1252", b"<r>a\xffb</r>")
+    block = (
+        '<parsererror xmlns="http://www.w3.org/1999/xhtml" style="display: block; white-space: pre; border: 2px solid '
+        '#c77; padding: 0 1em 0 1em; margin: 1em; background-color: #fdd; color: black"><h3>This page contains the '
+        'following errors:</h3><div style="font-family:monospace;font-size:12px">error on line {}</div><h3>Below is a '
+        "rendering of the page up to the first error.</h3></parsererror>"
+    )
+    serialize = "new XMLSerializer().serializeToString(document)"
+
+    with _open_page(session, whole) as page:
+        assert page.evaluate(serialize) == f"<r>{block.format('2 at column 4: Encoding error')}\n<s/></r>"
+    with _open_page(session, after_text) as page:
+        assert page.evaluate(serialize) == (
+            f"<!--abcdefghij--><r>{block.format('1 at column 29: Encoding error')}<s>a</s></r>"
+        )
+    premature_end = "1 at column 29: Premature end of data in tag r line 1\n"
+    with _open_page(session, first_byte) as page:
+        assert page.evaluate(serialize) == f"<!--abcdefghij--><r>{block.format(premature_end)}<s>a</s></r>"
+    with _open_page(session, latin) as page:
+        assert page.evaluate("[document.querySelector('parsererror'), document.querySelector('r').textContent]") == [
+            None,
+            "a\u00ffb",
+        ]
+
+
+def test_an_xml_response_with_no_style_is_shown_in_blinks_tree_viewer(session: mitto.Session, server: _Server) -> None:
+    # A top-level XML document with no element of a namespace that style knows, and no style sheet, becomes Blink's
+    # XML tree viewer: its nodes in a hidden container and, at the window's load, a tree of spans that shows them, as
+    # Chrome 157 gave.
+    url = server.serve(
+        "/a.xml",
+        "application/xml",
+        b'<?xml version="1.0"?><!--c--><root a="1"><child>text</child><e/><x:y xmlns:x="urn:x">  </x:y>'
+        b"<![CDATA[cd]]><?pi data?></root>",
+    )
+
+    with _open_page(session, url) as page:
+        assert page.evaluate(
+            "[document.constructor.name, document.contentType, document.documentElement.localName,"
+            " document.getElementById('xml-viewer-style').textContent.startsWith('/* Copyright 2014 The Chromium')]"
+        ) == ["XMLDocument", "application/xml", "html", True]
+        assert page.evaluate("document.body.outerHTML") == (
+            '<body xmlns="http://www.w3.org/1999/xhtml"><div id="webkit-xml-viewer-source-xml"><!--c--><root xmln'
+            's="" a="1"><child>text</child><e/><x:y xmlns:x="urn:x">  </x:y><![CDATA[cd]]><?pi data?></root></div'
+            '><div class="header"><span>This XML file does not appear to have any style information associated wi'
+            'th it. The document tree is shown below.</span><br /></div><div class="pretty-print"><div class="lin'
+            'e"><span class="comment html-comment">&lt;!-- c --&gt;</span></div><div class="folder" id="folder0">'
+            '<div class="line"><span class="folder-button fold"></span><span class="html-tag">&lt;root<span class'
+            '="html-attribute"> <span class="html-attribute-name">a</span>="<span class="html-attribute-value">1<'
+            '/span>"</span>&gt;</span></div><div class="opened"><div class="line"><span class="html-tag">&lt;chil'
+            'd&gt;</span><span>text</span><span class="html-tag">&lt;/child&gt;</span></div><div class="line"><sp'
+            'an class="html-tag">&lt;e/&gt;</span></div><div class="line"><span class="html-tag">&lt;x:y<span cla'
+            'ss="html-attribute"> <span class="html-attribute-name">xmlns:x</span>="<span class="html-attribute-v'
+            'alue">urn:x</span>"</span>&gt;</span><span>  </span><span class="html-tag">&lt;/x:y&gt;</span></div>'
+            '<div class="line"><span class="cdata">&lt;![CDATA[ cd ]]&gt;</span></div><div class="line"><span cla'
+            'ss="comment html-comment">&lt;?pi data?&gt;</span></div></div><span class="folded hidden">...</span>'
+            '<div class="line"><span class="html-tag">&lt;/root&gt;</span></div></div></div></body>'
+        )
