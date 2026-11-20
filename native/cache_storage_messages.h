@@ -158,6 +158,10 @@ struct PageCacheStorageCall {
   // The number of the question, which the answer names: larger than that of
   // each question before it.
   uint64_t question = 0;
+  // CacheStorage's kOpen, kHas, kDelete, kKeys and kMatch: the bucket whose
+  // caches they ask, by the number that the Session gave its StorageBucket,
+  // or 0 for the storage key's default bucket.
+  uint64_t bucket = 0;
   // kOpen, kHas, kDelete, and kMatch with a cache's name: in UTF-16, as a page
   // gave it.
   std::u16string cache_name;

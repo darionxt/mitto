@@ -1,5 +1,9 @@
 #include "mitto/dom/request.h"
 
+#include <stdint.h>
+
+#include <limits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -8,10 +12,15 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_request.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/body_stream_buffer.h"
+#include "mitto/dom/bytes_consumer.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/form_data_bytes_consumer.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/readable_stream.h"
 #include "mitto/dom/window.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
@@ -77,28 +86,41 @@ FetchCredentialsMode CredentialsFromString(std::u16string_view credentials) {
 
 }  // namespace
 
-std::optional<std::string> ExtractBody(
-    v8::Isolate* isolate,
-    v8::Local<v8::Value> value,
-    std::optional<std::string>* content_type) {
+BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
+                              v8::Local<v8::Value> value,
+                              std::optional<std::string>* content_type,
+                              bindings::ExceptionState& exception_state) {
+  std::string bytes;
   if (value->IsArrayBuffer()) {
     const std::shared_ptr<v8::BackingStore> store =
         value.As<v8::ArrayBuffer>()->GetBackingStore();
-    return std::string(static_cast<const char*>(store->Data()),
-                       store->ByteLength());
-  }
-  if (value->IsArrayBufferView()) {
+    if (store->ByteLength() > std::numeric_limits<uint32_t>::max()) {
+      exception_state.ThrowRangeError(
+          "The provided ArrayBuffer exceeds the maximum supported size");
+      return nullptr;
+    }
+    bytes.assign(static_cast<const char*>(store->Data()), store->ByteLength());
+  } else if (value->IsArrayBufferView()) {
     const v8::Local<v8::ArrayBufferView> view = value.As<v8::ArrayBufferView>();
-    std::string bytes(view->ByteLength(), '\0');
+    if (view->ByteLength() > std::numeric_limits<uint32_t>::max()) {
+      exception_state.ThrowRangeError(
+          "The provided ArrayBufferView exceeds the maximum supported size");
+      return nullptr;
+    }
+    bytes.resize(view->ByteLength());
     view->CopyContents(bytes.data(), bytes.size());
-    return bytes;
+  } else {
+    std::u16string text;
+    if (!bindings::FromV8USVString(isolate, value, &text)) {
+      return nullptr;
+    }
+    *content_type = "text/plain;charset=UTF-8";
+    bytes = base::UTF16ToUTF8(text);
   }
-  std::u16string text;
-  if (!bindings::FromV8USVString(isolate, value, &text)) {
-    return std::nullopt;
-  }
-  *content_type = "text/plain;charset=UTF-8";
-  return base::UTF16ToUTF8(text);
+  return BodyStreamBuffer::Create(
+      isolate,
+      bindings::MakeGarbageCollected<FormDataBytesConsumer>(std::move(bytes)),
+      /*signal=*/nullptr);
 }
 
 // static
@@ -122,7 +144,6 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     request->referrer_policy_ = input_request->referrer_policy_;
     request->priority_ = input_request->priority_;
     request->keepalive_ = input_request->keepalive_;
-    request->body_ = input_request->body_;
     signal = input_request->signal_.Get();
   } else {
     // The API base URL: the document's base URL, against which the input
@@ -245,26 +266,97 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
   if (exception_state.HadException()) {
     return nullptr;
   }
+  // The input's body, if it is a Request.
+  BodyStreamBuffer* const input_body =
+      input_request ? input_request->body_buffer_.Get() : nullptr;
   const bool has_init_body = init.body && !(*init.body)->IsNullOrUndefined();
-  if ((has_init_body || request->body_) &&
+  if ((has_init_body || input_body) &&
       (request->method_ == "GET" || request->method_ == "HEAD")) {
     exception_state.ThrowTypeError(
         "Request with GET/HEAD method cannot have body.");
     return nullptr;
   }
+  BodyStreamBuffer* body = input_body;
   if (has_init_body) {
-    std::optional<std::string> content_type;
-    std::optional<std::string> body =
-        ExtractBody(isolate, *init.body, &content_type);
-    if (!body) {
+    ReadableStream* const stream =
+        bindings::V8ReadableStream::ToWrappable(isolate, *init.body);
+    // Extracting a body with the keepalive flag set throws for a stream.
+    if (init.keepalive && *init.keepalive && stream) {
+      exception_state.ThrowTypeError(
+          "Keepalive request cannot have a ReadableStream body.");
       return nullptr;
     }
-    request->body_ = std::move(body);
+    std::optional<std::string> content_type;
+    if (stream) {
+      if (stream->IsDisturbed()) {
+        exception_state.ThrowTypeError(
+            "The provided ReadableStream is disturbed");
+        return nullptr;
+      }
+      if (stream->IsLocked()) {
+        exception_state.ThrowTypeError("The provided ReadableStream is locked");
+        return nullptr;
+      }
+      body = bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate, stream);
+    } else {
+      body = ExtractBody(isolate, *init.body, &content_type, exception_state);
+      if (!body) {
+        return nullptr;
+      }
+    }
     if (content_type && !request->headers_->GetValue("content-type")) {
       request->headers_->AppendLine("Content-Type", *content_type);
     }
   }
+  // A body whose source is null, a stream's.
+  if (body && body->IsMadeFromReadableStream()) {
+    if (has_init_body && !init.duplex) {
+      exception_state.ThrowTypeError(
+          "The `duplex` member must be specified for a request with a "
+          "streaming body");
+      return nullptr;
+    }
+    if (request->mode_ != FetchMode::kSameOrigin &&
+        request->mode_ != FetchMode::kCors) {
+      exception_state.ThrowTypeError(
+          "If request is made from ReadableStream, mode should "
+          "be\"same-origin\" or \"cors\"");
+      return nullptr;
+    }
+    // "Set this's request's use-CORS-preflight flag": Blink's mode
+    // cors-with-forced-preflight, which reads as "cors", even of a request
+    // of mode same-origin. The Session makes the preflight of a fetch()
+    // whose body streams.
+    request->mode_ = FetchMode::kCors;
+  }
+  if (input_body == body && input_request &&
+      (input_request->IsBodyUsed() || input_request->IsBodyLocked())) {
+    exception_state.ThrowTypeError(
+        "Cannot construct a Request with a Request object that has already "
+        "been used.");
+    return nullptr;
+  }
+  // Without a body of init's, the input's goes through a proxy, which leaves
+  // the input's stream locked and disturbed.
+  if (body && body == input_body) {
+    body = input_body->CreateProxy(exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+  }
+  request->body_buffer_ = body;
   return request;
+}
+
+BodyStreamBuffer* Request::PassBody(bindings::ExceptionState& exception_state) {
+  BodyStreamBuffer* const body = body_buffer_.Get();
+  if (body) {
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    body_buffer_ = BodyStreamBuffer::Create(
+        isolate, BytesConsumer::CreateClosed(), /*signal=*/nullptr);
+    body_buffer_->CloseAndLockAndDisturb(exception_state);
+  }
+  return body;
 }
 
 // static
@@ -286,6 +378,10 @@ Request* Request::CreateFromStored(
 Request::Request() = default;
 Request::~Request() = default;
 
+BodyStreamBuffer* Request::BodyBuffer() const {
+  return body_buffer_.Get();
+}
+
 const bindings::WrapperTypeInfo* Request::GetWrapperTypeInfo() const {
   return &bindings::V8Request::kWrapperTypeInfo;
 }
@@ -293,6 +389,7 @@ const bindings::WrapperTypeInfo* Request::GetWrapperTypeInfo() const {
 void Request::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(headers_);
+  visitor->Trace(body_buffer_);
   visitor->Trace(signal_);
 }
 

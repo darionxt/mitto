@@ -20,14 +20,16 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
-#include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/idle_task_controller.h"
+#include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/xml_document.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_fetcher.h"
@@ -106,18 +108,13 @@ bool GenerateEntropy(unsigned char* buffer, size_t size) {
   return true;
 }
 
-// Upstream: net/base/is_potentially_trustworthy.cc
-bool IsUrlPotentiallyTrustworthy(const GURL& url) {
-  if (url.IsAboutBlank() || url.IsAboutSrcdoc() ||
-      url.SchemeIs(url::kDataScheme)) {
-    return true;
-  }
-  const url::Origin origin = url::Origin::Create(url);
+// Upstream: services/network/public/cpp/is_potentially_trustworthy.cc
+bool IsOriginPotentiallyTrustworthy(const url::Origin& origin) {
   if (origin.opaque()) {
     return false;
   }
-  return GURL::SchemeIsCryptographic(origin.scheme()) || IsLocalhost(url) ||
-         origin.scheme() == url::kFileScheme;
+  return GURL::SchemeIsCryptographic(origin.scheme()) ||
+         IsLocalhost(origin.GetURL()) || origin.scheme() == url::kFileScheme;
 }
 
 ScriptRunner::ScriptRunner(v8::Isolate* isolate) : isolate_(isolate) {}
@@ -179,6 +176,10 @@ std::optional<std::string> ScriptRunner::Start(
           send_));
 
   const v8::HandleScope handle_scope(isolate_);
+  // The first document is a tab's about:blank, whose origin is opaque, so its
+  // context is no secure context, as in Chrome.
+  bindings::PerIsolateData::From(isolate_)->set_secure_context(
+      IsOriginPotentiallyTrustworthy(url::Origin()));
   const v8::Local<v8::Context> context =
       NewContext(bindings::PerIsolateData::From(isolate_)->time_origin());
   context_.Reset(isolate_, context);
@@ -219,6 +220,9 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   // What the document before asked of the Session's storage goes with it.
   if (cache_storage_host_) {
     cache_storage_host_->DocumentCommitted(committed.document);
+  }
+  if (storage_bucket_host_) {
+    storage_bucket_host_->DocumentCommitted(committed.document);
   }
   if (indexed_db_host_) {
     indexed_db_host_->DocumentCommitted(committed.document);
@@ -378,6 +382,11 @@ void ScriptRunner::OnResponseEnded(PageResponseEnded ended) {
                          base::Unretained(requests_.get()), ended));
 }
 
+void ScriptRunner::OnRequestBodyCredit(PageCredit credit) {
+  RunTask(base::BindOnce(&PageRequests::OnRequestBodyCredit,
+                         base::Unretained(requests_.get()), credit));
+}
+
 void ScriptRunner::RunTask(base::OnceClosure task) {
   // Start() failed, and the Page is about to end.
   if (context_.IsEmpty()) {
@@ -395,10 +404,12 @@ void ScriptRunner::PostTask(TaskType type, base::OnceClosure task) {
                                 std::move(task)));
 }
 
-Document& ScriptRunner::CommitDocument(uint64_t navigation,
-                                       const GURL& url,
-                                       base::TimeTicks navigation_start,
-                                       const PageConnection& connection) {
+Document& ScriptRunner::CommitDocument(
+    uint64_t navigation,
+    const GURL& url,
+    base::TimeTicks navigation_start,
+    const PageConnection& connection,
+    const std::optional<std::u16string>& xml_content_type) {
   const v8::HandleScope handle_scope(isolate_);
   for (const uint64_t call : waiting_calls_) {
     settled_.push_back(FailureOf(call, std::string(kContextDestroyed)));
@@ -430,7 +441,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
   bindings::PerIsolateData::From(isolate_)->set_time_origin(time_origin);
   // A [SecureContext] member is installed when a context is made.
   bindings::PerIsolateData::From(isolate_)->set_secure_context(
-      IsUrlPotentiallyTrustworthy(url));
+      IsOriginPotentiallyTrustworthy(url::Origin::Create(url)));
   // Chrome's site isolation locks a renderer to the site of a document at an
   // HTTP or HTTPS URL.
   MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
@@ -439,7 +450,10 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
   AttachWindow(context, connection, PageDocumentSource::kNavigationResponse,
                navigation);
   const v8::Context::Scope context_scope(context);
-  Document* const document = Document::CreateHTML();
+  Document* const document =
+      xml_content_type
+          ? static_cast<Document*>(XMLDocument::Create(*xml_content_type))
+          : Document::CreateHTML();
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
   // Only a document that the Session loaded over HTTP or HTTPS has cookies
   // there; another's origin is opaque to them.
@@ -447,6 +461,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
     document->SetCookieJar(cookie_jar_);
     document->SetCacheStorageHost(cache_storage_host_);
     document->SetIndexedDbHost(indexed_db_host_);
+    document->SetStorageBucketHost(storage_bucket_host_);
   }
   Window::Current().SetDocument(document);
   return *document;

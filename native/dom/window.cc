@@ -2,8 +2,11 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -17,6 +20,7 @@
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/bar_prop.h"
+#include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/cache_storage.h"
 #include "mitto/dom/cookie_store.h"
 #include "mitto/dom/crash_report_context.h"
@@ -35,10 +39,15 @@
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
 #include "mitto/dom/media_query_list.h"
+#include "mitto/dom/modulator.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigator.h"
 #include "mitto/dom/performance.h"
+#include "mitto/dom/preloaded_fetch.h"
+#include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/request.h"
+#include "mitto/dom/resource.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/scheduler.h"
 #include "mitto/dom/screen.h"
 #include "mitto/dom/script_values.h"
@@ -95,6 +104,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(viewport_);
   visitor->Trace(style_media_);
   visitor->Trace(navigation_);
+  visitor->Trace(modulator_);
   visitor->Trace(custom_elements_);
   visitor->Trace(crypto_);
   visitor->Trace(scheduler_);
@@ -278,6 +288,13 @@ mitto::Navigation* Window::Navigation() {
   return navigation_.Get();
 }
 
+Modulator* Window::GetModulator() {
+  if (!modulator_) {
+    modulator_ = bindings::MakeGarbageCollected<Modulator>(*this);
+  }
+  return modulator_.Get();
+}
+
 mitto::Crypto* Window::Crypto() {
   if (!crypto_) {
     crypto_ = mitto::Crypto::Create();
@@ -449,6 +466,12 @@ v8::Local<v8::Promise> Window::Fetch(
   if (!request) {
     return v8::Local<v8::Promise>();
   }
+  // The request's body goes to the fetch, and the Request keeps one that is
+  // used, as Blink's PassRequestData() leaves it.
+  BodyStreamBuffer* const body = request->PassBody(exception_state);
+  if (exception_state.HadException()) {
+    return v8::Local<v8::Promise>();
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::Promise::Resolver> resolver;
@@ -477,10 +500,25 @@ v8::Local<v8::Promise> Window::Fetch(
     return resolver->GetPromise();
   }
   FetchRequestData data;
+  // A body of bytes that a script gave whole goes as they are. A stream's
+  // goes as the Session reads it, through a reader of its own that locks it
+  // now, as Blink's DrainAsChunkedDataPipeGetter() does: a chunked upload,
+  // which goes only over HTTP/2 or HTTP/3.
+  BytesConsumer* upload_body = nullptr;
+  if (body && request->Method() != "GET" && request->Method() != "HEAD") {
+    data.body = body->DrainAsBytes(exception_state);
+    if (exception_state.HadException()) {
+      return v8::Local<v8::Promise>();
+    }
+    if (!data.body && body->IsMadeFromReadableStream()) {
+      upload_body = bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
+          isolate, body->Stream());
+      data.streams_body = true;
+    }
+  }
   data.method = request->Method();
   data.url = request->url().spec();
   data.headers = request->GetHeaders()->ToLines();
-  data.body = request->body();
   // A fetch's own are mode cors and credentials same-origin.
   if (request->mode() != FetchMode::kCors) {
     data.mode = request->mode();
@@ -489,16 +527,44 @@ v8::Local<v8::Promise> Window::Fetch(
     data.credentials = request->credentials();
   }
   data.referrer = request->referrer();
-  data.referrer_policy = request->referrer_policy();
+  // A request whose policy is the empty string goes with the document's.
+  data.referrer_policy =
+      request->referrer_policy() == FetchReferrerPolicy::kDefault
+          ? GetDocument().GetReferrerPolicy()
+          : request->referrer_policy();
   data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
                                        /*render_blocking=*/false);
   data.keepalive = request->keepalive();
-  fetcher->Fetch(std::move(data), std::make_unique<FetchLoader>(
-                                      isolate, context, resolver,
-                                      /*head=*/request->Method() == "HEAD",
-                                      /*credentials=*/request->credentials() ==
-                                          FetchCredentialsMode::kInclude,
-                                      signal));
+  auto loader = std::make_unique<FetchLoader>(
+      isolate, context, resolver,
+      /*credentials=*/request->credentials() == FetchCredentialsMode::kInclude,
+      signal, upload_body, upload_body ? body->Stream() : nullptr);
+  // A GET takes what a link preloaded as fetch, as Blink's ThreadableLoader
+  // asks the document's ResourceFetcher for a resource of type kRaw, with
+  // what Resource::CanReuse() wants of the request beside its mode and
+  // credentials mode: no keepalive, and no header of a conditional request.
+  WindowTasks* const tasks = GetTasks();
+  const Headers& headers = *request->GetHeaders();
+  if (tasks && data.method == "GET" && !data.keepalive &&
+      std::ranges::none_of(
+          std::to_array<std::string_view>({"if-match", "if-modified-since",
+                                           "if-none-match", "if-range",
+                                           "if-unmodified-since"}),
+          [&headers](std::string_view name) {
+            return headers.GetValue(name).has_value();
+          })) {
+    FetchParameters params;
+    params.url = request->url();
+    params.type = ResourceType::kRaw;
+    params.mode = request->mode();
+    params.credentials = request->credentials();
+    if (Resource* const preload =
+            GetDocument().Fetcher().MatchPreload(params)) {
+      PreloadedFetch::Start(*preload, std::move(loader), *tasks);
+      return resolver->GetPromise();
+    }
+  }
+  fetcher->Fetch(std::move(data), std::move(loader));
   return resolver->GetPromise();
 }
 

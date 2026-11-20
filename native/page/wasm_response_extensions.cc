@@ -93,14 +93,14 @@ void StreamFromResponse(const v8::FunctionCallbackInfo<v8::Value>& info) {
         "Incorrect response MIME type. Expected 'application/wasm'.");
     return;
   }
-  if (response->BodyUsed()) {
+  if (response->IsBodyLocked() || response->IsBodyUsed()) {
     AbortWithTypeError(
         isolate, *streaming,
         "Cannot compile WebAssembly.Module from an already read Response");
     return;
   }
   if (response->HasNullBody()) {
-    // A status of 204 or 205, or a 200 with no body.
+    // A Response made with no body, or an opaque one.
     streaming->Abort(v8::Exception::WasmCompileError(Message(
         isolate, base::StrCat({kContext, "Empty WebAssembly module"}))));
     return;

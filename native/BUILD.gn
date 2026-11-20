@@ -85,6 +85,8 @@ source_set("page_channel") {
     "page_channel.h",
     "page_messages.cc",
     "page_messages.h",
+    "storage_bucket_messages.cc",
+    "storage_bucket_messages.h",
   ]
   if (is_win) {
     sources += [ "page_channel_win.cc" ]
@@ -155,6 +157,8 @@ shared_library("mitto_core") {
     "page_cache_storage.h",
     "page_indexed_db.cc",
     "page_indexed_db.h",
+    "page_storage_buckets.cc",
+    "page_storage_buckets.h",
     "page_host.cc",
     "page_host.h",
     "page_launcher.cc",
@@ -178,10 +182,14 @@ shared_library("mitto_core") {
     "ssl_config_service_mojo.h",
     "storage_quota.cc",
     "storage_quota.h",
+    "storage/bucket_database.cc",
+    "storage/bucket_database.h",
     "storage/local_storage_database.cc",
     "storage/local_storage_database.h",
     "storage/storage_area_impl.cc",
     "storage/storage_area_impl.h",
+    "storage/storage_buckets.cc",
+    "storage/storage_buckets.h",
     "storage/storage_context.cc",
     "storage/storage_context.h",
     "storage/storage_key.cc",
@@ -410,7 +418,7 @@ if (mitto_enable_runtime) {
       "page:mitto_page",
     ]
     if (use_libfuzzer) {
-      deps += [ "dom:html_tree_builder_fuzzer" ]
+      deps += [ "dom:runtime_fuzzers" ]
     }
   }
 }

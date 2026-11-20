@@ -654,7 +654,7 @@ void FetchRules::SetRequestCredentials(net::URLRequest& request,
 bool FetchRules::NeedsPreflight(std::string_view method,
                                 const net::HttpRequestHeaders& headers) const {
   return params_.mode == RequestMode::kCors && fetch_cors_flag_ &&
-         mitto::NeedsPreflight(method, headers);
+         (params_.force_preflight || mitto::NeedsPreflight(method, headers));
 }
 
 void FetchRules::SetCorsFlagIfNeeded(const GURL& url) {

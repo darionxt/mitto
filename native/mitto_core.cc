@@ -161,7 +161,8 @@ struct MittoSession final : public mitto::PageNetwork {
       GURL url,
       net::HttpRequestHeaders headers,
       mitto::RequestOptions options,
-      std::optional<std::vector<char>> body) override;
+      std::optional<std::vector<char>> body,
+      scoped_refptr<mitto::RequestChannel> body_channel) override;
   net::CookieStore& cookie_store() override;
   const scoped_refptr<mitto::KeepaliveInFlight>& keepalive_in_flight()
       override {
@@ -363,10 +364,17 @@ class RequestJob final : public net::URLRequest::Delegate,
       GURL url,
       net::HttpRequestHeaders headers,
       RequestOptions options,
-      std::optional<std::vector<char>> body) {
-    return base::WrapUnique(new RequestJob(
-        session, &client, nullptr, nullptr, std::move(url), std::move(headers),
-        std::move(options), std::move(body)));
+      std::optional<std::vector<char>> body,
+      scoped_refptr<RequestChannel> body_channel) {
+    // A fetch() whose body is a stream: network::URLLoader's
+    // has_fetch_streaming_upload_body_, for a body of no known size.
+    const bool fetch_streaming_upload =
+        options.stream_body && !options.stream_body_size;
+    auto job = base::WrapUnique(new RequestJob(
+        session, &client, nullptr, std::move(body_channel), std::move(url),
+        std::move(headers), std::move(options), std::move(body)));
+    job->fetch_streaming_upload_ = fetch_streaming_upload;
+    return job;
   }
 
   RequestJob(const RequestJob&) = delete;
@@ -452,7 +460,7 @@ class RequestJob final : public net::URLRequest::Delegate,
 
   // Goes on with a read of the stream body that waits for the caller, who has now
   // answered. This may delete the job, so nothing may touch it afterwards.
-  void SendBody() {
+  void SendBody() override {
     // A 303 drops the body, and with it the stream.
     if (body_stream_) {
       body_stream_->OnCallerAnswered();
@@ -473,6 +481,8 @@ class RequestJob final : public net::URLRequest::Delegate,
   }
 
   void Cancel() { Finish(net::ERR_ABORTED); }
+
+  void FailBody() override { Finish(net::ERR_FAILED); }
 
   // BodyStream::Delegate:
   void OnBodyWanted() override { client_->OnBodyWanted(); }
@@ -538,6 +548,13 @@ class RequestJob final : public net::URLRequest::Delegate,
 
   void OnAuthRequired(net::URLRequest* request,
                       const net::AuthChallengeInfo& auth_info) override {
+    // Chrome's network service fails a page's stream at any challenge, a
+    // proxy's too, since the stream cannot go again.
+    // Upstream: services/network/url_loader.cc
+    if (fetch_streaming_upload_) {
+      request->CancelWithError(net::ERR_FAILED);
+      return;
+    }
     // A server's challenge goes to the caller, as a response.
     if (!auth_info.is_proxy) {
       request->CancelAuth();
@@ -1015,6 +1032,8 @@ class RequestJob final : public net::URLRequest::Delegate,
   bool read_wanted_ = false;
   bool read_in_progress_ = false;
   bool proxy_auth_answered_ = false;
+  // A Page's fetch() whose body is a stream of no known size.
+  bool fetch_streaming_upload_ = false;
   base::OneShotTimer connect_timer_;
   base::OneShotTimer read_timer_;
   base::OneShotTimer total_timer_;
@@ -1045,10 +1064,11 @@ base::WeakPtr<mitto::RunningRequest> MittoSession::StartPageRequest(
     GURL url,
     net::HttpRequestHeaders headers,
     mitto::RequestOptions options,
-    std::optional<std::vector<char>> body) {
+    std::optional<std::vector<char>> body,
+    scoped_refptr<mitto::RequestChannel> body_channel) {
   std::unique_ptr<mitto::RequestJob> job = mitto::RequestJob::ForPage(
       *this, client, std::move(url), std::move(headers), std::move(options),
-      std::move(body));
+      std::move(body), std::move(body_channel));
   mitto::RequestJob* const started_job = job.get();
   const base::WeakPtr<mitto::RequestJob> weak_job = job->GetWeakPtr();
   jobs.insert(std::move(job));
@@ -1211,7 +1231,8 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   session->quota_manager = std::make_unique<StorageQuota>(
       settings.storage_directory,
       base::SysInfo::AmountOfTotalPhysicalMemory().InBytes(),
-      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}));
+      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}),
+      session->storage->blocking_task_runner());
   session->cache_storage_context = std::make_unique<CacheStorageContext>(
       settings.storage_directory, *session->quota_manager);
   session->indexed_db_context = std::make_unique<IndexedDbContext>(
@@ -1404,7 +1425,7 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     base::WaitableEvent done;
     PostTask(base::BindOnce(
         [](MittoSession* session, bool* opened, base::WaitableEvent* done) {
-          // localStorage's database, then IndexedDB's.
+          // localStorage's database, then IndexedDB's, then the buckets.
           session->storage->Open(base::BindOnce(
               [](MittoSession* session, bool* opened, base::WaitableEvent* done,
                  bool result) {
@@ -1413,11 +1434,21 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
                   return;
                 }
                 session->indexed_db_context->Open(base::BindOnce(
-                    [](bool* opened, base::WaitableEvent* done, bool result) {
-                      *opened = result;
-                      done->Signal();
+                    [](MittoSession* session, bool* opened,
+                       base::WaitableEvent* done, bool result) {
+                      if (!result) {
+                        done->Signal();
+                        return;
+                      }
+                      session->quota_manager->Open(base::BindOnce(
+                          [](bool* opened, base::WaitableEvent* done,
+                             bool result) {
+                            *opened = result;
+                            done->Signal();
+                          },
+                          opened, done));
                     },
-                    opened, done));
+                    base::Unretained(session), opened, done));
               },
               base::Unretained(session), base::Unretained(opened),
               base::Unretained(done)));

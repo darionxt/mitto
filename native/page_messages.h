@@ -22,6 +22,7 @@
 #include "base/types/expected.h"
 #include "mitto/cache_storage_messages.h"
 #include "mitto/indexed_db_messages.h"
+#include "mitto/storage_bucket_messages.h"
 
 namespace base {
 class DictValue;
@@ -32,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 22;
+inline constexpr uint32_t kPageProtocolVersion = 25;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -233,6 +234,21 @@ enum class PageMessage : uint32_t {
   // frame's document that its element let go or a worker that ended, which
   // the Page names no more. The contexts under it go with it.
   kContextGone = 101,
+  // To the Session: what the document's StorageBucketManager or one of its
+  // StorageBuckets asks, as storage_bucket_messages.h says.
+  kStorageBuckets = 180,
+  // To the Page: what the Session answers the Storage Buckets API, as
+  // storage_bucket_messages.h says.
+  kStorageBucketsAnswer = 181,
+  // To the Session: the next part of the body of a request whose body
+  // streams, as PageRequestBodyPart says, which the Page has credit for.
+  kRequestBodyPart = 160,
+  // To the Session: the end of the body of a request whose body streams, as
+  // PageRequestBodyEnded says.
+  kRequestBodyEnded = 161,
+  // To the Page: how much more of the body of a request whose body streams
+  // the Session takes, as PageCredit says, once //net has taken as much.
+  kRequestBodyCredit = 162,
 };
 
 // The quota of an area of localStorage or sessionStorage, as Blink's
@@ -276,6 +292,8 @@ enum class PageRequestKind : uint8_t {
   kBeacon = 10,
   kIframe = 11,
   kFavicon = 12,
+  // What a module imports with `with {type: "json"}`.
+  kModuleJson = 13,
 };
 
 // What a Page's request says of its mode, as Fetch names it, where 0 leaves
@@ -623,12 +641,31 @@ struct PageRequest {
   // In UTF-8: a URL of the document's origin that Referer starts from, as
   // fetch()'s referrer asks, or empty for the document's own URL.
   std::string referrer;
+  // A fetch whose body streams in parts after it, kRequestBodyPart and
+  // kRequestBodyEnded, as a ReadableStream gives it: no body here, a method
+  // with a body, and no keepalive.
+  bool streams_body = false;
 };
 
-// How much more of a request's body a Page has taken.
+// How much more of a request's body a Page has taken, or, for a body that
+// streams to the Session, how much more of it the Session takes.
 struct PageCredit {
   uint64_t number = 0;
   uint32_t bytes = 0;
+};
+
+// The next part of a body that streams to the Session: at most as many bytes
+// as the Page has credit for, and at least one.
+struct PageRequestBodyPart {
+  uint64_t number = 0;
+  std::string bytes;
+};
+
+// The end of a body that streams to the Session: all of it has gone, or its
+// stream errored.
+struct PageRequestBodyEnded {
+  uint64_t number = 0;
+  bool errored = false;
 };
 
 // What a document that the Page has made is made of.
@@ -1034,12 +1071,18 @@ struct FrameFromPage {
   PageCacheStorageCall cache_storage_call;
   // kIndexedDb.
   PageIndexedDbCall indexed_db_call;
+  // kStorageBuckets.
+  PageStorageBucketCall storage_bucket_call;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
   // kWorkerStarted.
   PageWorkerStarted worker_started;
   // kContextGone.
   uint64_t gone_context = kNoDocument;
+  // kRequestBodyPart.
+  PageRequestBodyPart request_body_part;
+  // kRequestBodyEnded.
+  PageRequestBodyEnded request_body_ended;
   // kSameDocumentNavigation: the document's new URL.
   std::string same_document_url;
   // kStorageBind.
@@ -1093,6 +1136,10 @@ struct FrameFromSession {
   PageCacheStorageAnswer cache_storage_answer;
   // kIndexedDbCallback.
   PageIndexedDbCallback indexed_db_callback;
+  // kStorageBucketsAnswer.
+  PageStorageBucketAnswer storage_bucket_answer;
+  // kRequestBodyCredit.
+  PageCredit request_body_credit;
   // kStorageEntries.
   PageStorageEntries storage_entries;
   // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
@@ -1130,6 +1177,10 @@ std::string EncodeKnownGap(std::string_view name);
 std::string EncodeRequest(uint64_t document, const PageRequest& request);
 std::string EncodeCancel(uint64_t number);
 std::string EncodeCredit(const PageCredit& credit);
+// `part`'s bytes are at most kBodyWindow bytes.
+std::string EncodeRequestBodyPart(const PageRequestBodyPart& part);
+std::string EncodeRequestBodyEnded(const PageRequestBodyEnded& ended);
+std::string EncodeRequestBodyCredit(const PageCredit& credit);
 std::string EncodeGetCookies(uint64_t document, uint64_t question);
 // `line` is at most kMaxCookieLineSize bytes.
 std::string EncodeSetCookie(uint64_t document, std::string_view line);
@@ -1164,6 +1215,11 @@ std::string EncodeCacheStorage(uint64_t document,
                                const PageCacheStorageCall& call);
 // The frame of a call of document `document`'s IndexedDB.
 std::string EncodeIndexedDb(uint64_t document, const PageIndexedDbCall& call);
+// The frame of a call of document `document`'s Storage Buckets API.
+std::string EncodeStorageBuckets(uint64_t document,
+                                 const PageStorageBucketCall& call);
+// The frame of an answer of the Storage Buckets API, which fits.
+std::string EncodeStorageBucketsAnswer(const PageStorageBucketAnswer& answer);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
 std::string EncodeWorkerStarted(const PageWorkerStarted& started);

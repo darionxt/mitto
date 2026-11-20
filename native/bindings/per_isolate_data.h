@@ -127,9 +127,10 @@ class PerIsolateData {
   }
 
   // Whether the Page's context is a secure context, which decides whether it
-  // gets the members that Web IDL's [SecureContext] puts behind one. A Page's
-  // first document is about:blank, which is. The document it loads decides it
-  // for the context made for that document.
+  // gets the members that Web IDL's [SecureContext] puts behind one. Each
+  // document's origin decides it for the context made for that document, and
+  // a Session's Page's first, about:blank with an opaque origin, is none. The
+  // Page program's command line keeps it, as a file: page is one.
   bool secure_context() const { return secure_context_; }
   void set_secure_context(bool secure_context) {
     secure_context_ = secure_context;
