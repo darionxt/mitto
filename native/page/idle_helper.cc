@@ -198,3 +198,5 @@ void IdleHelper::RunTask(EventLoop::IdleTask task) {
 }
 
 }  // namespace mitto
+
+// Trial of the sanitizer jobs that a pull request runs. Not for merging.
