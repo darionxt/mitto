@@ -67,6 +67,7 @@ class ClassicPendingScript final : public PendingScript, public ResourceClient {
 
   // PendingScript:
   bool IsExternal() const override;
+  bool IsModule() const override;
   bool IsReady() const override;
   bool IsEligibleForLowPriorityAsyncScriptExecution() const override;
 
@@ -83,7 +84,6 @@ class ClassicPendingScript final : public PendingScript, public ResourceClient {
 
   // PendingScript:
   bool HasScript() const override;
-  bool IsModule() const override;
   void RunScript() override;
   // ClassicPendingScript::DisposeInternal(): a script that goes lets go of
   // its fetch, which is cancelled when nothing else uses it.

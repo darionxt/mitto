@@ -232,6 +232,7 @@ bool HTMLLinkElement::ShouldLoadLink() const {
 }
 
 void HTMLLinkElement::Abort() {
+  ++load_generation_;
   if (Resource* const resource = pending_resource_.Get()) {
     pending_resource_ = nullptr;
     resource->RemoveClient(this);
@@ -515,9 +516,14 @@ void HTMLLinkElement::NotifyFinished(Resource& resource) {
   }
   tasks->PostTask(
       TaskType::kNetworking,
-      base::BindOnce([](const cppgc::Persistent<HTMLLinkElement>& link,
-                        bool loaded) { link->DispatchLinkEvent(loaded); },
-                     cppgc::Persistent<HTMLLinkElement>(this), loaded));
+      base::BindOnce(
+          [](const cppgc::Persistent<HTMLLinkElement>& link,
+             uint64_t generation, bool loaded) {
+            if (link->load_generation_ == generation) {
+              link->DispatchLinkEvent(loaded);
+            }
+          },
+          cppgc::Persistent<HTMLLinkElement>(this), load_generation_, loaded));
 }
 
 void HTMLLinkElement::DispatchLinkEvent(bool loaded) {
