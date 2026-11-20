@@ -125,11 +125,15 @@ class ScriptRunner final : public base::TaskObserver {
   // promise of the old context fail, as DevTools' do when a page navigates,
   // and the old window's timers and fetches stop. The new window's
   // performance.timeOrigin is `navigation_start`, and its
-  // navigator.connection gives `connection`.
-  Document& CommitDocument(uint64_t navigation,
-                           const GURL& url,
-                           base::TimeTicks navigation_start,
-                           const PageConnection& connection);
+  // navigator.connection gives `connection`. With `xml_content_type`, the
+  // document is an XMLDocument of that MIME type, as Blink's DocumentInit
+  // makes one for an XML response, and otherwise an HTMLDocument.
+  Document& CommitDocument(
+      uint64_t navigation,
+      const GURL& url,
+      base::TimeTicks navigation_start,
+      const PageConnection& connection,
+      const std::optional<std::u16string>& xml_content_type = std::nullopt);
   // How the current window's document loads, which its document's loading
   // fills in, and performance.timing and window.chrome read.
   DocumentLoadTiming& document_load_timing() {

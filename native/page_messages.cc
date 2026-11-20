@@ -214,7 +214,7 @@ std::string EncodeDocumentFrame(PageMessage type,
 
 bool IsRequestKind(uint8_t kind) {
   return kind >= static_cast<uint8_t>(PageRequestKind::kScript) &&
-         kind <= static_cast<uint8_t>(PageRequestKind::kFavicon);
+         kind <= static_cast<uint8_t>(PageRequestKind::kModuleJson);
 }
 
 // The flags of a request.
@@ -787,12 +787,15 @@ std::optional<std::string> CheckRequestModes(const PageRequest& request) {
       }
       return std::nullopt;
     case PageRequestKind::kXhr:
-    case PageRequestKind::kFont:
     case PageRequestKind::kModule:
+    case PageRequestKind::kModuleJson:
       if (!is_default_mode && mode != PageRequestMode::kCors) {
         return "a request in a mode that its kind never has";
       }
       return std::nullopt;
+    // A font that a link preloads without crossorigin goes in mode no-cors,
+    // where @font-face's goes in cors.
+    case PageRequestKind::kFont:
     case PageRequestKind::kScript:
     case PageRequestKind::kImage:
     case PageRequestKind::kStyle:

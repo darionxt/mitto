@@ -62,6 +62,8 @@ source_set("dom") {
     "character_data.h",
     "child_list_mutation_scope.cc",
     "child_list_mutation_scope.h",
+    "classic_pending_script.cc",
+    "classic_pending_script.h",
     "comment.cc",
     "comment.h",
     "compression_format.cc",
@@ -97,6 +99,8 @@ source_set("dom") {
     "document.h",
     "document_fragment.cc",
     "document_fragment.h",
+    "document_kinds.cc",
+    "document_kinds.h",
     "document_load_timing.cc",
     "document_load_timing.h",
     "document_named_properties.cc",
@@ -135,6 +139,8 @@ source_set("dom") {
     "dom_window_storage.h",
     "dom_timer.cc",
     "dom_timer.h",
+    "dynamic_module_resolver.cc",
+    "dynamic_module_resolver.h",
     "element.cc",
     "element.h",
     "entry.cc",
@@ -316,6 +322,8 @@ source_set("dom") {
     "image_loader.h",
     "html_unknown_element.cc",
     "html_unknown_element.h",
+    "import_map.cc",
+    "import_map.h",
     "indexed_db_host.h",
     "inflate_transformer.cc",
     "inflate_transformer.h",
@@ -325,6 +333,8 @@ source_set("dom") {
     "keyboard.h",
     "keyboard_layout_map.cc",
     "keyboard_layout_map.h",
+    "libxml_tree_builder.cc",
+    "libxml_tree_builder.h",
     "location.cc",
     "location.h",
     "lock.cc",
@@ -362,6 +372,22 @@ source_set("dom") {
     "mime_type_array.h",
     "miscellaneous_operations.cc",
     "miscellaneous_operations.h",
+    "modulator.cc",
+    "modulator.h",
+    "module_map.cc",
+    "module_map.h",
+    "module_pending_script.cc",
+    "module_pending_script.h",
+    "module_record.cc",
+    "module_record.h",
+    "module_request.cc",
+    "module_request.h",
+    "module_script.cc",
+    "module_script.h",
+    "module_script_loader.cc",
+    "module_script_loader.h",
+    "module_tree_linker.cc",
+    "module_tree_linker.h",
     "mutation_observer.cc",
     "mutation_observer.h",
     "mutation_record.cc",
@@ -413,6 +439,10 @@ source_set("dom") {
     "page_reveal_event.h",
     "page_transition_event.cc",
     "page_transition_event.h",
+    "parsed_specifier.cc",
+    "parsed_specifier.h",
+    "pending_import_map.cc",
+    "pending_import_map.h",
     "pending_script.cc",
     "pending_script.h",
     "performance.cc",
@@ -455,6 +485,8 @@ source_set("dom") {
     "pop_state_event.h",
     "popover_data.cc",
     "popover_data.h",
+    "preloaded_fetch.cc",
+    "preloaded_fetch.h",
     "presentation_availability.cc",
     "presentation_availability.h",
     "presentation_request.cc",
@@ -497,6 +529,8 @@ source_set("dom") {
     "readable_stream_default_reader.h",
     "readable_stream_generic_reader.cc",
     "readable_stream_generic_reader.h",
+    "referrer_script_info.cc",
+    "referrer_script_info.h",
     "request.cc",
     "request.h",
     "resolved_url.cc",
@@ -517,6 +551,8 @@ source_set("dom") {
     "screen_orientation.h",
     "script_element_base.cc",
     "script_element_base.h",
+    "script_fetch_options.cc",
+    "script_fetch_options.h",
     "script_loader.cc",
     "script_loader.h",
     "script_values.cc",
@@ -591,6 +627,8 @@ source_set("dom") {
     "time_clamper.h",
     "toggle_event.cc",
     "toggle_event.h",
+    "transferable_streams.cc",
+    "transferable_streams.h",
     "transform_stream.cc",
     "transform_stream.h",
     "transform_stream_default_controller.cc",
@@ -635,8 +673,16 @@ source_set("dom") {
     "writable_stream_default_writer.h",
     "xml_document.cc",
     "xml_document.h",
+    "xml_dom_builder.cc",
+    "xml_dom_builder.h",
+    "xml_errors.cc",
+    "xml_errors.h",
     "xml_serializer.cc",
     "xml_serializer.h",
+    "xml_tree_builder.cc",
+    "xml_tree_builder.h",
+    "xml_tree_viewer.cc",
+    "xml_tree_viewer.h",
   ]
 
   # What //mitto/bindings:generate_bindings writes for these classes and for
@@ -658,6 +704,8 @@ source_set("dom") {
     "//mitto:string_hasher",
     "//mitto/encoding",
     "//mitto/html:tokenizer",
+    "//mitto/xml:libxml",
+    "//mitto/xml:xml_ffi",
     "//net/base:registry_controlled_domains",
     "//third_party/icu",
     "//third_party/zlib",
@@ -701,6 +749,29 @@ if (use_libfuzzer) {
       "//mitto/page:v8_snapshot",
       "//third_party/icu",
       "//v8",
+    ]
+  }
+
+  # Feeds any XML to the code that drives libxml2 and the Rust xml crate, on
+  # V8's C++ heap as the Page program has it.
+  fuzzer_test("xml_parser_fuzzer") {
+    sources = [ "//mitto/test/xml_parser_fuzzer.cc" ]
+    deps = [
+      ":dom",
+      "//base",
+      "//mitto/page:icu_data",
+      "//mitto/page:v8_snapshot",
+      "//third_party/icu",
+      "//v8",
+    ]
+  }
+
+  # What the runtime-fuzz build builds: both fuzz targets on V8's heap.
+  group("runtime_fuzzers") {
+    testonly = true
+    deps = [
+      ":html_tree_builder_fuzzer",
+      ":xml_parser_fuzzer",
     ]
   }
 }

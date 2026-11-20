@@ -57,8 +57,12 @@ uint64_t PageRequests::Start(PageRequest request,
   // ResourceFetcher::RecordResourceTimingInfo(), when the page asks.
   Timed& timed = open.timed.emplace();
   timed.start_time = base::TimeTicks::Now();
-  timed.initiator_type =
-      request.kind == PageRequestKind::kScript ? u"script" : u"fetch";
+  // A module's initiator type is "script" too, as ModuleScriptLoader sets it.
+  timed.initiator_type = request.kind == PageRequestKind::kScript ||
+                                 request.kind == PageRequestKind::kModule ||
+                                 request.kind == PageRequestKind::kModuleJson
+                             ? u"script"
+                             : u"fetch";
   timed.url = base::UTF8ToUTF16(request.url);
   timed.render_blocking = render_blocking;
   timed.window = &Window::Current();
