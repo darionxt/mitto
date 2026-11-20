@@ -34,8 +34,9 @@ class BytesUploader final : public cppgc::GarbageCollected<BytesUploader>,
   // been read stays as it is, as Blink's does when the network service never
   // asked for the body.
   void OnRequestGone();
-  // The request goes with its window, whose context is going: nothing more
-  // is read, and no script runs.
+  // Stops with no word to the consumer, so that no script runs: when the
+  // request goes with its window, whose context is going, or before an abort
+  // cancels the stream with its reason.
   void Detach();
 
   // BytesConsumer::Client:

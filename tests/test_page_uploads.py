@@ -149,6 +149,19 @@ _UPLOADS = {
     ),
 }
 
+# A chunk larger than what the Session and //net take of a stream, so that its rest waits for room when the request is
+# aborted. It sends more than the capture server, which opens no window, lets an HTTP/2 connection carry, so it runs on a
+# connection of its own.
+_UPLOADS_HELD_BACK = {
+    "an abort while a chunk waits for room": (
+        "const ac = new AbortController(); let cancelled = 'no'; const body = new ReadableStream({ pull(c) { "
+        "c.enqueue(new Uint8Array(1000000)); return new Promise(() => {}); }, cancel(reason) { cancelled = "
+        "String(reason); } }); const p = fetch('/case/fetch-post-stream', post(body, { signal: ac.signal })); "
+        "setTimeout(() => ac.abort('stop'), 200); const s = await settle(p); return [s, cancelled].join(' / ')",
+        "value: rejected stop / stop",
+    ),
+}
+
 # The same over HTTP/1.1, where Chrome sends no stream: //net refuses the request before anything goes, so the stream is
 # never read.
 _UPLOADS_OVER_HTTP1 = {
@@ -243,6 +256,16 @@ def test_a_stream_body_goes_as_in_chrome(capture: CaptureServer, protocol: str) 
     # header lines, as Blink's use-CORS-preflight flag has it, and so does one of mode same-origin.
     assert "OPTIONS /case/fetch-post-json-cross-site" in requests
     assert "POST /case/fetch-post-json-cross-site" in requests
+
+
+@pytest.mark.usefixtures("page_program")
+@pytest.mark.parametrize("protocol", [HTTP2, HTTP3])
+def test_an_abort_gives_a_stream_its_reason_while_a_chunk_waits_as_in_chrome(
+    capture: CaptureServer, protocol: str
+) -> None:
+    assert _run(capture, protocol, _UPLOADS_HELD_BACK) == {
+        name: chrome for name, (_, chrome) in _UPLOADS_HELD_BACK.items()
+    }
 
 
 @pytest.mark.usefixtures("page_program")

@@ -314,10 +314,12 @@ void FetchLoader::Abort() {
     resolver_.Reset();
   }
   // "If request's body is non-null and is readable, then cancel request's
-  // body with error", once its upload has stopped, so that the end that the
-  // cancel gives the upload goes nowhere.
+  // body with error", once its upload has stopped without a word to the
+  // stream, so that the cancel gives the stream's source the reason, even
+  // while a chunk waits for room, and the end that it gives the upload goes
+  // nowhere.
   if (uploader_) {
-    uploader_->OnRequestGone();
+    uploader_->Detach();
     uploader_.Clear();
   }
   if (ReadableStream* const stream = upload_stream_.Get()) {
