@@ -20,10 +20,12 @@
 #include "mitto/dom/cache_storage_answers.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_exception.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/quota_exceeded_error.h"
 #include "mitto/dom/storage_bucket.h"
 #include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -89,30 +91,56 @@ using Settle =
                             v8::Local<v8::Promise::Resolver> resolver,
                             PageStorageBucketAnswer answer)>;
 
-// Asks the Session, and settles the promise of `resolver` with what `settle`
-// makes of the answer in a task of its own, unless the window has gone.
+// Asks the Session from a task of its own, and settles the promise of
+// `resolver` with what `settle` makes of the answer in a task of its own,
+// unless the window has gone. Chrome's browser acts on a call of
+// BucketManagerHost only after hops through its quota manager's threads, by
+// which time what the page's task sent beside it has arrived, such as the
+// commit that a transaction sends once the task's microtasks have run: a
+// bucket that the call deletes closes its connections after that commit, as
+// in Chrome, and not before it.
 void Ask(v8::Isolate* isolate,
          v8::Local<v8::Promise::Resolver> resolver,
          StorageBucketHost& host,
          PageStorageBucketCall call,
          Settle settle) {
-  host.Ask(std::move(call),
-           base::BindOnce(
-               [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,
-                  v8::Global<v8::Promise::Resolver> resolver_handle,
-                  Settle settle, PageStorageBucketAnswer answer) {
-                 RunInCacheContext(isolate, context_handle,
-                                   [&](v8::Local<v8::Context> context) {
-                                     std::move(settle).Run(
-                                         isolate, context,
-                                         resolver_handle.Get(isolate),
-                                         std::move(answer));
-                                   });
-               },
-               isolate,
-               v8::Global<v8::Context>(isolate, isolate->GetCurrentContext()),
-               v8::Global<v8::Promise::Resolver>(isolate, resolver),
-               std::move(settle)));
+  Window& window = Window::Current();
+  auto ask = base::BindOnce(
+      [](v8::Isolate* isolate, cppgc::WeakPersistent<Window> window,
+         cppgc::WeakPersistent<Document> document, StorageBucketHost* host,
+         PageStorageBucketCall call, v8::Global<v8::Context> context_handle,
+         v8::Global<v8::Promise::Resolver> resolver_handle, Settle settle) {
+        // Nothing goes once the document's context has, as its remote goes
+        // with it.
+        if (!window || !window->HasContext() || !document ||
+            &window->GetDocument() != document.Get()) {
+          return;
+        }
+        host->Ask(
+            std::move(call),
+            base::BindOnce(
+                [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,
+                   v8::Global<v8::Promise::Resolver> resolver_handle,
+                   Settle settle, PageStorageBucketAnswer answer) {
+                  RunInCacheContext(isolate, context_handle,
+                                    [&](v8::Local<v8::Context> context) {
+                                      std::move(settle).Run(
+                                          isolate, context,
+                                          resolver_handle.Get(isolate),
+                                          std::move(answer));
+                                    });
+                },
+                isolate, std::move(context_handle), std::move(resolver_handle),
+                std::move(settle)));
+      },
+      isolate, cppgc::WeakPersistent<Window>(&window),
+      cppgc::WeakPersistent<Document>(&window.GetDocument()), &host,
+      std::move(call),
+      v8::Global<v8::Context>(isolate, isolate->GetCurrentContext()),
+      v8::Global<v8::Promise::Resolver>(isolate, resolver), std::move(settle));
+  EventLoop::Get()
+      ->TaskRunner(TaskType::kMiscPlatformAPI)
+      ->PostTask(FROM_HERE, std::move(ask));
 }
 
 }  // namespace

@@ -128,22 +128,44 @@ jobs:
           key: runtime-${{ matrix.runner }}-${{ hashFiles('native/**', 'tools/workspace/**') }}
       - id: tag
         run: echo "tag=$(cat tools/workspace/chromium_tag)" >> "$GITHUB_OUTPUT"
-      # What the export compiles to changes only with tools/workspace, so main and pull requests reuse the build
-      # directory that main saved first with it, and rebuild only native/. The nightly run builds from nothing, which
-      # shows a mistake in an incremental build.
+      # On Windows every compile and link command names the image's MSVC by its version: Chromium's
+      # build/toolchain/win/setup_toolchain.py turns the directories that vcvarsall.bat sets into -imsvc and -libpath
+      # flags. Over a build directory saved with another MSVC, ninja reruns every step, so there the keys of the build
+      # directories below also name the MSVC and the image. Linux takes its sysroot from the export, and on macOS the
+      # build links Xcode's SDK into the build directory, so their commands name neither and these outputs stay empty.
+      - id: toolchain
+        if: runner.os == 'Windows' && !inputs.from-nothing
+        shell: pwsh
+        run: |
+          # The Visual Studio 2026 that Chromium's build/vs_toolchain.py finds, and the MSVC that vcvarsall.bat picks.
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -version '[18.0,19.0)' -property installationPath
+          $msvc = (Get-Content -Raw "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          "msvc=-msvc$msvc" >> $env:GITHUB_OUTPUT
+          "image=-image$env:ImageVersion" >> $env:GITHUB_OUTPUT
+      # What the export compiles to changes only with tools/workspace, and on Windows with the image, so main and pull
+      # requests reuse the build directory that main saved first with them, and rebuild only native/. A run on an image
+      # that main has not built on yet starts from main's build directory with the same MSVC, or else from another of
+      # main's, and ninja rebuilds what differs. The nightly run builds from nothing, which shows a mistake in an
+      # incremental build.
       - id: cached-objects
         if: steps.cached-library.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
-          key: native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
+          key: native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}${{ steps.toolchain.outputs.msvc }}${{ steps.toolchain.outputs.image }}
+          restore-keys: |
+            native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}${{ steps.toolchain.outputs.msvc }}-
+            native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
       # The same for the Runtime's build directory.
       - id: cached-runtime-objects
         if: steps.cached-runtime.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/runtime
-          key: runtime-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
+          key: runtime-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}${{ steps.toolchain.outputs.msvc }}${{ steps.toolchain.outputs.image }}
+          restore-keys: |
+            runtime-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}${{ steps.toolchain.outputs.msvc }}-
+            runtime-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
       # A build on Windows needs the Windows SDK that the Engine Release asks for, which the image may lack.
       - if: runner.os == 'Windows' && (steps.cached-library.outputs.cache-hit != 'true' || steps.cached-runtime.outputs.cache-hit != 'true')
         uses: ./.github/actions/install-windows-sdk
@@ -171,7 +193,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/native-core
           key: ${{ steps.cached-library.outputs.cache-primary-key }}
-      # Only main saves a build directory, the first time it builds with a tools/workspace.
+      # Only main saves a build directory, the first time it builds with a tools/workspace, and on Windows with an image:
+      # one restored from another image's directory is saved again, under this image's key.
       - if: steps.cached-library.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

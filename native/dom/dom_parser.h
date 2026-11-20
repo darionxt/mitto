@@ -4,8 +4,8 @@
 // its parser's scripting flag is off.
 //
 // An HTML document is parsed as document.open(), write() and close() would
-// parse it, with declarative shadow roots refused. The XML types are a Known
-// Gap until the XML parser comes, and throw as the Known Gap did.
+// parse it, with declarative shadow roots refused, and an XML document with
+// the XML parser that the runtime-enabled features pick, as Blink's does.
 //
 // Upstream: third_party/blink/renderer/core/xml/dom_parser.h
 // Upstream: third_party/blink/renderer/core/xml/dom_parser.cc
