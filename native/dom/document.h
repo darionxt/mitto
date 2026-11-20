@@ -374,7 +374,14 @@ class Document : public Node {
   // document.
   void SetContent(const std::u16string& content);
   CompatibilityMode GetCompatibilityMode() const { return compat_mode_; }
-  void SetCompatibilityMode(CompatibilityMode mode) { compat_mode_ = mode; }
+  // Sets the mode unless it is locked, as a text, JSON, image or media
+  // document's no-quirks mode is.
+  void SetCompatibilityMode(CompatibilityMode mode) {
+    if (!compat_mode_locked_) {
+      compat_mode_ = mode;
+    }
+  }
+  void LockCompatibilityMode() { compat_mode_locked_ = true; }
   bool InQuirksMode() const {
     return compat_mode_ == CompatibilityMode::kQuirks;
   }
@@ -505,7 +512,9 @@ class Document : public Node {
   MarkupPosition EventHandlerPosition() const;
   // Document::OpenForNavigation(): a parser for the document's response,
   // which `client` feeds, with the document loading.
-  DocumentParser& OpenForNavigation(DocumentParser::Client& client);
+  DocumentParser& OpenForNavigation(
+      DocumentParser::Client& client,
+      DocumentParser::Kind kind = DocumentParser::Kind::kHtml);
   // Document::CancelParsing(), as stopping the document's loading does: the
   // parser goes, the document is complete, and open() and write() do nothing
   // from then on if a parser was parsing.
@@ -644,18 +653,17 @@ class Document : public Node {
     state_preserving_atomic_move_in_progress_ = value;
   }
   void SetPopoverRemovalRoot(Node* root) { popover_removal_root_ = root; }
+  // The MIME type that contentType gives, which an XML document and the loader
+  // of a response set as Blink's SetMimeType() does.
+  void SetContentType(std::u16string content_type) {
+    content_type_ = std::move(content_type);
+  }
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
   // A new document of the same class, which a copy starts from, as Blink's
   // CloneDocumentWithoutChildren() makes it.
   virtual Document* CloneDocumentWithoutChildren() const;
-  // The MIME type that contentType gives, which an XML document sets as Blink's
-  // SetMimeType() does.
-  void SetContentType(std::u16string content_type) {
-    content_type_ = std::move(content_type);
-  }
-
  private:
   std::u16string BodyAttribute(std::u16string_view name) const;
   // Blink's SetBodyAttribute(): nothing for a frameset, no body, or the value
@@ -675,7 +683,9 @@ class Document : public Node {
   void Close();
   // Document::ImplicitOpen(): the document emptied and loading, with a new
   // parser.
-  DocumentParser& ImplicitOpen(DocumentParser::Client* client);
+  DocumentParser& ImplicitOpen(
+      DocumentParser::Client* client,
+      DocumentParser::Kind kind = DocumentParser::Kind::kHtml);
   void DetachParser();
   // Document::BeginLifecycleUpdatesIfRenderingReady(): the window begins
   // rendering once no script blocks it.
@@ -713,6 +723,7 @@ class Document : public Node {
   const base::TimeTicks start_time_ = base::TimeTicks::Now();
   bool design_mode_ = false;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
+  bool compat_mode_locked_ = false;
   std::u16string url_ = u"about:blank";
   std::string encoding_ = "UTF-8";
   bool encoding_detected_heuristically_ = false;

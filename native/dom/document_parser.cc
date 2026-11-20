@@ -8,18 +8,23 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ref.h"
 #include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_kinds.h"
 #include "mitto/dom/document_write_intervention.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/resource.h"
 #include "mitto/dom/script_element_base.h"
 #include "mitto/dom/script_loader.h"
+#include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
+#include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
@@ -82,8 +87,9 @@ class DocumentParser::InsertionPointRecord {
   const raw_ref<HtmlDocumentParser> tree_;
 };
 
-DocumentParser::DocumentParser(Document& document, Client* client)
+DocumentParser::DocumentParser(Document& document, Client* client, Kind kind)
     : document_(&document),
+      kind_(kind),
       client_(client),
       created_by_script_(!client),
       references_(
@@ -95,6 +101,8 @@ DocumentParser::~DocumentParser() = default;
 
 void DocumentParser::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
+  visitor->Trace(json_pre_);
+  visitor->Trace(image_resource_);
   visitor->Trace(references_);
   visitor->Trace(parser_blocking_script_);
   scripts_after_parsing_.Trace(visitor);
@@ -113,16 +121,91 @@ void DocumentParser::DidReceiveData() {
   SchedulePumpTokenizer();
 }
 
+void DocumentParser::AppendBytes(const std::string& bytes) {
+  if (IsDetached()) {
+    return;
+  }
+  if (kind_ == Kind::kText && !started_) {
+    started_ = true;
+    tree_->StartTextDocument();
+    return;
+  }
+  if (kind_ != Kind::kImage) {
+    return;
+  }
+  if (!image_resource_) {
+    started_ = true;
+    image_resource_ = bindings::MakeGarbageCollected<Resource>(
+        ResourceType::kImage, GURL(document_->UrlForBinding()),
+        FetchMode::kNoCors, FetchCredentialsMode::kOmit);
+    BuildImageDocument(*document_, *image_resource_);
+    if (IsStopped()) {
+      return;
+    }
+    // The response's type; an image takes no notice of its status.
+    image_resource_->ResponseReceived(
+        0, base::UTF16ToUTF8(document_->ContentType()));
+  }
+  // Nothing more goes to an image that has failed to decode.
+  if (image_resource_->GetStatus() != ResourceStatus::kDecodeError) {
+    image_resource_->AppendData(bytes);
+  }
+}
+
 void DocumentParser::AppendData(std::u16string_view text) {
-  if (!IsDetached()) {
-    tree_->Append(text);
+  if (IsDetached()) {
+    return;
+  }
+  switch (kind_) {
+    case Kind::kHtml:
+    case Kind::kText:
+      tree_->Append(text);
+      return;
+    case Kind::kJson:
+      // Each piece that decodes to text is a text node of its own, as
+      // insertAdjacentText() adds it.
+      if (!text.empty()) {
+        if (!started_) {
+          started_ = true;
+          json_pre_ = &BuildJsonDocument(*document_);
+        }
+        json_pre_->ParserAppendChild(
+            Text::Create(*document_, std::u16string(text)));
+      }
+      return;
+    case Kind::kImage:
+    case Kind::kMedia:
+      return;
   }
 }
 
 void DocumentParser::FinishData() {
-  if (!IsDetached()) {
-    tree_->Finish();
+  if (IsDetached()) {
+    return;
   }
+  // A media document builds its tree at the end, and an image or JSON
+  // document that has started its tree takes no end of input, which would
+  // make the HTML parser's: an empty JSON body gives what HTML's empty input
+  // gives, and an empty image a document with no children, as in Chrome.
+  if (kind_ == Kind::kMedia) {
+    BuildMediaDocument(*document_);
+    return;
+  }
+  if (kind_ == Kind::kImage) {
+    if (image_resource_) {
+      // ImageDocumentParser::Finish(): all of the body is the image's.
+      const cppgc::Persistent<Resource> content = image_resource_.Get();
+      content->Finish(0);
+      if (!IsDetached()) {
+        ImageDocumentLoaded(*document_, *content);
+      }
+    }
+    return;
+  }
+  if (kind_ == Kind::kJson && started_) {
+    return;
+  }
+  tree_->Finish();
 }
 
 void DocumentParser::Finish() {

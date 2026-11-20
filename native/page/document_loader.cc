@@ -19,6 +19,7 @@
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/encoding/text_resource_decoder_builder.h"
 #include "mitto/header_rules.h"
+#include "mitto/mime_types.h"
 #include "mitto/page/page_frame.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
@@ -121,15 +122,52 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // sniffs one.
   const MimeTypeAndCharset content_type =
       GetMimeTypeAndCharset(HeaderField(response.headers, "content-type"));
-  decoder_ = BuildTextResourceDecoder(
-      url_,
-      content_type.mime_type.empty() ? "text/html" : content_type.mime_type,
-      content_type.charset, document_->DefaultView()->Start().locale,
-      /*parent=*/nullptr);
+  std::string mime_type =
+      content_type.mime_type.empty() ? "text/html" : content_type.mime_type;
+  // URLLoader::StartReading(): Chrome's network service gives a feed's
+  // response as text/plain.
+  if (mime_type == "application/rss+xml" ||
+      mime_type == "application/atom+xml") {
+    mime_type = "text/plain";
+  }
+  decoder_ = BuildTextResourceDecoder(url_, mime_type, content_type.charset,
+                                      document_->DefaultView()->Start().locale,
+                                      /*parent=*/nullptr);
   document_->SetDidDispatchLoadEvent(base::BindRepeating(
       &DocumentLoader::DidDispatchLoadEvent, weak_factory_.GetWeakPtr()));
+  // DocumentInit::CreateDocument(): the kind of document of the MIME type,
+  // whose contentType it is. A text, JSON, image or media document stays in
+  // no-quirks mode. XML documents are a Known Gap, which the HTML parser
+  // reads.
+  DocumentParser::Kind parser_kind = DocumentParser::Kind::kHtml;
+  switch (DocumentKindOf(mime_type)) {
+    case DocumentKind::kXhtml:
+    case DocumentKind::kSvg:
+    case DocumentKind::kXml:
+      break;
+    case DocumentKind::kHtml:
+      document_->SetContentType(base::ASCIIToUTF16(mime_type));
+      break;
+    case DocumentKind::kText:
+      parser_kind = DocumentParser::Kind::kText;
+      break;
+    case DocumentKind::kJson:
+      parser_kind = DocumentParser::Kind::kJson;
+      break;
+    case DocumentKind::kImage:
+      parser_kind = DocumentParser::Kind::kImage;
+      break;
+    case DocumentKind::kMedia:
+      parser_kind = DocumentParser::Kind::kMedia;
+      break;
+  }
+  if (parser_kind != DocumentParser::Kind::kHtml) {
+    document_->SetContentType(base::ASCIIToUTF16(mime_type));
+    document_->SetCompatibilityMode(Document::CompatibilityMode::kNoQuirks);
+    document_->LockCompatibilityMode();
+  }
   // Document::OpenForNavigation(), with the document loading.
-  parser_ = &document_->OpenForNavigation(*this);
+  parser_ = &document_->OpenForNavigation(*this, parser_kind);
   // DocumentLoader::DidCommitNavigation(): the first language of the
   // response's Content-Language, without HTML spaces. A header's value is
   // Latin-1.
@@ -231,7 +269,13 @@ bool DocumentLoader::FeedParser() {
   if (!waiting_body_.empty()) {
     const std::string bytes = std::move(waiting_body_.front());
     waiting_body_.pop_front();
-    AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
+    if (!bytes.empty()) {
+      parser_->AppendBytes(bytes);
+    }
+    // Starting the tree may have stopped the parser.
+    if (parser_) {
+      AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
+    }
     requests_->TookBody(number_, bytes.size());
     return true;
   }
