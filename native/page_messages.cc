@@ -920,12 +920,11 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   if (request.no_referrer && !request.referrer.empty()) {
     return base::unexpected("a request with no referrer and a referrer");
   }
-  if (request.streams_body &&
-      (request.kind != PageRequestKind::kFetch || request.body ||
-       without_body || request.keepalive)) {
+  if (request.streams_body && (request.kind != PageRequestKind::kFetch ||
+                               request.body || without_body)) {
     return base::unexpected(
         "a body that streams on a request that is not a fetch with a method "
-        "that has a body, or that has a body or keepalive");
+        "that has a body, or that has a body");
   }
   if ((request.target != 0) != (request.kind == PageRequestKind::kIframe)) {
     return base::unexpected(

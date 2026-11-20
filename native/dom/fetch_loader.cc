@@ -164,8 +164,11 @@ FetchLoader::~FetchLoader() {
 void FetchLoader::OnStarted(FetchController& controller) {
   controller_ = &controller;
   if (upload_body_) {
+    const v8::HandleScope handle_scope(isolate_);
     uploader_ = bindings::MakeGarbageCollected<BytesUploader>(
-        upload_body_.Get(), controller);
+        upload_body_.Get(), controller,
+        bindings::V8Window::ToWrappable(isolate_,
+                                        context_.Get(isolate_)->Global()));
     upload_body_.Clear();
   }
 }

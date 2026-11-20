@@ -110,6 +110,13 @@ _UPLOADS = {
         "new Request(a); const r = await fetch(b); return [r.status, a.bodyUsed, b.bodyUsed].join()",
         "value: 200,true,true",
     ),
+    "a keepalive fetch of a Request with a stream body": (
+        "let pulls = 0; const body = new ReadableStream({ pull(c) { pulls++; c.enqueue(enc.encode('x')); if (pulls "
+        "=== 2) c.close(); } }); const q = new Request('/case/fetch-post-stream', post(body)); const s = await "
+        "settle(fetch(q, { keepalive: true }).then((r) => r.status)); await tick(); return [s, pulls, body.locked, "
+        "q.bodyUsed].join(' / ')",
+        "value: fulfilled 200 / 2 / true / true",
+    ),
     "a stream body with a Content-Type": (
         "const r = await fetch('/case/fetch-post-stream', post(stream(enc.encode('x')), { headers: { 'Content-Type': "
         "'text/plain' } })); return r.status",
@@ -170,6 +177,13 @@ _UPLOADS_OVER_HTTP1 = {
         "= await settle(fetch('/case/fetch-post-stream', post(body))); await tick(); return [s, pulls, "
         "body.locked].join(' / ')",
         "value: rejected TypeError: Failed to fetch / 1 / true",
+    ),
+    "a keepalive fetch of a Request with a stream body": (
+        "let pulls = 0; const body = new ReadableStream({ pull(c) { pulls++; c.enqueue(enc.encode('x')); if (pulls "
+        "=== 2) c.close(); } }); const q = new Request('/case/fetch-post-stream', post(body)); const s = await "
+        "settle(fetch(q, { keepalive: true }).then((r) => r.status)); await tick(); return [s, pulls, body.locked, "
+        "q.bodyUsed].join(' / ')",
+        "value: rejected TypeError: Failed to fetch / 1 / true / true",
     ),
     "an abort of a stream body": (
         "const ac = new AbortController(); let cancelled = 'no'; const body = new ReadableStream({ pull(c) { "

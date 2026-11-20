@@ -98,7 +98,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           // Only a fetch's body streams, and then none comes with it.
           CHECK(!frame->request.streams_body ||
                 (frame->request.kind == mitto::PageRequestKind::kFetch &&
-                 !frame->request.body && !frame->request.keepalive));
+                 !frame->request.body));
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
           CHECK(base::IsStringUTF8AllowingNoncharacters(
               frame->request.referrer));

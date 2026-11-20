@@ -925,6 +925,9 @@ class PageHost::Request final : public RequestClient {
   // Lets the job go on without this Request, if it is still running, held to
   // the same checks, and still counting among the keepalive requests in
   // flight until it ends.
+  // A body that streams from the document, of which the library does not
+  // have all yet, fails from a later task, as Blink's BytesUploader answers
+  // GetSize() with ERR_FAILED once its context is destroyed.
   void DetachJob() {
     if (job_) {
       job_->Detach(base::BindRepeating(
@@ -932,6 +935,10 @@ class PageHost::Request final : public RequestClient {
              const RequestEvent& event) { return checks->Allows(event); },
           base::Owned(std::make_unique<ResponseChecks>(response_checks_)),
           base::Owned(std::move(keepalive_share_))));
+      if (body_channel_ && !end_written_) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&RunningRequest::FailBody, job_));
+      }
       job_.reset();
     }
   }
