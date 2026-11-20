@@ -1,13 +1,16 @@
 // The link element, which preloads what rel=preload names through its
-// document's ResourceFetcher, as Blink's LinkLoader and PreloadHelper do,
-// and fires load or error at the link once that ends. Style sheets, icons,
-// prefetch and the network hints are later work of #284.
+// document's ResourceFetcher, and the module script that rel=modulepreload
+// names through its window's module map, as Blink's LinkLoader and
+// PreloadHelper do, and fires load or error at the link once that ends.
+// Style sheets, icons, prefetch and the network hints are later work of
+// #284.
 //
 // Upstream: third_party/blink/renderer/core/html/html_link_element.h
 // Upstream: third_party/blink/renderer/core/html/html_link_element.cc
 // Upstream: third_party/blink/renderer/core/html/link_rel_attribute.cc
 // Upstream: third_party/blink/renderer/core/loader/link_loader.cc
 // Upstream: third_party/blink/renderer/core/loader/preload_helper.cc
+// Upstream: third_party/blink/renderer/core/loader/pending_link_preload.cc
 
 #ifndef MITTO_DOM_HTML_LINK_ELEMENT_H_
 #define MITTO_DOM_HTML_LINK_ELEMENT_H_
@@ -17,6 +20,7 @@
 #include <string>
 
 #include "mitto/dom/html_element.h"
+#include "mitto/dom/modulator.h"
 #include "mitto/dom/resource.h"
 #include "v8/include/cppgc/member.h"
 
@@ -72,6 +76,8 @@ class HTMLLinkElement final : public HTMLElement, public ResourceClient {
   void NotifyFinished(Resource& resource) override;
 
  private:
+  class ModulePreloadClient;
+
   // HTMLLinkElement::Process(): loads what the link asks for, in place of
   // what it loaded before.
   void Process();
@@ -81,10 +87,18 @@ class HTMLLinkElement final : public HTMLElement, public ResourceClient {
   void Abort();
   // PreloadHelper::PreloadIfNeeded().
   Resource* PreloadIfNeeded();
+  // PreloadHelper::ModulePreloadIfNeeded(): fetches the single module script
+  // that rel=modulepreload names, which tells module_preload_ once it ends.
+  void ModulePreloadIfNeeded();
+  // LinkLoader::NotifyModuleLoadFinished(), from `client`.
+  void ModulePreloadFinished(ModulePreloadClient& client, bool loaded);
   // HTMLLinkElement::LinkLoaded() and LinkLoadingErrored().
   void DispatchLinkEvent(bool loaded);
 
   cppgc::Member<Resource> pending_resource_;
+  // What a module preload tells of its module script, until Abort() lets it
+  // go, as Blink's PendingLinkPreload does.
+  cppgc::Member<ModulePreloadClient> module_preload_;
   // Whether Process() is adding the resource as a client, which hears of a
   // resource that has ended at once.
   bool adding_client_ = false;

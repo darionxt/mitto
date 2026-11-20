@@ -241,6 +241,86 @@ _CASES["module_lines"] = Case(
     }
 )
 
+# A link with rel=modulepreload fetches a single module script into the module map, without running it, and fires load,
+# or error where the fetch, its as or its integrity fails, whether from the integrity attribute or the import map's. One
+# with no href, or whose media does not match, fetches nothing and fires nothing. What imports the module later takes it
+# from the module map. The page logs each link's outcome in document order once they have come.
+_MODULE_PRELOADS = ("js", "json", "missing", "invalid_as", "no_href", "integrity", "map_integrity", "media")
+_CASES["modulepreload"] = Case(
+    {
+        "/": _page(
+            '<script type=importmap>{"integrity": {"/map-integrity.js": "sha384-foobar"}}</script>'
+            "<script>window.outcomes = {}; function outcome(link, x) { outcomes[link.id] = x; }</script>"
+            + "".join(
+                f"<link rel=modulepreload id={name} {attributes} onload=\"outcome(this, 'load')\""
+                f" onerror=\"outcome(this, 'error')\">"
+                for name, attributes in (
+                    ("js", "href=/preloaded.js"),
+                    ("json", "href=/preloaded.json as=json"),
+                    ("missing", "href=/missing.js"),
+                    ("invalid_as", "href=/invalid-as.js as=image"),
+                    ("no_href", 'href=""'),
+                    ("integrity", "href=/integrity.js integrity=sha384-foobar"),
+                    ("map_integrity", "href=/map-integrity.js"),
+                    ("media", 'href=/media.js media="(max-width: 1px)"'),
+                )
+            )
+            + "<script>addEventListener('load', async () => {"
+            "  for (let i = 0; i < 100 && Object.keys(outcomes).length < 6; ++i) {"
+            "    await new Promise(resolve => setTimeout(resolve, 20));"
+            "  }"
+            f"  for (const name of {list(_MODULE_PRELOADS)}) log(name + ' ' + (outcomes[name] || 'none'));"
+            "  await import('/preloaded.js');"
+            "  const json = await import('/preloaded.json', {with: {type: 'json'}});"
+            "  log('json ' + JSON.stringify(json.default));"
+            "  finish(logged);"
+            "});</script>"
+        ),
+        "/preloaded.js": _js("log('preloaded ran');"),
+        "/preloaded.json": Route('{"a": 1}', _JSON),
+        "/missing.js": _js("", status=404),
+        "/invalid-as.js": _js("log('invalid as ran');"),
+        "/integrity.js": _js("log('integrity ran');"),
+        "/map-integrity.js": _js("log('map integrity ran');"),
+        "/media.js": _js("log('media ran');"),
+    }
+)
+
+# Module preloads that a script inserts, which Chrome's preload scanner never sees, so that the requests are the links'
+# own: a JavaScript module's, and a JSON module's by its as.
+_CASES["modulepreload_lines"] = Case(
+    {
+        "/": _page(
+            "<script>"
+            "Promise.all(["
+            "  ['/inserted.js', 'script'], ['/inserted.json', 'json']"
+            "].map(([href, as]) => new Promise(resolve => {"
+            "  const link = Object.assign(document.createElement('link'), {rel: 'modulepreload', href, as});"
+            "  link.onload = () => resolve(as + ' load'); link.onerror = () => resolve(as + ' error');"
+            "  document.head.append(link);"
+            "}))).then(outcomes => { outcomes.forEach(log); finish(logged); });"
+            "</script>"
+        ),
+        "/inserted.js": _js("log('inserted ran');"),
+        "/inserted.json": Route("{}", _JSON),
+    }
+)
+
+# The document's referrer policy, from a meta element, which a module script, what it imports and a module preload go
+# with where their own policy is the empty string.
+_CASES["module_document_policy"] = Case(
+    {
+        "/": _page(
+            "<meta name=referrer content=origin>"
+            "<link rel=modulepreload href=/policy/preloaded.js>"
+            "<script type=module src=/policy/root.js></script>" + _FINISH_AFTER_LOAD
+        ),
+        "/policy/root.js": _js("import './imported.js'; await import('./preloaded.js'); log('root');"),
+        "/policy/imported.js": _js("log('imported');"),
+        "/policy/preloaded.js": _js("log('preloaded');"),
+    }
+)
+
 _CASES["referrers"] = Case(
     {
         "/": _page(
@@ -349,6 +429,20 @@ _CHROME: dict[str, list[str]] = {
         "later other lib",
         "load complete null",
     ],
+    "module_document_policy": ["imported", "load complete null", "preloaded", "root"],
+    "modulepreload": [
+        "js load",
+        "json load",
+        "missing error",
+        "invalid_as error",
+        "no_href none",
+        "integrity error",
+        "map_integrity error",
+        "media none",
+        "preloaded ran",
+        'json {"a":1}',
+    ],
+    "modulepreload_lines": ["script load", "json load"],
     "order": [
         "c1 loading c1",
         "dep interactive null",
@@ -448,3 +542,46 @@ def test_a_json_module_sends_the_accept_and_sec_fetch_dest_of_its_destination(
         # Chrome sends text/plain,*/*;q=0.5 and text, which a text module gets once Chrome 155, which has no text
         # modules, leaves the Supported Window: until then it goes as a module, a Known Gap.
         assert lines["/t.txt"] == ("*/*", "script")
+
+
+def test_a_module_preload_sends_the_lines_of_its_module_type_and_runs_nothing(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, logged = _run(session, server, "modulepreload_lines")
+    with page:
+        assert logged == _CHROME["modulepreload_lines"]
+        lines = {
+            path: (h.get("accept"), h.get("sec-fetch-dest"), h.get("sec-fetch-mode"), h.get("referer"))
+            for path, h in server.request_headers.items()
+        }
+        # What Chrome 157 sent for links that a script inserted, with the document as the referrer.
+        page_url = server.url()
+        assert lines["/inserted.js"] == ("*/*", "script", "cors", page_url)
+        assert lines["/inserted.json"] == ("application/json,*/*;q=0.5", "json", "cors", page_url)
+
+
+def test_a_module_preload_fetches_each_module_once_for_what_imports_it_later(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, _ = _run(session, server, "modulepreload")
+    with page:
+        requested = [path for path in server.requests if not path.startswith(("/mark/", "/result"))]
+        assert requested.count("/preloaded.js") == 1
+        assert requested.count("/preloaded.json") == 1
+        # An as that names no module type, and a media that does not match, fetch nothing from the link. Chrome's
+        # preload scanner, which a Page does not have, fetches a link in the markup whatever its as: a Known Gap.
+        assert "/invalid-as.js" not in requested
+        assert "/media.js" not in requested
+
+
+def test_a_module_script_its_imports_and_a_module_preload_go_with_the_documents_referrer_policy(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, logged = _run(session, server, "module_document_policy")
+    with page:
+        assert logged == _CHROME["module_document_policy"]
+        # As Chrome 157 sent them, by the meta element's origin policy: what root.js imports names the origin, where
+        # the default policy names root.js.
+        assert {
+            path: referer for path, referer in server.referers.items() if path.startswith("/policy/")
+        } == dict.fromkeys(("/policy/preloaded.js", "/policy/root.js", "/policy/imported.js"), server.url())
