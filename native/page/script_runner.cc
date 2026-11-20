@@ -382,6 +382,11 @@ void ScriptRunner::OnResponseEnded(PageResponseEnded ended) {
                          base::Unretained(requests_.get()), ended));
 }
 
+void ScriptRunner::OnRequestBodyCredit(PageCredit credit) {
+  RunTask(base::BindOnce(&PageRequests::OnRequestBodyCredit,
+                         base::Unretained(requests_.get()), credit));
+}
+
 void ScriptRunner::RunTask(base::OnceClosure task) {
   // Start() failed, and the Page is about to end.
   if (context_.IsEmpty()) {

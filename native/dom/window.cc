@@ -501,21 +501,19 @@ v8::Local<v8::Promise> Window::Fetch(
   }
   FetchRequestData data;
   // A body of bytes that a script gave whole goes as they are. A stream's
-  // would go as the Session reads it, which the Runtime does not do yet, so
-  // such a fetch fails as Chrome's fails over HTTP/1.1, with the stream
-  // locked to the reader of its upload: a Known Gap.
+  // goes as the Session reads it, through a reader of its own that locks it
+  // now, as Blink's DrainAsChunkedDataPipeGetter() does: a chunked upload,
+  // which goes only over HTTP/2 or HTTP/3.
+  BytesConsumer* upload_body = nullptr;
   if (body && request->Method() != "GET" && request->Method() != "HEAD") {
     data.body = body->DrainAsBytes(exception_state);
     if (exception_state.HadException()) {
       return v8::Local<v8::Promise>();
     }
     if (!data.body && body->IsMadeFromReadableStream()) {
-      bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
+      upload_body = bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
           isolate, body->Stream());
-      std::ignore = resolver->Reject(
-          context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                       isolate, "Failed to fetch")));
-      return resolver->GetPromise();
+      data.streams_body = true;
     }
   }
   data.method = request->Method();
@@ -540,7 +538,7 @@ v8::Local<v8::Promise> Window::Fetch(
   auto loader = std::make_unique<FetchLoader>(
       isolate, context, resolver,
       /*credentials=*/request->credentials() == FetchCredentialsMode::kInclude,
-      signal);
+      signal, upload_body, upload_body ? body->Stream() : nullptr);
   // A GET takes what a link preloaded as fetch, as Blink's ThreadableLoader
   // asks the document's ResourceFetcher for a resource of type kRaw, with
   // what Resource::CanReuse() wants of the request beside its mode and

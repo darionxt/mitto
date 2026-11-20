@@ -323,6 +323,11 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
           "be\"same-origin\" or \"cors\"");
       return nullptr;
     }
+    // "Set this's request's use-CORS-preflight flag": Blink's mode
+    // cors-with-forced-preflight, which reads as "cors", even of a request
+    // of mode same-origin. The Session makes the preflight of a fetch()
+    // whose body streams.
+    request->mode_ = FetchMode::kCors;
   }
   if (input_body == body && input_request &&
       (input_request->IsBodyUsed() || input_request->IsBodyLocked())) {

@@ -213,6 +213,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kResponseStarted:
       case PageMessage::kResponseBody:
       case PageMessage::kResponseEnded:
+      case PageMessage::kRequestBodyCredit:
         if (!started_) {
           Refuse("a response came before the start");
           return;
@@ -326,6 +327,8 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kUncaughtError:
       case PageMessage::kRequest:
       case PageMessage::kCredit:
+      case PageMessage::kRequestBodyPart:
+      case PageMessage::kRequestBodyEnded:
       case PageMessage::kGetCookies:
       case PageMessage::kSetCookie:
       case PageMessage::kLoaded:
@@ -461,6 +464,9 @@ class SessionLink final : public PageChannel::Delegate
         return;
       case PageMessage::kResponseEnded:
         runner_->OnResponseEnded(frame.ended);
+        return;
+      case PageMessage::kRequestBodyCredit:
+        runner_->OnRequestBodyCredit(frame.request_body_credit);
         return;
       default:
         NOTREACHED();

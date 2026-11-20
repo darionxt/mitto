@@ -43,6 +43,8 @@ source_set("dom") {
     "byte_stream_tee_engine.h",
     "bytes_consumer.cc",
     "bytes_consumer.h",
+    "bytes_uploader.cc",
+    "bytes_uploader.h",
     "cache.cc",
     "cache.h",
     "cache_body_loader.cc",

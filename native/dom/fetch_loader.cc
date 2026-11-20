@@ -1,6 +1,7 @@
 #include "mitto/dom/fetch_loader.h"
 
 #include <set>
+#include <tuple>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -15,8 +16,10 @@
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/buffering_bytes_consumer.h"
+#include "mitto/dom/bytes_uploader.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/readable_stream.h"
 #include "mitto/dom/response.h"
 #include "mitto/header_rules.h"
 #include "v8/include/v8-context.h"
@@ -134,12 +137,16 @@ FetchLoader::FetchLoader(v8::Isolate* isolate,
                          v8::Local<v8::Context> context,
                          v8::Local<v8::Promise::Resolver> resolver,
                          bool credentials,
-                         AbortSignal* signal)
+                         AbortSignal* signal,
+                         BytesConsumer* upload_body,
+                         ReadableStream* upload_stream)
     : isolate_(isolate),
       context_(isolate, context),
       resolver_(isolate, resolver),
       credentials_(credentials),
-      signal_(signal) {
+      signal_(signal),
+      upload_body_(upload_body),
+      upload_stream_(upload_stream) {
   signal->AddAlgorithm(bindings::MakeGarbageCollected<AbortFetchAlgorithm>(
       weak_factory_.GetWeakPtr()));
 }
@@ -148,10 +155,22 @@ FetchLoader::~FetchLoader() {
   if (BodyLoaderBytesConsumer* const consumer = consumer_.Get()) {
     consumer->DetachLoader();
   }
+  // What is left of an upload goes with the window.
+  if (uploader_) {
+    uploader_->Detach();
+  }
 }
 
 void FetchLoader::OnStarted(FetchController& controller) {
   controller_ = &controller;
+  if (upload_body_) {
+    const v8::HandleScope handle_scope(isolate_);
+    uploader_ = bindings::MakeGarbageCollected<BytesUploader>(
+        upload_body_.Get(), controller,
+        bindings::V8Window::ToWrappable(isolate_,
+                                        context_.Get(isolate_)->Global()));
+    upload_body_.Clear();
+  }
 }
 
 void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
@@ -242,6 +261,10 @@ void FetchLoader::OnResponseEnded(int net_error) {
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = context_.Get(isolate_);
   const v8::Context::Scope context_scope(context);
+  if (uploader_) {
+    uploader_->OnRequestGone();
+    uploader_.Clear();
+  }
   if (!resolver_.IsEmpty()) {
     // Upstream: third_party/blink/renderer/core/fetch/fetch_manager.cc
     std::ignore = resolver_.Get(isolate_)->Reject(
@@ -259,6 +282,15 @@ void FetchLoader::OnResponseEnded(int net_error) {
       consumer->SignalError();
     }
   }
+}
+
+void FetchLoader::OnBodyRoom() {
+  if (!uploader_) {
+    return;
+  }
+  const v8::HandleScope handle_scope(isolate_);
+  const v8::Context::Scope context_scope(context_.Get(isolate_));
+  uploader_->OnRoom();
 }
 
 void FetchLoader::BodyRequested() {}
@@ -284,10 +316,29 @@ void FetchLoader::Abort() {
     std::ignore = resolver_.Get(isolate_)->Reject(context, signal_->Reason());
     resolver_.Reset();
   }
+  // "If request's body is non-null and is readable, then cancel request's
+  // body with error", once its upload has stopped without a word to the
+  // stream, so that the cancel gives the stream's source the reason, even
+  // while a chunk waits for room, and the end that it gives the upload goes
+  // nowhere.
+  if (uploader_) {
+    uploader_->Detach();
+    uploader_.Clear();
+  }
+  if (ReadableStream* const stream = upload_stream_.Get()) {
+    upload_stream_.Clear();
+    std::ignore = ReadableStream::Cancel(isolate_, stream, signal_->Reason());
+  }
   Cancel();
 }
 
 void FetchLoader::Cancel() {
+  if (uploader_) {
+    const v8::HandleScope handle_scope(isolate_);
+    const v8::Context::Scope context_scope(context_.Get(isolate_));
+    uploader_->OnRequestGone();
+    uploader_.Clear();
+  }
   // A body that has not all come fails, unless what reads it has gone.
   if (BodyLoaderBytesConsumer* const consumer = consumer_.Get()) {
     consumer->DetachLoader();

@@ -110,6 +110,7 @@ class ScriptRunner final : public base::TaskObserver {
   void OnResponseStarted(PageResponseStarted response);
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(PageResponseEnded ended);
+  void OnRequestBodyCredit(PageCredit credit);
 
   // What a document's loading uses, on the main thread.
   //
