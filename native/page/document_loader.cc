@@ -229,7 +229,8 @@ void DocumentLoader::AppendDecoded(std::u16string text) {
   // The document's encoding is the decoder's after each piece, as
   // DecodedDataDocumentParser::UpdateDocument() sets it.
   document_->SetEncoding(decoder_->encoding(),
-                         decoder_->EncodingWasDetectedHeuristically());
+                         decoder_->EncodingWasDetectedHeuristically(),
+                         decoder_->saw_error());
   parser_->AppendData(text);
 }
 

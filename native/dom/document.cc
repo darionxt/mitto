@@ -678,7 +678,8 @@ std::u16string Document::CharacterSet() const {
 }
 
 void Document::SetEncoding(std::string_view encoding,
-                           bool detected_heuristically) {
+                           bool detected_heuristically,
+                           bool saw_decoding_error) {
   DCHECK(!encoding.empty());
   // The loader sets the encoding after each piece of the body, so the tree is
   // searched only when windows-1252 gives way to another.
@@ -710,6 +711,7 @@ void Document::SetEncoding(std::string_view encoding,
   }
   encoding_ = std::string(encoding);
   encoding_detected_heuristically_ = detected_heuristically;
+  saw_decoding_error_ = saw_decoding_error;
 }
 
 void Document::SetTitle(const std::u16string& title) {

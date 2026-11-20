@@ -335,6 +335,41 @@ def test_an_xml_or_xhtml_response_is_an_xml_document_of_libxml2(session: mitto.S
         )
 
 
+def test_a_byte_that_an_xml_responses_encoding_cannot_decode_stops_its_parse(
+    session: mitto.Session, server: _Server
+) -> None:
+    # Chrome 157's decoder of XML stops at such a byte, and libxml2 reports a fatal encoding error where it has got to
+    # once it has read the text before it. A piece that decodes to no text gives libxml2 nothing to read, so the parse
+    # runs to the end of the input, and a response in windows-1252 decodes every byte.
+    prefix = b"<!--abcdefghij--><r><s>a</s>"
+    whole = server.serve("/a.xml", "application/xml", b"<r>\n<s>a\xe2\x82b</s></r>")
+    after_text = server.serve("/b.xml", "application/xml", prefix, b"b\xff</r>")
+    first_byte = server.serve("/c.xml", "application/xml", prefix, b"\xffb</r>")
+    latin = server.serve("/d.xml", "application/xml; charset=windows-1252", b"<r>a\xffb</r>")
+    block = (
+        '<parsererror xmlns="http://www.w3.org/1999/xhtml" style="display: block; white-space: pre; border: 2px solid '
+        '#c77; padding: 0 1em 0 1em; margin: 1em; background-color: #fdd; color: black"><h3>This page contains the '
+        'following errors:</h3><div style="font-family:monospace;font-size:12px">error on line {}</div><h3>Below is a '
+        "rendering of the page up to the first error.</h3></parsererror>"
+    )
+    serialize = "new XMLSerializer().serializeToString(document)"
+
+    with _open_page(session, whole) as page:
+        assert page.evaluate(serialize) == f"<r>{block.format('2 at column 4: Encoding error')}\n<s/></r>"
+    with _open_page(session, after_text) as page:
+        assert page.evaluate(serialize) == (
+            f"<!--abcdefghij--><r>{block.format('1 at column 29: Encoding error')}<s>a</s></r>"
+        )
+    premature_end = "1 at column 29: Premature end of data in tag r line 1\n"
+    with _open_page(session, first_byte) as page:
+        assert page.evaluate(serialize) == f"<!--abcdefghij--><r>{block.format(premature_end)}<s>a</s></r>"
+    with _open_page(session, latin) as page:
+        assert page.evaluate("[document.querySelector('parsererror'), document.querySelector('r').textContent]") == [
+            None,
+            "a\u00ffb",
+        ]
+
+
 def test_an_xml_response_with_no_style_is_shown_in_blinks_tree_viewer(session: mitto.Session, server: _Server) -> None:
     # A top-level XML document with no element of a namespace that style knows, and no style sheet, becomes Blink's
     # XML tree viewer: its nodes in a hidden container and, at the window's load, a tree of spans that shows them, as

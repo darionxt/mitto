@@ -398,11 +398,17 @@ class Document : public Node {
   bool EncodingWasDetectedHeuristically() const {
     return encoding_detected_heuristically_;
   }
+  // Whether the decoder of the document's body met a byte that its encoding
+  // cannot decode, which stops the decoder of XML.
+  bool SawDecodingError() const { return saw_decoding_error_; }
   // Sets the encoding as the decoder of the document's body has it after each
-  // piece, as Blink's Document::SetEncodingData() does. When a <meta> found
-  // late changes windows-1252 to another, the text of the document's <title>,
-  // decoded as windows-1252 already, decodes again with the new one.
-  void SetEncoding(std::string_view encoding, bool detected_heuristically);
+  // piece, and whether it met an error, as Blink's Document::SetEncodingData()
+  // does. When a <meta> found late changes windows-1252 to another, the text
+  // of the document's <title>, decoded as windows-1252 already, decodes again
+  // with the new one.
+  void SetEncoding(std::string_view encoding,
+                   bool detected_heuristically,
+                   bool saw_decoding_error);
   // The time of its response's Last-Modified, which lastModified gives.
   void SetLastModified(base::Time time) { last_modified_ = time; }
   // The referrer of the navigation that loaded the document, which referrer
@@ -741,6 +747,7 @@ class Document : public Node {
   std::u16string url_ = u"about:blank";
   std::string encoding_ = "UTF-8";
   bool encoding_detected_heuristically_ = false;
+  bool saw_decoding_error_ = false;
   std::optional<base::Time> last_modified_;
   // A document that no parser is loading is complete, as Blink's starts.
   Readiness readiness_ = Readiness::kComplete;

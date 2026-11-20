@@ -462,6 +462,16 @@ void LibxmlTreeBuilder::Append(std::u16string_view text) {
   SwitchEncoding(context_);
   xmlParseChunk(context_.get(), reinterpret_cast<const char*>(text.data()),
                 base::checked_cast<int>(text.size() * sizeof(char16_t)), 0);
+  // DoWrite(): once the decoder of the body has met a byte that it cannot
+  // decode, which stopped it, a fatal error where libxml2 has got to.
+  if (builder_.document().SawDecodingError()) {
+    auto event = std::make_unique<Event>();
+    event->type = Event::Type::kError;
+    event->position = ContextPosition();
+    event->number = static_cast<int>(XmlErrors::Type::kFatal);
+    event->message = "Encoding error";
+    Enqueue(std::move(event));
+  }
 }
 
 void LibxmlTreeBuilder::Finish() {
