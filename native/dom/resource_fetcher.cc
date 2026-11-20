@@ -203,6 +203,35 @@ Resource* ResourceFetcher::CachedResource(const GURL& url) const {
   return nullptr;
 }
 
+Resource* ResourceFetcher::MatchPreload(const FetchParameters& params) {
+  // The preloads are keyed by URL, its fragment aside, and type.
+  const GURL key = WithoutFragment(params.url);
+  Resource* resource = nullptr;
+  for (size_t i = resources_.size(); i > 0 && !resource; --i) {
+    Resource* const candidate = resources_[i - 1];
+    if (candidate->IsUnusedPreload() && candidate->GetType() == params.type &&
+        WithoutFragment(candidate->Url()) == key) {
+      resource = candidate;
+    }
+  }
+  if (!resource) {
+    return nullptr;
+  }
+  if (!params.integrity.empty() &&
+      !IntegritySetsEqual(resource->Integrity(), params.integrity)) {
+    return nullptr;
+  }
+  if (resource->Mode() != params.mode ||
+      resource->Credentials() != params.credentials) {
+    return nullptr;
+  }
+  resource->SetIsUnusedPreload(false);
+  if (resource->HttpStatus() == 304) {
+    return nullptr;
+  }
+  return resource;
+}
+
 bool ResourceFetcher::CanUse(const Resource& existing,
                              const FetchParameters& params) const {
   // MustRefetchDueToIntegrityMetadata(): a request with integrity metadata

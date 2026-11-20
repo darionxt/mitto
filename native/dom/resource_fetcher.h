@@ -88,6 +88,14 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // The document's resource of `url`, its fragment aside, if it has one.
   Resource* CachedResource(const GURL& url) const;
 
+  // Blink's MatchPreload() of a request whose response streams, as fetch()'s
+  // does: the unused link preload of the URL and type, which the request now
+  // uses, if its integrity metadata and Resource::CanReuse() allow it. The
+  // caller checks what else CanReuse() wants: a GET with no keepalive and no
+  // header of a conditional request. Null for none, and for a preload whose
+  // response was a 304, which is used up all the same.
+  Resource* MatchPreload(const FetchParameters& params);
+
   // Blink's ComputeLoadPriority() of a request, which counts the images that
   // the preload scanner found.
   FetchPriority ComputeLoadPriority(const FetchParameters& params);

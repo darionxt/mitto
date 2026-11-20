@@ -107,6 +107,45 @@ def test_a_preload_fires_load_or_error_at_its_link(session: mitto.Session, serve
     assert events == ["load", "error"]
 
 
+def test_a_fetch_takes_a_preload_as_fetch_of_its_mode_and_credentials_mode(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    no_store = [("Cache-Control", "no-store")]
+    for path in ("/data", "/plain", "/conditional"):
+        server.route(path, path[1:].encode(), "text/plain", no_store)
+    url = server.page(
+        "/",
+        '<link rel="preload" href="/data" as="fetch" crossorigin>'
+        '<link rel="preload" href="/plain" as="fetch">'
+        '<link rel="preload" href="/conditional" as="fetch" crossorigin>'
+        '<link rel="preload" href="/missing" as="fetch" crossorigin'
+        " onload=\"window.missing = 'load'\" onerror=\"window.missing = 'error'\">",
+    )
+
+    with _open_page(session, url) as page:
+        for path in ("/data", "/plain", "/conditional", "/missing"):
+            assert server.wait_for_path(path), path
+        responses = page.evaluate(
+            """Promise.all([
+              fetch('/data'), fetch('/plain'), fetch('/conditional', {headers: {'If-None-Match': '"x"'}}),
+              fetch('/missing'),
+            ].map(async fetched => {
+              const response = await fetched;
+              return [response.status, await response.text()];
+            })).then(responses => [...responses, window.missing])""",
+            timeout=TIMEOUT_SECONDS,
+        )
+
+    # A raw resource ignores an error status, as Blink's RawResource does, so the link loads.
+    assert responses == [[200, "data"], [200, "plain"], [200, "conditional"], [404, "not here"], "load"]
+    assert server.paths().count("/data") == 1
+    assert server.paths().count("/missing") == 1
+    # A preload without crossorigin goes in mode no-cors with credentials, unlike fetch()'s own, and a conditional
+    # request takes no preload, as Resource::CanReuse() has it.
+    assert server.paths().count("/plain") == 2
+    assert server.paths().count("/conditional") == 2
+
+
 def test_a_link_processed_again_or_removed_drops_the_event_of_a_preload_that_had_ended(
     session: mitto.Session, server: RecordingServer
 ) -> None:
