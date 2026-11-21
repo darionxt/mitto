@@ -192,11 +192,6 @@ int64_t LockService::RequestLock(scoped_refptr<Client> client,
   return lock_id;
 }
 
-void LockService::ReleaseLock(std::string origin, int64_t lock_id) {
-  Post(base::BindOnce(&LockService::DoReleaseLock, base::Unretained(this),
-                      std::move(origin), lock_id));
-}
-
 void LockService::QueryState(
     std::string origin,
     base::OnceCallback<void(std::vector<Info>, std::vector<Info>)> answer) {

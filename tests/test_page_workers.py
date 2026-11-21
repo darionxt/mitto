@@ -155,6 +155,11 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"  }"
         b"};",
     ),
+    # A worker that closes in the callback of its lock, which lets the lock go as the callback returns.
+    "/lock-close.js": (
+        "text/javascript",
+        b"navigator.locks.request('x', () => { postMessage('got'); close(); });",
+    ),
     "/caches.js": (
         "text/javascript",
         b"(async () => {"
@@ -631,6 +636,18 @@ def test_a_window_and_its_worker_share_their_origins_web_locks(server: str) -> N
     })()"""
 
     assert _evaluate(server, script) == ["busy", "free", "holding", ["y"], "granted after terminate()"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_closes_in_its_locks_callback_lets_the_lock_go(server: str) -> None:
+    script = """(async () => {
+        const worker = new Worker('/lock-close.js');
+        const got = await new Promise((resolve) => { worker.onmessage = (e) => resolve(e.data); });
+        const granted = navigator.locks.request('x', () => 'granted');
+        return [got, await Promise.race([granted, new Promise((resolve) => setTimeout(() => resolve('held'), 3000))])];
+    })()"""
+
+    assert _evaluate(server, script) == ["got", "granted"]
 
 
 @pytest.mark.usefixtures("page_program")
