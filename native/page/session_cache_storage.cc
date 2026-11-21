@@ -70,7 +70,7 @@ void SessionCacheStorage::SetSender(
 }
 
 void SessionCacheStorage::Send(const PageCacheStorageCall& call) {
-  sender_->Send(EncodeCacheStorage(document_, call));
+  sender_->SendFromContext(document_, EncodeCacheStorage(document_, call));
 }
 
 void SessionCacheStorage::Ask(PageCacheStorageCall call, Answer answer) {
@@ -158,15 +158,17 @@ void SessionCacheStorage::DocumentCommitted(uint64_t document) {
   if (host_ != 0) {
     sender_->RemoveCacheStorageHost(host_);
   }
-  host_ = sender_->AddCacheStorageHost(base::BindRepeating(
-      [](scoped_refptr<base::SingleThreadTaskRunner> runner,
-         base::WeakPtr<SessionCacheStorage> self, uint64_t host,
-         PageCacheStorageAnswer answer) {
-        runner->PostTask(FROM_HERE,
-                         base::BindOnce(&SessionCacheStorage::OnAnswer, self,
-                                        host, std::move(answer)));
-      },
-      runner_, weak_factory_.GetWeakPtr()));
+  host_ = sender_->AddCacheStorageHost(
+      document, base::BindRepeating(
+                    [](scoped_refptr<base::SingleThreadTaskRunner> runner,
+                       base::WeakPtr<SessionCacheStorage> self, uint64_t host,
+                       PageCacheStorageAnswer answer) {
+                      runner->PostTask(
+                          FROM_HERE,
+                          base::BindOnce(&SessionCacheStorage::OnAnswer, self,
+                                         host, std::move(answer)));
+                    },
+                    runner_, weak_factory_.GetWeakPtr()));
   document_ = document;
   questions_.clear();
   put_bodies_.clear();

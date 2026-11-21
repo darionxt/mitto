@@ -143,10 +143,12 @@ bool SessionSender::Route(FrameFromSession& frame) {
   return true;
 }
 
-uint64_t SessionSender::AddCacheStorageHost(CacheStorageRoute route) {
+uint64_t SessionSender::AddCacheStorageHost(uint64_t context,
+                                            CacheStorageRoute route) {
   const base::AutoLock lock(lock_);
   const uint64_t host = ++last_cache_storage_host_;
-  cache_storage_hosts_.emplace(host, std::move(route));
+  cache_storage_hosts_.emplace(host,
+                               CacheStorageHost{context, std::move(route)});
   return host;
 }
 
@@ -166,6 +168,11 @@ uint64_t SessionSender::SendCacheStorageQuestion(
     base::FunctionRef<std::string(uint64_t question)> encode) {
   const base::AutoLock lock(lock_);
   const uint64_t question = ++last_cache_storage_question_;
+  const CacheStorageHost* const of =
+      base::FindOrNull(cache_storage_hosts_, host);
+  if (of && forgotten_.contains(of->context)) {
+    return question;
+  }
   cache_storage_questions_.emplace(question, host);
   send_.Run(encode(question));
   return question;
@@ -243,12 +250,12 @@ std::optional<std::string> SessionSender::RouteCacheStorage(
         break;
       }
     }
-    const CacheStorageRoute* const found =
+    const CacheStorageHost* const found =
         base::FindOrNull(cache_storage_hosts_, host);
     if (!found) {
       return std::nullopt;
     }
-    route = *found;
+    route = found->route;
   }
   route.Run(host, std::move(answer));
   return std::nullopt;

@@ -88,6 +88,13 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b" setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {} go(); }, 0);",
     ),
     "/busy-child.js": ("text/javascript", b"const go = () => fetch('/data.txt').then(go, go); go();"),
+    # A worker that is busy for a while from when it says so, past its creator's document being replaced, before it
+    # asks the Cache API and puts there.
+    "/busy-caches.js": (
+        "text/javascript",
+        b"postMessage('busy'); setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {}"
+        b" caches.keys(); caches.open('late').then((c) => c.put('/late', new Response('late'))); }, 0);",
+    ),
     # performance.measure() from a name of performance.timing, which a worker has not, as Chrome 157.0.8103.79 throws.
     "/measure.js": (
         "text/javascript",
@@ -569,6 +576,22 @@ def test_a_document_with_busy_workers_gives_way_to_the_next(server: str) -> None
         assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?last"
         assert page.evaluate("location.search") == "?last"
 
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_cache_questions_after_its_document_has_gone_go_nowhere(server: str) -> None:
+    # The Session forgets the worker with its creator's document, so what the worker asks of the Cache API later goes
+    # nowhere, and the Page goes on.
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        started = """new Promise((resolve) => {
+            const worker = new Worker('/busy-caches.js');
+            worker.onmessage = (e) => resolve(e.data);
+        })"""
+        assert page.evaluate(started) == "busy"
+        assert page.evaluate("location.href = '/?next'; 'set'") == "set"
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?next"
+        # Past the worker's busy loop and what it asked then.
+        assert page.evaluate("new Promise((resolve) => setTimeout(() => resolve(location.search), 2500))") == "?next"
+        assert page.evaluate("caches.keys()") == []
 
 
 @pytest.mark.usefixtures("page_program")

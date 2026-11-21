@@ -92,14 +92,16 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // main thread. The I/O thread.
   bool Route(FrameFromSession& frame);
 
-  // The Cache API of a context, whose answers go to `route`: its number. Any
+  // The Cache API of `context`, whose answers go to `route`: its number. Any
   // thread, as are the others below but the last.
-  uint64_t AddCacheStorageHost(CacheStorageRoute route);
+  uint64_t AddCacheStorageHost(uint64_t context, CacheStorageRoute route);
   // The host has gone, or its document has: what it asked, held or opened
   // goes unheard.
   void RemoveCacheStorageHost(uint64_t host);
   // Takes the number of the Page's next Cache API question, of `host`, sends
-  // the frame that `encode` makes of it, and returns it.
+  // the frame that `encode` makes of it, and returns it. A question of a
+  // context that the Session has forgotten takes its number and goes nowhere,
+  // and no answer comes.
   uint64_t SendCacheStorageQuestion(
       uint64_t host,
       base::FunctionRef<std::string(uint64_t question)> encode);
@@ -135,8 +137,12 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // that went nowhere.
   std::set<uint64_t> forgotten_ GUARDED_BY(lock_);
   std::set<uint64_t> unsent_requests_ GUARDED_BY(lock_);
+  struct CacheStorageHost {
+    uint64_t context;
+    CacheStorageRoute route;
+  };
   uint64_t last_cache_storage_host_ GUARDED_BY(lock_) = 0;
-  std::map<uint64_t, CacheStorageRoute> cache_storage_hosts_ GUARDED_BY(lock_);
+  std::map<uint64_t, CacheStorageHost> cache_storage_hosts_ GUARDED_BY(lock_);
   uint64_t last_cache_storage_question_ GUARDED_BY(lock_) = 0;
   uint64_t last_cache_storage_put_body_ GUARDED_BY(lock_) = 0;
   // The host of each question that waits for its answer, of each put body
