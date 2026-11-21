@@ -19,17 +19,18 @@
 
 namespace mitto {
 
+class ExecutionContext;
 class Resource;
-class WindowTasks;
 
 class PreloadedFetch final : public FetchController {
  public:
-  // Starts `client` on `resource`, which it hears of from a task of `tasks`.
-  // It owns itself until the client's end, or until the window drops the
-  // task.
+  // Starts `client` on `resource`, which it hears of from a task of
+  // `context`, a window with tasks. It owns itself until the client's end,
+  // or until the context goes, which destroys the client with no word, as
+  // Blink's FetchManager disposes its loaders when its context is destroyed.
   static void Start(Resource& resource,
                     std::unique_ptr<FetchClient> client,
-                    WindowTasks& tasks);
+                    ExecutionContext& context);
 
   PreloadedFetch(const PreloadedFetch&) = delete;
   PreloadedFetch& operator=(const PreloadedFetch&) = delete;
