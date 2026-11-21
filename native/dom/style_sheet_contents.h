@@ -38,9 +38,15 @@ class StyleSheetOwner : public cppgc::GarbageCollectedMixin {
 struct StyleSheetReferrer {
   // kClientReferrer for the document's, or the URL of a fetched sheet.
   std::string referrer = kClientReferrer;
-  // The policy that fetched the sheet, or kDefault for the document's.
+  // The policy that a fetched sheet's response names, or kDefault for the
+  // document's.
   FetchReferrerPolicy policy = FetchReferrerPolicy::kDefault;
 };
+
+// CSSStyleSheetResource::GetReferrerPolicy(): the policy that a fetched
+// sheet's Referrer-Policy header names, without the legacy keywords, or
+// kDefault for none, which leaves its imports to the document's.
+FetchReferrerPolicy StyleSheetReferrerPolicy(const Resource& resource);
 
 class StyleSheetContents final
     : public cppgc::GarbageCollected<StyleSheetContents> {
@@ -122,13 +128,21 @@ class StyleRuleImport final : public cppgc::GarbageCollected<StyleRuleImport>,
   bool loading_ = false;
 };
 
+// A fetched style sheet's text, and the encoding that decoded it, which its
+// imports ask for, as Blink gives a sheet's parser context
+// CSSStyleSheetResource::Encoding().
+struct DecodedStyleSheet {
+  std::u16string text;
+  std::string encoding;
+};
+
 // CSSStyleSheetResource::SheetText(): the text of a fetched style sheet,
 // decoded by a byte order mark, else its response's charset, else @charset,
 // else the charset hint of the request that made it; or nothing for one that
 // failed, or whose Content-Type is not text/css, none or
 // application/x-unknown-content-type, unless `lax`, for a sheet of the
 // document's origin in quirks mode.
-std::u16string StyleSheetText(const Resource& resource, bool lax);
+DecodedStyleSheet DecodeStyleSheet(const Resource& resource, bool lax);
 
 // Whether a sheet's text is held to its MIME type laxly: one that is not
 // opaque, in a document in quirks mode.

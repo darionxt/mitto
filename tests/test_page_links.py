@@ -6,6 +6,7 @@ origin. Where a caller can ask for the same request, the lines that the Page sen
 the Session's Request Kinds make both. Each test needs a native library with the Page program beside it.
 """
 
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -14,7 +15,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page
-from tests.page_server import TIMEOUT_SECONDS, RecordingServer, png
+from tests.page_server import TIMEOUT_SECONDS, RecordingServer, Route, png
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -105,6 +106,139 @@ def test_a_preload_fires_load_or_error_at_its_link(session: mitto.Session, serve
 
     # A style sheet fails on an error status, as Blink's CSSStyleSheetResource does.
     assert events == ["load", "error"]
+
+
+def test_a_fetch_keeps_a_loading_preload_whose_link_goes_in_the_same_task(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    hold = threading.Event()
+    server.routes["/slow"] = Route(
+        b"slow", headers=[("Content-Type", "text/plain"), ("Cache-Control", "no-store")], hold=hold
+    )
+    url = server.page("/", '<link id="slow" rel="preload" href="/slow" as="fetch" crossorigin>')
+
+    with _open_page(session, url) as page:
+        assert server.wait_for_path("/slow")
+        page.evaluate("document.getElementById('slow').remove(); window.slow = fetch('/slow'); true")
+        hold.set()
+        text = page.evaluate("window.slow.then(response => response.text())", timeout=TIMEOUT_SECONDS)
+
+    # fetch() is the resource's client at once, as ThreadableLoader is, so the load that the link let go goes on.
+    assert text == "slow"
+    assert server.paths().count("/slow") == 1
+
+
+def test_a_navigation_lets_go_of_a_fetch_that_took_a_loading_preload(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    hold = threading.Event()
+    server.routes["/slow"] = Route(
+        b"slow", headers=[("Content-Type", "text/plain"), ("Cache-Control", "no-store")], hold=hold
+    )
+    second = server.page("/second", "<p>second</p>")
+    url = server.page("/", '<link rel="preload" href="/slow" as="fetch" crossorigin>')
+
+    with _open_page(session, url) as page:
+        assert server.wait_for_path("/slow")
+        assert page.evaluate("window.slow = fetch('/slow'); location.href = '/second'; 'set'") == "set"
+        page.wait_for_navigation(timeout=TIMEOUT_SECONDS)
+        hold.set()
+        text = page.evaluate("document.querySelector('p').textContent", timeout=TIMEOUT_SECONDS)
+        assert page.url == second
+
+    # The old window's fetch goes with its context, as Blink's FetchManager disposes its loaders, and nothing of it
+    # reaches the new document.
+    assert text == "second"
+    assert server.paths().count("/slow") == 1
+
+
+def test_a_preload_of_another_type_of_the_same_url_hides_no_preload(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    server.route("/both.js", b"window.count = (window.count || 0) + 1;", _JS, [("Cache-Control", "no-store")])
+    url = server.page(
+        "/",
+        '<link rel="preload" href="both.js" as="script">'
+        '<link rel="preload" href="both.js" as="fetch" crossorigin>'
+        '<script src="both.js"></script>',
+    )
+
+    with _open_page(session, url) as page:
+        result = page.evaluate(
+            "fetch('both.js').then(response => response.text()).then(text => [window.count, text.length > 0])",
+            timeout=TIMEOUT_SECONDS,
+        )
+
+    # The script and fetch() each take their own preload, as Blink keys its preloads by URL and type.
+    assert result == [1, True]
+    assert server.paths().count("/both.js") == 2
+
+
+def test_a_fetch_takes_a_preload_as_fetch_of_its_mode_and_credentials_mode(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    no_store = [("Cache-Control", "no-store")]
+    for path in ("/data", "/plain", "/conditional"):
+        server.route(path, path[1:].encode(), "text/plain", no_store)
+    url = server.page(
+        "/",
+        '<link rel="preload" href="/data" as="fetch" crossorigin>'
+        '<link rel="preload" href="/plain" as="fetch">'
+        '<link rel="preload" href="/conditional" as="fetch" crossorigin>'
+        '<link rel="preload" href="/missing" as="fetch" crossorigin'
+        " onload=\"window.missing = 'load'\" onerror=\"window.missing = 'error'\">",
+    )
+
+    with _open_page(session, url) as page:
+        for path in ("/data", "/plain", "/conditional", "/missing"):
+            assert server.wait_for_path(path), path
+        responses = page.evaluate(
+            """Promise.all([
+              fetch('/data'), fetch('/plain'), fetch('/conditional', {headers: {'If-None-Match': '"x"'}}),
+              fetch('/missing'),
+            ].map(async fetched => {
+              const response = await fetched;
+              return [response.status, await response.text()];
+            })).then(responses => [...responses, window.missing])""",
+            timeout=TIMEOUT_SECONDS,
+        )
+
+    # A raw resource ignores an error status, as Blink's RawResource does, so the link loads.
+    assert responses == [[200, "data"], [200, "plain"], [200, "conditional"], [404, "not here"], "load"]
+    assert server.paths().count("/data") == 1
+    assert server.paths().count("/missing") == 1
+    # A preload without crossorigin goes in mode no-cors with credentials, unlike fetch()'s own, and a conditional
+    # request takes no preload, as Resource::CanReuse() has it.
+    assert server.paths().count("/plain") == 2
+    assert server.paths().count("/conditional") == 2
+
+
+def test_a_link_processed_again_or_removed_drops_the_event_of_a_preload_that_had_ended(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", "<p>events</p>")
+
+    with _open_page(session, url) as page:
+        events = page.evaluate(
+            """new Promise(resolve => {
+              const events = [];
+              const preload = (name, onload) => {
+                const link = Object.assign(document.createElement('link'),
+                                           {rel: 'preload', as: 'style', href: `data:text/css,${name}{}`});
+                link.onload = onload || (() => events.push(name));
+                document.head.append(link);
+                return link;
+              };
+              // A data: URL's resource has ended at once, so each link's event waits for a task.
+              preload('a').href = 'data:text/css,b{}';
+              preload('c').remove();
+              preload('d', () => resolve([...events, 'd']));
+            })""",
+            timeout=TIMEOUT_SECONDS,
+        )
+
+    # LinkLoader::Abort() disposes the finish observer whose task was posted, so it fires nothing.
+    assert events == ["a", "d"]
 
 
 def test_a_script_takes_its_preload_and_two_scripts_of_one_url_take_one_request(

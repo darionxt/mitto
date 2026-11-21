@@ -3,7 +3,7 @@
 // frame scheduler gives that type, the queues of scheduler.postTask(), idle
 // tasks, which run in idle periods, and the frames that it begins at the
 // display's refresh rate. The Page program makes it and gives it to the DOM,
-// on its main thread.
+// on its main thread, and a dedicated worker's thread has one of its own.
 //
 // Upstream: third_party/blink/public/platform/task_type.h
 // Upstream: third_party/blink/renderer/core/frame/local_frame_view.cc
@@ -108,9 +108,10 @@ class EventLoop {
   using BeginFrameCallback =
       base::OnceCallback<void(base::TimeTicks frame_time)>;
 
-  // The Page's, or null before the Page program has made one.
+  // The current thread's: the Page's main thread's, or a dedicated worker's,
+  // or null before the Page program has made one there.
   static EventLoop* Get();
-  // Makes `event_loop` the Page's, or none for null.
+  // Makes `event_loop` the current thread's, or none for null.
   static void Set(EventLoop* event_loop);
 
   // The task runner of tasks of `type`.

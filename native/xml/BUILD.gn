@@ -1,0 +1,42 @@
+# The libraries of Blink's two XML parsers: the Rust xml crate behind a cxx
+# bridge, which reads DOMParser's XML and SVG documents, and libxml2, with
+# libxslt for XSLT, which reads the XML of a navigation.
+#
+# Upstream: third_party/blink/renderer/core/BUILD.gn
+
+import("//build/rust/rust_static_library.gni")
+
+# The bridge to the Rust xml crate, as Blink's xml_ffi target has it.
+rust_static_library("xml_ffi") {
+  # The cxx crate's bridge needs it.
+  allow_unsafe = true
+  crate_root = "xml_ffi.rs"
+  sources = [
+    "entities.rs",
+    crate_root,
+  ]
+  cxx_bindings = [ crate_root ]
+  public_deps = [ ":xml_ffi_callbacks" ]
+  deps = [
+    "//third_party/rust/cxx/v1:lib",
+    "//third_party/rust/xml/v1:lib",
+  ]
+}
+
+source_set("xml_ffi_callbacks") {
+  sources = [
+    "xml_ffi_callbacks.cc",
+    "xml_ffi_callbacks.h",
+  ]
+  public_deps = [ "//third_party/rust/cxx/v1:lib" ]
+  deps = [ "//base" ]
+}
+
+# libxml2 and libxslt, which the XML parser of navigations and XSLTProcessor
+# run on.
+group("libxml") {
+  public_deps = [
+    "//third_party/libxml",
+    "//third_party/libxslt",
+  ]
+}

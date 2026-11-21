@@ -26,6 +26,8 @@ enum class FetchDestination {
   kStyle,
   kFont,
   kText,
+  // A module of a module worker's graph.
+  kWorker,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.
@@ -94,6 +96,12 @@ FetchPriorityHint FetchPriorityHintFromAttribute(std::u16string_view value);
 // Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
 FetchReferrerPolicy FetchReferrerPolicyFromString(std::u16string_view value);
 
+// Whether header lines, as FetchResponseHead has them, say
+// X-Content-Type-Options: nosniff, as Blink's ParseContentTypeOptionsHeader()
+// reads the field's first value, as the Fetch Standard splits it.
+// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
+bool IsContentTypeOptionsNosniff(std::string_view headers);
+
 // The referrer policy that a Referrer-Policy header names: the last of its
 // comma-separated tokens that names one, without white space around it, and
 // kDefault where none does.
@@ -135,6 +143,9 @@ struct FetchRequestData {
   // The lines that the script set, each "name: value" and a line feed.
   std::string headers;
   std::optional<std::string> body;
+  // Whether its body streams, as the FetchClient sends it through its
+  // FetchController, from when the Session starts reading it.
+  bool streams_body = false;
   // The request's mode and credentials mode, if not those of its destination.
   std::optional<FetchMode> mode;
   std::optional<FetchCredentialsMode> credentials;
@@ -186,6 +197,15 @@ class FetchController {
   // client must touch nothing of itself after calling it.
   virtual void Cancel() = 0;
 
+  // For a body that streams: how many more bytes of it the Session takes now,
+  // none until it starts reading the body. A request whose body does not
+  // stream, such as one that a preload answers, takes none.
+  virtual size_t BodyRoom() const;
+  // Sends `bytes` of the body, at most BodyRoom().
+  virtual void SendBody(std::string_view bytes) {}
+  // Ends the body, which fails the request if `errored`.
+  virtual void EndBody(bool errored) {}
+
  protected:
   virtual ~FetchController() = default;
 };
@@ -205,6 +225,8 @@ class FetchClient {
   // 0 when all of the body has come, and otherwise a net error, before or
   // after the response started.
   virtual void OnResponseEnded(int net_error) = 0;
+  // For a request whose body streams: the Session takes more of it.
+  virtual void OnBodyRoom() {}
 };
 
 class Fetcher {

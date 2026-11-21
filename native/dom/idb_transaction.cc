@@ -21,6 +21,7 @@
 #include "mitto/dom/dom_exception.h"
 #include "mitto/dom/dom_string_list.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/idb_cursor.h"
 #include "mitto/dom/idb_database.h"
 #include "mitto/dom/idb_event_dispatcher.h"
@@ -30,7 +31,6 @@
 #include "mitto/dom/idb_request.h"
 #include "mitto/dom/idb_request_queue_item.h"
 #include "mitto/dom/indexed_db_host.h"
-#include "mitto/dom/window.h"
 #include "v8/include/v8-isolate.h"
 
 namespace mitto {
@@ -74,7 +74,7 @@ void EnqueueEndOfMicrotaskCheckpointTask(v8::Isolate* isolate,
 
 // static
 IDBTransaction* IDBTransaction::CreateNonVersionChange(
-    Window* window,
+    ExecutionContext* execution_context,
     IndexedDbHost* host,
     uint64_t id,
     const std::set<std::u16string>& scope,
@@ -84,29 +84,29 @@ IDBTransaction* IDBTransaction::CreateNonVersionChange(
   DCHECK_NE(mode, IndexedDbTransactionMode::kVersionChange);
   DCHECK(!scope.empty());
   return bindings::MakeGarbageCollected<IDBTransaction>(
-      window, host, id, scope, mode, durability, database);
+      execution_context, host, id, scope, mode, durability, database);
 }
 
 // static
 IDBTransaction* IDBTransaction::CreateVersionChange(
-    Window* window,
+    ExecutionContext* execution_context,
     IndexedDbHost* host,
     uint64_t id,
     IDBDatabase* database,
     IDBOpenDBRequest* open_db_request,
     const IDBDatabaseMetadata& old_metadata) {
   return bindings::MakeGarbageCollected<IDBTransaction>(
-      window, host, id, database, open_db_request, old_metadata);
+      execution_context, host, id, database, open_db_request, old_metadata);
 }
 
-IDBTransaction::IDBTransaction(Window* window,
+IDBTransaction::IDBTransaction(ExecutionContext* execution_context,
                                IndexedDbHost* host,
                                uint64_t id,
                                const std::set<std::u16string>& scope,
                                IndexedDbTransactionMode mode,
                                IndexedDbDurability durability,
                                IDBDatabase* database)
-    : window_(window),
+    : execution_context_(execution_context),
       host_(host),
       id_(id),
       database_(database),
@@ -136,13 +136,13 @@ IDBTransaction::IDBTransaction(Window* window,
   database_->TransactionCreated(this);
 }
 
-IDBTransaction::IDBTransaction(Window* window,
+IDBTransaction::IDBTransaction(ExecutionContext* execution_context,
                                IndexedDbHost* host,
                                uint64_t id,
                                IDBDatabase* database,
                                IDBOpenDBRequest* open_db_request,
                                const IDBDatabaseMetadata& old_metadata)
-    : window_(window),
+    : execution_context_(execution_context),
       host_(host),
       id_(id),
       database_(database),
@@ -166,7 +166,7 @@ const bindings::WrapperTypeInfo* IDBTransaction::GetWrapperTypeInfo() const {
 
 void IDBTransaction::Trace(cppgc::Visitor* visitor) const {
   EventTarget::Trace(visitor);
-  visitor->Trace(window_);
+  visitor->Trace(execution_context_);
   visitor->Trace(database_);
   visitor->Trace(open_db_request_);
   visitor->Trace(error_);
@@ -178,8 +178,8 @@ void IDBTransaction::Trace(cppgc::Visitor* visitor) const {
 }
 
 bool IDBTransaction::HasContext() const {
-  Window* const window = window_.Get();
-  return window && window->HasContext();
+  ExecutionContext* const execution_context = execution_context_.Get();
+  return execution_context && execution_context->HasContext();
 }
 
 void IDBTransaction::SetError(DOMException* error) {
@@ -601,15 +601,16 @@ void IDBTransaction::Put(int64_t object_store_id,
         {"The serialized keys and/or value are too large (size=",
          base::NumberToString(estimated_size),
          " bytes, max=", base::NumberToString(kMaxPutValueSize), " bytes)."}));
-    PostIDBTask(window_.Get(), base::BindOnce(
-                                   [](cppgc::WeakPersistent<IDBRequest> request,
-                                      PageIndexedDbCallback answer) {
-                                     if (request) {
-                                       request->OnPut(answer);
-                                     }
-                                   },
-                                   cppgc::WeakPersistent<IDBRequest>(request),
-                                   std::move(answer)));
+    PostIDBTask(
+        execution_context_.Get(),
+        base::BindOnce(
+            [](cppgc::WeakPersistent<IDBRequest> request,
+               PageIndexedDbCallback answer) {
+              if (request) {
+                request->OnPut(answer);
+              }
+            },
+            cppgc::WeakPersistent<IDBRequest>(request), std::move(answer)));
     return;
   }
 

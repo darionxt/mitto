@@ -9,10 +9,10 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/modulator.h"
 #include "mitto/dom/module_script.h"
 #include "mitto/dom/referrer_script_info.h"
-#include "mitto/dom/window.h"
 #include "url/gurl.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-container.h"
@@ -148,10 +148,13 @@ void DynamicModuleResolver::ResolveDynamically(
   const ModuleType module_type =
       modulator_->ModuleTypeFromRequest(module_request);
   // Step 4.3: the base URL of the script that calls it, or, where there is
-  // none, the window's API base URL.
+  // none, the API base URL of the window or worker.
   GURL base_url = referrer_info.BaseUrl();
   if (base_url.is_empty()) {
-    base_url = modulator_->GetWindow()->GetDocument().BaseUrl();
+    if (ExecutionContext* const execution_context =
+            modulator_->GetExecutionContext()) {
+      base_url = execution_context->BaseUrl();
+    }
   }
   // Wait for import maps: the document no longer acquires them.
   modulator_->SetAcquiringImportMapsState(
@@ -190,14 +193,16 @@ void DynamicModuleResolver::ResolveDynamically(
   options.referrer_policy = referrer_info.GetReferrerPolicy();
   // Fetch an import() module script graph, whose referrer is the base URL
   // of the script that calls it, which is none for a script without one, as
-  // Blink's empty referrer string sends none.
+  // Blink's empty referrer string sends none, of the destination script, in a
+  // module worker too.
   auto* const tree_client =
       bindings::MakeGarbageCollected<DynamicImportTreeClient>(url, *modulator_,
                                                               resolver);
   modulator_->FetchTree(url, module_type, options, tree_client,
                         referrer_info.BaseUrl().is_empty()
                             ? std::string(kNoReferrer)
-                            : referrer_info.BaseUrl().spec());
+                            : referrer_info.BaseUrl().spec(),
+                        FetchDestination::kScript);
 }
 
 }  // namespace mitto

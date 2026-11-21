@@ -14,12 +14,11 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_scheduler.h"
 #include "mitto/bindings/v8_task_signal.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/scheduler_task_context.h"
 #include "mitto/dom/task_signal.h"
-#include "mitto/dom/window.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
@@ -54,7 +53,8 @@ scoped_refptr<base::SingleThreadTaskRunner> RunnerFor(Priority priority,
       SchedulerTaskContext::QueueFor(priority, continuation));
 }
 
-// The context of the promise that `resolver` settles, if its window still runs
+// The context of the promise that `resolver` settles, if it still runs, a
+// window's or a worker's
 // it: a resolver of a context that has gone settles nothing.
 std::optional<v8::Local<v8::Context>> ResolverContext(
     v8::Isolate* isolate,
@@ -63,9 +63,9 @@ std::optional<v8::Local<v8::Context>> ResolverContext(
   if (!resolver->GetPromise()->GetCreationContext(isolate).ToLocal(&context)) {
     return std::nullopt;
   }
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
-  if (!window || !window->HasContext()) {
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  if (!execution_context || !execution_context->HasContext()) {
     return std::nullopt;
   }
   return context;
@@ -296,7 +296,7 @@ class AbortAlgorithm final : public AbortSignal::Algorithm {
 
 }  // namespace
 
-Scheduler::Scheduler(Window* window) : window_(window) {}
+Scheduler::Scheduler(ExecutionContext* context) : context_(context) {}
 
 Scheduler::~Scheduler() = default;
 
@@ -306,12 +306,12 @@ const bindings::WrapperTypeInfo* Scheduler::GetWrapperTypeInfo() const {
 
 void Scheduler::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
-  visitor->Trace(window_);
+  visitor->Trace(context_);
 }
 
 bool Scheduler::CheckAttached(bindings::ExceptionState& exception_state) const {
-  const Window* const window = window_.Get();
-  if (!window || !window->HasContext()) {
+  const ExecutionContext* const context = context_.Get();
+  if (!context || !context->HasContext()) {
     exception_state.ThrowDOMException("NotSupportedError",
                                       "Current window is detached");
     return false;
@@ -347,7 +347,7 @@ v8::Local<v8::Promise> Scheduler::PostTask(
     priority = PriorityOf(static_cast<TaskSignal*>(signal)->Priority());
   }
   auto* const task_context =
-      bindings::MakeGarbageCollected<SchedulerTaskContext>(window_.Get(),
+      bindings::MakeGarbageCollected<SchedulerTaskContext>(context_.Get(),
                                                            signal, priority);
   DOMTask* const task = bindings::MakeGarbageCollected<DOMTask>(
       this, isolate, callback, resolver, task_context);
@@ -378,7 +378,7 @@ v8::Local<v8::Promise> Scheduler::Yield(
     return {};
   }
   SchedulerTaskContext* task_context = SchedulerTaskContext::Current(isolate);
-  if (task_context && !task_context->CanPropagateTo(window_.Get())) {
+  if (task_context && !task_context->CanPropagateTo(context_.Get())) {
     task_context = nullptr;
   }
   AbortSignal* const abort_source =

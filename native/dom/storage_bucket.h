@@ -30,7 +30,7 @@ class ExceptionState;
 class CacheStorage;
 class IDBFactory;
 class StorageBucketHost;
-class Window;
+class ExecutionContext;
 
 class StorageBucket final : public bindings::ScriptWrappable {
   CPPGC_USING_PRE_FINALIZER(StorageBucket, Dispose);
@@ -38,7 +38,7 @@ class StorageBucket final : public bindings::ScriptWrappable {
  public:
   // Bucket `bucket` of `host`'s, named `name`, which `window`'s
   // StorageBucketManager opened.
-  StorageBucket(Window* window,
+  StorageBucket(ExecutionContext* context,
                 StorageBucketHost* host,
                 std::u16string name,
                 uint64_t bucket);
@@ -76,7 +76,7 @@ class StorageBucket final : public bindings::ScriptWrappable {
   StorageBucketHost* Host() const;
   v8::Local<v8::Promise> Ask(PageStorageBucketCall call, Settle settle);
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
   const raw_ptr<StorageBucketHost> host_;
   const std::u16string name_;
   const uint64_t bucket_;

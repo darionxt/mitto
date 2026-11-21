@@ -43,6 +43,10 @@ struct FetchParams {
   ~FetchParams();
 
   RequestMode mode = RequestMode::kNavigate;
+  // For mode kCors: network::mojom::RequestMode::kCorsWithForcedPreflight,
+  // which a fetch() whose body is a stream has, so that a request to another
+  // origin always goes after a CORS preflight.
+  bool force_preflight = false;
   // Always a token, because the Sec-Fetch-Dest header holds it.
   std::string destination;
   CredentialsMode credentials_mode = CredentialsMode::kInclude;

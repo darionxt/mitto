@@ -14,13 +14,12 @@
 #include "mitto/bindings/script_promise.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/body_stream_buffer.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetch_data_loader.h"
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/text_decoder_transformer.h"
 #include "mitto/dom/transform_stream.h"
-#include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
@@ -62,8 +61,8 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
 
   BodyConsumer(Kind kind,
                bindings::ScriptPromiseResolver* resolver,
-               Window* window)
-      : kind_(kind), resolver_(resolver), window_(window) {}
+               ExecutionContext* context)
+      : kind_(kind), resolver_(resolver), context_(context) {}
 
   void DidFetchDataLoadedArrayBuffer(std::string bytes) override {
     CHECK_EQ(kind_, Kind::kArrayBuffer);
@@ -125,7 +124,7 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
 
   void Trace(cppgc::Visitor* visitor) const override {
     visitor->Trace(resolver_);
-    visitor->Trace(window_);
+    visitor->Trace(context_);
     FetchDataLoader::Client::Trace(visitor);
   }
 
@@ -136,8 +135,8 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
   // Resource Timing's entry is not yet added, so the resolution waits for a
   // later networking task, as Blink's does (https://crbug.com/507169).
   void ResolveLater(MakeValue make_value) {
-    PostWindowTask(
-        window_.Get(), TaskType::kNetworking,
+    PostTaskInContext(
+        context_.Get(), TaskType::kNetworking,
         base::BindOnce(
             [](cppgc::Persistent<BodyConsumer> self, MakeValue make_value) {
               v8::Isolate* const isolate = v8::Isolate::GetCurrent();
@@ -149,7 +148,7 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
 
   const Kind kind_;
   const cppgc::Member<bindings::ScriptPromiseResolver> resolver_;
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
 };
 
 }  // namespace
@@ -182,8 +181,8 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
   const v8::Local<v8::Promise> promise = resolver->Promise(isolate);
   if (BodyStreamBuffer* const body_buffer = BodyBuffer()) {
     const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-    Window* const window =
-        bindings::V8Window::ToWrappable(isolate, context->Global());
+    ExecutionContext* const execution_context =
+        ExecutionContext::From(isolate, context);
     BodyConsumer::Kind kind = BodyConsumer::Kind::kText;
     FetchDataLoader* loader = nullptr;
     switch (read_as) {
@@ -200,10 +199,10 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
         loader = FetchDataLoader::CreateLoaderAsString();
         break;
     }
-    body_buffer->StartLoading(
-        loader,
-        bindings::MakeGarbageCollected<BodyConsumer>(kind, resolver, window),
-        exception_state);
+    body_buffer->StartLoading(loader,
+                              bindings::MakeGarbageCollected<BodyConsumer>(
+                                  kind, resolver, execution_context),
+                              exception_state);
     if (exception_state.HadException()) {
       return v8::Local<v8::Promise>();
     }

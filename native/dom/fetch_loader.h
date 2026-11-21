@@ -5,7 +5,7 @@
 // starts unless the response has Cache-Control: no-store. The Fetcher owns it
 // until the request ends. Its request's signal rejects the promise with its
 // reason and cancels the request, as Blink's FetchManager::Loader::Abort()
-// does.
+// does. A body that streams goes through a BytesUploader.
 //
 // Upstream: third_party/blink/renderer/core/fetch/fetch_manager.cc
 // Upstream: third_party/blink/renderer/core/fetch/fetch_response_data.cc
@@ -28,17 +28,23 @@
 namespace mitto {
 
 class AbortSignal;
+class BytesConsumer;
+class BytesUploader;
+class ReadableStream;
 
 class FetchLoader final : public FetchClient, public BodyLoader {
  public:
   // `resolver` is fetch()'s, in `context`. `credentials` says that the
   // request's credentials mode is include. `signal` is the request's, which
-  // has not aborted.
+  // has not aborted. `upload_body`, if any, is what the body that streams
+  // reads, which nothing has read, from `upload_stream`.
   FetchLoader(v8::Isolate* isolate,
               v8::Local<v8::Context> context,
               v8::Local<v8::Promise::Resolver> resolver,
               bool credentials,
-              AbortSignal* signal);
+              AbortSignal* signal,
+              BytesConsumer* upload_body = nullptr,
+              ReadableStream* upload_stream = nullptr);
 
   FetchLoader(const FetchLoader&) = delete;
   FetchLoader& operator=(const FetchLoader&) = delete;
@@ -50,6 +56,7 @@ class FetchLoader final : public FetchClient, public BodyLoader {
   void OnResponseStarted(const FetchResponseHead& head) override;
   void OnResponseBody(std::string bytes) override;
   void OnResponseEnded(int net_error) override;
+  void OnBodyRoom() override;
 
   // BodyLoader: it cancels the request once the body is dropped.
   void BodyRequested() override;
@@ -70,6 +77,11 @@ class FetchLoader final : public FetchClient, public BodyLoader {
   cppgc::Persistent<AbortSignal> signal_;
   // Where the body goes, which goes with what reads it.
   cppgc::WeakPersistent<BodyLoaderBytesConsumer> consumer_;
+  // The body that streams, until the request starts, and then its upload,
+  // and the stream it reads, which an abort cancels.
+  cppgc::Persistent<BytesConsumer> upload_body_;
+  cppgc::Persistent<BytesUploader> uploader_;
+  cppgc::Persistent<ReadableStream> upload_stream_;
   base::WeakPtrFactory<FetchLoader> weak_factory_{this};
 };
 

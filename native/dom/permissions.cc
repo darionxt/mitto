@@ -10,6 +10,7 @@
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_permissions.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/permission_status.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
@@ -400,7 +401,13 @@ std::optional<Descriptor> Parse(v8::Isolate* isolate,
 // its content setting's default. Every context is restricted to secure
 // origins, so a page that is not a secure context gets "denied", but for the
 // storage access grant, whose context turns that into "ask".
-std::u16string_view StateOf(Kind kind, bool secure) {
+std::u16string_view StateOf(Kind kind, bool secure, bool window) {
+  // Background fetch and the storage access API answer for a frame: a worker,
+  // which has none, gets the default, ask.
+  if (!window &&
+      (kind == Kind::kBackgroundFetch || kind == Kind::kStorageAccessGrant)) {
+    return secure ? u"prompt" : StateOf(kind, secure, /*window=*/true);
+  }
   if (!secure) {
     return kind == Kind::kStorageAccessGrant ? u"prompt" : u"denied";
   }
@@ -456,7 +463,9 @@ v8::Local<v8::Promise> Permissions::Query(
   const auto [entry, inserted] = names_.try_emplace(
       static_cast<int>(descriptor->kind), std::u16string(descriptor->name));
   const std::u16string_view state =
-      StateOf(descriptor->kind, Window::Current().IsSecureContextForBindings());
+      StateOf(descriptor->kind,
+              ExecutionContext::Current().IsSecureContextForBindings(),
+              ExecutionContext::Current().IsWindow());
   // A new PermissionStatus each time, once the browser has answered.
   ResolveFromTask(isolate, resolver,
                   PermissionStatus::Create(entry->second, std::u16string(state))

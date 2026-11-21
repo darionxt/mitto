@@ -31,7 +31,7 @@ class IDBOpenDBRequest final : public IDBRequest {
   // An open of `name` at `version`, kNoVersion for none, whose connection
   // and upgrade transaction `host` numbered; or a delete, with no connection
   // and kDefaultVersion.
-  IDBOpenDBRequest(Window* window,
+  IDBOpenDBRequest(ExecutionContext* execution_context,
                    IDBFactory* factory,
                    IndexedDbHost* host,
                    const std::u16string& name,
@@ -46,7 +46,7 @@ class IDBOpenDBRequest final : public IDBRequest {
   const std::u16string& db_name() const { return db_name_; }
   int64_t version() const { return version_; }
 
-  // What the Session answers, through IDBFactoryClient, in the window's
+  // What the Session answers, through IDBFactoryClient, in the request's
   // context. These fire their events at once, past the transaction's queue
   // of results, which no open waits behind.
   void OnBlocked(int64_t old_version);

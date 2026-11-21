@@ -23,10 +23,10 @@
 #include "mitto/dom/cache_storage_host.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/response.h"
-#include "mitto/dom/window.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
 #include "v8/include/v8-container.h"
@@ -138,8 +138,8 @@ Cache::PutBarrier::PutBarrier(PutBarrier&&) = default;
 Cache::PutBarrier& Cache::PutBarrier::operator=(PutBarrier&&) = default;
 Cache::PutBarrier::~PutBarrier() = default;
 
-Cache::Cache(Window* window, CacheStorageHost* host, uint64_t cache)
-    : window_(window), host_(host), cache_(cache) {}
+Cache::Cache(ExecutionContext* context, CacheStorageHost* host, uint64_t cache)
+    : context_(context), host_(host), cache_(cache) {}
 
 Cache::~Cache() = default;
 
@@ -149,7 +149,7 @@ const bindings::WrapperTypeInfo* Cache::GetWrapperTypeInfo() const {
 
 void Cache::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
-  visitor->Trace(window_);
+  visitor->Trace(context_);
 }
 
 void Cache::Dispose() {
@@ -165,8 +165,8 @@ void Cache::Dispose() {
 }
 
 CacheStorageHost* Cache::Host() const {
-  Window* const window = window_.Get();
-  if (!window || !window->HasContext()) {
+  ExecutionContext* const context = context_.Get();
+  if (!context || !context->HasContext()) {
     return nullptr;
   }
   return host_;
@@ -435,8 +435,8 @@ v8::Local<v8::Promise> Cache::AddAllImpl(
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return {};
   }
-  Window* const window = window_.Get();
-  if (!window) {
+  ExecutionContext* const execution_context = context_.Get();
+  if (!execution_context) {
     return {};
   }
   const uint64_t barrier =
@@ -448,9 +448,8 @@ v8::Local<v8::Promise> Cache::AddAllImpl(
       init.signal = AbortSignal::CreateComposite(
           {state->abort_controller->Signal(), requests[i]->Signal()});
     }
-    const v8::Local<v8::Promise> fetch_promise =
-        window->Fetch(bindings::RequestOrUSVString(requests[i]), init,
-                      exception_state);
+    const v8::Local<v8::Promise> fetch_promise = execution_context->Fetch(
+        bindings::RequestOrUSVString(requests[i]), init, exception_state);
     if (exception_state.HadException() || fetch_promise.IsEmpty()) {
       barriers_.erase(barrier);
       return {};
@@ -562,14 +561,14 @@ void Cache::OnResponse(uint64_t barrier,
   if (require_ok && !response->Ok()) {
     // OnNonOkResponse(): what failed goes to the console, and the exception
     // keeps it out of the page's sight.
-    if (Window* const window = window_.Get()) {
-      window->AddConsoleMessage(
+    if (ExecutionContext* const context = context_.Get()) {
+      context->AddConsoleMessage(
           ConsoleLevel::kError,
-          base::StrCat(
-              {state->method_name, " failed for '",
-               state->requests[index]->url().spec(),
-               "': Response status ", base::NumberToString(response->Status()),
-               " is not a successful status (200-299)."}));
+          base::StrCat({state->method_name, " failed for '",
+                        state->requests[index]->url().spec(),
+                        "': Response status ",
+                        base::NumberToString(response->Status()),
+                        " is not a successful status (200-299)."}));
     }
     FailBarrier(barrier, CacheCallException(isolate, "", "Request failed",
                                             state->member, "Cache"));

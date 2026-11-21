@@ -71,6 +71,16 @@ bool IsSupportedType(ResourceType type, std::u16string_view mime_type) {
   }
 }
 
+// ContentType::GetType(): the type without white space or parameters.
+std::u16string_view MimeTypeOfContentType(std::u16string_view type) {
+  type = base::TrimWhitespace(type, base::TRIM_ALL);
+  const size_t semicolon = type.find(';');
+  if (semicolon != std::u16string_view::npos) {
+    type = base::TrimWhitespace(type.substr(0, semicolon), base::TRIM_ALL);
+  }
+  return type;
+}
+
 // An attribute's value, or "" for none.
 std::u16string_view AttributeOrEmpty(const Element& element,
                                      std::u16string_view name) {
@@ -86,6 +96,32 @@ void FireSimpleEvent(EventTarget& target, const std::u16string& type) {
 }
 
 }  // namespace
+
+// Blink's PendingLinkPreload, as a module preload's client: tells the link of
+// the module script that it waits for, until the link lets it go.
+class HTMLLinkElement::ModulePreloadClient final : public SingleModuleClient {
+ public:
+  explicit ModulePreloadClient(HTMLLinkElement& link) : link_(&link) {}
+
+  void Trace(cppgc::Visitor* visitor) const override {
+    visitor->Trace(link_);
+    SingleModuleClient::Trace(visitor);
+  }
+
+  // PendingLinkPreload::Dispose(): the link no longer waits.
+  void Dispose() { link_ = nullptr; }
+
+  // SingleModuleClient:
+  void NotifyModuleLoadFinished(ModuleScript* module_script) override {
+    if (HTMLLinkElement* const link = link_.Get()) {
+      link_ = nullptr;
+      link->ModulePreloadFinished(*this, module_script != nullptr);
+    }
+  }
+
+ private:
+  cppgc::Member<HTMLLinkElement> link_;
+};
 
 LinkRelAttribute::LinkRelAttribute(std::u16string_view rel) {
   for (const std::u16string_view token :
@@ -131,6 +167,7 @@ const bindings::WrapperTypeInfo* HTMLLinkElement::GetWrapperTypeInfo() const {
 
 void HTMLLinkElement::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(pending_resource_);
+  visitor->Trace(module_preload_);
   visitor->Trace(style_resource_);
   visitor->Trace(sheet_);
   HTMLElement::Trace(visitor);
@@ -209,9 +246,14 @@ bool HTMLLinkElement::ShouldLoadLink() const {
 }
 
 void HTMLLinkElement::Abort() {
+  ++load_generation_;
   if (Resource* const resource = pending_resource_.Get()) {
     pending_resource_ = nullptr;
     resource->RemoveClient(this);
+  }
+  if (ModulePreloadClient* const client = module_preload_.Get()) {
+    module_preload_ = nullptr;
+    client->Dispose();
   }
 }
 
@@ -235,6 +277,7 @@ void HTMLLinkElement::Process(bool media_change) {
       resource->AddClient(this);
       adding_client_ = false;
     }
+    ModulePreloadIfNeeded();
   }
   // A link that names no sheet any more keeps none.
   if (!LoadStylesheetIfNeeded() && sheet_) {
@@ -292,8 +335,8 @@ bool HTMLLinkElement::IsAlternate() const {
 
 bool HTMLLinkElement::LoadStylesheetIfNeeded() {
   const LinkRelAttribute rel(AttributeOrEmpty(*this, u"rel"));
-  const std::u16string type =
-      base::ToLowerASCII(AttributeOrEmpty(*this, u"type"));
+  const std::u16string type = base::ToLowerASCII(
+      MimeTypeOfContentType(AttributeOrEmpty(*this, u"type")));
   const std::u16string_view href =
       StripHTMLSpaces(AttributeOrEmpty(*this, u"href"));
   Document& document = GetDocument();
@@ -433,19 +476,20 @@ void HTMLLinkElement::StyleSheetFinished(Resource& resource) {
     }
   }
   // The sheet's imports resolve against its response's URL and go with it as
-  // referrer, under the policy that fetched it.
+  // referrer, under the policy that its response names.
   StyleSheetReferrer referrer;
   referrer.referrer = resource.Response().url;
-  referrer.policy = resource.ReferrerPolicy();
+  referrer.policy = StyleSheetReferrerPolicy(resource);
   if (sheet_) {
     ClearSheet();
   }
+  DecodedStyleSheet decoded =
+      DecodeStyleSheet(resource, IsLaxMimeTypeCheck(document, resource));
   sheet_ = bindings::MakeGarbageCollected<StyleSheetContents>(
       document, GURL(resource.Response().url), resource.Url(),
-      std::move(referrer), resource.Charset(), this, nullptr);
+      std::move(referrer), std::move(decoded.encoding), this, nullptr);
   sheet_->SetRenderBlocking(render_blocking_);
-  sheet_->ParseAuthorStyleSheet(
-      StyleSheetText(resource, IsLaxMimeTypeCheck(document, resource)));
+  sheet_->ParseAuthorStyleSheet(decoded.text);
   loading_ = false;
   if (resource.ErrorOccurred()) {
     sheet_->SetLoadErrorOccurred();
@@ -613,6 +657,126 @@ Resource* HTMLLinkElement::PreloadIfNeeded() {
   return document.Fetcher().RequestResource(params);
 }
 
+void HTMLLinkElement::ModulePreloadIfNeeded() {
+  const LinkRelAttribute rel(AttributeOrEmpty(*this, u"rel"));
+  Window* const window = ActiveWindowOf(GetDocument());
+  if (!rel.is_module_preload || !window) {
+    return;
+  }
+  Document& document = GetDocument();
+  // Step 1: no href, no fetch.
+  const std::u16string_view href =
+      StripHTMLSpaces(AttributeOrEmpty(*this, u"href"));
+  if (href.empty()) {
+    window->AddConsoleMessage(ConsoleLevel::kWarning,
+                              "<link rel=modulepreload> has no `href` value");
+    return;
+  }
+  Modulator* const modulator = window->GetModulator();
+  if (!modulator) {
+    return;
+  }
+  // Steps 2 and 3: the destination that as names, script where it names
+  // none, and style and json, as ModulePreloadStyleJson, stable, has it.
+  // Any other fails from a task.
+  const std::u16string as = base::ToLowerASCII(AttributeOrEmpty(*this, u"as"));
+  ModuleType module_type = ModuleType::kInvalid;
+  if (as.empty() || as == u"script") {
+    module_type = ModuleType::kJavaScriptOrWasm;
+  } else if (as == u"style") {
+    module_type = ModuleType::kCSS;
+  } else if (as == u"json") {
+    module_type = ModuleType::kJSON;
+  } else {
+    window->AddConsoleMessage(
+        ConsoleLevel::kWarning,
+        "<link rel=modulepreload> has an invalid `as` value " +
+            base::UTF16ToUTF8(as));
+    module_preload_ =
+        bindings::MakeGarbageCollected<ModulePreloadClient>(*this);
+    modulator->PostTask(base::BindOnce(
+        &ModulePreloadClient::NotifyModuleLoadFinished,
+        cppgc::Persistent<ModulePreloadClient>(module_preload_.Get()),
+        nullptr));
+    return;
+  }
+  // Step 4.
+  const GURL url = document.CompleteUrl(href);
+  if (!url.is_valid()) {
+    window->AddConsoleMessage(
+        ConsoleLevel::kWarning,
+        "<link rel=modulepreload> has an invalid `href` value " +
+            base::UTF16ToUTF8(href));
+    return;
+  }
+  // Only if media matches.
+  const std::u16string* media = FindAttribute(u"media");
+  if (media && !media->empty()) {
+    MediaValues values = MediaValuesFor(window->Start());
+    values.strict_mode = !document.InQuirksMode();
+    const MediaQueryFeatures features = MediaQueryFeaturesFor(
+        bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features());
+    if (!MediaQueryEvaluator(values).Eval(
+            *ParseMediaQuerySet(*media, features))) {
+      return;
+    }
+  }
+  // Step 6: the module script credentials mode for crossorigin.
+  ScriptFetchOptions options;
+  const std::u16string* cross_origin = FindAttribute(u"crossorigin");
+  options.credentials_mode =
+      CrossOriginAttributeFromValue(
+          cross_origin ? std::optional<std::u16string>(*cross_origin)
+                       : std::nullopt) == CrossOriginAttribute::kUseCredentials
+          ? FetchCredentialsMode::kInclude
+          : FetchCredentialsMode::kSameOrigin;
+  // Step 7.
+  options.nonce = Nonce();
+  // Steps 9 and 10: the integrity attribute's metadata, or, with no such
+  // attribute, what the import map's integrity says of url.
+  if (const std::u16string* integrity = FindAttribute(u"integrity")) {
+    options.integrity_attribute = *integrity;
+    if (!integrity->empty()) {
+      std::vector<std::string> messages;
+      options.integrity_metadata =
+          ParseIntegrityAttribute(*integrity, &messages);
+      for (std::string& message : messages) {
+        window->AddConsoleMessage(ConsoleLevel::kError, std::move(message));
+      }
+    }
+  } else {
+    options.integrity_attribute = modulator->GetIntegrityMetadataString(url);
+    options.integrity_metadata = modulator->GetIntegrityMetadata(url);
+  }
+  // Steps 11 to 13.
+  options.parser_state = ParserDisposition::kNotParserInserted;
+  options.referrer_policy =
+      FetchReferrerPolicyFromString(AttributeOrEmpty(*this, u"referrerpolicy"));
+  options.fetch_priority_hint =
+      FetchPriorityHintFromAttribute(AttributeOrEmpty(*this, u"fetchpriority"));
+  options.render_blocking = RenderBlockingBehavior::kNonBlocking;
+  // Step 14, with the document's referrer, as ModulePreloadReferrer, stable,
+  // has it: the single module script, not its imports.
+  modulator->SetAcquiringImportMapsState(
+      Modulator::AcquiringImportMapsState::kAfterModuleScriptLoad);
+  module_preload_ = bindings::MakeGarbageCollected<ModulePreloadClient>(*this);
+  modulator->FetchSingle(
+      // A JavaScript module's destination; a JSON or CSS one has its own.
+      ModuleScriptFetchRequest(url, module_type, FetchDestination::kScript,
+                               options, kClientReferrer),
+      ModuleGraphLevel::kDependentModuleFetch, module_preload_.Get());
+}
+
+void HTMLLinkElement::ModulePreloadFinished(ModulePreloadClient& client,
+                                            bool loaded) {
+  if (&client != module_preload_.Get()) {
+    return;
+  }
+  module_preload_ = nullptr;
+  // Steps 14 and 15.
+  DispatchLinkEvent(loaded);
+}
+
 void HTMLLinkElement::NotifyFinished(Resource& resource) {
   if (&resource == style_resource_.Get()) {
     StyleSheetFinished(resource);
@@ -649,9 +813,14 @@ void HTMLLinkElement::NotifyFinished(Resource& resource) {
   }
   tasks->PostTask(
       TaskType::kNetworking,
-      base::BindOnce([](const cppgc::Persistent<HTMLLinkElement>& link,
-                        bool loaded) { link->DispatchLinkEvent(loaded); },
-                     cppgc::Persistent<HTMLLinkElement>(this), loaded));
+      base::BindOnce(
+          [](const cppgc::Persistent<HTMLLinkElement>& link,
+             uint64_t generation, bool loaded) {
+            if (link->load_generation_ == generation) {
+              link->DispatchLinkEvent(loaded);
+            }
+          },
+          cppgc::Persistent<HTMLLinkElement>(this), load_generation_, loaded));
 }
 
 void HTMLLinkElement::DispatchLinkEvent(bool loaded) {

@@ -2,13 +2,15 @@
 // the root, then the descendants of each module script that it fetches, in
 // parallel, each URL and module type once, then the first parse error of the
 // graph, or else its instantiation, whose error becomes the root's error to
-// rethrow.
+// rethrow. Each module of the graph is fetched with the graph's destination:
+// script, or worker for a module worker's.
 //
 // Upstream: third_party/blink/renderer/core/loader/modulescript/module_tree_linker.cc
 
 #ifndef MITTO_DOM_MODULE_TREE_LINKER_H_
 #define MITTO_DOM_MODULE_TREE_LINKER_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -26,17 +28,22 @@ namespace mitto {
 
 class ModuleTreeLinker final : public SingleModuleClient {
  public:
-  ModuleTreeLinker(Modulator& modulator, ModuleTreeClient& client);
+  ModuleTreeLinker(Modulator& modulator,
+                   ModuleTreeClient& client,
+                   FetchDestination destination);
   ~ModuleTreeLinker() override;
 
   void Trace(cppgc::Visitor* visitor) const override;
 
   // Fetch a module script tree, an import() module script graph: from the
-  // root at `url`.
-  void FetchRoot(const GURL& url,
-                 ModuleType module_type,
-                 const ScriptFetchOptions& options,
-                 std::string referrer);
+  // root at `url`, or from `main_script`, the response of a module worker's
+  // script, which its creator took.
+  void FetchRoot(
+      const GURL& url,
+      ModuleType module_type,
+      const ScriptFetchOptions& options,
+      std::string referrer,
+      std::shared_ptr<const ModuleWorkerMainScript> main_script = nullptr);
   // Fetch an inline module script graph: from `module_script`, already made.
   void FetchRootInline(ModuleScript* module_script);
 
@@ -66,6 +73,7 @@ class ModuleTreeLinker final : public SingleModuleClient {
 
   cppgc::Member<Modulator> modulator_;
   cppgc::Member<ModuleTreeClient> client_;
+  const FetchDestination destination_;
   State state_ = State::kInitial;
   cppgc::Member<ModuleScript> result_;
   bool found_parse_error_ = false;
