@@ -293,6 +293,9 @@ _POSTED: list[tuple[str, bytes]] = []
 # The Referer of each GET, by path, and the paths that redirect, to where.
 _REFERERS: dict[str, str | None] = {}
 _REDIRECTS = {"/redirect-w.js": "/v2/w.js"}
+# The headers of the last GET of /echo, which any origin may read, and how many preflights of it came.
+_ECHOED: dict[str, str] = {}
+_PREFLIGHTS: list[str] = []
 
 
 @pytest.fixture
@@ -314,6 +317,16 @@ def server() -> Iterator[str]:
         def do_GET(self) -> None:
             path = self.path.partition("?")[0]
             _REFERERS[path] = self.headers.get("Referer")
+            if path == "/echo":
+                _ECHOED.clear()
+                _ECHOED.update(self.headers.items())
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", "4")
+                self.end_headers()
+                self.wfile.write(b"echo")
+                return
             if path in _REDIRECTS:
                 self.send_response(302)
                 self.send_header("Location", _REDIRECTS[path])
@@ -332,6 +345,15 @@ def server() -> Iterator[str]:
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_OPTIONS(self) -> None:
+            _PREFLIGHTS.append(self.path)
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "x-test")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def do_POST(self) -> None:
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -544,6 +566,46 @@ def test_a_worker_of_a_data_url_has_an_opaque_origin(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == ["null", "data:text/javascript,postMessage([self.origin, location.href])"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_of_a_data_url_fetches_as_its_opaque_origin(server: str) -> None:
+    # As Chrome 157 sends it: Origin null, from another site, with neither the page's cookie nor a Referer.
+    script = """new Promise((resolve) => {
+        document.cookie = 'c=1';
+        const src = "fetch('" + location.origin + "/echo').then((r) => r.text()).then(postMessage, (e) => postMessage(String(e)));";
+        const worker = new Worker('data:text/javascript,' + encodeURIComponent(src));
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "echo"
+    seen = {name.lower(): value for name, value in _ECHOED.items()}
+    assert (seen["origin"], seen["sec-fetch-site"], seen["sec-fetch-mode"], seen["sec-fetch-dest"]) == (
+        "null",
+        "cross-site",
+        "cors",
+        "empty",
+    )
+    assert "cookie" not in seen
+    assert "referer" not in seen
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_of_a_data_url_keeps_one_origin_for_its_preflights(server: str) -> None:
+    # Its opaque origin is the same for each of its requests, so a preflight that allowed one serves the next.
+    _PREFLIGHTS.clear()
+    script = """new Promise((resolve) => {
+        const echo = location.origin + '/echo';
+        const src = "const f = () => fetch('" + echo + "', {headers: {'x-test': '1'}}).then((r) => r.text());" +
+            "f().then(f).then(postMessage, (e) => postMessage(String(e)));";
+        const worker = new Worker('data:text/javascript,' + encodeURIComponent(src));
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "echo"
+    assert _PREFLIGHTS == ["/echo"]
 
 
 @pytest.mark.usefixtures("page_program")

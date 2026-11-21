@@ -169,7 +169,9 @@ FetchRules::FetchRules(FetchParams params,
       client_hints_store_(client_hints_store),
       network_quality_(network_quality),
       original_url_(url) {
-  if (params_.initiator) {
+  if (params_.opaque_initiator) {
+    initiator_ = *params_.opaque_initiator;
+  } else if (params_.initiator) {
     page_ = *params_.initiator;
     initiator_ = url::Origin::Create(page_);
   } else if (params_.mode != RequestMode::kNavigate || IsSubframeNavigation()) {
