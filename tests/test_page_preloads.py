@@ -16,7 +16,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page
-from tests.page_server import TIMEOUT_SECONDS, RecordingServer, png
+from tests.page_server import TIMEOUT_SECONDS, RecordingServer, Route, png
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -135,6 +135,23 @@ def test_a_style_elements_import_is_fetched_once(session: mitto.Session, server:
     # The scanner reads the import ahead of the parser, and the sheet takes its response.
     assert "/imported.css" in asked
     assert server.paths().count("/imported.css") == 1
+
+
+def test_a_url_against_the_base_element_keeps_the_documents_encoding(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    server.route("/held.js", b"", _JS)
+    server.route("/s.js?q=%E9", b"", _JS)
+    markup = '<base href="/"><script src=held.js></script><script src="s.js?q=\u00e9"></script>'
+    server.routes["/"] = Route(markup.encode("cp1252"), headers=[("Content-Type", "text/html; charset=windows-1252")])
+
+    asked = _open_page_holding(session, server, server.url("/"), ["/held.js"], lambda: set(server.paths()))
+
+    # The scanner resolves against the predicted base in the document's encoding, as Document::CompleteURLWithOverride()
+    # does, so the script takes its preload.
+    assert "/s.js?q=%E9" in asked
+    assert server.paths().count("/s.js?q=%E9") == 1
+    assert "/s.js?q=%C3%A9" not in server.paths()
 
 
 def test_a_csp_meta_element_stops_the_scanner(session: mitto.Session, server: RecordingServer) -> None:
