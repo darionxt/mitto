@@ -5,6 +5,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "mitto/page_messages.h"
+#include "url/gurl.h"
+#include "url/scheme_host_port.h"
 
 namespace mitto {
 namespace {
@@ -167,7 +169,7 @@ namespace {
 // its destination, where a text module, whose Request Kind comes once Chrome
 // 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
 // send a JavaScript module's lines, Known Gaps; a classic script; an image;
-// a style sheet; a font; or a fetch.
+// a style sheet; a font; a favicon; or a fetch.
 PageRequestKind KindOf(const FetchRequestData& data) {
   if (data.is_module) {
     return data.destination == FetchDestination::kJson
@@ -185,6 +187,8 @@ PageRequestKind KindOf(const FetchRequestData& data) {
       return PageRequestKind::kStyle;
     case FetchDestination::kFont:
       return PageRequestKind::kFont;
+    case FetchDestination::kFavicon:
+      return PageRequestKind::kFavicon;
     case FetchDestination::kJson:
     case FetchDestination::kText:
     case FetchDestination::kWorker:
@@ -264,13 +268,32 @@ void PageFetcher::Fetch(FetchRequestData data,
     page_request.priority = ToPagePriority(*data.priority);
   }
   page_request.keepalive = data.keepalive;
+  // A request with no entry in the Performance Timeline, as the favicon's.
   started.set_number(
-      requests_->Start(std::move(page_request), started, data.render_blocking));
+      data.resource_timing
+          ? requests_->Start(std::move(page_request), started,
+                             data.render_blocking)
+          : requests_->StartUntimed(std::move(page_request), started));
   open_.emplace(started.number(), std::move(request));
 }
 
 bool PageFetcher::HasFinishedResponse(std::string_view url) const {
   return finished_responses_.contains(url);
+}
+
+void PageFetcher::PrefetchDns(const GURL& url) {
+  PageNetworkHint hint;
+  hint.type = PageNetworkHintType::kPrefetchDns;
+  hint.url = url::SchemeHostPort(url).GetURL().spec();
+  requests_->Hint(hint);
+}
+
+void PageFetcher::Preconnect(const GURL& url, bool allow_credentials) {
+  PageNetworkHint hint;
+  hint.type = PageNetworkHintType::kPreconnect;
+  hint.allow_credentials = allow_credentials;
+  hint.url = url::SchemeHostPort(url).GetURL().spec();
+  requests_->Hint(hint);
 }
 
 void PageFetcher::Finished(uint64_t number) {

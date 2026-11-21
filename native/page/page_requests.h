@@ -117,6 +117,9 @@ class PageRequests {
   // the Page, once it hears of the next document.
   void LetGo(uint64_t number);
 
+  // Sends the Session a network hint of the current window's document.
+  void Hint(const PageNetworkHint& hint);
+
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);
 

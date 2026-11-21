@@ -221,6 +221,11 @@ void PageRequests::CancelAll() {
   }
 }
 
+void PageRequests::Hint(const PageNetworkHint& hint) {
+  const uint64_t document = Window::Current().DocumentId();
+  sender_->SendFromContext(document, EncodeNetworkHint(document, hint));
+}
+
 void PageRequests::LetGo(uint64_t number) {
   const auto found = open_.find(number);
   if (found == open_.end()) {

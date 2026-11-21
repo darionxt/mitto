@@ -107,6 +107,8 @@ class DocumentLoader final : public PageRequests::Client,
   bool body_ended_ = false;
   // Whether the parser has had all of the body.
   bool data_finished_ = false;
+  // Whether the document's load event has led to a favicon fetch.
+  bool favicon_fetched_ = false;
   base::WeakPtrFactory<DocumentLoader> weak_factory_{this};
 };
 

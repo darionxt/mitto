@@ -200,6 +200,7 @@ bool IsKnown(uint32_t type) {
           type <= static_cast<uint32_t>(PageMessage::kContextGone)) ||
          (type >= static_cast<uint32_t>(PageMessage::kRequestBodyPart) &&
           type <= static_cast<uint32_t>(PageMessage::kRequestBodyCredit)) ||
+         type == static_cast<uint32_t>(PageMessage::kNetworkHint) ||
          (type >= static_cast<uint32_t>(PageMessage::kStorageBuckets) &&
           type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer));
 }
@@ -2114,6 +2115,7 @@ bool NamesDocument(PageMessage type) {
     case PageMessage::kCacheStorage:
     case PageMessage::kIndexedDb:
     case PageMessage::kStorageBuckets:
+    case PageMessage::kNetworkHint:
       return true;
     default:
       return false;
@@ -2170,6 +2172,15 @@ std::string EncodeStorageMutation(PageMessage type,
 
 std::string EncodeStorageUnbind(uint64_t area) {
   return EncodeFrame(PageMessage::kStorageUnbind, EncodeUint64(area));
+}
+
+std::string EncodeNetworkHint(uint64_t document, const PageNetworkHint& hint) {
+  const char type_and_credentials[] = {
+      static_cast<char>(hint.type),
+      static_cast<char>(hint.allow_credentials ? 1 : 0)};
+  return EncodeDocumentFrame(
+      PageMessage::kNetworkHint, document,
+      base::StrCat({std::string_view(type_and_credentials, 2), hint.url}));
 }
 
 std::vector<std::string> EncodeStorageEntries(
@@ -2528,6 +2539,34 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.storage_unbind = DecodeUint64(payload);
       return frame;
+    case PageMessage::kNetworkHint: {
+      if (payload.size() < 2) {
+        return base::unexpected(WrongSize("network hint", payload.size()));
+      }
+      const std::string_view bytes = payload;
+      const uint8_t hint_type = static_cast<uint8_t>(bytes[0]);
+      const uint8_t allow_credentials = static_cast<uint8_t>(bytes[1]);
+      if (hint_type > static_cast<uint8_t>(PageNetworkHintType::kPreconnect)) {
+        return base::unexpected(base::StrCat(
+            {"a network hint of type ", base::NumberToString(hint_type)}));
+      }
+      // Only a preconnect says whether its connection carries credentials.
+      if (allow_credentials > 1 ||
+          (allow_credentials &&
+           hint_type !=
+               static_cast<uint8_t>(PageNetworkHintType::kPreconnect))) {
+        return base::unexpected(
+            base::StrCat({"a network hint whose credentials byte is ",
+                          base::NumberToString(allow_credentials)}));
+      }
+      if (!IsText(bytes.substr(2))) {
+        return base::unexpected("a network hint whose URL is not UTF-8");
+      }
+      frame.network_hint.type = static_cast<PageNetworkHintType>(hint_type);
+      frame.network_hint.allow_credentials = allow_credentials == 1;
+      frame.network_hint.url = std::string(bytes.substr(2));
+      return frame;
+    }
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -2763,6 +2802,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kStorageDelete:
     case PageMessage::kStorageDeleteAll:
     case PageMessage::kStorageUnbind:
+    case PageMessage::kNetworkHint:
     case PageMessage::kRequestBodyPart:
     case PageMessage::kRequestBodyEnded:
       return base::unexpected(WrongWay(type, "a Session"));

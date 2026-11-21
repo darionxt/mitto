@@ -126,6 +126,9 @@ class HTMLLinkElement final : public HTMLElement,
   // LinkLoader::Abort(): lets go of the resource that it waits for, and of
   // an event that a task will fire for one that has ended.
   void Abort();
+  // PreloadHelper::DnsPrefetchIfNeeded() and PreconnectIfNeeded(): the
+  // hints that a link of rel dns-prefetch or preconnect gives the Session.
+  void HintIfNeeded();
   // PreloadHelper::PreloadIfNeeded().
   Resource* PreloadIfNeeded();
   // PreloadHelper::ModulePreloadIfNeeded(): fetches the single module script

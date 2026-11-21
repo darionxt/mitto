@@ -72,9 +72,9 @@ A Session replays the cases of documents as a caller would make them. A page mak
 | `frame_script`, `frame_image`, `frame_fetch`, `frame_nested_fetch` | That a frame of another site asks for it, whose site for cookies is no site | [#285](https://github.com/darionxt/mitto/issues/285) |
 | `module_text` | That a text module asks for it, whose `Accept` and `Sec-Fetch-Dest` no Request Kind has yet. `RequestKind.MODULE_TEXT` comes with the Chrome 158 run, when the Supported Window becomes 156-158, by the owner's choice of 2026-11-19, because Chrome 155 has no text modules and so no Baseline of one | [#291](https://github.com/darionxt/mitto/issues/291) |
 
-The other cases of documents, the frames' own navigations, `frame_nested` and `favicon` among them, have checks now, and what a Session cannot replay of them yet is in the known-gaps list, as for any case.
+The other cases of documents, the frames' own navigations and `frame_nested` among them, have checks now, and what a Session cannot replay of them yet is in the known-gaps list, as for any case.
 
-The `document_*` cases, what a document's markup asks for, replay through a Page that opens the document's page and stays until its own script asks for its last path (`until` in their `Replay`), so that a Page's preload scanner and load scheduler give each request Blink's priority, and over HTTP/2 and HTTP/3 Blink's order.
+The `document_*` cases, what a document's markup asks for, replay through a Page that opens the document's page and stays until its own script asks for its last path (`until` in their `Replay`), so that a Page's preload scanner and load scheduler give each request Blink's priority, and over HTTP/2 and HTTP/3 Blink's order. `favicon` replays the same way, as the Page asks for the icon once the document has loaded, as Chrome's favicon driver does.
 
 `order`, which a normal form of documents holds over HTTP/2 and HTTP/3, belongs to the fingerprint of each case it names, and to no other, so it shows only in the `document_*` cases.
 

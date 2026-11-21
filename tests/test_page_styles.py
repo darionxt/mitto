@@ -17,7 +17,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page
-from tests.page_server import TIMEOUT_SECONDS, RecordingServer
+from tests.page_server import TIMEOUT_SECONDS, RecordingServer, without_favicon
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -91,7 +91,13 @@ def test_a_sheet_and_its_imports_go_as_a_callers_style_requests(
     with _open_page(session, url):
         pass
 
-    assert sorted(server.paths()) == ["/deepest.css", "/inline.css", "/linked.css", "/nested.css", "/page"]
+    assert sorted(without_favicon(server.paths())) == [
+        "/deepest.css",
+        "/inline.css",
+        "/linked.css",
+        "/nested.css",
+        "/page",
+    ]
     # A sheet of the document goes from the document, and an import from the sheet that imports it, as Referer says.
     for path, initiator in (
         ("/linked.css", url),
@@ -114,7 +120,7 @@ def test_an_import_takes_the_decoded_string_of_a_quoted_url(session: mitto.Sessi
         pass
 
     # The string inside url() decodes its escapes, as the tokenizer reads it, an escaped quote too.
-    assert sorted(server.paths()) == ["/escaped.css", "/page", "/say's.css"]
+    assert sorted(without_favicon(server.paths())) == ["/escaped.css", "/page", "/say's.css"]
 
 
 def test_a_link_type_with_parameters_names_a_style_sheet(session: mitto.Session, server: RecordingServer) -> None:
@@ -132,7 +138,7 @@ def test_a_link_type_with_parameters_names_a_style_sheet(session: mitto.Session,
         pass
 
     # The type's MIME type, without white space or parameters, as Blink's ContentType::GetType() takes it.
-    assert sorted(server.paths()) == ["/page", "/parameters.css", "/spaced.css"]
+    assert sorted(without_favicon(server.paths())) == ["/page", "/parameters.css", "/spaced.css"]
 
 
 def test_an_import_takes_the_encoding_that_decoded_its_sheet(session: mitto.Session, server: RecordingServer) -> None:
@@ -147,7 +153,7 @@ def test_an_import_takes_the_encoding_that_decoded_its_sheet(session: mitto.Sess
 
     # A sheet that says nothing of its encoding decodes as the sheet that imports it was decoded, as Blink gives the
     # import the parent's CSSStyleSheetResource::Encoding().
-    assert sorted(server.paths()) == [named, "/declared.css", "/page", "/undeclared.css"]
+    assert sorted(without_favicon(server.paths())) == [named, "/declared.css", "/page", "/undeclared.css"]
 
 
 def test_a_style_element_reads_its_text_again_once_a_script_changes_it(
@@ -162,7 +168,7 @@ def test_a_style_element_reads_its_text_again_once_a_script_changes_it(
         assert server.wait_for_path("/next.css")
 
     # CharacterData::DidModifyData() tells the parent, and the style element makes its sheet again.
-    assert sorted(server.paths()) == ["/first.css", "/next.css", "/page"]
+    assert sorted(without_favicon(server.paths())) == ["/first.css", "/next.css", "/page"]
 
 
 def test_an_import_goes_under_the_policy_that_its_sheets_response_names(
@@ -245,7 +251,7 @@ def test_an_import_after_a_rule_or_of_its_own_sheet_loads_nothing(
         pass
 
     # A rule that does not parse ends no import section, as Blink drops it.
-    assert sorted(server.paths()) == ["/", "/after-invalid.css", "/cycle.css"]
+    assert sorted(without_favicon(server.paths())) == ["/", "/after-invalid.css", "/cycle.css"]
 
 
 def test_a_parser_inserted_sheet_holds_back_the_scripts_after_it(
@@ -258,7 +264,7 @@ def test_a_parser_inserted_sheet_holds_back_the_scripts_after_it(
     asked_early = _open_page_holding(session, server, url, "/held.css", lambda: "/after-script" in server.paths())
 
     assert not asked_early
-    assert server.paths()[-1] == "/after-script"
+    assert without_favicon(server.paths())[-1] == "/after-script"
 
 
 @pytest.mark.parametrize(
@@ -332,7 +338,7 @@ def test_a_disabled_link_loads_its_sheet_once_a_script_enables_it(
     )
 
     with _open_page(session, url) as page:
-        before = list(server.paths())
+        before = without_favicon(server.paths())
         loaded = page.evaluate(
             """new Promise(resolve => {
               const link = document.getElementById('link');
@@ -344,7 +350,7 @@ def test_a_disabled_link_loads_its_sheet_once_a_script_enables_it(
 
     assert before == ["/"]
     assert loaded is True
-    assert server.paths() == ["/", "/later.css"]
+    assert without_favicon(server.paths()) == ["/", "/later.css"]
 
 
 def test_the_window_load_event_waits_for_a_sheet_and_its_imports(
