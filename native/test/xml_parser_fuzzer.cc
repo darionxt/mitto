@@ -8,7 +8,8 @@
 // a default namespace. The high five bits say how big the pieces are that a
 // document comes in. The rest is the markup, in UTF-8. A document must get the
 // same tree whole as in pieces, save what pieces change in Chrome too: where
-// libxml2 places an error, and some documents of the Rust crate.
+// libxml2 places an error, a document whose internal subset libxml2 takes to
+// end inside a processing instruction, and some documents of the Rust crate.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -19,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/check_op.h"
@@ -224,6 +226,156 @@ struct ParsedDocument {
   bool pieces_leave_alone;
 };
 
+// Whether libxml2's push parser reads the internal subset of `markup` with
+// less of it in pieces than whole, as in Chrome. It reads the subset once a
+// `]`, blanks and `>` have come outside quotes and comments, as
+// xmlParseLookupInternalSubset() looks for them, which may be inside a
+// processing instruction, whose end the parser then looks for in what has
+// come: `<!DOCTYPE a [<?x ]> ?>]><a>t</a>` is a document whole, and an error
+// that the instruction never ends when a piece ends just after its `]>`.
+bool SubsetEndsInsideProcessingInstruction(std::u16string_view markup) {
+  const auto is_blank = [](char16_t c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+  };
+  // The document type declaration, after the prolog's blanks, comments and
+  // processing instructions, the XML declaration among them.
+  size_t at = markup.starts_with(u"\uFEFF") ? 1 : 0;
+  while (true) {
+    const std::u16string_view rest = markup.substr(at);
+    if (!rest.empty() && is_blank(rest[0])) {
+      ++at;
+      continue;
+    }
+    const bool instruction = rest.starts_with(u"<?");
+    if (instruction || rest.starts_with(u"<!--")) {
+      const std::u16string_view end = instruction ? u"?>" : u"-->";
+      const size_t found = rest.find(end, instruction ? 2 : 4);
+      if (found == std::u16string_view::npos) {
+        return false;
+      }
+      at += found + end.size();
+      continue;
+    }
+    if (!rest.starts_with(u"<!DOCTYPE")) {
+      return false;
+    }
+    break;
+  }
+  // The external ID's literals, up to the subset's `[`.
+  char16_t quote = 0;
+  for (at += 9; at < markup.size(); ++at) {
+    const char16_t c = markup[at];
+    if (quote) {
+      if (c == quote) {
+        quote = 0;
+      }
+    } else if (c == '"' || c == '\'') {
+      quote = c;
+    } else if (c == '>') {
+      return false;
+    } else if (c == '[') {
+      break;
+    }
+  }
+  if (at >= markup.size()) {
+    return false;
+  }
+  // Where the parser's processing instructions are, from just after `[`: one
+  // starts with `<?` outside comments and the literals of declarations, and
+  // ends with `?>`, whatever quotes it holds.
+  std::vector<bool> in_instruction(markup.size(), false);
+  enum class Place { kSubset, kInstruction, kComment, kDeclaration };
+  Place place = Place::kSubset;
+  char16_t literal = 0;
+  for (size_t i = at + 1; i < markup.size();) {
+    const std::u16string_view rest = markup.substr(i);
+    switch (place) {
+      case Place::kSubset:
+        if (rest.starts_with(u"<?")) {
+          place = Place::kInstruction;
+          in_instruction[i] = in_instruction[i + 1] = true;
+          i += 2;
+          continue;
+        }
+        if (rest.starts_with(u"<!--")) {
+          place = Place::kComment;
+          i += 4;
+          continue;
+        }
+        if (rest.starts_with(u"<!")) {
+          place = Place::kDeclaration;
+          i += 2;
+          continue;
+        }
+        break;
+      case Place::kInstruction:
+        if (rest.starts_with(u"?>")) {
+          place = Place::kSubset;
+          i += 2;
+          continue;
+        }
+        in_instruction[i] = true;
+        break;
+      case Place::kComment:
+        if (rest.starts_with(u"-->")) {
+          place = Place::kSubset;
+          i += 3;
+          continue;
+        }
+        break;
+      case Place::kDeclaration:
+        if (literal) {
+          if (markup[i] == literal) {
+            literal = 0;
+          }
+        } else if (markup[i] == '"' || markup[i] == '\'') {
+          literal = markup[i];
+        } else if (markup[i] == '>') {
+          place = Place::kSubset;
+        }
+        break;
+    }
+    ++i;
+  }
+  // xmlParseLookupInternalSubset()'s scan from just after `[`, to where it
+  // takes the subset to end.
+  char16_t state = 0;
+  size_t i = at + 1;
+  while (i < markup.size()) {
+    const char16_t c = markup[i];
+    const std::u16string_view rest = markup.substr(i);
+    if (state == '-') {
+      if (rest.starts_with(u"-->")) {
+        state = 0;
+        i += 3;
+        continue;
+      }
+    } else if (state == ']' || state == ' ') {
+      if (c == '>') {
+        return in_instruction[i];
+      }
+      if (is_blank(c)) {
+        state = ' ';
+      } else if (state == ' ' || c != ']') {
+        state = 0;
+        continue;
+      }
+    } else if (state != 0) {
+      if (c == state) {
+        state = 0;
+      }
+    } else if (rest.starts_with(u"<!--")) {
+      state = '-';
+      i += 4;
+      continue;
+    } else if (c == '"' || c == '\'' || c == ']') {
+      state = c;
+    }
+    ++i;
+  }
+  return false;
+}
+
 // A document of no window, whose scripts never run, so no reader gives the
 // parser a script to wait for.
 ParsedDocument ParseDocument(std::u16string_view markup,
@@ -352,7 +504,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     const ParsedDocument whole =
         ParseDocument(markup, markup.size() + 1, libxml);
     const ParsedDocument in_pieces = ParseDocument(markup, piece_size, libxml);
-    if (libxml || whole.pieces_leave_alone) {
+    if (libxml ? !SubsetEndsInsideProcessingInstruction(markup)
+               : whole.pieces_leave_alone) {
       CHECK_EQ(whole.dump, in_pieces.dump);
     }
   } else {
