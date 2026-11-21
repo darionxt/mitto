@@ -15,9 +15,9 @@
 #include "mitto/dom/cache_storage_answers.h"
 #include "mitto/dom/cache_storage_host.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/response.h"
-#include "mitto/dom/execution_context.h"
 #include "mitto/dom/storage_bucket.h"
 #include "url/gurl.h"
 #include "v8/include/v8-container.h"
@@ -133,29 +133,29 @@ v8::Local<v8::Promise> CacheStorage::Match(
     call.has_cache_name = true;
     call.cache_name = *options.cache_name;
   }
-  return Ask(std::move(call), "match", [](v8::Isolate* isolate,
-                                 v8::Local<v8::Context> context,
-                                 v8::Local<v8::Promise::Resolver> resolver,
-                                 CacheStorageHost& host,
-                                 const PageCacheStorageAnswer& answer) {
-    // MatchComplete(): no entry, an error of storage or no such cache gives
-    // undefined.
-    if (answer.error == kCacheStorageErrorNotFound ||
-        answer.error == kCacheStorageErrorStorage ||
-        answer.error == kCacheStorageErrorCacheNameNotFound) {
-      std::ignore = resolver->Resolve(context, v8::Undefined(isolate));
-      return;
-    }
-    if (answer.error != kCacheStorageSuccess || answer.responses.empty()) {
-      std::ignore = resolver->Reject(
-          context, CacheStorageException(isolate, answer.error, "", "match",
-                                         "CacheStorage"));
-      return;
-    }
-    std::ignore = resolver->Resolve(
-        context, bindings::ToV8(isolate,
-                                ResponseFromCache(host, answer.responses[0])));
-  });
+  return Ask(
+      std::move(call), "match",
+      [](v8::Isolate* isolate, v8::Local<v8::Context> context,
+         v8::Local<v8::Promise::Resolver> resolver, CacheStorageHost& host,
+         const PageCacheStorageAnswer& answer) {
+        // MatchComplete(): no entry, an error of storage or no such cache gives
+        // undefined.
+        if (answer.error == kCacheStorageErrorNotFound ||
+            answer.error == kCacheStorageErrorStorage ||
+            answer.error == kCacheStorageErrorCacheNameNotFound) {
+          std::ignore = resolver->Resolve(context, v8::Undefined(isolate));
+          return;
+        }
+        if (answer.error != kCacheStorageSuccess || answer.responses.empty()) {
+          std::ignore = resolver->Reject(
+              context, CacheStorageException(isolate, answer.error, "", "match",
+                                             "CacheStorage"));
+          return;
+        }
+        std::ignore = resolver->Resolve(
+            context, bindings::ToV8(isolate, ResponseFromCache(
+                                                 host, answer.responses[0])));
+      });
 }
 
 v8::Local<v8::Promise> CacheStorage::Has(
@@ -164,22 +164,21 @@ v8::Local<v8::Promise> CacheStorage::Has(
   PageCacheStorageCall call;
   call.op = CacheStorageCallOp::kHas;
   call.cache_name = cache_name;
-  return Ask(std::move(call), "has", [](v8::Isolate* isolate,
-                                 v8::Local<v8::Context> context,
-                                 v8::Local<v8::Promise::Resolver> resolver,
-                                 CacheStorageHost& host,
-                                 const PageCacheStorageAnswer& answer) {
-    // HasComplete().
-    if (answer.error == kCacheStorageSuccess) {
-      std::ignore = resolver->Resolve(context, v8::True(isolate));
-    } else if (answer.error == kCacheStorageErrorNotFound) {
-      std::ignore = resolver->Resolve(context, v8::False(isolate));
-    } else {
-      std::ignore = resolver->Reject(
-          context, CacheStorageException(isolate, answer.error, "", "has",
-                                         "CacheStorage"));
-    }
-  });
+  return Ask(std::move(call), "has",
+             [](v8::Isolate* isolate, v8::Local<v8::Context> context,
+                v8::Local<v8::Promise::Resolver> resolver,
+                CacheStorageHost& host, const PageCacheStorageAnswer& answer) {
+               // HasComplete().
+               if (answer.error == kCacheStorageSuccess) {
+                 std::ignore = resolver->Resolve(context, v8::True(isolate));
+               } else if (answer.error == kCacheStorageErrorNotFound) {
+                 std::ignore = resolver->Resolve(context, v8::False(isolate));
+               } else {
+                 std::ignore = resolver->Reject(
+                     context, CacheStorageException(isolate, answer.error, "",
+                                                    "has", "CacheStorage"));
+               }
+             });
 }
 
 v8::Local<v8::Promise> CacheStorage::Open(
@@ -188,23 +187,23 @@ v8::Local<v8::Promise> CacheStorage::Open(
   PageCacheStorageCall call;
   call.op = CacheStorageCallOp::kOpen;
   call.cache_name = cache_name;
-  return Ask(std::move(call), "open", [](v8::Isolate* isolate,
-                                 v8::Local<v8::Context> context,
-                                 v8::Local<v8::Promise::Resolver> resolver,
-                                 CacheStorageHost& host,
-                                 const PageCacheStorageAnswer& answer) {
-    // OpenComplete().
-    if (answer.error != kCacheStorageSuccess) {
-      std::ignore = resolver->Reject(
-          context, CacheStorageException(isolate, answer.error, "", "open",
-                                         "CacheStorage"));
-      return;
-    }
-    std::ignore = resolver->Resolve(
-        context, bindings::ToV8(isolate, bindings::MakeGarbageCollected<Cache>(
-                                             &ExecutionContext::Current(), &host,
-                                             answer.cache)));
-  });
+  return Ask(std::move(call), "open",
+             [](v8::Isolate* isolate, v8::Local<v8::Context> context,
+                v8::Local<v8::Promise::Resolver> resolver,
+                CacheStorageHost& host, const PageCacheStorageAnswer& answer) {
+               // OpenComplete().
+               if (answer.error != kCacheStorageSuccess) {
+                 std::ignore = resolver->Reject(
+                     context, CacheStorageException(isolate, answer.error, "",
+                                                    "open", "CacheStorage"));
+                 return;
+               }
+               std::ignore = resolver->Resolve(
+                   context, bindings::ToV8(
+                                isolate, bindings::MakeGarbageCollected<Cache>(
+                                             &ExecutionContext::Current(),
+                                             &host, answer.cache)));
+             });
 }
 
 v8::Local<v8::Promise> CacheStorage::Delete(
@@ -213,42 +212,42 @@ v8::Local<v8::Promise> CacheStorage::Delete(
   PageCacheStorageCall call;
   call.op = CacheStorageCallOp::kDelete;
   call.cache_name = cache_name;
-  return Ask(std::move(call), "delete", [](v8::Isolate* isolate,
-                                 v8::Local<v8::Context> context,
-                                 v8::Local<v8::Promise::Resolver> resolver,
-                                 CacheStorageHost& host,
-                                 const PageCacheStorageAnswer& answer) {
-    // DeleteComplete(): an error of storage or no such cache gives false.
-    if (answer.error == kCacheStorageSuccess) {
-      std::ignore = resolver->Resolve(context, v8::True(isolate));
-    } else if (answer.error == kCacheStorageErrorStorage ||
-               answer.error == kCacheStorageErrorNotFound) {
-      std::ignore = resolver->Resolve(context, v8::False(isolate));
-    } else {
-      std::ignore = resolver->Reject(
-          context, CacheStorageException(isolate, answer.error, "", "delete",
-                                         "CacheStorage"));
-    }
-  });
+  return Ask(std::move(call), "delete",
+             [](v8::Isolate* isolate, v8::Local<v8::Context> context,
+                v8::Local<v8::Promise::Resolver> resolver,
+                CacheStorageHost& host, const PageCacheStorageAnswer& answer) {
+               // DeleteComplete(): an error of storage or no such cache gives
+               // false.
+               if (answer.error == kCacheStorageSuccess) {
+                 std::ignore = resolver->Resolve(context, v8::True(isolate));
+               } else if (answer.error == kCacheStorageErrorStorage ||
+                          answer.error == kCacheStorageErrorNotFound) {
+                 std::ignore = resolver->Resolve(context, v8::False(isolate));
+               } else {
+                 std::ignore = resolver->Reject(
+                     context, CacheStorageException(isolate, answer.error, "",
+                                                    "delete", "CacheStorage"));
+               }
+             });
 }
 
 v8::Local<v8::Promise> CacheStorage::Keys(
     bindings::ExceptionState& exception_state) {
   PageCacheStorageCall call;
   call.op = CacheStorageCallOp::kKeys;
-  return Ask(std::move(call), "keys", [](v8::Isolate* isolate,
-                                 v8::Local<v8::Context> context,
-                                 v8::Local<v8::Promise::Resolver> resolver,
-                                 CacheStorageHost& host,
-                                 const PageCacheStorageAnswer& answer) {
-    std::vector<v8::Local<v8::Value>> names;
-    names.reserve(answer.names.size());
-    for (const std::u16string& name : answer.names) {
-      names.push_back(bindings::ToV8String(isolate, name));
-    }
-    std::ignore = resolver->Resolve(
-        context, v8::Array::New(isolate, names.data(), names.size()));
-  });
+  return Ask(std::move(call), "keys",
+             [](v8::Isolate* isolate, v8::Local<v8::Context> context,
+                v8::Local<v8::Promise::Resolver> resolver,
+                CacheStorageHost& host, const PageCacheStorageAnswer& answer) {
+               std::vector<v8::Local<v8::Value>> names;
+               names.reserve(answer.names.size());
+               for (const std::u16string& name : answer.names) {
+                 names.push_back(bindings::ToV8String(isolate, name));
+               }
+               std::ignore = resolver->Resolve(
+                   context,
+                   v8::Array::New(isolate, names.data(), names.size()));
+             });
 }
 
 }  // namespace mitto
