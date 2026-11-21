@@ -227,7 +227,7 @@ void DedicatedWorkerMessagingProxy::PostMessageToWorkerGlobalScope(
     queued_messages_.emplace_back(std::move(message), std::move(ports));
     return;
   }
-  thread_->PostMessage(std::move(message), std::move(ports));
+  thread_->PostMessageToWorkerGlobalScope(std::move(message), std::move(ports));
 }
 
 void DedicatedWorkerMessagingProxy::Terminate() {
@@ -365,7 +365,8 @@ void DedicatedWorkerMessagingProxy::DidEvaluateScript() {
   while (!queued_messages_.empty() && thread_ && !terminated_) {
     QueuedMessage queued = std::move(queued_messages_.front());
     queued_messages_.pop_front();
-    thread_->PostMessage(std::move(queued.message), std::move(queued.ports));
+    thread_->PostMessageToWorkerGlobalScope(std::move(queued.message),
+                                            std::move(queued.ports));
   }
 }
 

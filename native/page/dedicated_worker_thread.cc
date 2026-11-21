@@ -605,8 +605,9 @@ void DedicatedWorkerThread::RunClassicScript(ScriptResponse response) {
           base::Unretained(this), std::move(response)));
 }
 
-void DedicatedWorkerThread::PostMessage(SerializedScriptValue message,
-                                        std::vector<MessagePortChannel> ports) {
+void DedicatedWorkerThread::PostMessageToWorkerGlobalScope(
+    SerializedScriptValue message,
+    std::vector<MessagePortChannel> ports) {
   message_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
