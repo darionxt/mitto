@@ -147,8 +147,8 @@ uint64_t SessionSender::AddCacheStorageHost(uint64_t context,
                                             CacheStorageRoute route) {
   const base::AutoLock lock(lock_);
   const uint64_t host = ++last_cache_storage_host_;
-  cache_storage_hosts_.emplace(host,
-                               CacheStorageHost{context, std::move(route)});
+  cache_storage_hosts_.emplace(
+      host, Host<CacheStorageRoute>{context, std::move(route)});
   return host;
 }
 
@@ -168,9 +168,7 @@ uint64_t SessionSender::SendCacheStorageQuestion(
     base::FunctionRef<std::string(uint64_t question)> encode) {
   const base::AutoLock lock(lock_);
   const uint64_t question = ++last_cache_storage_question_;
-  const CacheStorageHost* const of =
-      base::FindOrNull(cache_storage_hosts_, host);
-  if (of && forgotten_.contains(of->context)) {
+  if (OfForgotten(base::FindOrNull(cache_storage_hosts_, host))) {
     return question;
   }
   cache_storage_questions_.emplace(question, host);
@@ -250,7 +248,7 @@ std::optional<std::string> SessionSender::RouteCacheStorage(
         break;
       }
     }
-    const CacheStorageHost* const found =
+    const Host<CacheStorageRoute>* const found =
         base::FindOrNull(cache_storage_hosts_, host);
     if (!found) {
       return std::nullopt;
@@ -261,10 +259,12 @@ std::optional<std::string> SessionSender::RouteCacheStorage(
   return std::nullopt;
 }
 
-uint64_t SessionSender::AddIndexedDbHost(IndexedDbRoute route) {
+uint64_t SessionSender::AddIndexedDbHost(uint64_t context,
+                                         IndexedDbRoute route) {
   const base::AutoLock lock(lock_);
   const uint64_t host = ++last_indexed_db_host_;
-  indexed_db_hosts_.emplace(host, std::move(route));
+  indexed_db_hosts_.emplace(host,
+                            Host<IndexedDbRoute>{context, std::move(route)});
   return host;
 }
 
@@ -288,6 +288,9 @@ uint64_t SessionSender::SendIndexedDbCall(
     base::FunctionRef<std::string(uint64_t call)> encode) {
   const base::AutoLock lock(lock_);
   const uint64_t call = ++last_indexed_db_number_;
+  if (OfForgotten(base::FindOrNull(indexed_db_hosts_, host))) {
+    return call;
+  }
   indexed_db_calls_.emplace(call, host);
   send_.Run(encode(call));
   return call;
@@ -344,21 +347,23 @@ std::optional<std::string> SessionSender::RouteIndexedDb(
         break;
       }
     }
-    const IndexedDbRoute* const found =
+    const Host<IndexedDbRoute>* const found =
         base::FindOrNull(indexed_db_hosts_, host);
     if (!found) {
       return std::nullopt;
     }
-    route = *found;
+    route = found->route;
   }
   route.Run(host, std::move(callback));
   return std::nullopt;
 }
 
-uint64_t SessionSender::AddStorageBucketHost(StorageBucketRoute route) {
+uint64_t SessionSender::AddStorageBucketHost(uint64_t context,
+                                             StorageBucketRoute route) {
   const base::AutoLock lock(lock_);
   const uint64_t host = ++last_storage_bucket_host_;
-  storage_bucket_hosts_.emplace(host, std::move(route));
+  storage_bucket_hosts_.emplace(
+      host, Host<StorageBucketRoute>{context, std::move(route)});
   return host;
 }
 
@@ -374,6 +379,9 @@ uint64_t SessionSender::SendStorageBucketQuestion(
     base::FunctionRef<std::string(uint64_t question)> encode) {
   const base::AutoLock lock(lock_);
   const uint64_t question = ++last_storage_bucket_question_;
+  if (OfForgotten(base::FindOrNull(storage_bucket_hosts_, host))) {
+    return question;
+  }
   storage_bucket_questions_.emplace(question, host);
   send_.Run(encode(question));
   return question;
@@ -397,12 +405,12 @@ std::optional<std::string> SessionSender::RouteStorageBucket(
     }
     host = found->second;
     storage_bucket_questions_.erase(found);
-    const StorageBucketRoute* const found_route =
+    const Host<StorageBucketRoute>* const found_route =
         base::FindOrNull(storage_bucket_hosts_, host);
     if (!found_route) {
       return std::nullopt;
     }
-    route = *found_route;
+    route = found_route->route;
   }
   route.Run(host, std::move(answer));
   return std::nullopt;

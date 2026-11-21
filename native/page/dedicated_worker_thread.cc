@@ -305,9 +305,11 @@ DedicatedWorkerThread::Scope::~Scope() {
   scope_.Clear();
   context_.Reset();
   worker_starter_.reset();
-  // The Cache API's questions that wait for answers hold the isolate's
-  // handles, so they go before it does.
+  // What the Cache API, IndexedDB and Storage Buckets wait to hear holds the
+  // isolate's handles, so they go before it does.
   cache_storage_.reset();
+  indexed_db_.reset();
+  storage_buckets_.reset();
   fetcher_.reset();
   requests_.reset();
   animation_frames_.reset();

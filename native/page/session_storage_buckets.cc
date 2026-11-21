@@ -44,7 +44,7 @@ void SessionStorageBuckets::Release(uint64_t bucket) {
   PageStorageBucketCall call;
   call.op = StorageBucketCallOp::kRelease;
   call.bucket = bucket;
-  sender_->Send(EncodeStorageBuckets(document_, call));
+  sender_->SendFromContext(document_, EncodeStorageBuckets(document_, call));
 }
 
 void SessionStorageBuckets::DocumentCommitted(uint64_t document) {
@@ -52,15 +52,17 @@ void SessionStorageBuckets::DocumentCommitted(uint64_t document) {
   if (host_ != 0) {
     sender_->RemoveStorageBucketHost(host_);
   }
-  host_ = sender_->AddStorageBucketHost(base::BindRepeating(
-      [](scoped_refptr<base::SingleThreadTaskRunner> runner,
-         base::WeakPtr<SessionStorageBuckets> self, uint64_t host,
-         PageStorageBucketAnswer answer) {
-        runner->PostTask(FROM_HERE,
-                         base::BindOnce(&SessionStorageBuckets::OnAnswer, self,
-                                        host, std::move(answer)));
-      },
-      runner_, weak_factory_.GetWeakPtr()));
+  host_ = sender_->AddStorageBucketHost(
+      document, base::BindRepeating(
+                    [](scoped_refptr<base::SingleThreadTaskRunner> runner,
+                       base::WeakPtr<SessionStorageBuckets> self, uint64_t host,
+                       PageStorageBucketAnswer answer) {
+                      runner->PostTask(
+                          FROM_HERE,
+                          base::BindOnce(&SessionStorageBuckets::OnAnswer, self,
+                                         host, std::move(answer)));
+                    },
+                    runner_, weak_factory_.GetWeakPtr()));
   document_ = document;
   questions_.clear();
   buckets_.clear();

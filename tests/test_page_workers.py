@@ -96,6 +96,12 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"postMessage('busy'); setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {}"
         b" caches.keys(); caches.open('late').then((c) => c.put('/late', new Response('late'))); }, 0);",
     ),
+    # The same, before it opens a database and asks for its storage buckets.
+    "/busy-storage.js": (
+        "text/javascript",
+        b"postMessage('busy'); setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {}"
+        b" indexedDB.open('late'); navigator.storageBuckets.keys(); }, 0);",
+    ),
     # performance.measure() from a name of performance.timing, which a worker has not, as Chrome 157.0.8103.79 throws.
     "/measure.js": (
         "text/javascript",
@@ -661,6 +667,22 @@ def test_a_workers_cache_questions_after_its_document_has_gone_go_nowhere(server
         # Past the worker's busy loop and what it asked then.
         assert page.evaluate("new Promise((resolve) => setTimeout(() => resolve(location.search), 2500))") == "?next"
         assert page.evaluate("caches.keys()") == []
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_storage_calls_after_its_document_has_gone_go_nowhere(server: str) -> None:
+    # What the forgotten worker asks of IndexedDB and Storage Buckets goes nowhere, and what waits for an answer goes
+    # with its thread, so the Page goes on.
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        started = """new Promise((resolve) => {
+            const worker = new Worker('/busy-storage.js');
+            worker.onmessage = (e) => resolve(e.data);
+        })"""
+        assert page.evaluate(started) == "busy"
+        assert page.evaluate("location.href = '/?next'; 'set'") == "set"
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?next"
+        assert page.evaluate("new Promise((resolve) => setTimeout(() => resolve(location.search), 2500))") == "?next"
+        assert page.evaluate("indexedDB.databases().then((list) => list.map((info) => info.name))") == []
 
 
 @pytest.mark.usefixtures("page_program")

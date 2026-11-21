@@ -113,7 +113,7 @@ void SessionIndexedDb::Send(const PageIndexedDbCall& call) {
   if (NamesWhatWent(call)) {
     return;
   }
-  sender_->Send(EncodeIndexedDb(document_, call));
+  sender_->SendFromContext(document_, EncodeIndexedDb(document_, call));
 }
 
 void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
@@ -179,15 +179,17 @@ void SessionIndexedDb::DocumentCommitted(uint64_t document) {
   if (host_ != 0) {
     sender_->RemoveIndexedDbHost(host_);
   }
-  host_ = sender_->AddIndexedDbHost(base::BindRepeating(
-      [](scoped_refptr<base::SingleThreadTaskRunner> runner,
-         base::WeakPtr<SessionIndexedDb> self, uint64_t host,
-         PageIndexedDbCallback callback) {
-        runner->PostTask(
-            FROM_HERE, base::BindOnce(&SessionIndexedDb::OnCallback, self, host,
-                                      std::move(callback)));
-      },
-      runner_, weak_factory_.GetWeakPtr()));
+  host_ = sender_->AddIndexedDbHost(
+      document, base::BindRepeating(
+                    [](scoped_refptr<base::SingleThreadTaskRunner> runner,
+                       base::WeakPtr<SessionIndexedDb> self, uint64_t host,
+                       PageIndexedDbCallback callback) {
+                      runner->PostTask(
+                          FROM_HERE,
+                          base::BindOnce(&SessionIndexedDb::OnCallback, self,
+                                         host, std::move(callback)));
+                    },
+                    runner_, weak_factory_.GetWeakPtr()));
   first_number_ = sender_->NextIndexedDbNumber();
   document_ = document;
   calls_.clear();
