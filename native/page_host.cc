@@ -2730,8 +2730,9 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
     // Its CookieStore listened over a pipe that went with it.
     cookie_store_listeners_.erase(id);
   }
-  // Its Cache API's puts that wait for a body fail, as its pipes go with it in
-  // Chrome, so that none holds its cache.
+  // Its Cache API's puts that wait for a body fail, and its caches and stored
+  // bodies are let go, as its pipes go with it in Chrome, so that none holds
+  // its cache.
   if (cache_storage_) {
     cache_storage_->ForgetContexts(ids);
   }

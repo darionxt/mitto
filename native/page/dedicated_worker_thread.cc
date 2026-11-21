@@ -40,6 +40,7 @@
 #include "mitto/page/page_platform.h"
 #include "mitto/page/page_reporter.h"
 #include "mitto/page/page_requests.h"
+#include "mitto/page/session_cache_storage.h"
 #include "mitto/page/worker_scheduler.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-array-buffer.h"
@@ -145,6 +146,7 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   std::unique_ptr<WindowTasks> tasks_;
   std::unique_ptr<PageRequests> requests_;
   std::unique_ptr<PageFetcher> fetcher_;
+  std::unique_ptr<SessionCacheStorage> cache_storage_;
   std::unique_ptr<PageWorkerStarter> worker_starter_;
   int reports_queued_ = 0;
   bool shut_down_ = false;
@@ -223,6 +225,16 @@ void DedicatedWorkerThread::Scope::Start() {
           base::Unretained(this)));
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
   scope_->SetFetcher(fetcher_.get());
+  // The worker's own Cache API, as its creator's frame's storage key reaches
+  // it, unless its origin may not reach caches.
+  if (!params_.origin.opaque()) {
+    cache_storage_ = std::make_unique<SessionCacheStorage>();
+    cache_storage_->SetSender(
+        params_.sender, scheduler_->TaskRunner(TaskType::kMiscPlatformAPI),
+        params_.refuse);
+    cache_storage_->DocumentCommitted(params_.id);
+    scope_->SetCacheStorageHost(cache_storage_.get());
+  }
   scope_->SetConsoleSink(base::BindRepeating(
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
         PageConsoleMessage message;
@@ -268,6 +280,9 @@ DedicatedWorkerThread::Scope::~Scope() {
   scope_.Clear();
   context_.Reset();
   worker_starter_.reset();
+  // The Cache API's questions that wait for answers hold the isolate's
+  // handles, so they go before it does.
+  cache_storage_.reset();
   fetcher_.reset();
   requests_.reset();
   tasks_.reset();
@@ -302,6 +317,7 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetFetcher(nullptr);
     scope_->SetWorkerStarter(nullptr);
     scope_->SetImportedScriptLoader(nullptr);
+    scope_->SetCacheStorageHost(nullptr);
   }
   // The fetcher lets its keepalive requests go before the rest are cancelled,
   // so that they go on without the worker, as a window's do without their

@@ -41,14 +41,15 @@ class AbortController;
 class CacheStorageHost;
 class Request;
 class Response;
-class Window;
+class ExecutionContext;
 
 class Cache final : public bindings::ScriptWrappable {
   CPPGC_USING_PRE_FINALIZER(Cache, Dispose);
 
  public:
-  // Cache `cache` of `host`'s, which `window`'s CacheStorage opened.
-  Cache(Window* window, CacheStorageHost* host, uint64_t cache);
+  // Cache `cache` of `host`'s, which the CacheStorage of `context`, a
+  // window's or a worker's, opened.
+  Cache(ExecutionContext* context, CacheStorageHost* host, uint64_t cache);
   ~Cache() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -103,7 +104,7 @@ class Cache final : public bindings::ScriptWrappable {
   };
 
   void Dispose();
-  // The host, or null once the window's context has gone.
+  // The host, or null once the context has gone.
   CacheStorageHost* Host() const;
   v8::Local<v8::Promise> AddAllImpl(std::string method_name,
                                     std::vector<Request*> requests,
@@ -143,7 +144,7 @@ class Cache final : public bindings::ScriptWrappable {
                              std::string_view method,
                              Settle settle);
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
   // The Page's, which outlives every window.
   const raw_ptr<CacheStorageHost> host_;
   const uint64_t cache_;

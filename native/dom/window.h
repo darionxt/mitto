@@ -49,6 +49,7 @@ class AnimationFrameController;
 class BarProp;
 class CrashReportContext;
 class CacheStorage;
+class CacheStorageHost;
 class CookieStore;
 class Storage;
 class Crypto;
@@ -89,6 +90,8 @@ class Window final : public WindowProperties, public ExecutionContext {
   Window* Self() { return this; }
   mitto::Document* Document() const { return document_.Get(); }
   mitto::Performance* Performance() override;
+  // The document's.
+  CacheStorageHost* GetCacheStorageHost() const override;
   // DOMWindowFileSystem's: the file system of the document's origin, from a
   // task of its own, as Chrome's browser opens one for a new profile, or an
   // error for an opaque origin or a type other than TEMPORARY and PERSISTENT.

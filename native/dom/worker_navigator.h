@@ -1,7 +1,8 @@
 // The HTML Standard's WorkerNavigator, a worker's `navigator`: what its
 // creator's navigator says of the browser and the machine, from the Session's
 // Persona and Machine, as Blink's NavigatorBase gives a worker the values of
-// its creator's process; its other members are Known Gaps.
+// its creator's process, and the worker's own Web Locks; its other members are
+// Known Gaps.
 //
 // Upstream: third_party/blink/renderer/core/workers/worker_navigator.h
 // Upstream: third_party/blink/renderer/core/execution_context/navigator_base.cc
@@ -21,9 +22,12 @@
 
 namespace mitto {
 
+class LockManager;
 class Navigator;
 class NavigatorUAData;
 class NetworkInformation;
+class Permissions;
+class StorageManager;
 
 class WorkerNavigator final : public bindings::ScriptWrappable {
  public:
@@ -52,11 +56,15 @@ class WorkerNavigator final : public bindings::ScriptWrappable {
   NetworkInformation* Connection();
   float DeviceMemory() const;
   NavigatorUAData* UserAgentData() const;
+  mitto::Permissions* Permissions();
+  StorageManager* Storage();
+  mitto::LockManager* Locks();
 
  private:
   // A window's navigator of the same values, which no page reaches, as Blink
   // shares NavigatorBase between both.
   const cppgc::Member<Navigator> navigator_;
+  cppgc::Member<mitto::LockManager> locks_;
 };
 
 }  // namespace mitto

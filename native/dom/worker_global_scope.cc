@@ -13,12 +13,15 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_worker_global_scope.h"
+#include "mitto/dom/cache_storage.h"
+#include "mitto/dom/classic_pending_script.h"
+#include "mitto/dom/crypto.h"
 #include "mitto/dom/dedicated_worker_messaging.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/message_port.h"
-#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
+#include "mitto/dom/scheduler.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/worker_location.h"
 #include "mitto/dom/worker_navigator.h"
@@ -52,6 +55,41 @@ void WorkerGlobalScope::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(performance_);
   visitor->Trace(location_);
   visitor->Trace(navigator_);
+  visitor->Trace(crypto_);
+  visitor->Trace(scheduler_);
+  visitor->Trace(caches_);
+}
+
+mitto::Crypto* WorkerGlobalScope::Crypto() {
+  if (!crypto_) {
+    crypto_ = mitto::Crypto::Create();
+  }
+  return crypto_.Get();
+}
+
+mitto::Scheduler* WorkerGlobalScope::Scheduler() {
+  if (!scheduler_) {
+    scheduler_ = bindings::MakeGarbageCollected<mitto::Scheduler>(this);
+  }
+  return scheduler_.Get();
+}
+
+mitto::CacheStorage* WorkerGlobalScope::Caches(
+    bindings::ExceptionState& exception_state) {
+  // GlobalCacheStorage::CanCreateCacheStorage(): not for an opaque origin.
+  if (!cache_storage_host_) {
+    exception_state.ThrowDOMException("SecurityError",
+                                      "Access to cache storage is denied.");
+    return nullptr;
+  }
+  if (!caches_) {
+    caches_ = bindings::MakeGarbageCollected<mitto::CacheStorage>(this);
+  }
+  return caches_.Get();
+}
+
+CacheStorageHost* WorkerGlobalScope::GetCacheStorageHost() const {
+  return cache_storage_host_;
 }
 
 WorkerNavigator* WorkerGlobalScope::Navigator() {

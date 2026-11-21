@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -308,12 +309,12 @@ class SessionLink final : public PageChannel::Delegate
           Refuse("a Cache API answer came before the start");
           return;
         }
-        // Blink binds CacheStorage and its Caches to this queue.
-        misc_platform_api_->PostTask(
-            FROM_HERE,
-            base::BindOnce(&SessionCacheStorage::OnAnswer,
-                           base::Unretained(&*cache_storage_),
-                           std::move(frame->cache_storage_answer)));
+        // To the queue of the context that asked, which Blink binds
+        // CacheStorage and its Caches to.
+        if (std::optional<std::string> why = sender_->RouteCacheStorage(
+                std::move(frame->cache_storage_answer))) {
+          Refuse(*std::move(why));
+        }
         return;
       case PageMessage::kStorageBucketsAnswer:
         if (!started_) {
@@ -427,7 +428,7 @@ class SessionLink final : public PageChannel::Delegate
           }
         },
         sender_));
-    cache_storage_->SetSend(send, refuse);
+    cache_storage_->SetSender(sender_, misc_platform_api_, refuse);
     indexed_db_->SetSend(send, refuse);
     storage_buckets_->SetSend(send, refuse);
     // What the document's localStorage and sessionStorage ask of the Session.

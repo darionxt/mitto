@@ -88,6 +88,13 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b" setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {} go(); }, 0);",
     ),
     "/busy-child.js": ("text/javascript", b"const go = () => fetch('/data.txt').then(go, go); go();"),
+    # A worker that is busy for a while from when it says so, past its creator's document being replaced, before it
+    # asks the Cache API and puts there.
+    "/busy-caches.js": (
+        "text/javascript",
+        b"postMessage('busy'); setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {}"
+        b" caches.keys(); caches.open('late').then((c) => c.put('/late', new Response('late'))); }, 0);",
+    ),
     # performance.measure() from a name of performance.timing, which a worker has not, as Chrome 157.0.8103.79 throws.
     "/measure.js": (
         "text/javascript",
@@ -110,6 +117,14 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b" t(() => typeof performance.measure('m', 'navigationStart').duration);"
         b" t(() => performance.getEntriesByName('navigationStart').length); postMessage(out);",
     ),
+    "/apis.js": (
+        "text/javascript",
+        b"Promise.all([navigator.userAgentData.getHighEntropyValues(['platform']).then((v) => v.platform),"
+        b"scheduler.postTask(() => 'posted'), Promise.resolve(crypto.getRandomValues(new Uint8Array(4)).length),"
+        b"navigator.permissions.query({name: 'storage-access'}).then((s) => s.state),"
+        b"Promise.resolve(Notification.permission), Promise.resolve(PerformanceObserver.supportedEntryTypes.join())])"
+        b".then((values) => postMessage(values));",
+    ),
     "/data-imports.js": (
         "text/javascript",
         b"var x = 'a', ran = false; const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return e; } };"
@@ -129,6 +144,42 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"performance.mark('m'); postMessage([performance.getEntriesByName('m').length,"
         b"performance.getEntriesByType('navigation').length, typeof performance.timing]);",
+    ),
+    "/locks.js": (
+        "text/javascript",
+        b"onmessage = async (e) => {"
+        b"  if (e.data === 'try') {"
+        b"    postMessage(await navigator.locks.request('x', {ifAvailable: true}, (lock) => (lock ? 'free' : 'busy')));"
+        b"  } else {"
+        b"    navigator.locks.request('y', () => { postMessage('holding'); return new Promise(() => {}); });"
+        b"  }"
+        b"};",
+    ),
+    # A worker that closes in the callback of its lock, which lets the lock go as the callback returns.
+    "/lock-close.js": (
+        "text/javascript",
+        b"navigator.locks.request('x', () => { postMessage('got'); close(); });",
+    ),
+    "/caches.js": (
+        "text/javascript",
+        b"(async () => {"
+        b"  const cache = await caches.open('shared');"
+        b"  await cache.put('/data.txt', new Response('put by the worker'));"
+        b"  const keys = await caches.keys();"
+        b"  const text = await (await caches.match('/data.txt')).text();"
+        b"  const estimate = await navigator.storage.estimate();"
+        b"  postMessage([keys, text, estimate.usageDetails.caches > 0]);"
+        b"})().catch((e) => postMessage(String(e)));",
+    ),
+    # A worker that holds a cache and a matched response that it has not read.
+    "/hold-cache.js": (
+        "text/javascript",
+        b"(async () => {"
+        b"  const cache = await caches.open('held');"
+        b"  await cache.put('/held', new Response('x'.repeat(1 << 20)));"
+        b"  self.kept = [cache, await cache.match('/held')];"
+        b"  postMessage('holding');"
+        b"})().catch((e) => postMessage(String(e)));",
     ),
     "/port.js": (
         "text/javascript",
@@ -542,6 +593,97 @@ def test_a_document_with_busy_workers_gives_way_to_the_next(server: str) -> None
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_workers_cache_questions_after_its_document_has_gone_go_nowhere(server: str) -> None:
+    # The Session forgets the worker with its creator's document, so what the worker asks of the Cache API later goes
+    # nowhere, and the Page goes on.
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        started = """new Promise((resolve) => {
+            const worker = new Worker('/busy-caches.js');
+            worker.onmessage = (e) => resolve(e.data);
+        })"""
+        assert page.evaluate(started) == "busy"
+        assert page.evaluate("location.href = '/?next'; 'set'") == "set"
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?next"
+        # Past the worker's busy loop and what it asked then.
+        assert page.evaluate("new Promise((resolve) => setTimeout(() => resolve(location.search), 2500))") == "?next"
+        assert page.evaluate("caches.keys()") == []
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_window_and_its_worker_share_their_origins_web_locks(server: str) -> None:
+    script = """(async () => {
+        const worker = new Worker('/locks.js');
+        const answer = (message) => new Promise((resolve) => {
+            worker.addEventListener('message', (e) => resolve(e.data), {once: true});
+            worker.postMessage(message);
+        });
+        const out = [];
+        let release;
+        const held = navigator.locks.request('x', () => new Promise((resolve) => { release = resolve; }));
+        await navigator.locks.query();
+        out.push(await answer('try'));
+        release();
+        await held;
+        // Answered once the release has reached the service, from the same queue.
+        await navigator.locks.query();
+        out.push(await answer('try'));
+        out.push(await answer('hold'));
+        out.push((await navigator.locks.query()).held.map((lock) => lock.name));
+        // A worker that ends lets its locks go.
+        worker.terminate();
+        out.push(await navigator.locks.request('y', () => 'granted after terminate()'));
+        return out;
+    })()"""
+
+    assert _evaluate(server, script) == ["busy", "free", "holding", ["y"], "granted after terminate()"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_closes_in_its_locks_callback_lets_the_lock_go(server: str) -> None:
+    script = """(async () => {
+        const worker = new Worker('/lock-close.js');
+        const got = await new Promise((resolve) => { worker.onmessage = (e) => resolve(e.data); });
+        const granted = navigator.locks.request('x', () => 'granted');
+        return [got, await Promise.race([granted, new Promise((resolve) => setTimeout(() => resolve('held'), 3000))])];
+    })()"""
+
+    assert _evaluate(server, script) == ["got", "granted"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_reaches_the_caches_of_its_origin(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/caches.js');
+        worker.onmessage = async (e) => {
+            const response = await caches.match('/data.txt', {cacheName: 'shared'});
+            resolve([e.data, await response.text()]);
+        };
+    })"""
+
+    assert _evaluate(server, script) == [[["shared"], "put by the worker", True], "put by the worker"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_ends_lets_go_of_its_caches(server: str) -> None:
+    # The cache and the unread body that the worker held go with it, so the cache, deleted after, gives its room back.
+    script = """(async () => {
+        const worker = new Worker('/hold-cache.js');
+        const held = await new Promise((resolve) => { worker.onmessage = (e) => resolve(e.data); });
+        const before = (await navigator.storage.estimate()).usage;
+        worker.terminate();
+        const deleted = await caches.delete('held');
+        let after = before;
+        for (const end = Date.now() + 5000; Date.now() < end && after >= before;) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            after = (await navigator.storage.estimate()).usage;
+        }
+        return [held, deleted, before >= 1048576, before - after >= 1048576];
+    })()"""
+
+    assert _evaluate(server, script) == ["holding", True, True, True]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_broadcast_goes_between_a_window_and_its_worker(server: str) -> None:
     script = """new Promise((resolve) => {
         const channel = new BroadcastChannel('news');
@@ -551,3 +693,14 @@ def test_a_broadcast_goes_between_a_window_and_its_worker(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == [["worker heard", "from the window", server], True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_apis_answer_as_chromes_do_in_a_worker(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/apis.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    # Chrome's browser answers for a context with no frame.
+    assert _evaluate(server, script) == ["Windows", "posted", 4, "prompt", "denied", "mark,measure,resource"]

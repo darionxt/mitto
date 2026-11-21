@@ -60,7 +60,10 @@ class PageCacheStorage {
   uint64_t NextNumber() const;
 
   // The Page's contexts `contexts` have gone: their puts that wait for a body
-  // fail, as they do when the host goes, so that none holds its cache.
+  // fail, as they do when the host goes, so that none holds its cache, and
+  // the caches they opened and the stored bodies they could still read are
+  // let go, as their pipes go with them in Chrome. What they asked that
+  // answers later holds nothing and goes nowhere.
   void ForgetContexts(const std::set<uint64_t>& contexts);
 
  private:
@@ -74,10 +77,14 @@ class PageCacheStorage {
   // Whether a cache's call names a cache of a bucket that has been deleted.
   bool CacheBucketGone(const PageCacheStorageCall& call) const;
   // Answers a call of a bucket that has been deleted, or of one of its caches.
-  void AnswerGoneBucket(const PageCacheStorageCall& call);
+  void AnswerGoneBucket(const PageCacheStorageCall& call, uint64_t context);
 
-  void OnOpen(PageCacheStorageCall call, const std::string& storage_key);
-  void OnMatch(PageCacheStorageCall call, const std::string& storage_key);
+  void OnOpen(PageCacheStorageCall call,
+              uint64_t context,
+              const std::string& storage_key);
+  void OnMatch(PageCacheStorageCall call,
+               uint64_t context,
+               const std::string& storage_key);
   void OnCacheBatch(PageCacheStorageCall call,
                     uint64_t context,
                     CacheStorageCache& cache);
@@ -88,6 +95,7 @@ class PageCacheStorage {
   // Answers a question with the responses that matched, each body that has
   // bytes kept for the Page to read.
   void AnswerResponses(uint64_t question,
+                       uint64_t context,
                        CacheStorageError error,
                        std::vector<CacheStorageCache::MatchResult> matches);
   void SendAnswer(const PageCacheStorageAnswer& answer);
@@ -108,6 +116,10 @@ class PageCacheStorage {
   std::map<uint64_t, CacheStorageCacheHandle> caches_;
   // The key of the bucket of each, as BucketKey() gives it.
   std::map<uint64_t, std::string> cache_buckets_;
+  // The context that opened each, which lets it go when it goes.
+  std::map<uint64_t, uint64_t> cache_contexts_;
+  // The contexts that have gone.
+  std::set<uint64_t> gone_contexts_;
   uint64_t next_cache_ = 1;
   // The bodies of puts that wait for the Page, by the Page's numbers.
   std::map<uint64_t, PutBody*> put_bodies_;
