@@ -227,6 +227,7 @@ void Modulator::FetchTree(const GURL& url,
 }
 
 void Modulator::FetchWorkerScriptTree(
+    const GURL& url,
     std::shared_ptr<const ModuleWorkerMainScript> main_script,
     const ScriptFetchOptions& options,
     ModuleTreeClient* client) {
@@ -234,7 +235,9 @@ void Modulator::FetchWorkerScriptTree(
       bindings::MakeGarbageCollected<ModuleTreeLinker>(
           *this, *client, FetchDestination::kWorker);
   AddLinker(linker);
-  linker->FetchRoot(main_script->url, ModuleType::kJavaScriptOrWasm, options,
+  // Keyed in the module map by the URL asked for; only the module script's
+  // source and base URL are the response's.
+  linker->FetchRoot(url, ModuleType::kJavaScriptOrWasm, options,
                     kClientReferrer, std::move(main_script));
 }
 

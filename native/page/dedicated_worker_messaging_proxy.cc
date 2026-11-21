@@ -8,11 +8,13 @@
 #include "base/time/time.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/data_url.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/message_port.h"
+#include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "mitto/dom/worker.h"
 #include "url/origin.h"
@@ -141,8 +143,13 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   // GlobalScopeCreationParams: what the worker takes of its creator.
   params_.origin = context.GetSecurityOrigin();
   params_.name = options.name;
+  params_.script_url = url;
   params_.module = options.module;
   params_.credentials = options.credentials;
+  if (context.IsWindow()) {
+    params_.referrer_policy =
+        static_cast<Window&>(context).GetDocument().GetReferrerPolicy();
+  }
   params_.strict_mime_type = !context.IsWindow();
   params_.secure_context = data->secure_context();
   params_.begin_frames = context.IsWindow();

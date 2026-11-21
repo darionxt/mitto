@@ -15,6 +15,7 @@
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/worker_global_scope.h"
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
@@ -228,14 +229,22 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   data.is_module = true;
   data.mode = FetchMode::kCors;
   data.credentials = options_.credentials_mode;
-  // A request whose policy is the empty string goes with the document's. A
-  // worker's would go with the policy of its script's response, which a
+  // A request whose policy is the empty string goes with that of its fetch
+  // client settings: the document's, or, for a module worker's top-level
+  // graph, which only has the destination worker, its creator's, as Blink
+  // fetches it through the outside settings. An import() graph in a worker
+  // would go with the policy of the worker's script's response, which a
   // worker does not have: a Known Gap.
-  data.referrer_policy =
-      request.options.referrer_policy == FetchReferrerPolicy::kDefault &&
-              context->IsWindow()
-          ? static_cast<Window*>(context)->GetDocument().GetReferrerPolicy()
-          : request.options.referrer_policy;
+  data.referrer_policy = request.options.referrer_policy;
+  if (data.referrer_policy == FetchReferrerPolicy::kDefault) {
+    if (context->IsWindow()) {
+      data.referrer_policy =
+          static_cast<Window*>(context)->GetDocument().GetReferrerPolicy();
+    } else if (request.destination == FetchDestination::kWorker) {
+      data.referrer_policy =
+          static_cast<WorkerGlobalScope*>(context)->OutsideReferrerPolicy();
+    }
+  }
   // The referrer is the base URL of the script that imports it, which the
   // Session takes from the document's origin, or as the final URL of a
   // response that the document has had, such as a module's of another

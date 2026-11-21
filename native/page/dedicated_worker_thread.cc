@@ -306,6 +306,7 @@ void DedicatedWorkerThread::Scope::Start() {
       send));
   scope_->SetObjectProxy(params_.object_proxy.get());
   scope_->SetModule(params_.module);
+  scope_->SetOutsideReferrerPolicy(params_.referrer_policy);
   scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.
@@ -501,7 +502,7 @@ void DedicatedWorkerThread::Scope::RunModuleScript(ScriptResponse response) {
   ScriptFetchOptions options;
   options.credentials_mode = params_.credentials;
   scope_->GetModulator()->FetchWorkerScriptTree(
-      std::move(main_script), options,
+      params_.script_url, std::move(main_script), options,
       bindings::MakeGarbageCollected<WorkerModuleTreeClient>(base::BindOnce(
           &Scope::OnModuleTreeFetched, weak_factory_.GetWeakPtr())));
 }

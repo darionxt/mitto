@@ -261,6 +261,15 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"self.run().then((m) => postMessage(m.where), (e) => postMessage(String(e)));",
     ),
     "/sub/runs-import.js": ("text/javascript", b"self.run = () => import('./where.js');"),
+    # A module worker's root and what it imports statically, which goes with its creator's referrer policy.
+    "/referrer-root.js": ("text/javascript", b"import './referrer-dep.js'; postMessage('ran');"),
+    "/referrer-dep.js": ("text/javascript", b"export const x = 1;"),
+    # Where /redirect-w.js ends up: a module worker's root that imports the URL it was asked for.
+    "/v2/w.js": (
+        "text/javascript",
+        b"self.count = (self.count || 0) + 1;"
+        b"import('/redirect-w.js').then(() => postMessage(self.count), (e) => postMessage(String(e)));",
+    ),
     # The same script from another origin, whose response is opaque, so its base URL is about:blank.
     "/imports-a-cross-origin-module.js": (
         "text/javascript",
@@ -281,6 +290,9 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
 
 # The path and body of each POST that reached the server, in order.
 _POSTED: list[tuple[str, bytes]] = []
+# The Referer of each GET, by path, and the paths that redirect, to where.
+_REFERERS: dict[str, str | None] = {}
+_REDIRECTS = {"/redirect-w.js": "/v2/w.js"}
 
 
 @pytest.fixture
@@ -301,6 +313,13 @@ def server() -> Iterator[str]:
 
         def do_GET(self) -> None:
             path = self.path.partition("?")[0]
+            _REFERERS[path] = self.headers.get("Referer")
+            if path in _REDIRECTS:
+                self.send_response(302)
+                self.send_header("Location", _REDIRECTS[path])
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if path in _SCRIPTS:
                 content_type, body = _SCRIPTS[path]
                 status = 200
@@ -946,6 +965,34 @@ def test_import_in_an_opaque_imported_script_has_no_base_url(server: str) -> Non
         "TypeError: Failed to resolve module specifier './where.js'. The base URL is about:blank because import() is "
         "called from a CORS-cross-origin script."
     )
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_module_workers_static_imports_take_its_creators_referrer_policy(server: str) -> None:
+    # Chrome fetches a module worker's top-level graph through its creator's settings.
+    _REFERERS.clear()
+    script = """new Promise((resolve) => {
+        const meta = document.createElement('meta');
+        meta.name = 'referrer';
+        meta.content = 'origin';
+        document.head.append(meta);
+        const worker = new Worker('/referrer-root.js', {type: 'module'});
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "ran"
+    assert _REFERERS["/referrer-dep.js"] == f"{server}/"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_module_workers_root_is_in_its_map_at_the_url_it_was_asked_for(server: str) -> None:
+    # After a redirect, an import() of the URL that new Worker() asked for finds the root, which runs once.
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/redirect-w.js', {type: 'module'});
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == 1
 
 
 @pytest.mark.usefixtures("page_program")

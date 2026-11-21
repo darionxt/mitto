@@ -22,6 +22,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/fetcher.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/cppgc/member.h"
@@ -114,6 +115,14 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   void SetOrigin(url::Origin origin) { origin_ = std::move(origin); }
   // Whether the worker runs a module script, whose importScripts() throws.
   void SetModule(bool module) { module_ = module; }
+  // Its creator's referrer policy, that of the outside settings that its
+  // top-level module graph is fetched with.
+  void SetOutsideReferrerPolicy(FetchReferrerPolicy policy) {
+    outside_referrer_policy_ = policy;
+  }
+  FetchReferrerPolicy OutsideReferrerPolicy() const {
+    return outside_referrer_policy_;
+  }
   // What importScripts() fetches through. Without one, as in the Page program
   // given a script, each script fails to load.
   void SetImportedScriptLoader(ImportedScriptLoader* loader) {
@@ -147,6 +156,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   bool module_ = false;
+  FetchReferrerPolicy outside_referrer_policy_ = FetchReferrerPolicy::kDefault;
   bool closing_ = false;
 };
 

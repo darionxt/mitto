@@ -146,10 +146,12 @@ class Modulator final : public cppgc::GarbageCollected<Modulator> {
                  ModuleTreeClient* client,
                  std::string referrer = kClientReferrer,
                  FetchDestination destination = FetchDestination::kScript);
-  // Fetch a module worker's script graph, from `main_script`, the response
-  // that its creator took, of the destination worker, as
+  // Fetch a module worker's script graph, whose root is `url`, the URL that
+  // new Worker() asked for, from `main_script`, the response that its creator
+  // took, of the destination worker, as
   // WorkerGlobalScope::FetchModuleTopLevelScript() does.
   void FetchWorkerScriptTree(
+      const GURL& url,
       std::shared_ptr<const ModuleWorkerMainScript> main_script,
       const ScriptFetchOptions& options,
       ModuleTreeClient* client);
