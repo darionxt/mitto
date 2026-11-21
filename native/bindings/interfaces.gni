@@ -209,6 +209,13 @@ mitto_bindings_interfaces = [
     file = "custom_event"
   },
   {
+    name = "DedicatedWorkerGlobalScope"
+    file = "dedicated_worker_global_scope"
+
+    # onmessage and onmessageerror run as every event handler attribute does.
+    implemented = [ "name" ]
+  },
+  {
     # location.ancestorOrigins, a Known Gap, gives an empty one.
     name = "DOMStringList"
     file = "dom_string_list"
@@ -3092,6 +3099,24 @@ mitto_bindings_interfaces = [
     name = "WindowProperties"
     file = "window_properties"
     missing = []
+  },
+  {
+    name = "WorkerGlobalScope"
+    file = "worker_global_scope"
+
+    # onerror and the other event handlers run as every event handler
+    # attribute does.
+    implemented = [
+      "self",
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "queueMicrotask",
+      "atob",
+      "btoa",
+      "reportError",
+    ]
   },
   {
     name = "WritableStream"

@@ -393,3 +393,45 @@ def legacy_platform_objects(program: Path) -> dict[str, str]:
 @pytest.mark.parametrize("name", list(_LEGACY_PLATFORM_OBJECTS_AS_CHROME))
 def test_a_legacy_platform_object_is_as_in_chrome(legacy_platform_objects: dict[str, str], name: str) -> None:
     assert legacy_platform_objects[name] == _LEGACY_PLATFORM_OBJECTS_AS_CHROME[name][1]
+
+
+def test_a_workers_context_has_a_dedicated_worker_global_scope(program: Path) -> None:
+    # As in Chrome's dedicated worker: its global object and the chain of prototypes behind it, its name, and none of a
+    # window's interfaces.
+    script = """JSON.stringify([
+        Object.getPrototypeOf(self) === DedicatedWorkerGlobalScope.prototype,
+        Object.getPrototypeOf(DedicatedWorkerGlobalScope.prototype) === WorkerGlobalScope.prototype,
+        Object.getPrototypeOf(WorkerGlobalScope.prototype) === EventTarget.prototype,
+        self === globalThis, self.self === self, self.name,
+        String(self), typeof document, typeof Window, typeof Document, typeof WorkerNavigator,
+        Object.prototype.hasOwnProperty.call(self, "setTimeout"),
+        Object.prototype.hasOwnProperty.call(WorkerGlobalScope.prototype, "setTimeout"),
+    ])"""
+
+    assert json.loads(_evaluate(program, script, "--worker")) == [
+        True,
+        True,
+        True,
+        True,
+        True,
+        "",
+        "[object DedicatedWorkerGlobalScope]",
+        "undefined",
+        "undefined",
+        "undefined",
+        "function",
+        False,
+        True,
+    ]
+
+
+def test_a_workers_timers_and_base64_run(program: Path) -> None:
+    script = "new Promise((resolve) => setTimeout((a) => queueMicrotask(() => resolve(a + atob('Yg=='))), 0, 'a'))"
+
+    assert _evaluate(program, script, "--worker") == "ab"
+
+
+def test_a_worker_has_no_document_to_build(program: Path) -> None:
+    result = _run(program, "--worker", "--html=<p>", "1")
+
+    assert result.returncode == _WRONG_ARGUMENTS

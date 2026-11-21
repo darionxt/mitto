@@ -12,8 +12,10 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_window.h"
+#include "mitto/bindings/v8_worker_global_scope.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/worker_global_scope.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
@@ -52,7 +54,11 @@ ExecutionContext& ExecutionContext::Current() {
 // static
 ExecutionContext* ExecutionContext::From(v8::Isolate* isolate,
                                          v8::Local<v8::Context> context) {
-  return bindings::V8Window::ToWrappable(isolate, context->Global());
+  if (Window* const window =
+          bindings::V8Window::ToWrappable(isolate, context->Global())) {
+    return window;
+  }
+  return bindings::V8WorkerGlobalScope::ToWrappable(isolate, context->Global());
 }
 
 ExecutionContext::ExecutionContext() = default;
