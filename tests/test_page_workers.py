@@ -166,6 +166,16 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"  postMessage([keys, text, estimate.usageDetails.caches > 0]);"
         b"})().catch((e) => postMessage(String(e)));",
     ),
+    # A worker that holds a cache and a matched response that it has not read.
+    "/hold-cache.js": (
+        "text/javascript",
+        b"(async () => {"
+        b"  const cache = await caches.open('held');"
+        b"  await cache.put('/held', new Response('x'.repeat(1 << 20)));"
+        b"  self.kept = [cache, await cache.match('/held')];"
+        b"  postMessage('holding');"
+        b"})().catch((e) => postMessage(String(e)));",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -634,6 +644,26 @@ def test_a_worker_reaches_the_caches_of_its_origin(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == [[["shared"], "put by the worker", True], "put by the worker"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_ends_lets_go_of_its_caches(server: str) -> None:
+    # The cache and the unread body that the worker held go with it, so the cache, deleted after, gives its room back.
+    script = """(async () => {
+        const worker = new Worker('/hold-cache.js');
+        const held = await new Promise((resolve) => { worker.onmessage = (e) => resolve(e.data); });
+        const before = (await navigator.storage.estimate()).usage;
+        worker.terminate();
+        const deleted = await caches.delete('held');
+        let after = before;
+        for (const end = Date.now() + 5000; Date.now() < end && after >= before;) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            after = (await navigator.storage.estimate()).usage;
+        }
+        return [held, deleted, before >= 1048576, before - after >= 1048576];
+    })()"""
+
+    assert _evaluate(server, script) == ["holding", True, True, True]
 
 
 @pytest.mark.usefixtures("page_program")
