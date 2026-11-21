@@ -8,8 +8,8 @@
 #include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "base/strings/string_view_util.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetcher.h"
-#include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/persistent.h"
 
@@ -17,8 +17,8 @@ namespace mitto {
 
 BytesUploader::BytesUploader(BytesConsumer* consumer,
                              FetchController& controller,
-                             Window* window)
-    : consumer_(consumer), window_(window), controller_(&controller) {
+                             ExecutionContext* context)
+    : consumer_(consumer), context_(context), controller_(&controller) {
   DCHECK_EQ(consumer_->GetPublicState(),
             BytesConsumer::PublicState::kReadableOrWaiting);
 }
@@ -44,14 +44,14 @@ void BytesUploader::OnRequestGone() {
     disposed_ = true;
     return;
   }
-  PostWindowTask(window_.Get(), TaskType::kNetworking,
-                 base::BindOnce(
-                     [](cppgc::WeakPersistent<BytesUploader> self) {
-                       if (self) {
-                         self->WriteDataOnPipe();
-                       }
-                     },
-                     cppgc::WeakPersistent<BytesUploader>(this)));
+  PostTaskInContext(context_.Get(), TaskType::kNetworking,
+                    base::BindOnce(
+                        [](cppgc::WeakPersistent<BytesUploader> self) {
+                          if (self) {
+                            self->WriteDataOnPipe();
+                          }
+                        },
+                        cppgc::WeakPersistent<BytesUploader>(this)));
 }
 
 void BytesUploader::Detach() {
@@ -151,7 +151,7 @@ void BytesUploader::Dispose() {
 
 void BytesUploader::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(consumer_);
-  visitor->Trace(window_);
+  visitor->Trace(context_);
 }
 
 }  // namespace mitto

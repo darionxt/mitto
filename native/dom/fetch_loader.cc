@@ -12,12 +12,12 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/buffering_bytes_consumer.h"
 #include "mitto/dom/bytes_uploader.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/response.h"
@@ -155,7 +155,7 @@ FetchLoader::~FetchLoader() {
   if (BodyLoaderBytesConsumer* const consumer = consumer_.Get()) {
     consumer->DetachLoader();
   }
-  // What is left of an upload goes with the window.
+  // What is left of an upload goes with the window or worker.
   if (uploader_) {
     uploader_->Detach();
   }
@@ -167,8 +167,7 @@ void FetchLoader::OnStarted(FetchController& controller) {
     const v8::HandleScope handle_scope(isolate_);
     uploader_ = bindings::MakeGarbageCollected<BytesUploader>(
         upload_body_.Get(), controller,
-        bindings::V8Window::ToWrappable(isolate_,
-                                        context_.Get(isolate_)->Global()));
+        ExecutionContext::From(isolate_, context_.Get(isolate_)));
     upload_body_.Clear();
   }
 }
@@ -192,10 +191,9 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
                       std::string(line.substr(colon + 2)));
     }
   }
-  Window* const window =
-      bindings::V8Window::ToWrappable(isolate_, context->Global());
   auto* const consumer =
-      bindings::MakeGarbageCollected<BodyLoaderBytesConsumer>(this, window);
+      bindings::MakeGarbageCollected<BodyLoaderBytesConsumer>(
+          this, ExecutionContext::From(isolate_, context));
   consumer_ = consumer;
   const std::optional<std::string> cache_control =
       all->GetValue("cache-control");

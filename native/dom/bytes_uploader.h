@@ -19,18 +19,18 @@
 
 namespace mitto {
 
+class ExecutionContext;
 class FetchController;
-class Window;
 
 class BytesUploader final : public cppgc::GarbageCollected<BytesUploader>,
                             public BytesConsumer::Client {
  public:
   // Uploads `consumer`, which nothing has read, through `controller`, which
   // must outlive this until OnRequestGone() or Detach(), for a fetch of
-  // `window`.
+  // `context`, a window's or a worker's.
   BytesUploader(BytesConsumer* consumer,
                 FetchController& controller,
-                Window* window);
+                ExecutionContext* context);
 
   // The Session takes more of the body: the first time, Blink's
   // StartReading(), and after that OnPipeWriteable().
@@ -41,8 +41,8 @@ class BytesUploader final : public cppgc::GarbageCollected<BytesUploader>,
   // network service never asked for the body.
   void OnRequestGone();
   // Stops with no word to the consumer, so that no script runs: when the
-  // request goes with its window, whose context is going, or before an abort
-  // cancels the stream with its reason.
+  // request goes with its window or worker, whose context is going, or before
+  // an abort cancels the stream with its reason.
   void Detach();
 
   // BytesConsumer::Client:
@@ -57,7 +57,7 @@ class BytesUploader final : public cppgc::GarbageCollected<BytesUploader>,
   void Dispose();
 
   cppgc::Member<BytesConsumer> consumer_;
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
   // Null once the request has gone, as Blink's data pipe has closed then.
   raw_ptr<FetchController> controller_;
   bool started_ = false;

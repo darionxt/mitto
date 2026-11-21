@@ -26,11 +26,12 @@
 #include "build/build_config.h"
 #include "mitto/dom/broadcast_channel_service.h"
 #include "mitto/dom/event_loop.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_cookie_jar.h"
 #include "mitto/page/session_indexed_db.h"
+#include "mitto/page/session_sender.h"
 #include "mitto/page/session_storage_backend.h"
 #include "mitto/page/session_storage_buckets.h"
 #include "mitto/page_channel.h"
@@ -117,6 +118,18 @@ class SessionLink final : public PageChannel::Delegate
     if (!channel_) {
       EndProcess(kPageExitRefused);
     }
+    // What the Page's threads send, which this thread sends in the order it
+    // came.
+    sender_ = base::MakeRefCounted<SessionSender>(base::BindRepeating(
+        [](scoped_refptr<base::SingleThreadTaskRunner> io_thread,
+           SessionLink* link, std::string frame) {
+          io_thread->PostTask(
+              FROM_HERE,
+              base::BindOnce(&SessionLink::SendToSession,
+                             base::Unretained(link), std::move(frame)));
+        },
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        base::Unretained(this)));
     channel_->Send(EncodeHello());
   }
 
@@ -216,6 +229,10 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kRequestBodyCredit:
         if (!started_) {
           Refuse("a response came before the start");
+          return;
+        }
+        // A worker's request goes to its thread.
+        if (sender_->Route(*frame)) {
           return;
         }
         networking_->PostTask(
@@ -373,15 +390,7 @@ class SessionLink final : public PageChannel::Delegate
   void StartOnMainThread(scoped_refptr<base::SingleThreadTaskRunner> io_thread,
                          PageStart start) {
     // What the Page sends, which the I/O thread sends in the order it came.
-    SendFrame send = base::BindRepeating(
-        [](scoped_refptr<base::SingleThreadTaskRunner> io_thread,
-           SessionLink* link, std::string frame) {
-          io_thread->PostTask(
-              FROM_HERE,
-              base::BindOnce(&SessionLink::SendToSession,
-                             base::Unretained(link), std::move(frame)));
-        },
-        io_thread, base::Unretained(this));
+    SendFrame send = base::BindRepeating(&SessionSender::Send, sender_);
     // What the main thread refuses of what the Session sends, which the I/O
     // thread says.
     base::RepeatingCallback<void(std::string)> refuse = base::BindRepeating(
@@ -405,18 +414,19 @@ class SessionLink final : public PageChannel::Delegate
     // What the Page's BroadcastChannels send to the Session's other Pages. A
     // message too large for a frame stays in the Page.
     BroadcastChannelService::Get().SetSessionSender(base::BindRepeating(
-        [](SendFrame send, const std::string& name, bool locked,
-           std::vector<uint8_t> data) {
+        [](scoped_refptr<SessionSender> sender, const std::string& name,
+           bool locked, std::vector<uint8_t> data) {
           PageBroadcast broadcast;
           broadcast.name = name;
           broadcast.locked = locked;
           broadcast.data.assign(data.begin(), data.end());
           if (BroadcastFits(broadcast)) {
-            send.Run(
-                EncodeBroadcast(Window::Current().DocumentId(), broadcast));
+            const uint64_t context = ExecutionContext::Current().ContextId();
+            sender->SendFromContext(context,
+                                    EncodeBroadcast(context, broadcast));
           }
         },
-        send));
+        sender_));
     cache_storage_->SetSend(send, refuse);
     indexed_db_->SetSend(send, refuse);
     storage_buckets_->SetSend(send, refuse);
@@ -427,8 +437,8 @@ class SessionLink final : public PageChannel::Delegate
     runner_->SetCacheStorageHost(*cache_storage_);
     runner_->SetIndexedDbHost(*indexed_db_);
     runner_->SetStorageBucketHost(*storage_buckets_);
-    if (std::optional<std::string> why = runner_->Start(
-            start, std::move(send), std::move(refuse), *cookie_jar_)) {
+    if (std::optional<std::string> why =
+            runner_->Start(start, sender_, std::move(refuse), *cookie_jar_)) {
       io_thread->PostTask(FROM_HERE,
                           base::BindOnce(&SessionLink::Refuse,
                                          base::Unretained(this), *why));
@@ -529,6 +539,9 @@ class SessionLink final : public PageChannel::Delegate
   const raw_ref<SessionStorageBuckets> storage_buckets_;
   const raw_ref<SessionStorageBackend> storage_backend_;
   std::unique_ptr<PageChannel> channel_;
+  // Made on the I/O thread before the start, which the main thread reads
+  // after it.
+  scoped_refptr<SessionSender> sender_;
   bool hello_received_ = false;
   // The parts of a storage event that its frame has not yet come for.
   std::string storage_part_;

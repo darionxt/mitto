@@ -4,9 +4,9 @@
 
 #include "base/functional/bind.h"
 #include "mitto/bindings/script_wrappable.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/cache_storage_answers.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "v8/include/v8-context.h"
 
 namespace mitto {
@@ -17,7 +17,7 @@ CacheBodyLoader::CacheBodyLoader(CacheStorageHost& host,
                                  v8::Local<v8::Context> context)
     : host_(host), body_(body), isolate_(isolate), context_(isolate, context) {
   consumer_ = bindings::MakeGarbageCollected<BodyLoaderBytesConsumer>(
-      this, bindings::V8Window::ToWrappable(isolate, context->Global()));
+      this, ExecutionContext::From(isolate, context));
 }
 
 CacheBodyLoader::~CacheBodyLoader() {

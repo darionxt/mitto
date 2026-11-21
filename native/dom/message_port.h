@@ -11,7 +11,10 @@
 // the new port. A port whose end travels in a cycle of pipes, as one sent
 // through its own pipe to its peer does, can never be read, and its peer never
 // hears that it went. A port stays alive while it has
-// started and is entangled, and closes when its window's context goes.
+// started and is entangled, and closes when its context goes. A port belongs
+// to a window's context or a worker's, and its peer may be on another thread:
+// the pipe's state is held under a lock, and a port's trap posts to its own
+// thread.
 //
 // Upstream: third_party/blink/renderer/core/messaging/message_port.h
 // Upstream: third_party/blink/renderer/core/messaging/message_port.cc
@@ -30,10 +33,12 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/serialized_script_value.h"
+#include "v8/include/cppgc/cross-thread-persistent.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/cppgc/visitor.h"
@@ -53,9 +58,9 @@ namespace bindings {
 class ExceptionState;
 }  // namespace bindings
 
+class ExecutionContext;
 class MessagePortChannel;
 class SchedulerTaskContext;
-class Window;
 
 // A message as it goes from port to port: Blink's BlinkTransferableMessage.
 struct TransferableMessage {
@@ -70,8 +75,9 @@ struct TransferableMessage {
   bool user_activation = false;
   // The scheduler's state of the task that posted it, which a port that is
   // still entangled with its first peer carries to the task that dispatches
-  // it, as Blink's task attribution does for a channel used to schedule.
-  cppgc::Persistent<SchedulerTaskContext> task_state;
+  // it, as Blink's task attribution does for a channel used to schedule. Such
+  // a port is on its peer's thread, but the message may go anywhere.
+  cppgc::subtle::CrossThreadPersistent<SchedulerTaskContext> task_state;
 };
 
 // One end of a pipe between two ports: Blink's MessagePortDescriptor with its
@@ -97,10 +103,12 @@ class MessagePortChannel {
   size_t PendingCount() const;
   // Whether the other end has closed.
   bool PeerClosed() const;
-  // Runs `notify` once, when a message comes or the other end closes, as a
-  // mojo trap does, and returns true. Returns false, and keeps nothing, if a
-  // message waits or the other end has closed already.
-  bool Arm(base::OnceClosure notify);
+  // Posts `notify` to `runner` once, when a message comes or the other end
+  // closes, as a mojo trap does, and returns true. Returns false, and keeps
+  // nothing, if a message waits or the other end has closed already. Any
+  // thread may let go of `notify`.
+  bool Arm(scoped_refptr<base::SingleThreadTaskRunner> runner,
+           base::OnceClosure notify);
   // Closes this end: what waits here goes, and the other end hears of it.
   void Close();
 
@@ -115,9 +123,9 @@ class MessagePortChannel {
 
 class MessagePort final : public EventTarget {
  public:
-  // A port of `window`'s context, entangled with nothing yet. One made where
-  // the context has gone starts out closed.
-  explicit MessagePort(Window* window);
+  // A port of `context`, a window's or a worker's, entangled with nothing
+  // yet. One made where the context has gone starts out closed.
+  explicit MessagePort(ExecutionContext* context);
   ~MessagePort() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -148,11 +156,11 @@ class MessagePort final : public EventTarget {
   static std::optional<std::vector<MessagePortChannel>> DisentanglePorts(
       v8::Isolate* isolate,
       const std::vector<cppgc::Persistent<MessagePort>>& ports);
-  // EntanglePorts(): a new port of `window`'s context for each end, each held
+  // EntanglePorts(): a new port of `context` for each end, each held
   // until what receives it, an event or a clone, holds it, since the
   // collector does not look into a std::vector's buffer.
   static std::vector<cppgc::Persistent<MessagePort>> EntanglePorts(
-      Window* window,
+      ExecutionContext* context,
       std::vector<MessagePortChannel> channels);
   // The ports that `ports` hold, which must outlive the list.
   static std::vector<MessagePort*> PortsOf(
@@ -170,12 +178,16 @@ class MessagePort final : public EventTarget {
  private:
   // What mojo::Connector does for the port.
   void WaitToReadMore();
-  static void PostReadTask(cppgc::WeakPersistent<MessagePort> port,
-                           uint64_t generation,
-                           bool counted);
-  static void RunReadTask(cppgc::WeakPersistent<MessagePort> port,
-                          uint64_t generation,
-                          bool counted);
+  // Where a port of this thread reads, on Blink's posted-message queue.
+  static scoped_refptr<base::SingleThreadTaskRunner> ReadTaskRunner();
+  static void PostReadTask(
+      cppgc::subtle::WeakCrossThreadPersistent<MessagePort> port,
+      uint64_t generation,
+      bool counted);
+  static void RunReadTask(
+      cppgc::subtle::WeakCrossThreadPersistent<MessagePort> port,
+      uint64_t generation,
+      bool counted);
   void ReadAvailableMessage();
   void DispatchMessageEvent(TransferableMessage message);
   // OnConnectionError(): the other end has closed and nothing waits.
@@ -185,7 +197,7 @@ class MessagePort final : public EventTarget {
   // HasPendingActivity() does.
   void UpdateKeepAlive();
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
   MessagePortChannel channel_;
   cppgc::WeakMember<MessagePort> initially_entangled_port_;
   bool started_ = false;

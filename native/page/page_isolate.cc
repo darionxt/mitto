@@ -120,6 +120,29 @@ void ConfigurePageIsolate(v8::Isolate::CreateParams& params, int memory_gib) {
   params.allow_atomics_wait = false;
 }
 
+void ConfigureWorkerIsolate(v8::Isolate::CreateParams& params, int memory_gib) {
+  ConfigurePageIsolate(params, memory_gib);
+  // V8PerIsolateData: a worker's isolate allows Atomics.wait().
+  params.allow_atomics_wait = true;
+}
+
+void InitializeWorkerIsolate(v8::Isolate* isolate) {
+  // V8Initializer::InitializeV8Common(): the limits of WasmModuleOverride()
+  // and WasmInstanceOverride() hold on the main thread alone.
+  isolate->SetWasmCustomDescriptorsEnabledCallback(
+      &WasmCustomDescriptorsEnabled);
+  isolate->SetSharedArrayBufferConstructorEnabledCallback(
+      &SharedArrayBufferConstructorEnabled);
+  isolate->SetIsJSApiWrapperNativeErrorCallback(&IsDOMExceptionWrapper);
+  InitializeWasmResponseExtensions(isolate);
+  // InitializeWorker(): kWorkerMaxStackSize below the stack's current
+  // position.
+  constexpr uintptr_t kWorkerMaxStackSize = 500 * 1024;
+  uintptr_t here = 0;
+  const uintptr_t position = reinterpret_cast<uintptr_t>(&here);
+  isolate->SetStackLimit(position - kWorkerMaxStackSize);
+}
+
 void InitializePageIsolate(v8::Isolate* isolate) {
   // V8Initializer::InitializeV8Common().
   isolate->SetWasmModuleCallback(&WasmModuleOverride);

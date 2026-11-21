@@ -213,7 +213,11 @@ mitto_bindings_interfaces = [
     file = "dedicated_worker_global_scope"
 
     # onmessage and onmessageerror run as every event handler attribute does.
-    implemented = [ "name" ]
+    implemented = [
+      "name",
+      "postMessage",
+      "close",
+    ]
   },
   {
     # location.ancestorOrigins, a Known Gap, gives an empty one.
@@ -3101,6 +3105,39 @@ mitto_bindings_interfaces = [
     missing = []
   },
   {
+    name = "Worker"
+    file = "worker"
+
+    # onmessage and onerror run as every event handler attribute does.
+    implemented = [
+      "terminate",
+      "postMessage",
+    ]
+  },
+  {
+    name = "WorkerLocation"
+    file = "worker_location"
+  },
+  {
+    name = "WorkerNavigator"
+    file = "worker_navigator"
+    implemented = [
+      "hardwareConcurrency",
+      "appCodeName",
+      "appName",
+      "appVersion",
+      "platform",
+      "product",
+      "userAgent",
+      "language",
+      "languages",
+      "onLine",
+      "connection",
+      "deviceMemory",
+      "userAgentData",
+    ]
+  },
+  {
     name = "WorkerGlobalScope"
     file = "worker_global_scope"
 
@@ -3108,6 +3145,14 @@ mitto_bindings_interfaces = [
     # attribute does.
     implemented = [
       "self",
+      "location",
+      "navigator",
+      "origin",
+      "isSecureContext",
+      "performance",
+      "structuredClone",
+      "importScripts",
+      "fetch",
       "setTimeout",
       "clearTimeout",
       "setInterval",

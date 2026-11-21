@@ -18,23 +18,31 @@
 
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/page_messages.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/visitor.h"
 #include "v8/include/v8-forward.h"
 #include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-value.h"
 
 namespace mitto {
 
 class DOMTimerCoordinator;
+class Performance;
+class EventTarget;
 class Fetcher;
 class WindowTasks;
+class WorkerStarter;
 
 class ExecutionContext : public cppgc::GarbageCollectedMixin {
  public:
@@ -54,6 +62,43 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
 
   // Whether it is a window, as Blink's IsWindow().
   virtual bool IsWindow() const;
+  // The context's URL as a page reads it: the document's, or the worker's
+  // script's final URL.
+  virtual std::u16string Url() const = 0;
+  // Where errors that the context's scripts leave uncaught fire, as Blink's
+  // ErrorEventTarget(): the window, or the worker's global scope.
+  virtual EventTarget* ErrorEventTarget() = 0;
+  // The context's origin, as Blink's GetSecurityOrigin(): the document's, or
+  // the worker's, its creator's.
+  virtual url::Origin GetSecurityOrigin() const = 0;
+  // `url` resolved against the context's base URL, as Blink's CompleteURL():
+  // the document's, with its query in the document's encoding, or the
+  // worker's URL, in UTF-8.
+  virtual GURL CompleteUrl(std::u16string_view url) const = 0;
+  // The base URL that an API resolves against in UTF-8, as KURL(base, input)
+  // does: the document's, or the worker's URL.
+  virtual GURL BaseUrl() const = 0;
+  // WindowOrWorkerGlobalScope's origin, serialized.
+  virtual std::u16string Origin() const = 0;
+  // WindowOrWorkerGlobalScope's isSecureContext.
+  virtual bool IsSecureContextForBindings() const = 0;
+  // WindowOrWorkerGlobalScope's performance, made the first time.
+  virtual mitto::Performance* Performance() = 0;
+
+  // ExecutionContext's state of its error events (error_reporting.h).
+  struct ErrorEventState {
+    ErrorEventState();
+    ~ErrorEventState();
+
+    // Whether the error listeners run, which queues an error that they throw
+    // for the console alone.
+    bool in_dispatch_error_event = false;
+    // Whether those queued errors go to the console, which drops any error
+    // thrown meanwhile.
+    bool draining_pending_exceptions = false;
+    std::vector<v8::Global<v8::Value>> pending_exceptions;
+  };
+  ErrorEventState& GetErrorEventState() { return error_event_state_; }
 
   // WindowOrWorkerGlobalScope's timers. Without timers, as once the context
   // is gone, a timer set is never run, and its ID is 0, as Chrome gives in a
@@ -79,6 +124,9 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
                       bindings::ExceptionState& exception_state);
   std::u16string Atob(const std::u16string& data,
                       bindings::ExceptionState& exception_state);
+  v8::Local<v8::Promise> Fetch(const bindings::RequestOrUSVString& input,
+                               const bindings::RequestInit& init,
+                               bindings::ExceptionState& exception_state);
   // Reports `e` as an error that a script left uncaught: the error event of
   // the context's global object, then the console, as Blink's
   // WindowOrWorkerGlobalScope does.
@@ -104,6 +152,11 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // ExecutionContextLifecycleObserver::ContextDestroyed() does. It counts
   // among no timers.
   void AddContextDestroyedCallback(base::OnceClosure callback);
+
+  // What starts the context's dedicated workers. Without one, as in the Page
+  // program given a script, a worker's script never comes.
+  void SetWorkerStarter(WorkerStarter* starter) { worker_starter_ = starter; }
+  WorkerStarter* GetWorkerStarter() const { return worker_starter_; }
 
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
@@ -141,6 +194,7 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // Runs a callback that queueMicrotask() queued, from its microtask.
   static void RunQueuedMicrotask(void* data);
 
+  ErrorEventState error_event_state_;
   ConsoleSink console_sink_;
   PageStart start_;
   PageConnection connection_;
@@ -148,6 +202,7 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
   raw_ptr<WindowTasks> tasks_ = nullptr;
+  raw_ptr<WorkerStarter> worker_starter_ = nullptr;
   std::map<uint64_t, base::OnceClosure> signal_timers_;
   std::vector<base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;

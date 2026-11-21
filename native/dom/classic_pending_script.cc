@@ -171,6 +171,33 @@ std::optional<std::string> RefusedAsScript(const GURL& url,
   return std::nullopt;
 }
 
+// Upstream: third_party/blink/renderer/platform/loader/allowed_by_nosniff.cc
+std::optional<std::string> RefusedAsWorkerScript(const GURL& url,
+                                                 std::string_view headers,
+                                                 bool strict) {
+  if (!url.SchemeIsHTTPOrHTTPS()) {
+    const std::string_view path = url.path();
+    if (path.ends_with(".js") || path.ends_with(".mjs")) {
+      return std::nullopt;
+    }
+  }
+  if (url.SchemeIs(url::kDataScheme) || url.SchemeIs(url::kBlobScheme) ||
+      url.SchemeIs(url::kFileSystemScheme)) {
+    return std::nullopt;
+  }
+  if (std::optional<std::string> refused = RefusedAsScript(url, headers)) {
+    return refused;
+  }
+  const std::string mime_type = HttpContentType(headers);
+  if (strict && !IsJavaScriptMimeType(mime_type)) {
+    return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
+                         "' because its MIME type ('",
+                         HeaderBytesToUtf8(mime_type),
+                         "') is not executable."});
+  }
+  return std::nullopt;
+}
+
 // static
 ClassicPendingScript* ClassicPendingScript::CreateInline(
     ScriptElementBase& element,

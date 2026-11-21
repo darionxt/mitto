@@ -46,6 +46,9 @@ class Performance final : public EventTarget {
   // which its document's loading fills.
   static Performance* Create(base::TimeTicks time_origin,
                              DocumentLoadTiming* timing);
+  // A worker's, as WorkerPerformance, which counts from when the worker
+  // started: no navigation, no timing, and no entry of the page's visibility.
+  static Performance* CreateForWorker(base::TimeTicks time_origin);
 
   Performance(base::TimeTicks time_origin, DocumentLoadTiming* timing);
   ~Performance() override;

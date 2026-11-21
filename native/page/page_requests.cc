@@ -1,13 +1,22 @@
 #include "mitto/page/page_requests.h"
 
+#include <deque>
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
+#include "base/memory/ref_counted.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/synchronization/lock.h"
+#include "base/synchronization/waitable_event.h"
+#include "base/thread_annotations.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/resource_timing.h"
@@ -27,9 +36,12 @@ PageRequests::Open& PageRequests::Open::operator=(Open&&) = default;
 PageRequests::Open::~Open() = default;
 
 PageRequests::PageRequests(
-    SendFrame send,
-    base::RepeatingCallback<void(std::string why)> refuse)
-    : send_(std::move(send)), refuse_(std::move(refuse)) {}
+    scoped_refptr<SessionSender> sender,
+    base::RepeatingCallback<void(std::string why)> refuse,
+    SessionSender::ResponseRoute route)
+    : sender_(std::move(sender)),
+      refuse_(std::move(refuse)),
+      route_(std::move(route)) {}
 
 PageRequests::~PageRequests() = default;
 
@@ -50,12 +62,8 @@ uint64_t PageRequests::Start(PageRequestKind kind,
 uint64_t PageRequests::Start(PageRequest request,
                              Client& client,
                              bool render_blocking) {
-  request.number = next_number_++;
-  Open& open = open_[request.number];
-  open.client = &client;
-  open.streams_body = request.streams_body;
   // ResourceFetcher::RecordResourceTimingInfo(), when the page asks.
-  Timed& timed = open.timed.emplace();
+  Timed timed;
   timed.start_time = base::TimeTicks::Now();
   // A module's initiator type is "script" too, as ModuleScriptLoader sets it.
   timed.initiator_type = request.kind == PageRequestKind::kScript ||
@@ -65,19 +73,125 @@ uint64_t PageRequests::Start(PageRequest request,
                              : u"fetch";
   timed.url = base::UTF8ToUTF16(request.url);
   timed.render_blocking = render_blocking;
-  timed.window = &Window::Current();
+  ExecutionContext& context = ExecutionContext::Current();
+  if (context.IsWindow()) {
+    timed.window = &Window::Current();
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timed.context.Reset(isolate, isolate->GetCurrentContext());
-  // The Session works out the Initiator from the document that asks.
-  send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
-  return request.number;
+  // The Session works out the Initiator from the context that asks.
+  const uint64_t number = Send(context.ContextId(), request);
+  Open& open = open_[number];
+  open.client = &client;
+  open.streams_body = request.streams_body;
+  open.timed = std::move(timed);
+  return number;
+}
+
+uint64_t PageRequests::StartUntimed(PageRequest request, Client& client) {
+  const uint64_t number =
+      Send(ExecutionContext::Current().ContextId(), request);
+  open_[number].client = &client;
+  return number;
 }
 
 uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
-  request.number = next_number_++;
-  open_[request.number].client = &client;
-  send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
-  return request.number;
+  const uint64_t number = Send(Window::Current().DocumentId(), request);
+  open_[number].client = &client;
+  return number;
+}
+
+uint64_t PageRequests::Send(uint64_t context, PageRequest& request) {
+  // Its response can come only once this thread is done with this task, so
+  // it finds the request open.
+  return Send(context, request, route_);
+}
+
+uint64_t PageRequests::Send(uint64_t context,
+                            PageRequest& request,
+                            const SessionSender::ResponseRoute& route) {
+  return sender_->SendRequest(
+      context,
+      [&](uint64_t number) {
+        request.number = number;
+        return EncodeRequest(context, request);
+      },
+      route);
+}
+
+namespace {
+
+// What the I/O thread hands a synchronous request: each frame of its
+// response, for the thread that waits for them.
+class SynchronousResponse
+    : public base::RefCountedThreadSafe<SynchronousResponse> {
+ public:
+  SynchronousResponse() = default;
+  SynchronousResponse(const SynchronousResponse&) = delete;
+  SynchronousResponse& operator=(const SynchronousResponse&) = delete;
+
+  void Add(FrameFromSession frame) {
+    {
+      const base::AutoLock lock(lock_);
+      frames_.push_back(std::move(frame));
+    }
+    arrived_.Signal();
+  }
+
+  std::deque<FrameFromSession> Take() {
+    const base::AutoLock lock(lock_);
+    std::deque<FrameFromSession> frames;
+    frames.swap(frames_);
+    return frames;
+  }
+
+  base::WaitableEvent& arrived() { return arrived_; }
+
+ private:
+  friend class base::RefCountedThreadSafe<SynchronousResponse>;
+  ~SynchronousResponse() = default;
+
+  base::Lock lock_;
+  std::deque<FrameFromSession> frames_ GUARDED_BY(lock_);
+  base::WaitableEvent arrived_{base::WaitableEvent::ResetPolicy::AUTOMATIC};
+};
+
+}  // namespace
+
+void PageRequests::StartSynchronous(PageRequest request,
+                                    Client& client,
+                                    base::WaitableEvent& abort) {
+  auto response = base::MakeRefCounted<SynchronousResponse>();
+  const uint64_t number =
+      Send(ExecutionContext::Current().ContextId(), request,
+           base::BindRepeating(&SynchronousResponse::Add, response));
+  open_[number].client = &client;
+  while (open_.contains(number)) {
+    base::WaitableEvent* events[] = {&response->arrived(), &abort};
+    if (base::WaitableEvent::WaitMany(events) == 1) {
+      Cancel(number);
+      return;
+    }
+    for (FrameFromSession& frame : response->Take()) {
+      switch (frame.type) {
+        case PageMessage::kResponseStarted:
+          OnResponseStarted(frame.response);
+          break;
+        case PageMessage::kResponseBody: {
+          // The client takes the body as it comes.
+          const size_t size = frame.body.bytes.size();
+          OnResponseBody(std::move(frame.body));
+          TookBody(number, size);
+          break;
+        }
+        case PageMessage::kResponseEnded:
+          OnResponseEnded(frame.ended);
+          break;
+        default:
+          NOTREACHED();
+      }
+    }
+  }
 }
 
 void PageRequests::Cancel(uint64_t number) {
@@ -94,7 +208,19 @@ void PageRequests::Cancel(uint64_t number) {
   // It stays open until the Session ends it, so that what the Session sent
   // meanwhile still counts against its credit.
   found->second.client = nullptr;
-  send_.Run(EncodeCancel(number));
+  sender_->SendForRequest(number, EncodeCancel(number));
+}
+
+void PageRequests::CancelAll() {
+  std::vector<uint64_t> numbers;
+  for (const auto& [number, open] : open_) {
+    if (open.client) {
+      numbers.push_back(number);
+    }
+  }
+  for (const uint64_t number : numbers) {
+    Cancel(number);
+  }
 }
 
 void PageRequests::LetGo(uint64_t number) {
@@ -148,7 +274,7 @@ void PageRequests::TookBody(uint64_t number, size_t bytes) {
   PageCredit credit;
   credit.number = number;
   credit.bytes = base::checked_cast<uint32_t>(bytes);
-  send_.Run(EncodeCredit(credit));
+  sender_->SendForRequest(credit.number, EncodeCredit(credit));
 }
 
 size_t PageRequests::BodyCredit(uint64_t number) const {
@@ -173,7 +299,7 @@ void PageRequests::SendBodyPart(uint64_t number, std::string_view bytes) {
   PageRequestBodyPart part;
   part.number = number;
   part.bytes = std::string(bytes);
-  send_.Run(EncodeRequestBodyPart(part));
+  sender_->SendForRequest(number, EncodeRequestBodyPart(part));
 }
 
 void PageRequests::EndBody(uint64_t number, bool errored) {
@@ -187,7 +313,7 @@ void PageRequests::EndBody(uint64_t number, bool errored) {
   PageRequestBodyEnded ended;
   ended.number = number;
   ended.errored = errored;
-  send_.Run(EncodeRequestBodyEnded(ended));
+  sender_->SendForRequest(number, EncodeRequestBodyEnded(ended));
 }
 
 PageRequests::Open* PageRequests::Find(uint64_t number,

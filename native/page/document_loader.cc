@@ -38,6 +38,12 @@ DocumentLoader::DocumentLoader(ScriptRunner& runner,
       frame_(frame),
       number_(number) {}
 
+DocumentLoader::DocumentLoader(ScriptRunner& runner,
+                               PageRequests& requests,
+                               SendFrame send,
+                               PageFrame& frame)
+    : DocumentLoader(runner, requests, std::move(send), frame, 0) {}
+
 DocumentLoader::~DocumentLoader() {
   // The parser holds this as its client, so it stops for good first.
   waiting_body_.clear();

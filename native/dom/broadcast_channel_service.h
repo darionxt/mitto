@@ -7,11 +7,13 @@
 //
 // It stands where the browser does: a message reaches it from a task of its
 // own, and each connection gets it from another, as a mojo message each way
-// would. Until frames have storage keys of their own (#261), a channel's key
-// is its document's origin, since a Page has only its top-level document, and
-// channels of an opaque origin reach only those of their own window. A message
-// carries its bytes alone, as a CloneableMessage does through the browser, so
-// a WebAssembly module in it reads back as nothing.
+// would, on the thread of the connection's channel, the main thread's or a
+// dedicated worker's. Its state is held under a lock. Until frames have storage
+// keys of their own (#261), a channel's key is its document's origin, since a
+// Page has only its top-level document, and channels of an opaque origin reach
+// only those of their own window. A message carries its bytes alone, as a
+// CloneableMessage does through the browser, so a WebAssembly module in it
+// reads back as nothing.
 //
 // Upstream: content/browser/broadcast_channel/broadcast_channel_service.cc
 // Upstream: third_party/blink/renderer/modules/broadcastchannel/broadcast_channel.cc
@@ -25,13 +27,18 @@
 #include <vector>
 
 #include "base/functional/callback.h"
-#include "v8/include/cppgc/persistent.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/synchronization/lock.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/thread_annotations.h"
+#include "v8/include/cppgc/cross-thread-persistent.h"
 
 namespace mitto {
 
 class BroadcastChannel;
+class ExecutionContext;
 class SerializedScriptValue;
-class Window;
 
 class BroadcastChannelService {
  public:
@@ -48,16 +55,15 @@ class BroadcastChannelService {
   BroadcastChannelService& operator=(const BroadcastChannelService&) = delete;
   ~BroadcastChannelService();
 
-  // What the Page program gives it once it has a Session. Without one, as in
-  // the Page program given a script, messages stay in the Page.
-  void SetSessionSender(SessionSender sender) {
-    session_sender_ = std::move(sender);
-  }
+  // What the Page program gives it once it has a Session, which any thread
+  // calls. Without one, as in the Page program given a script, messages stay
+  // in the Page.
+  void SetSessionSender(SessionSender sender);
 
-  // Connects `channel` of `window` under `name`, and returns the ID of its
-  // connection.
+  // Connects `channel` of `context` under `name`, and returns the ID of its
+  // connection. On the channel's thread.
   uint64_t Connect(BroadcastChannel* channel,
-                   Window& window,
+                   ExecutionContext& context,
                    const std::u16string& name);
   void Disconnect(uint64_t connection);
 
@@ -77,7 +83,8 @@ class BroadcastChannelService {
     Connection(uint64_t id,
                std::string key,
                bool opaque,
-               Window* window,
+               const ExecutionContext* context,
+               scoped_refptr<base::SingleThreadTaskRunner> runner,
                std::string name,
                BroadcastChannel* channel);
     Connection(Connection&&);
@@ -85,25 +92,32 @@ class BroadcastChannelService {
     ~Connection();
 
     uint64_t id;
-    // The serialized origin of the channel's document.
+    // The serialized origin of the channel's context.
     std::string key;
     bool opaque;
-    cppgc::WeakPersistent<Window> window;
+    // The channel's context, which only names it: another thread's is never
+    // reached through it.
+    raw_ptr<const ExecutionContext> context;
+    // Where the channel receives, on its thread.
+    scoped_refptr<base::SingleThreadTaskRunner> runner;
     // In UTF-8, as the name reaches Chrome's browser.
     std::string name;
-    cppgc::WeakPersistent<BroadcastChannel> channel;
+    // Read only on the channel's thread.
+    cppgc::subtle::WeakCrossThreadPersistent<BroadcastChannel> channel;
   };
 
   // Gives the message to the channel of `connection` from a task of its own,
-  // if it is still connected then.
+  // on its thread, if it is still connected then.
   void Deliver(uint64_t connection,
+               scoped_refptr<base::SingleThreadTaskRunner> runner,
                bool locked,
                bool same_agent_cluster,
                std::vector<uint8_t> data);
 
-  std::vector<Connection> connections_;
-  uint64_t next_connection_ = 0;
-  SessionSender session_sender_;
+  base::Lock lock_;
+  std::vector<Connection> connections_ GUARDED_BY(lock_);
+  uint64_t next_connection_ GUARDED_BY(lock_) = 0;
+  SessionSender session_sender_ GUARDED_BY(lock_);
 };
 
 }  // namespace mitto

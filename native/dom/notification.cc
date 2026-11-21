@@ -6,8 +6,8 @@
 #include "base/functional/bind.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_notification.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
-#include "mitto/dom/window.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -40,8 +40,8 @@ const bindings::WrapperTypeInfo* Notification::GetWrapperTypeInfo() const {
 std::u16string Notification::Permission() {
   // Blink answers "denied" in a context that is not secure without asking the
   // browser, whose answer elsewhere is the content setting's default, ask.
-  return Window::Current().IsSecureContextForBindings() ? u"default"
-                                                        : u"denied";
+  return ExecutionContext::Current().IsSecureContextForBindings() ? u"default"
+                                                                  : u"denied";
 }
 
 // static
@@ -53,7 +53,7 @@ v8::Local<v8::Promise> Notification::RequestPermission(
            .ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
-  if (Window::Current().IsSecureContextForBindings()) {
+  if (ExecutionContext::Current().IsSecureContextForBindings()) {
     return resolver->GetPromise();
   }
   // A context that is not secure: the browser's permission context denies the
