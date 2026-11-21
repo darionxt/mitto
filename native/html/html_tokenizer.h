@@ -153,6 +153,11 @@ class HtmlTokenizer {
   void Finish();
   // Whether Finish() has been called.
   bool HasSeenEndOfFile() const { return finished_; }
+  // HTMLInputStream::Current(): what of the input the tokenizer has not read
+  // yet, which the preload scanner starts from.
+  std::u16string_view UnreadInput() const {
+    return std::u16string_view(input_).substr(input_position_);
+  }
 
   // The HTML Standard's insertion point, as Blink's HTMLInputStream and
   // InsertionPointRecord keep it for document.write(): the parser sets one

@@ -10,12 +10,14 @@
 #ifndef MITTO_DOM_RESOURCE_FETCHER_H_
 #define MITTO_DOM_RESOURCE_FETCHER_H_
 
+#include <memory>
 #include <optional>
 #include <string>
 
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/resource.h"
+#include "mitto/dom/resource_load_scheduler.h"
 #include "mitto/dom/subresource_integrity.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/garbage-collected.h"
@@ -73,6 +75,11 @@ struct FetchParameters {
   std::string charset;
 };
 
+// PreloadHelper::GetResourceTypeFromAsAttribute(), of what a Page fetches,
+// for a lower-case `as`: track, which Blink preloads too, has no Request Kind
+// yet, a Known Gap.
+std::optional<ResourceType> ResourceTypeFromAsAttribute(std::u16string_view as);
+
 class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
  public:
   explicit ResourceFetcher(Document& document);
@@ -103,6 +110,10 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // the preload scanner found.
   FetchPriority ComputeLoadPriority(const FetchParameters& params);
 
+  // LoosenLoadThrottlingPolicy(): the parser inserts the body, so no fetch
+  // waits for its turn any more.
+  void LoosenLoadThrottlingPolicy() { scheduler_.LoosenThrottlingPolicy(); }
+
  private:
   class ResourceLoader;
 
@@ -113,6 +124,10 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // `params`.
   bool CanUse(const Resource& existing, const FetchParameters& params) const;
   void StartLoad(Resource& resource, const FetchParameters& params);
+  // ResourceLoader::Run(): the scheduler lets the fetch of `resource` start.
+  void RunLoad(Resource& resource,
+               FetchRequestData request,
+               std::unique_ptr<ResourceLoader> loader);
   // The fetch of `resource` has ended, and lets the load event go if it held
   // it back.
   void LoadFinished(Resource& resource);
@@ -136,6 +151,7 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // lowers late scripts and style sheets.
   bool image_fetched_ = false;
   int boosted_image_count_ = 0;
+  ResourceLoadScheduler scheduler_;
 };
 
 }  // namespace mitto

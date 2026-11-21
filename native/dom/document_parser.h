@@ -31,6 +31,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "mitto/dom/event_loop.h"
@@ -42,14 +43,15 @@
 
 namespace mitto {
 
-class DocWrittenScriptScanner;
 class Document;
 class XmlReader;
 class Element;
 class HtmlDocumentParser;
+class HtmlPreloadScanner;
 class HtmlTreeBuilderReferences;
 class PendingScript;
 class Resource;
+struct PreloadRequest;
 
 class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
  public:
@@ -184,6 +186,12 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
     return parser_blocking_script_ || waiting_for_stylesheets_;
   }
   void CheckIfBlockingStylesheetAdded();
+  // Whether Blink's parser would have an HTMLResourcePreloader: for a
+  // document of a window.
+  bool HasPreloader() const;
+  // ScanAndPreload(): what `scanner` finds goes on the queue, which is
+  // fetched unless a CSP meta element has been seen.
+  void ScanAndPreload(HtmlPreloadScanner& scanner);
 
   void PostTask(TaskType type, void (DocumentParser::*method)());
   void SchedulePumpTokenizer();
@@ -240,9 +248,15 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // The XML parser's tree builder, which takes the place of the tokenizer
   // and the HTML tree builder for an XML document.
   std::unique_ptr<XmlReader> xml_;
-  // What writes gave while the parser waits for a script, scanned as Blink's
-  // insertion preload scanner does, until the parser goes on.
-  std::unique_ptr<DocWrittenScriptScanner> insertion_scanner_;
+  // The preload scanner of the markup, from its first piece on, and that of
+  // what writes gave while the parser waits, until the parser goes on, as
+  // Blink's HTMLDocumentParser keeps them; and the requests that they found,
+  // which wait while a CSP meta element has been seen.
+  std::unique_ptr<HtmlPreloadScanner> preload_scanner_;
+  std::unique_ptr<HtmlPreloadScanner> insertion_scanner_;
+  std::vector<PreloadRequest> queued_preloads_;
+  int seen_csp_meta_tags_ = 0;
+  bool seen_first_byte_ = false;
   State state_ = State::kParsing;
 
   // HTMLDocumentParserState.

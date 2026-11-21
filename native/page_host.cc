@@ -1402,9 +1402,10 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     net_error = net::ERR_UNKNOWN_URL_SCHEME;
   } else if (!request_template) {
     net_error = net::ERR_NOT_IMPLEMENTED;
-  } else if (document_origin.opaque()) {
+  } else if (document_origin.opaque() && !context.is_worker) {
     // A document that the Session did not load, such as about:blank, has no
-    // Initiator that a request can name, and nor has a worker of a data: URL.
+    // Initiator that a request can name. A worker of a data: URL, whose
+    // origin is opaque, asks as that origin.
     net_error = net::ERR_ACCESS_DENIED;
   } else if (asked.mode == PageRequestMode::kSameOrigin &&
              !document_origin.IsSameOriginWith(url)) {
@@ -2799,10 +2800,15 @@ void PageHost::FillContextFetch(uint64_t id,
                                 FetchParams& fetch) const {
   const Context& context = contexts_.at(id);
   // The Initiator is the context's URL, or the origin of a frame's initial
-  // about:blank, which has its parent's.
-  fetch.initiator = context.origin.IsSameOriginWith(context.url)
-                        ? context.url
-                        : context.origin.GetURL();
+  // about:blank, which has its parent's, or the opaque origin of a worker of
+  // a data: URL, whose requests send "null" as their Origin, as Chrome's do.
+  if (context.origin.opaque()) {
+    fetch.opaque_initiator = context.origin;
+  } else {
+    fetch.initiator = context.origin.IsSameOriginWith(context.url)
+                          ? context.url
+                          : context.origin.GetURL();
+  }
   // Blink's OutgoingReferrer(): an about:blank document's is its parent's,
   // and a worker's is its script's URL, of which a blob: or data: one gives
   // none.
@@ -2813,7 +2819,7 @@ void PageHost::FillContextFetch(uint64_t id,
   }
   if (!source->url.SchemeIsHTTPOrHTTPS()) {
     fetch.referrer_policy = net::ReferrerPolicy::NO_REFERRER;
-  } else if (source->url != *fetch.initiator) {
+  } else if (fetch.initiator && source->url != *fetch.initiator) {
     fetch.referrer_source = source->url;
   }
   // The frame tree, from the context's frame, or from a frame's parent for
@@ -2821,10 +2827,14 @@ void PageHost::FillContextFetch(uint64_t id,
   // it out. A frame's navigation always names the top-level frame, since its
   // Initiator need not be it.
   const FrameTree tree = FrameTreeOf(parent != kNoDocument ? parent : id);
-  if (!tree.is_top_level || parent != kNoDocument) {
+  if (!tree.is_top_level || parent != kNoDocument ||
+      fetch.opaque_initiator.has_value()) {
     fetch.top_frame_origin = tree.top_frame_origin;
   }
-  fetch.cross_site_ancestor = tree.cross_site;
+  // An opaque origin is of no site, so its requests have no site for
+  // cookies, as the storage key of a worker of a data: URL gives them.
+  fetch.cross_site_ancestor =
+      tree.cross_site || fetch.opaque_initiator.has_value();
   fetch.cross_origin_ancestor = tree.cross_origin;
   fetch.from_worker = context.is_worker;
 }

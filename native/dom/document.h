@@ -476,6 +476,11 @@ class Document : public Node {
   GURL CompleteUrl(std::u16string_view url) const;
   // The document's URL, as no frame gives a document of a Page another.
   GURL FallbackBaseUrl() const { return GURL(url_); }
+  // Blink's ValidBaseElementURL(): the URL that the first base element with
+  // an href gives, if it is valid.
+  GURL ValidBaseElementUrl() const {
+    return base_element_url_.is_valid() ? base_element_url_ : GURL();
+  }
   // Blink's Document::ProcessBaseElement(), once a base element comes, goes,
   // or changes its href.
   void ProcessBaseElement();
@@ -567,8 +572,9 @@ class Document : public Node {
   // Document::FinishedParsing(), once the parser is done: DOMContentLoaded,
   // a microtask checkpoint, then CheckCompleted() for a document of a window.
   void FinishedParsing();
-  // Document::WillInsertBody(), as the parser inserts the body: a document
-  // with something to show begins rendering, once no script blocks it.
+  // Document::WillInsertBody(), as the parser inserts the body: the fetches
+  // that waited for it start, and a document with something to show begins
+  // rendering, once no script blocks it.
   void WillInsertBody();
   // RenderBlockingResourceManager's pending scripts: a potentially
   // render-blocking script that is fetched before the body blocks the
