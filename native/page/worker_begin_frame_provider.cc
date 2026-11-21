@@ -50,8 +50,10 @@ void WorkerBeginFrameProvider::PostBeginFrame(base::TimeTicks frame_time,
 }
 
 // BeginFrameProvider::OnBeginFrame(): one that nothing waits for stops them,
-// and a late one is dropped; the rest run what waits, and the next comes at
-// the next vsync.
+// and a late one is dropped, though not two in a row: the one after is taken
+// however late it comes, as cc takes the missed BeginFrame that viz sends a
+// client that missed one, so that a thread that wakes late still gets frames.
+// The rest run what waits, and the next comes at the next vsync.
 void WorkerBeginFrameProvider::OnBeginFrame(base::TimeTicks frame_time) {
   if (requests_.empty()) {
     observing_ = false;
@@ -59,11 +61,13 @@ void WorkerBeginFrameProvider::OnBeginFrame(base::TimeTicks frame_time) {
   }
   const BeginFrameSource::VSync vsync = BeginFrameSource::DisplayVSync();
   const base::TimeTicks now = base::TimeTicks::Now();
-  if (now > frame_time + vsync.interval) {
+  if (!dropped_last_ && now > frame_time + vsync.interval) {
+    dropped_last_ = true;
     const base::TimeTicks next = vsync.NextAfter(now);
     PostBeginFrame(next, next + ArrivalLatency(vsync));
     return;
   }
+  dropped_last_ = false;
   const base::TimeTicks next = vsync.NextAfter(frame_time);
   PostBeginFrame(next, next + ArrivalLatency(vsync));
   std::vector<EventLoop::BeginFrameCallback> requests;

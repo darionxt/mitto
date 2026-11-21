@@ -49,6 +49,8 @@ class WorkerBeginFrameProvider {
   std::vector<EventLoop::BeginFrameCallback> requests_;
   // Whether BeginFrames come, as when the frame sink needs them.
   bool observing_ = false;
+  // Whether the last was dropped as late, so that the next is taken.
+  bool dropped_last_ = false;
 };
 
 }  // namespace mitto

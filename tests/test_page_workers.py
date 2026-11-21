@@ -787,15 +787,15 @@ def test_a_worker_that_a_window_started_has_animation_frames(server: str) -> Non
 
 @pytest.mark.usefixtures("page_program")
 def test_a_workers_animation_frames_go_on_at_a_display_of_1000_hz(server: str) -> None:
-    # Its period is shorter than a frame takes to arrive, which the frames still arrive within.
+    # Its period is shorter than a frame takes to arrive, and a thread that wakes late, as a loaded Host's does, misses
+    # every deadline: a late frame is dropped, but never the one after it, so the frames go on.
     machine = mitto.Machine.draw(seed=4, refresh_rate=1000)
     script = """new Promise((resolve) => {
         const worker = new Worker('/frames.js');
         worker.onmessage = (e) => resolve(e.data);
-        setTimeout(() => resolve('stalled'), 5000);
     })"""
     with mitto.Session(machine=machine) as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-        assert page.evaluate(script) == [True, True, False]
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [True, True, False]
 
 
 @pytest.mark.usefixtures("page_program")
