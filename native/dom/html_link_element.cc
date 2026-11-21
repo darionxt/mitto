@@ -470,7 +470,9 @@ void HTMLLinkElement::ModulePreloadIfNeeded() {
       Modulator::AcquiringImportMapsState::kAfterModuleScriptLoad);
   module_preload_ = bindings::MakeGarbageCollected<ModulePreloadClient>(*this);
   modulator->FetchSingle(
-      ModuleScriptFetchRequest(url, module_type, options, kClientReferrer),
+      // A JavaScript module's destination; a JSON or CSS one has its own.
+      ModuleScriptFetchRequest(url, module_type, FetchDestination::kScript,
+                               options, kClientReferrer),
       ModuleGraphLevel::kDependentModuleFetch, module_preload_.Get());
 }
 

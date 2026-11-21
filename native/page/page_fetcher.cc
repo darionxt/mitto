@@ -187,6 +187,7 @@ PageRequestKind KindOf(const FetchRequestData& data) {
       return PageRequestKind::kFont;
     case FetchDestination::kJson:
     case FetchDestination::kText:
+    case FetchDestination::kWorker:
       // Only a module's fetch has these destinations.
       NOTREACHED();
   }

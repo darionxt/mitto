@@ -134,6 +134,9 @@ void InitializeWorkerIsolate(v8::Isolate* isolate) {
   isolate->SetSharedArrayBufferConstructorEnabledCallback(
       &SharedArrayBufferConstructorEnabled);
   isolate->SetIsJSApiWrapperNativeErrorCallback(&IsDOMExceptionWrapper);
+  isolate->SetHostImportModuleDynamicallyCallback(&HostImportModuleDynamically);
+  isolate->SetHostInitializeImportMetaObjectCallback(
+      &HostInitializeImportMetaObject);
   InitializeWasmResponseExtensions(isolate);
   // InitializeWorker(): kWorkerMaxStackSize below the stack's current
   // position.

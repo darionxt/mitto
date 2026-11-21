@@ -33,6 +33,7 @@
 #include "base/threading/platform_thread.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/dom/dedicated_worker_messaging.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/page/session_sender.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
@@ -76,7 +77,16 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     // Its origin, its creator's.
     url::Origin origin;
     std::u16string name;
+    // The URL that new Worker() asked for, the key of a module worker's root
+    // in its module map, which a redirect does not change.
+    GURL script_url;
     bool module = false;
+    // A module worker's credentials mode, which its graph's fetches take.
+    FetchCredentialsMode credentials = FetchCredentialsMode::kSameOrigin;
+    // Its creator's referrer policy, a window's document's, which a module
+    // worker's top-level graph is fetched with, as through Blink's outside
+    // settings. A worker's creator has none of its own: a Known Gap.
+    FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
     // Whether its creator is a worker, which holds the script to Blink's
     // strict check of its MIME type.
     bool strict_mime_type = false;

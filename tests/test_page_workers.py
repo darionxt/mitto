@@ -240,6 +240,43 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"  postMessage([bucket.name, await navigator.storageBuckets.keys()]);"
         b"})().catch((e) => postMessage(String(e)));",
     ),
+    "/module.js": (
+        "text/javascript",
+        b"import {x} from './exports.js'; const {z} = await import('./dynamic.js');"
+        b"const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return String(e); } };"
+        b"postMessage([x, z, import.meta.url.replace(location.origin, ''), outcome(() => importScripts('/lib.js'))]);",
+    ),
+    "/exports.js": ("text/javascript", b"export const x = 'imported';"),
+    "/dynamic.js": ("text/javascript", b"export const z = 'imported dynamically';"),
+    "/broken-graph.js": ("text/javascript", b"import './missing.js'; postMessage('ran');"),
+    "/module-syntax.js": ("text/javascript", b"export const = 1;"),
+    "/module-throws.js": ("text/javascript", b"throw new Error('in a module');"),
+    "/classic-import.js": (
+        "text/javascript",
+        b"import('./dynamic.js').then((m) => postMessage(m.z), (e) => postMessage(String(e)));",
+    ),
+    "/imports-a-module.js": (
+        "text/javascript",
+        b"importScripts('/sub/runs-import.js');"
+        b"self.run().then((m) => postMessage(m.where), (e) => postMessage(String(e)));",
+    ),
+    "/sub/runs-import.js": ("text/javascript", b"self.run = () => import('./where.js');"),
+    # A module worker's root and what it imports statically, which goes with its creator's referrer policy.
+    "/referrer-root.js": ("text/javascript", b"import './referrer-dep.js'; postMessage('ran');"),
+    "/referrer-dep.js": ("text/javascript", b"export const x = 1;"),
+    # Where /redirect-w.js ends up: a module worker's root that imports the URL it was asked for.
+    "/v2/w.js": (
+        "text/javascript",
+        b"self.count = (self.count || 0) + 1;"
+        b"import('/redirect-w.js').then(() => postMessage(self.count), (e) => postMessage(String(e)));",
+    ),
+    # The same script from another origin, whose response is opaque, so its base URL is about:blank.
+    "/imports-a-cross-origin-module.js": (
+        "text/javascript",
+        b"importScripts(location.origin.replace('127.0.0.1', 'localhost') + '/sub/runs-import.js');"
+        b"self.run().then((m) => postMessage(m.where), (e) => postMessage(String(e)));",
+    ),
+    "/sub/where.js": ("text/javascript", b"export const where = 'beside the imported script';"),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -253,6 +290,9 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
 
 # The path and body of each POST that reached the server, in order.
 _POSTED: list[tuple[str, bytes]] = []
+# The Referer of each GET, by path, and the paths that redirect, to where.
+_REFERERS: dict[str, str | None] = {}
+_REDIRECTS = {"/redirect-w.js": "/v2/w.js"}
 
 
 @pytest.fixture
@@ -273,6 +313,13 @@ def server() -> Iterator[str]:
 
         def do_GET(self) -> None:
             path = self.path.partition("?")[0]
+            _REFERERS[path] = self.headers.get("Referer")
+            if path in _REDIRECTS:
+                self.send_response(302)
+                self.send_header("Location", _REDIRECTS[path])
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if path in _SCRIPTS:
                 content_type, body = _SCRIPTS[path]
                 status = 200
@@ -843,6 +890,109 @@ def test_a_worker_opens_the_storage_buckets_of_its_origin(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == [["drafts", ["drafts"]], ["drafts"], "in the bucket"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_module_worker_runs_its_graph(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/module.js', {type: 'module'});
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == [
+        "imported",
+        "imported dynamically",
+        "/module.js",
+        "TypeError: Failed to execute 'importScripts' on 'WorkerGlobalScope': Module scripts don't support "
+        "importScripts().",
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+@pytest.mark.parametrize("path", ["/broken-graph.js", "/module-syntax.js", "/image.js"])
+def test_a_module_worker_whose_graph_fails_fires_a_plain_error(server: str, path: str) -> None:
+    script = f"""new Promise((resolve) => {{
+        const worker = new Worker('{path}', {{type: 'module'}});
+        worker.onmessage = (e) => resolve(e.data);
+        worker.onerror = (e) => resolve([e.constructor.name, e.cancelable, 'message' in e]);
+    }})"""
+
+    assert _evaluate(server, script) == ["Event", True, False]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_error_that_a_module_worker_throws_reaches_its_worker(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/module-throws.js', {type: 'module'});
+        worker.onerror = (e) => {
+            e.preventDefault();
+            resolve([e.constructor.name, e.message, e.filename.replace(location.origin, ''), e.lineno]);
+        };
+    })"""
+
+    assert _evaluate(server, script) == ["ErrorEvent", "Uncaught Error: in a module", "/module-throws.js", 1]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_classic_worker_imports_a_module(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/classic-import.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "imported dynamically"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_import_in_an_imported_script_resolves_against_that_script(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/imports-a-module.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "beside the imported script"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_import_in_an_opaque_imported_script_has_no_base_url(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/imports-a-cross-origin-module.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == (
+        "TypeError: Failed to resolve module specifier './where.js'. The base URL is about:blank because import() is "
+        "called from a CORS-cross-origin script."
+    )
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_module_workers_static_imports_take_its_creators_referrer_policy(server: str) -> None:
+    # Chrome fetches a module worker's top-level graph through its creator's settings.
+    _REFERERS.clear()
+    script = """new Promise((resolve) => {
+        const meta = document.createElement('meta');
+        meta.name = 'referrer';
+        meta.content = 'origin';
+        document.head.append(meta);
+        const worker = new Worker('/referrer-root.js', {type: 'module'});
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "ran"
+    assert _REFERERS["/referrer-dep.js"] == f"{server}/"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_module_workers_root_is_in_its_map_at_the_url_it_was_asked_for(server: str) -> None:
+    # After a redirect, an import() of the URL that new Worker() asked for finds the root, which runs once.
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/redirect-w.js', {type: 'module'});
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == 1
 
 
 @pytest.mark.usefixtures("page_program")

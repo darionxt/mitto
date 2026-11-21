@@ -26,6 +26,8 @@ enum class FetchDestination {
   kStyle,
   kFont,
   kText,
+  // A module of a module worker's graph.
+  kWorker,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.

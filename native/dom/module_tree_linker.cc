@@ -20,8 +20,9 @@ struct ModuleScriptFetchTarget {
 }  // namespace
 
 ModuleTreeLinker::ModuleTreeLinker(Modulator& modulator,
-                                   ModuleTreeClient& client)
-    : modulator_(&modulator), client_(&client) {}
+                                   ModuleTreeClient& client,
+                                   FetchDestination destination)
+    : modulator_(&modulator), client_(&client), destination_(destination) {}
 
 ModuleTreeLinker::~ModuleTreeLinker() = default;
 
@@ -62,10 +63,12 @@ void ModuleTreeLinker::AdvanceState(State new_state) {
   }
 }
 
-void ModuleTreeLinker::FetchRoot(const GURL& url,
-                                 ModuleType module_type,
-                                 const ScriptFetchOptions& options,
-                                 std::string referrer) {
+void ModuleTreeLinker::FetchRoot(
+    const GURL& url,
+    ModuleType module_type,
+    const ScriptFetchOptions& options,
+    std::string referrer,
+    std::shared_ptr<const ModuleWorkerMainScript> main_script) {
   // Wait for import maps: the document no longer acquires them.
   modulator_->SetAcquiringImportMapsState(
       Modulator::AcquiringImportMapsState::kAfterModuleScriptLoad);
@@ -86,9 +89,11 @@ void ModuleTreeLinker::FetchRoot(const GURL& url,
   // Fetch a single module script, with the top-level module fetch flag set,
   // and the referrer that the caller gives: the client, or for import() the
   // URL of the script that calls it.
-  modulator_->FetchSingle(
-      ModuleScriptFetchRequest(url, module_type, options, std::move(referrer)),
-      ModuleGraphLevel::kTopLevelModuleFetch, this);
+  ModuleScriptFetchRequest request(url, module_type, destination_, options,
+                                   std::move(referrer));
+  request.main_script = std::move(main_script);
+  modulator_->FetchSingle(request, ModuleGraphLevel::kTopLevelModuleFetch,
+                          this);
 }
 
 void ModuleTreeLinker::FetchRootInline(ModuleScript* module_script) {
@@ -164,8 +169,8 @@ void ModuleTreeLinker::FetchDescendants(const ModuleScript* module_script) {
     options.render_blocking = RenderBlockingBehavior::kNonBlocking;
     ++num_incomplete_fetches_;
     modulator_->FetchSingle(
-        ModuleScriptFetchRequest(target.url, target.module_type, options,
-                                 module_script->BaseUrl().spec()),
+        ModuleScriptFetchRequest(target.url, target.module_type, destination_,
+                                 options, module_script->BaseUrl().spec()),
         ModuleGraphLevel::kDependentModuleFetch, this);
   }
   CHECK_GT(num_incomplete_fetches_, 0u);

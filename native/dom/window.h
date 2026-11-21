@@ -267,7 +267,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   DocumentLoadTiming& GetDocumentLoadTiming();
   // The window's module map and the rest of its module machinery, made the
   // first time, as Blink's Modulator::From() makes the context's.
-  Modulator* GetModulator();
+  Modulator* GetModulator() override;
 
  private:
   // The window's bars, each an object of its own, as Blink's are.

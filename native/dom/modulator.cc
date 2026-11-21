@@ -11,10 +11,10 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dynamic_module_resolver.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/import_map.h"
 #include "mitto/dom/module_map.h"
 #include "mitto/dom/module_record.h"
@@ -158,10 +158,12 @@ ModuleScriptFetchRequest::ModuleScriptFetchRequest() = default;
 ModuleScriptFetchRequest::ModuleScriptFetchRequest(
     const GURL& url,
     ModuleType expected_module_type,
+    FetchDestination destination,
     const ScriptFetchOptions& options,
     std::string referrer)
     : url(url),
       expected_module_type(expected_module_type),
+      destination(destination),
       options(options),
       referrer(std::move(referrer)) {}
 
@@ -173,16 +175,16 @@ ModuleScriptFetchRequest::~ModuleScriptFetchRequest() = default;
 
 // static
 Modulator* Modulator::From(v8::Local<v8::Context> context) {
-  Window* const window = bindings::V8Window::ToWrappable(
-      v8::Isolate::GetCurrent(), context->Global());
-  if (!window || !window->HasContext()) {
+  ExecutionContext* const execution_context =
+      ExecutionContext::From(v8::Isolate::GetCurrent(), context);
+  if (!execution_context || !execution_context->HasContext()) {
     return nullptr;
   }
-  return window->GetModulator();
+  return execution_context->GetModulator();
 }
 
-Modulator::Modulator(Window& window)
-    : window_(&window),
+Modulator::Modulator(ExecutionContext& context)
+    : context_(&context),
       map_(bindings::MakeGarbageCollected<ModuleMap>(*this)),
       dynamic_module_resolver_(
           bindings::MakeGarbageCollected<DynamicModuleResolver>(*this)),
@@ -192,7 +194,7 @@ Modulator::Modulator(Window& window)
 Modulator::~Modulator() = default;
 
 void Modulator::Trace(cppgc::Visitor* visitor) const {
-  visitor->Trace(window_);
+  visitor->Trace(context_);
   visitor->Trace(map_);
   visitor->Trace(dynamic_module_resolver_);
   tree_linkers_.Trace(visitor);
@@ -200,13 +202,13 @@ void Modulator::Trace(cppgc::Visitor* visitor) const {
 }
 
 bool Modulator::HasValidContext() const {
-  const Window* const window = window_.Get();
-  return window && window->HasContext();
+  const ExecutionContext* const context = context_.Get();
+  return context && context->HasContext();
 }
 
 void Modulator::PostTask(base::OnceClosure task) {
-  Window* const window = window_.Get();
-  if (WindowTasks* const tasks = window ? window->GetTasks() : nullptr) {
+  ExecutionContext* const context = context_.Get();
+  if (WindowTasks* const tasks = context ? context->GetTasks() : nullptr) {
     tasks->PostTask(TaskType::kNetworking, std::move(task));
   }
 }
@@ -215,17 +217,35 @@ void Modulator::FetchTree(const GURL& url,
                           ModuleType module_type,
                           const ScriptFetchOptions& options,
                           ModuleTreeClient* client,
-                          std::string referrer) {
+                          std::string referrer,
+                          FetchDestination destination) {
   ModuleTreeLinker* const linker =
-      bindings::MakeGarbageCollected<ModuleTreeLinker>(*this, *client);
+      bindings::MakeGarbageCollected<ModuleTreeLinker>(*this, *client,
+                                                       destination);
   AddLinker(linker);
   linker->FetchRoot(url, module_type, options, std::move(referrer));
+}
+
+void Modulator::FetchWorkerScriptTree(
+    const GURL& url,
+    std::shared_ptr<const ModuleWorkerMainScript> main_script,
+    const ScriptFetchOptions& options,
+    ModuleTreeClient* client) {
+  ModuleTreeLinker* const linker =
+      bindings::MakeGarbageCollected<ModuleTreeLinker>(
+          *this, *client, FetchDestination::kWorker);
+  AddLinker(linker);
+  // Keyed in the module map by the URL asked for; only the module script's
+  // source and base URL are the response's.
+  linker->FetchRoot(url, ModuleType::kJavaScriptOrWasm, options,
+                    kClientReferrer, std::move(main_script));
 }
 
 void Modulator::FetchDescendantsForInlineScript(ModuleScript* module_script,
                                                 ModuleTreeClient* client) {
   ModuleTreeLinker* const linker =
-      bindings::MakeGarbageCollected<ModuleTreeLinker>(*this, *client);
+      bindings::MakeGarbageCollected<ModuleTreeLinker>(
+          *this, *client, FetchDestination::kScript);
   AddLinker(linker);
   linker->FetchRootInline(module_script);
 }
@@ -296,9 +316,10 @@ GURL Modulator::ResolveModuleSpecifier(std::u16string_view specifier,
 void Modulator::ResolveDynamically(const ModuleRequest& module_request,
                                    const ReferrerScriptInfo& referrer_info,
                                    v8::Local<v8::Promise::Resolver> resolver) {
-  // A window that has lost its document.
-  Window* const window = window_.Get();
-  if (!window || !window->HasDocument()) {
+  // A context that has gone, or a window that has lost its document.
+  ExecutionContext* const context = context_.Get();
+  if (!context || !context->HasContext() ||
+      (context->IsWindow() && !static_cast<Window*>(context)->HasDocument())) {
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
     std::ignore = resolver->Reject(
         isolate->GetCurrentContext(),
@@ -320,8 +341,8 @@ ModuleType Modulator::ModuleTypeFromRequest(
   if (*module_type_string == u"json") {
     return ModuleType::kJSON;
   }
-  // A window's, which is the only global that has a modulator here.
-  if (*module_type_string == u"css") {
+  // Only a window's.
+  if (*module_type_string == u"css" && context_ && context_->IsWindow()) {
     return ModuleType::kCSS;
   }
   // JavaScriptImportText, stable in Chrome 157.
@@ -337,9 +358,10 @@ void Modulator::MergeExistingAndNewImportMaps(
   import_map_->MergeExistingAndNewImportMaps(
       std::move(new_import_map), scoped_resolved_module_map_,
       toplevel_resolved_module_set_, [this](std::string message) {
-        Window* const window = window_.Get();
-        if (window && merge_warnings_.insert(message).second) {
-          window->AddConsoleMessage(ConsoleLevel::kWarning, std::move(message));
+        ExecutionContext* const context = context_.Get();
+        if (context && merge_warnings_.insert(message).second) {
+          context->AddConsoleMessage(ConsoleLevel::kWarning,
+                                     std::move(message));
         }
       });
 }
@@ -359,9 +381,9 @@ IntegrityMetadataSet Modulator::GetIntegrityMetadata(const GURL& url) const {
   }
   std::vector<std::string> messages;
   IntegrityMetadataSet integrity = ParseIntegrityAttribute(*value, &messages);
-  if (Window* const window = window_.Get()) {
+  if (ExecutionContext* const context = context_.Get()) {
     for (std::string& message : messages) {
-      window->AddConsoleMessage(ConsoleLevel::kError, std::move(message));
+      context->AddConsoleMessage(ConsoleLevel::kError, std::move(message));
     }
   }
   return integrity;

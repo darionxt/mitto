@@ -39,6 +39,7 @@ namespace mitto {
 
 class CacheStorageHost;
 class IndexedDbHost;
+class Modulator;
 class StorageBucketHost;
 class DOMTimerCoordinator;
 class Performance;
@@ -96,6 +97,9 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // Where the context's Storage Buckets API reaches the Session, or null for
   // a context whose origin may not reach buckets.
   virtual StorageBucketHost* GetStorageBucketHost() const = 0;
+  // The context's module map and the rest of its module machinery, made the
+  // first time, as Blink's Modulator::From() makes the context's.
+  virtual Modulator* GetModulator() = 0;
 
   // ExecutionContext's state of its error events (error_reporting.h).
   struct ErrorEventState {

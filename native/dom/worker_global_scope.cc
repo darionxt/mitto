@@ -20,9 +20,12 @@
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/idb_factory.h"
 #include "mitto/dom/message_port.h"
+#include "mitto/dom/modulator.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
+#include "mitto/dom/referrer_script_info.h"
 #include "mitto/dom/scheduler.h"
+#include "mitto/dom/script_fetch_options.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/worker_location.h"
 #include "mitto/dom/worker_navigator.h"
@@ -30,6 +33,7 @@
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/encoding/text_resource_decoder_builder.h"
 #include "mitto/header_rules.h"
+#include "url/url_constants.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -60,6 +64,7 @@ void WorkerGlobalScope::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(scheduler_);
   visitor->Trace(caches_);
   visitor->Trace(indexed_db_);
+  visitor->Trace(modulator_);
 }
 
 mitto::Crypto* WorkerGlobalScope::Crypto() {
@@ -107,6 +112,14 @@ IndexedDbHost* WorkerGlobalScope::GetIndexedDbHost() const {
 
 StorageBucketHost* WorkerGlobalScope::GetStorageBucketHost() const {
   return storage_bucket_host_;
+}
+
+// WorkerModulatorImpl, made the first time.
+Modulator* WorkerGlobalScope::GetModulator() {
+  if (!modulator_) {
+    modulator_ = bindings::MakeGarbageCollected<Modulator>(*this);
+  }
+  return modulator_.Get();
 }
 
 WorkerNavigator* WorkerGlobalScope::Navigator() {
@@ -217,8 +230,16 @@ void WorkerGlobalScope::ImportScripts(
               v8::NewStringType::kNormal,
               base::checked_cast<int>(source.size()))
               .ToLocal(&code)) {
-        v8::ScriptOrigin origin =
-            ClassicScriptOrigin(name_string, /*muted_errors=*/script->opaque);
+        // ImportScriptsInternal(): its base URL, which its import() resolves
+        // against, is its response's, or about:blank for an opaque response,
+        // as a window's classic script's is, with the default fetch options.
+        v8::ScriptOrigin origin = ClassicScriptOrigin(
+            name_string, /*muted_errors=*/script->opaque, /*line_offset=*/0,
+            /*column_offset=*/0,
+            ReferrerScriptInfo(
+                script->opaque ? GURL(url::kAboutBlankURL) : script->url,
+                ScriptFetchOptions())
+                .ToV8HostDefinedOptions(isolate, GURL(name)));
         v8::ScriptCompiler::Source script_source(code, origin);
         if (v8::ScriptCompiler::Compile(context, &script_source)
                 .ToLocal(&compiled) &&

@@ -11,6 +11,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/memory/weak_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -27,8 +28,12 @@
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/message_port.h"
+#include "mitto/dom/modulator.h"
+#include "mitto/dom/module_script.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/referrer_script_info.h"
+#include "mitto/dom/script_fetch_options.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/encoding/content_type.h"
@@ -108,10 +113,14 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   // WorkerOrWorkletScriptController::Initialize() makes it.
   void Start();
 
+  // Runs the worker's script, as a classic script or, for a module worker,
+  // as the root of its module graph.
   void RunClassicScript(ScriptResponse response);
   void ReceiveMessage(SerializedScriptValue message,
                       std::vector<MessagePortChannel> ports,
                       bool user_activation);
+  void RunModuleScript(ScriptResponse response);
+  void OnModuleTreeFetched(ModuleScript* module_script);
   // PrepareForShutdownOnWorkerThread(): the context goes, which ends the
   // worker's own workers, and every queue shuts down. Then the thread's loop
   // ends.
@@ -157,7 +166,34 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   std::unique_ptr<PageWorkerStarter> worker_starter_;
   int reports_queued_ = 0;
   bool shut_down_ = false;
+  base::WeakPtrFactory<Scope> weak_factory_{this};
 };
+
+namespace {
+
+// WorkerModuleTreeClient: hears that a module worker's graph has been
+// fetched and linked, on the worker's thread.
+class WorkerModuleTreeClient final : public ModuleTreeClient {
+ public:
+  explicit WorkerModuleTreeClient(
+      base::OnceCallback<void(ModuleScript* module_script)> finished)
+      : finished_(std::move(finished)) {}
+
+  void Trace(cppgc::Visitor* visitor) const override {
+    ModuleTreeClient::Trace(visitor);
+  }
+
+  void NotifyModuleTreeLoadFinished(ModuleScript* module_script) override {
+    if (finished_) {
+      std::move(finished_).Run(module_script);
+    }
+  }
+
+ private:
+  base::OnceCallback<void(ModuleScript* module_script)> finished_;
+};
+
+}  // namespace
 
 void DedicatedWorkerThread::Scope::Start() {
   v8::Isolate::CreateParams params;
@@ -270,6 +306,7 @@ void DedicatedWorkerThread::Scope::Start() {
       send));
   scope_->SetObjectProxy(params_.object_proxy.get());
   scope_->SetModule(params_.module);
+  scope_->SetOutsideReferrerPolicy(params_.referrer_policy);
   scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.
@@ -367,6 +404,10 @@ void DedicatedWorkerThread::Scope::RunClassicScript(ScriptResponse response) {
   if (shut_down_) {
     return;
   }
+  if (params_.module) {
+    RunModuleScript(std::move(response));
+    return;
+  }
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = context_.Get(isolate_);
   const v8::Context::Scope context_scope(context);
@@ -416,8 +457,13 @@ void DedicatedWorkerThread::Scope::RunClassicScript(ScriptResponse response) {
             isolate_, reinterpret_cast<const uint16_t*>(source.data()),
             v8::NewStringType::kNormal, base::checked_cast<int>(source.size()))
             .ToLocal(&code)) {
-      v8::ScriptOrigin origin =
-          ClassicScriptOrigin(name, /*muted_errors=*/false);
+      // A classic worker script's base URL, which its import() resolves
+      // against, is its response's, with the default fetch options.
+      v8::ScriptOrigin origin = ClassicScriptOrigin(
+          name, /*muted_errors=*/false, /*line_offset=*/0,
+          /*column_offset=*/0,
+          ReferrerScriptInfo(response.url, ScriptFetchOptions())
+              .ToV8HostDefinedOptions(isolate_, response.url));
       v8::ScriptCompiler::Source script_source(code, origin);
       if (v8::ScriptCompiler::Compile(context, &script_source)
               .ToLocal(&script)) {
@@ -428,6 +474,63 @@ void DedicatedWorkerThread::Scope::RunClassicScript(ScriptResponse response) {
   }
   // DidEvaluateTopLevelScript(): the messages that waited for it go to the
   // worker.
+  params_.object_proxy->DidEvaluateTopLevelScript();
+}
+
+// WorkerGlobalScope::FetchModuleTopLevelScript(): the graph of the worker's
+// script, whose response its creator took, with the destination worker and
+// the credentials of new Worker()'s options.
+void DedicatedWorkerThread::Scope::RunModuleScript(ScriptResponse response) {
+  const v8::HandleScope handle_scope(isolate_);
+  const v8::Context::Scope context_scope(context_.Get(isolate_));
+  // WorkerModuleScriptFetcher: a response that failed or is not ok gives no
+  // module script.
+  if (response.net_error != 0 ||
+      (response.status != 0 &&
+       (response.status < 200 || response.status > 299))) {
+    OnModuleTreeFetched(nullptr);
+    return;
+  }
+  // InitializeURL(): the worker's URL is its script's final one.
+  scope_->SetUrl(response.url);
+  auto main_script = std::make_shared<ModuleWorkerMainScript>();
+  main_script->url = response.url;
+  // A data: URL's, which no request answered.
+  main_script->status = response.status == 0 ? 200 : response.status;
+  main_script->headers = std::move(response.headers);
+  main_script->body = std::move(response.body);
+  ScriptFetchOptions options;
+  options.credentials_mode = params_.credentials;
+  scope_->GetModulator()->FetchWorkerScriptTree(
+      params_.script_url, std::move(main_script), options,
+      bindings::MakeGarbageCollected<WorkerModuleTreeClient>(base::BindOnce(
+          &Scope::OnModuleTreeFetched, weak_factory_.GetWeakPtr())));
+}
+
+// WorkerModuleTreeClient::NotifyModuleTreeLoadFinished(), then
+// RunWorkerScript().
+void DedicatedWorkerThread::Scope::OnModuleTreeFetched(
+    ModuleScript* module_script) {
+  if (shut_down_) {
+    return;
+  }
+  const v8::HandleScope handle_scope(isolate_);
+  const v8::Local<v8::Context> context = context_.Get(isolate_);
+  const v8::Context::Scope context_scope(context);
+  // A graph that failed, or whose root has an error to rethrow, a parse or
+  // link error: the Worker hears a plain error, and the worker closes.
+  if (!module_script || module_script->HasErrorToRethrow()) {
+    params_.object_proxy->DidFailToFetchScript();
+    scope_->Close();
+    return;
+  }
+  {
+    const v8::MicrotasksScope microtasks_scope(
+        context, v8::MicrotasksScope::kRunMicrotasks);
+    // What the evaluation throws, or a rejection of its promise, is reported
+    // as any error that the worker leaves uncaught.
+    module_script->RunScript();
+  }
   params_.object_proxy->DidEvaluateTopLevelScript();
 }
 
