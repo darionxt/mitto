@@ -170,7 +170,7 @@ FetchRules::FetchRules(FetchParams params,
       network_quality_(network_quality),
       original_url_(url) {
   if (params_.opaque_initiator) {
-    initiator_ = url::Origin();
+    initiator_ = *params_.opaque_initiator;
   } else if (params_.initiator) {
     page_ = *params_.initiator;
     initiator_ = url::Origin::Create(page_);

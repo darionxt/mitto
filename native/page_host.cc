@@ -2803,7 +2803,7 @@ void PageHost::FillContextFetch(uint64_t id,
   // about:blank, which has its parent's, or the opaque origin of a worker of
   // a data: URL, whose requests send "null" as their Origin, as Chrome's do.
   if (context.origin.opaque()) {
-    fetch.opaque_initiator = true;
+    fetch.opaque_initiator = context.origin;
   } else {
     fetch.initiator = context.origin.IsSameOriginWith(context.url)
                           ? context.url
@@ -2827,12 +2827,14 @@ void PageHost::FillContextFetch(uint64_t id,
   // it out. A frame's navigation always names the top-level frame, since its
   // Initiator need not be it.
   const FrameTree tree = FrameTreeOf(parent != kNoDocument ? parent : id);
-  if (!tree.is_top_level || parent != kNoDocument || fetch.opaque_initiator) {
+  if (!tree.is_top_level || parent != kNoDocument ||
+      fetch.opaque_initiator.has_value()) {
     fetch.top_frame_origin = tree.top_frame_origin;
   }
   // An opaque origin is of no site, so its requests have no site for
   // cookies, as the storage key of a worker of a data: URL gives them.
-  fetch.cross_site_ancestor = tree.cross_site || fetch.opaque_initiator;
+  fetch.cross_site_ancestor =
+      tree.cross_site || fetch.opaque_initiator.has_value();
   fetch.cross_origin_ancestor = tree.cross_origin;
   fetch.from_worker = context.is_worker;
 }
