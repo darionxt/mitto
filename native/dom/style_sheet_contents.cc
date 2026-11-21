@@ -38,6 +38,11 @@ bool IsLaxMimeTypeCheck(const Document& document, const Resource& resource) {
   return document.InQuirksMode() && !resource.Response().opaque;
 }
 
+FetchReferrerPolicy StyleSheetReferrerPolicy(const Resource& resource) {
+  return FetchReferrerPolicyFromHeaderValue(
+      HeaderField(resource.Response().headers, "referrer-policy"));
+}
+
 DecodedStyleSheet DecodeStyleSheet(const Resource& resource, bool lax) {
   // CSSStyleSheetResource's decoder: the request's charset hint, the
   // response's charset over it, and @charset or a byte order mark over both.
@@ -217,12 +222,12 @@ void StyleRuleImport::NotifyFinished(Resource& resource) {
   Document* const document = parent ? parent->GetDocument() : nullptr;
   if (document && !resource.ErrorOccurred()) {
     // The imported sheet's imports resolve against its response's URL and go
-    // with it as referrer, under the policy that fetched it. A sheet of the
-    // wrong type is empty.
+    // with it as referrer, under the policy that its response names. A sheet
+    // of the wrong type is empty.
     const GURL response_url(resource.Response().url);
     StyleSheetReferrer referrer;
     referrer.referrer = response_url.spec();
-    referrer.policy = resource.ReferrerPolicy();
+    referrer.policy = StyleSheetReferrerPolicy(resource);
     DecodedStyleSheet decoded =
         DecodeStyleSheet(resource, IsLaxMimeTypeCheck(*document, resource));
     style_sheet_ = bindings::MakeGarbageCollected<StyleSheetContents>(

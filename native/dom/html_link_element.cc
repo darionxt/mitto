@@ -497,10 +497,10 @@ void HTMLLinkElement::StyleSheetFinished(Resource& resource) {
     }
   }
   // The sheet's imports resolve against its response's URL and go with it as
-  // referrer, under the policy that fetched it.
+  // referrer, under the policy that its response names.
   StyleSheetReferrer referrer;
   referrer.referrer = resource.Response().url;
-  referrer.policy = resource.ReferrerPolicy();
+  referrer.policy = StyleSheetReferrerPolicy(resource);
   if (sheet_) {
     ClearSheet();
   }

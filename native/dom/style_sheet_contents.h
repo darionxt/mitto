@@ -38,9 +38,15 @@ class StyleSheetOwner : public cppgc::GarbageCollectedMixin {
 struct StyleSheetReferrer {
   // kClientReferrer for the document's, or the URL of a fetched sheet.
   std::string referrer = kClientReferrer;
-  // The policy that fetched the sheet, or kDefault for the document's.
+  // The policy that a fetched sheet's response names, or kDefault for the
+  // document's.
   FetchReferrerPolicy policy = FetchReferrerPolicy::kDefault;
 };
+
+// CSSStyleSheetResource::GetReferrerPolicy(): the policy that a fetched
+// sheet's Referrer-Policy header names, without the legacy keywords, or
+// kDefault for none, which leaves its imports to the document's.
+FetchReferrerPolicy StyleSheetReferrerPolicy(const Resource& resource);
 
 class StyleSheetContents final
     : public cppgc::GarbageCollected<StyleSheetContents> {

@@ -165,6 +165,29 @@ def test_a_style_element_reads_its_text_again_once_a_script_changes_it(
     assert sorted(server.paths()) == ["/first.css", "/next.css", "/page"]
 
 
+def test_an_import_goes_under_the_policy_that_its_sheets_response_names(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    server.route("/private.css", b"@import 'from-private.css';", _CSS, [("Referrer-Policy", "no-referrer")])
+    server.route("/from-private.css", b"p {}", _CSS)
+    server.route("/plain.css", b"@import 'from-plain.css';", _CSS)
+    server.route("/from-plain.css", b"p {}", _CSS)
+    url = server.page(
+        "/page",
+        '<link rel="stylesheet" href="private.css"><link rel="stylesheet" referrerpolicy="no-referrer" href="plain.css">',
+    )
+
+    with _open_page(session, url):
+        pass
+
+    # CSSStyleSheetResource::GetReferrerPolicy(): the sheet's Referrer-Policy, else the document's, whatever policy
+    # fetched the sheet.
+    (private_lines,) = server.headers_of("/from-private.css")
+    (plain_lines,) = server.headers_of("/from-plain.css")
+    assert _value(private_lines, "Referer") is None
+    assert _value(plain_lines, "Referer") == server.url("/plain.css")
+
+
 def test_an_import_of_a_sheet_of_another_origin_names_that_sheet_as_referrer(
     session: mitto.Session, server: RecordingServer
 ) -> None:
