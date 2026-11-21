@@ -261,6 +261,12 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"self.run().then((m) => postMessage(m.where), (e) => postMessage(String(e)));",
     ),
     "/sub/runs-import.js": ("text/javascript", b"self.run = () => import('./where.js');"),
+    # The same script from another origin, whose response is opaque, so its base URL is about:blank.
+    "/imports-a-cross-origin-module.js": (
+        "text/javascript",
+        b"importScripts(location.origin.replace('127.0.0.1', 'localhost') + '/sub/runs-import.js');"
+        b"self.run().then((m) => postMessage(m.where), (e) => postMessage(String(e)));",
+    ),
     "/sub/where.js": ("text/javascript", b"export const where = 'beside the imported script';"),
     "/port.js": (
         "text/javascript",
@@ -927,6 +933,19 @@ def test_import_in_an_imported_script_resolves_against_that_script(server: str) 
     })"""
 
     assert _evaluate(server, script) == "beside the imported script"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_import_in_an_opaque_imported_script_has_no_base_url(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/imports-a-cross-origin-module.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == (
+        "TypeError: Failed to resolve module specifier './where.js'. The base URL is about:blank because import() is "
+        "called from a CORS-cross-origin script."
+    )
 
 
 @pytest.mark.usefixtures("page_program")

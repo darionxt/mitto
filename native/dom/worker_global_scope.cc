@@ -33,6 +33,7 @@
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/encoding/text_resource_decoder_builder.h"
 #include "mitto/header_rules.h"
+#include "url/url_constants.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -230,11 +231,14 @@ void WorkerGlobalScope::ImportScripts(
               base::checked_cast<int>(source.size()))
               .ToLocal(&code)) {
         // ImportScriptsInternal(): its base URL, which its import() resolves
-        // against, is its response's, with the default fetch options.
+        // against, is its response's, or about:blank for an opaque response,
+        // as a window's classic script's is, with the default fetch options.
         v8::ScriptOrigin origin = ClassicScriptOrigin(
             name_string, /*muted_errors=*/script->opaque, /*line_offset=*/0,
             /*column_offset=*/0,
-            ReferrerScriptInfo(script->url, ScriptFetchOptions())
+            ReferrerScriptInfo(
+                script->opaque ? GURL(url::kAboutBlankURL) : script->url,
+                ScriptFetchOptions())
                 .ToV8HostDefinedOptions(isolate, GURL(name)));
         v8::ScriptCompiler::Source script_source(code, origin);
         if (v8::ScriptCompiler::Compile(context, &script_source)
