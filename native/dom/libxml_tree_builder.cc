@@ -489,6 +489,10 @@ bool LibxmlTreeBuilder::HasSeenEndOfFile() const {
   return finished_;
 }
 
+bool LibxmlTreeBuilder::SawError() const {
+  return builder_.saw_error();
+}
+
 void LibxmlTreeBuilder::Enqueue(std::unique_ptr<Event> event) {
   events_.push_back(std::move(event));
 }
