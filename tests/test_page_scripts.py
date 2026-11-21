@@ -437,7 +437,7 @@ _CASES["current_script"] = Case(
             "<script id=s1>"
             "log('inline ' + current());"
             "Promise.resolve().then(() => log('microtask ' + current()));"
-            "setTimeout(() => log('timer ' + current()));"
+            "setTimeout(() => { log('timer ' + current()); mark('timer'); });"
             "document.addEventListener('DOMContentLoaded', () => { log('listener ' + current()); mark('dcl'); });"
             "addEventListener('load', () => { log('load ' + current()); setTimeout(() => finish(logged), 100); });"
             "</script>"
@@ -446,7 +446,8 @@ _CASES["current_script"] = Case(
             "<script id=s4 async src=/s4.js></script>"
             "<script>log('anonymous inline ' + current() + ' ' + document.currentScript.textContent.startsWith('log('))</script>"
         ),
-        "/s2.js": _js("log('external ' + current());"),
+        # Chrome's network answered after the timer, which the preload scanner's early request would not wait for.
+        "/s2.js": _js("log('external ' + current());", hold="timer"),
         "/s3.js": _js("log('deferred ' + current());"),
         "/s4.js": _js("log('async ' + current());", hold="dcl"),
     }
