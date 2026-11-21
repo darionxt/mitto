@@ -7,8 +7,8 @@
 // context, an element of the HTML namespace or one that declares a prefix and
 // a default namespace. The high five bits say how big the pieces are that a
 // document comes in. The rest is the markup, in UTF-8. A document must get the
-// same tree whole as in pieces, save those of the Rust crate that pieces
-// change in Chrome too.
+// same tree whole as in pieces, save what pieces change in Chrome too: where
+// libxml2 places an error, and some documents of the Rust crate.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -25,6 +25,7 @@
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/per_isolate_data.h"
@@ -157,6 +158,40 @@ struct ParsedDocument {
   bool pieces_leave_alone;
 };
 
+// `dump` with the line and column of each error in its block left out. libxml2
+// places an error where its input ends when it stopped there, so where a piece
+// ended, in Chrome as here: a processing instruction that never ends in the
+// internal subset, which libxml2 reads once the subset's `]>` has come, is an
+// error at column 51 of its document whole, and at column 40, just after `]>`,
+// when `]>` ended a piece.
+std::string WithoutErrorPlaces(std::string_view dump) {
+  std::string out;
+  while (!dump.empty()) {
+    size_t mark = std::string_view::npos;
+    size_t mark_size = 0;
+    for (const std::string_view candidate : {" on line ", " at column "}) {
+      const size_t at = dump.find(candidate);
+      if (at < mark) {
+        mark = at;
+        mark_size = candidate.size();
+      }
+    }
+    if (mark == std::string_view::npos) {
+      out += dump;
+      break;
+    }
+    out += dump.substr(0, mark + mark_size);
+    dump.remove_prefix(mark + mark_size);
+    size_t digits = 0;
+    while (digits < dump.size() && base::IsAsciiDigit(dump[digits])) {
+      ++digits;
+    }
+    out += '#';
+    dump.remove_prefix(digits);
+  }
+  return out;
+}
+
 // A document of no window, whose scripts never run, so no reader gives the
 // parser a script to wait for.
 ParsedDocument ParseDocument(std::u16string_view markup,
@@ -284,7 +319,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     const ParsedDocument whole =
         ParseDocument(markup, markup.size() + 1, libxml);
     const ParsedDocument in_pieces = ParseDocument(markup, piece_size, libxml);
-    if (libxml || whole.pieces_leave_alone) {
+    if (libxml) {
+      CHECK_EQ(WithoutErrorPlaces(whole.dump),
+               WithoutErrorPlaces(in_pieces.dump));
+    } else if (whole.pieces_leave_alone) {
       CHECK_EQ(whole.dump, in_pieces.dump);
     }
   } else {
