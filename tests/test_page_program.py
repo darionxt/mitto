@@ -940,7 +940,7 @@ def test_a_documents_event_handler_attributes_run_as_it_loads(session: _Session)
     assert session.close() == 0
 
 
-def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -> None:
+def test_a_page_takes_what_comes_while_its_parser_waits(session: _Session) -> None:
     session.start()
     first = b"<script src=/wait.js></script>"
     second = b"<p id=later>" + b"x" * 2000 + b"</p>"
@@ -949,13 +949,13 @@ def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -
     assert session.receive()[0] == _CREDIT
     assert session.receive()[0] == _REQUEST
 
-    # The parser waits for the script, so what comes meanwhile waits too, and the Session gets no room for more.
+    # The parser waits for the script, and what comes meanwhile goes into its input, as Chrome's loader appends it
+    # for the preload scanner to read, so the Session gets room for more.
     _body(session, 0, second)
-    assert _nothing_comes(session)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(second)))
 
     _respond(session, 1, "http://www.example.test/wait.js", "text/javascript")
     _end(session, 1)
-    assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(second)))
     _end(session, 0)
     assert session.receive() == (_LOADED, _DOCUMENT)
     assert session.evaluate("document.getElementById('later').textContent.length") == (False, "2000")
@@ -1468,12 +1468,8 @@ def test_timers_run_while_the_page_waits_for_a_response(session: _Session) -> No
 
 def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Session) -> None:
     session.start()
-    first = b"<script src=/wait.js></script>"
     _respond(session, 0, _DOCUMENT_URL, "text/html")
-    _body(session, 0, first)
-    assert session.receive()[0] == _CREDIT
-    assert session.receive()[0] == _REQUEST
-
+    # The whole window, then a byte more, before the parser has taken any of it.
     _body(session, 0, b"x" * _BODY_WINDOW)
     _body(session, 0, b"x")
 

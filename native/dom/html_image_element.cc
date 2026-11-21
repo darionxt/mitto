@@ -56,8 +56,8 @@ Window* ActiveWindowOf(const Document& document) {
   return window;
 }
 
-// HTMLImageElement::SupportedImageType(): an empty type, or one that a
-// decoder takes, as ContentType::GetType() reads it.
+}  // namespace
+
 bool SupportedImageType(const std::u16string* type) {
   if (!type) {
     return true;
@@ -70,8 +70,6 @@ bool SupportedImageType(const std::u16string* type) {
   return stripped.empty() ||
          IsSupportedImagePrefixedMimeType(base::UTF16ToUTF8(stripped));
 }
-
-}  // namespace
 
 // static
 HTMLImageElement* HTMLImageElement::Create(Document& document) {
