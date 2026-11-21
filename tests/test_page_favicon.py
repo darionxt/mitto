@@ -88,6 +88,9 @@ def test_a_data_icon_asks_for_nothing_and_an_icon_is_asked_for_once(
         page.evaluate("setTimeout(() => document.getElementById('next').click()); null", timeout=TIMEOUT_SECONDS)
         page.wait_for_navigation(timeout=TIMEOUT_SECONDS)
         assert server.wait_for_path("/icon.png", _ICON_SECONDS)
+        # The download ends before the reload, which would cancel it, as a navigation cancels Chrome's, and the
+        # favicon service keeps only an icon whose download ended.
+        page.evaluate("new Promise(resolve => setTimeout(resolve, 500))", timeout=TIMEOUT_SECONDS)
         page.evaluate("setTimeout(() => location.reload()); null", timeout=TIMEOUT_SECONDS)
         page.wait_for_navigation(timeout=TIMEOUT_SECONDS)
         page.evaluate("new Promise(resolve => setTimeout(resolve, 1000))", timeout=TIMEOUT_SECONDS)
