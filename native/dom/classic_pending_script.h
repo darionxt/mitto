@@ -32,6 +32,14 @@ class ScriptElementBase;
 // for an element's script, which Blink holds to the lax check.
 std::optional<std::string> RefusedAsScript(const GURL& url,
                                            std::string_view headers);
+// The same for a worker's script, as WorkerClassicScriptLoader holds it to
+// AllowedByNosniff::MimeTypeAsScript(): laxly for a worker that a window
+// starts, and strictly, so only a JavaScript MIME type, for one that a worker
+// starts and for importScripts(). A data: or blob: URL, and a URL of another
+// scheme than HTTP or HTTPS whose path ends in .js or .mjs, always pass.
+std::optional<std::string> RefusedAsWorkerScript(const GURL& url,
+                                                 std::string_view headers,
+                                                 bool strict);
 
 class ClassicPendingScript final : public PendingScript, public ResourceClient {
  public:
@@ -67,6 +75,7 @@ class ClassicPendingScript final : public PendingScript, public ResourceClient {
 
   // PendingScript:
   bool IsExternal() const override;
+  bool IsModule() const override;
   bool IsReady() const override;
   bool IsEligibleForLowPriorityAsyncScriptExecution() const override;
 
@@ -83,7 +92,6 @@ class ClassicPendingScript final : public PendingScript, public ResourceClient {
 
   // PendingScript:
   bool HasScript() const override;
-  bool IsModule() const override;
   void RunScript() override;
   // ClassicPendingScript::DisposeInternal(): a script that goes lets go of
   // its fetch, which is cancelled when nothing else uses it.

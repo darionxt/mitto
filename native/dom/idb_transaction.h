@@ -52,7 +52,7 @@ class IDBOpenDBRequest;
 class IDBRequest;
 class IDBRequestQueueItem;
 class IndexedDbHost;
-class Window;
+class ExecutionContext;
 
 class IDBTransaction final : public EventTarget {
  public:
@@ -60,7 +60,7 @@ class IDBTransaction final : public EventTarget {
   // `id`, which the Session was told of. It is active until the microtask
   // checkpoint that comes next has run.
   static IDBTransaction* CreateNonVersionChange(
-      Window* window,
+      ExecutionContext* execution_context,
       IndexedDbHost* host,
       uint64_t id,
       const std::set<std::u16string>& scope,
@@ -70,7 +70,7 @@ class IDBTransaction final : public EventTarget {
   // The upgrade of `open_db_request`, numbered `id` by its open, whose
   // database had `old_metadata` before.
   static IDBTransaction* CreateVersionChange(
-      Window* window,
+      ExecutionContext* execution_context,
       IndexedDbHost* host,
       uint64_t id,
       IDBDatabase* database,
@@ -78,7 +78,7 @@ class IDBTransaction final : public EventTarget {
       const IDBDatabaseMetadata& old_metadata);
 
   // For readonly and readwrite transactions.
-  IDBTransaction(Window* window,
+  IDBTransaction(ExecutionContext* execution_context,
                  IndexedDbHost* host,
                  uint64_t id,
                  const std::set<std::u16string>& scope,
@@ -86,7 +86,7 @@ class IDBTransaction final : public EventTarget {
                  IndexedDbDurability durability,
                  IDBDatabase* database);
   // For upgrades.
-  IDBTransaction(Window* window,
+  IDBTransaction(ExecutionContext* execution_context,
                  IndexedDbHost* host,
                  uint64_t id,
                  IDBDatabase* database,
@@ -110,7 +110,9 @@ class IDBTransaction final : public EventTarget {
 
   // What the rest of IndexedDB uses.
   uint64_t Id() const { return id_; }
-  Window* GetWindow() const { return window_.Get(); }
+  ExecutionContext* GetExecutionContext() const {
+    return execution_context_.Get();
+  }
   bool HasContext() const;
   IDBDatabase& db() const { return *database_; }
   IndexedDbTransactionMode GetMode() const { return mode_; }
@@ -198,7 +200,7 @@ class IDBTransaction final : public EventTarget {
   // The message of a TransactionInactiveError: inactive, or finished.
   const char* InactiveErrorMessage() const;
 
-  // The window's context went: nothing keeps the transaction any more.
+  // The context went: nothing keeps the transaction any more.
   void ContextDestroyed();
 
  protected:
@@ -230,7 +232,7 @@ class IDBTransaction final : public EventTarget {
   // Called once the transaction has completed or aborted.
   void Finished();
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> execution_context_;
   const raw_ptr<IndexedDbHost> host_;
   const uint64_t id_;
   const cppgc::Member<IDBDatabase> database_;
@@ -267,7 +269,7 @@ class IDBTransaction final : public EventTarget {
   // Its cursors, which the collector may take, as Blink's set holds them.
   WeakHeapVector<IDBCursor> cursors_;
   // HasPendingActivity(): the transaction stays until its complete or abort
-  // event has fired, or its window's context goes.
+  // event has fired, or its context goes.
   cppgc::Persistent<IDBTransaction> keep_alive_;
 };
 

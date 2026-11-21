@@ -18,6 +18,7 @@
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_tree_builder.h"
+#include "mitto/dom/libxml_tree_builder.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 
@@ -984,19 +985,26 @@ DocumentFragment* Range::CreateContextualFragment(
           std::u16string(html_names::kXhtmlNamespace), std::nullopt, u"body");
     }
   }
-  if (!element->GetDocument().IsHTMLDocument()) {
-    // A document that is not HTML parses markup as XML, which the Runtime
-    // does not have yet.
-    exception_state.ThrowTypeError("Not implemented.");
-    return nullptr;
-  }
   DocumentFragment* const fragment =
       DocumentFragment::Create(element->GetDocument());
-  // Its scripts run once they are connected, unlike innerHTML's.
-  for (const cppgc::Persistent<Node>& child : ParseHtmlFragment(
-           *element, fragment_markup, FragmentParserOptions(*element),
-           /*skipped_rules=*/nullptr, FragmentScripts::kRunnable)) {
-    fragment->ParserAppendChild(child.Get());
+  if (!element->GetDocument().IsHTMLDocument()) {
+    // A document that is not HTML parses markup as XML, on libxml2, whose
+    // fragments' scripts never run.
+    const NodeVector nodes =
+        ParseXmlFragment(*element, fragment_markup, exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+    for (const cppgc::Persistent<Node>& child : nodes) {
+      fragment->ParserAppendChild(child.Get());
+    }
+  } else {
+    // Its scripts run once they are connected, unlike innerHTML's.
+    for (const cppgc::Persistent<Node>& child : ParseHtmlFragment(
+             *element, fragment_markup, FragmentParserOptions(*element),
+             /*skipped_rules=*/nullptr, FragmentScripts::kRunnable)) {
+      fragment->ParserAppendChild(child.Get());
+    }
   }
   Node* next = nullptr;
   for (Node* child = fragment->FirstChild(); child; child = next) {

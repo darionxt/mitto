@@ -28,8 +28,10 @@ namespace {
 // Blink gives each frame a context group of its own. A Page has one.
 constexpr int kContextGroupId = 1;
 
-// The one PageReporter, which V8's callback for rejected promises reaches.
-PageReporter* g_reporter = nullptr;
+// The PageReporter that V8's callback for rejected promises reaches: one for
+// each isolate, on the isolate's thread, the main thread's and each dedicated
+// worker's.
+constinit thread_local PageReporter* g_reporter = nullptr;
 
 // Blink's kMaxReportedHandlersPendingResolution: how many reported rejections
 // a handler that comes later still finds.
@@ -116,8 +118,9 @@ void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
   context_.Reset(isolate_, context);
   v8_inspector::V8ContextInfo info(context, kContextGroupId,
                                    v8_inspector::StringView());
-  // A window's console has memory, as Blink's MainThreadDebugger says.
-  info.hasMemoryOnConsole = true;
+  // A window's console has memory, as Blink's MainThreadDebugger says, and a
+  // worker's has none, as WorkerThreadDebugger says nothing of it.
+  info.hasMemoryOnConsole = !for_worker_;
   inspector_->contextCreated(info);
 }
 
@@ -232,7 +235,16 @@ void PageReporter::ReportException(v8::Local<v8::Value> exception,
   }
   ReportUncaughtError(
       isolate_, message, exception,
-      [this, context](v8::Local<v8::Value> uncaught) {
+      [this, context, message, exception](v8::Local<v8::Value> uncaught) {
+        if (uncaught_sink_) {
+          // An error that an error listener threw has a message of its own.
+          uncaught_sink_.Run(
+              uncaught == exception
+                  ? message
+                  : v8::Exception::CreateMessage(isolate_, uncaught),
+              uncaught);
+          return;
+        }
         send_.Run(EncodeUncaughtError(DescribeUncaught(
             isolate_, context, uncaught, "Uncaught ", kMaxPayloadSize)));
       });

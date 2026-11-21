@@ -38,21 +38,12 @@ bool IsLaxMimeTypeCheck(const Document& document, const Resource& resource) {
   return document.InQuirksMode() && !resource.Response().opaque;
 }
 
-std::u16string StyleSheetText(const Resource& resource, bool lax) {
-  if (resource.ErrorOccurred()) {
-    return std::u16string();
-  }
-  // CanUseSheet(): Content-Type as it came, before any sniffing.
-  if (!lax) {
-    const std::string content_type =
-        GetMimeTypeAndCharset(
-            HeaderField(resource.Response().headers, "content-type"))
-            .mime_type;
-    if (!content_type.empty() && content_type != "text/css" &&
-        content_type != "application/x-unknown-content-type") {
-      return std::u16string();
-    }
-  }
+FetchReferrerPolicy StyleSheetReferrerPolicy(const Resource& resource) {
+  return FetchReferrerPolicyFromHeaderValue(
+      HeaderField(resource.Response().headers, "referrer-policy"));
+}
+
+DecodedStyleSheet DecodeStyleSheet(const Resource& resource, bool lax) {
   // CSSStyleSheetResource's decoder: the request's charset hint, the
   // response's charset over it, and @charset or a byte order mark over both.
   TextResourceDecoder decoder(TextResourceDecoderOptions(
@@ -66,9 +57,27 @@ std::u16string StyleSheetText(const Resource& resource, bool lax) {
         CanonicalTextEncodingName(charset),
         TextResourceDecoder::EncodingSource::kEncodingFromHttpHeader);
   }
-  std::u16string text = decoder.Decode(base::as_byte_span(resource.Body()));
-  text += decoder.Flush();
-  return text;
+  DecodedStyleSheet sheet;
+  if (resource.ErrorOccurred()) {
+    sheet.encoding = decoder.encoding();
+    return sheet;
+  }
+  // CanUseSheet(): Content-Type as it came, before any sniffing.
+  if (!lax) {
+    const std::string content_type =
+        GetMimeTypeAndCharset(
+            HeaderField(resource.Response().headers, "content-type"))
+            .mime_type;
+    if (!content_type.empty() && content_type != "text/css" &&
+        content_type != "application/x-unknown-content-type") {
+      sheet.encoding = decoder.encoding();
+      return sheet;
+    }
+  }
+  sheet.text = decoder.Decode(base::as_byte_span(resource.Body()));
+  sheet.text += decoder.Flush();
+  sheet.encoding = decoder.encoding();
+  return sheet;
 }
 
 StyleSheetContents::StyleSheetContents(Document& document,
@@ -213,17 +222,18 @@ void StyleRuleImport::NotifyFinished(Resource& resource) {
   Document* const document = parent ? parent->GetDocument() : nullptr;
   if (document && !resource.ErrorOccurred()) {
     // The imported sheet's imports resolve against its response's URL and go
-    // with it as referrer, under the policy that fetched it. A sheet of the
-    // wrong type is empty.
+    // with it as referrer, under the policy that its response names. A sheet
+    // of the wrong type is empty.
     const GURL response_url(resource.Response().url);
     StyleSheetReferrer referrer;
     referrer.referrer = response_url.spec();
-    referrer.policy = resource.ReferrerPolicy();
+    referrer.policy = StyleSheetReferrerPolicy(resource);
+    DecodedStyleSheet decoded =
+        DecodeStyleSheet(resource, IsLaxMimeTypeCheck(*document, resource));
     style_sheet_ = bindings::MakeGarbageCollected<StyleSheetContents>(
         *document, response_url, resource.Url(), std::move(referrer),
-        resource.Charset(), nullptr, this);
-    style_sheet_->ParseAuthorStyleSheet(
-        StyleSheetText(resource, IsLaxMimeTypeCheck(*document, resource)));
+        std::move(decoded.encoding), nullptr, this);
+    style_sheet_->ParseAuthorStyleSheet(decoded.text);
   }
   loading_ = false;
   if (parent) {

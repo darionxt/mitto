@@ -1,7 +1,7 @@
 // What the Session answers an open or a delete, as Blink's IDBFactoryClient
 // hears it for an IDBOpenDBRequest: blocked and upgradeneeded keep it
 // listening, and success or an error ends it. A connection that an answer
-// gives a request that can no longer take it, as its window's context went,
+// gives a request that can no longer take it, as its context went,
 // closes, as dropping Blink's remote of it does.
 //
 // Upstream: third_party/blink/renderer/modules/indexeddb/idb_factory_client.h
@@ -39,7 +39,7 @@ class IDBFactoryClient final : public base::RefCounted<IDBFactoryClient> {
   friend class base::RefCounted<IDBFactoryClient>;
   ~IDBFactoryClient();
 
-  // Hands `answer` to the request, in its window's context, and returns
+  // Hands `answer` to the request, in its context, and returns
   // whether the request took the connection that it gives.
   bool Deliver(const PageIndexedDbCallback& answer);
   // The request hears nothing more.

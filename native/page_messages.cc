@@ -198,6 +198,8 @@ bool IsKnown(uint32_t type) {
               static_cast<uint32_t>(PageMessage::kSameDocumentNavigation)) ||
          (type >= static_cast<uint32_t>(PageMessage::kWorkerStarted) &&
           type <= static_cast<uint32_t>(PageMessage::kContextGone)) ||
+         (type >= static_cast<uint32_t>(PageMessage::kRequestBodyPart) &&
+          type <= static_cast<uint32_t>(PageMessage::kRequestBodyCredit)) ||
          type == static_cast<uint32_t>(PageMessage::kNetworkHint) ||
          (type >= static_cast<uint32_t>(PageMessage::kStorageBuckets) &&
           type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer));
@@ -223,9 +225,10 @@ constexpr uint8_t kReloadFlag = 4;
 constexpr uint8_t kKeepaliveFlag = 8;
 constexpr uint8_t kSynchronousFlag = 16;
 constexpr uint8_t kNoReferrerFlag = 32;
+constexpr uint8_t kStreamsBodyFlag = 64;
 constexpr uint8_t kRequestFlags = kUserActivationFlag | kReloadFlag |
                                   kKeepaliveFlag | kSynchronousFlag |
-                                  kNoReferrerFlag;
+                                  kNoReferrerFlag | kStreamsBodyFlag;
 
 // The last value of each byte of a request's fixed part.
 constexpr uint8_t kLastRequestMode = static_cast<uint8_t>(PageRequestMode::kCors);
@@ -835,6 +838,7 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   request.keepalive = flags & kKeepaliveFlag;
   request.synchronous = flags & kSynchronousFlag;
   request.no_referrer = flags & kNoReferrerFlag;
+  request.streams_body = flags & kStreamsBodyFlag;
   const uint8_t mode = static_cast<uint8_t>(bytes[10]);
   const uint8_t credentials = static_cast<uint8_t>(bytes[11]);
   const uint8_t referrer_policy = static_cast<uint8_t>(bytes[12]);
@@ -916,6 +920,12 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   }
   if (request.no_referrer && !request.referrer.empty()) {
     return base::unexpected("a request with no referrer and a referrer");
+  }
+  if (request.streams_body && (request.kind != PageRequestKind::kFetch ||
+                               request.body || without_body)) {
+    return base::unexpected(
+        "a body that streams on a request that is not a fetch with a method "
+        "that has a body, or that has a body");
   }
   if ((request.target != 0) != (request.kind == PageRequestKind::kIframe)) {
     return base::unexpected(
@@ -1352,6 +1362,31 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
         {"a credit of ", base::NumberToString(credit.bytes), " bytes"}));
   }
   return credit;
+}
+
+base::expected<PageRequestBodyPart, std::string> ReadRequestBodyPart(
+    std::string payload) {
+  if (payload.size() <= 8 || payload.size() > 8 + kBodyWindow) {
+    return base::unexpected(
+        WrongSize("part of a request's body", payload.size()));
+  }
+  PageRequestBodyPart part;
+  part.number = DecodeUint64(std::string_view(payload).substr(0, 8));
+  payload.erase(0, 8);
+  part.bytes = std::move(payload);
+  return part;
+}
+
+base::expected<PageRequestBodyEnded, std::string> ReadRequestBodyEnded(
+    std::string_view payload) {
+  if (payload.size() != 9 || static_cast<uint8_t>(payload[8]) > 1) {
+    return base::unexpected(
+        WrongSize("end of a request's body", payload.size()));
+  }
+  PageRequestBodyEnded ended;
+  ended.number = DecodeUint64(payload.substr(0, 8));
+  ended.errored = payload[8] == 1;
+  return ended;
 }
 
 base::expected<PageResponseStarted, std::string> ReadResponseStarted(
@@ -1792,7 +1827,8 @@ std::string EncodeRequest(uint64_t document, const PageRequest& request) {
                         (request.reload ? kReloadFlag : 0) |
                         (request.keepalive ? kKeepaliveFlag : 0) |
                         (request.synchronous ? kSynchronousFlag : 0) |
-                        (request.no_referrer ? kNoReferrerFlag : 0)),
+                        (request.no_referrer ? kNoReferrerFlag : 0) |
+                        (request.streams_body ? kStreamsBodyFlag : 0)),
       static_cast<char>(request.mode),
       static_cast<char>(request.credentials),
       static_cast<char>(request.referrer_policy),
@@ -1817,6 +1853,24 @@ std::string EncodeCancel(uint64_t number) {
 std::string EncodeCredit(const PageCredit& credit) {
   return EncodeFrame(
       PageMessage::kCredit,
+      base::StrCat({EncodeUint64(credit.number), EncodeUint32(credit.bytes)}));
+}
+
+std::string EncodeRequestBodyPart(const PageRequestBodyPart& part) {
+  return EncodeFrame(PageMessage::kRequestBodyPart,
+                     base::StrCat({EncodeUint64(part.number), part.bytes}));
+}
+
+std::string EncodeRequestBodyEnded(const PageRequestBodyEnded& ended) {
+  const char errored = ended.errored ? 1 : 0;
+  return EncodeFrame(PageMessage::kRequestBodyEnded,
+                     base::StrCat({EncodeUint64(ended.number),
+                                   std::string_view(&errored, 1)}));
+}
+
+std::string EncodeRequestBodyCredit(const PageCredit& credit) {
+  return EncodeFrame(
+      PageMessage::kRequestBodyCredit,
       base::StrCat({EncodeUint64(credit.number), EncodeUint32(credit.bytes)}));
 }
 
@@ -2398,6 +2452,24 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.storage_bucket_call = *std::move(call);
       return frame;
     }
+    case PageMessage::kRequestBodyPart: {
+      base::expected<PageRequestBodyPart, std::string> part =
+          ReadRequestBodyPart(std::move(payload));
+      if (!part.has_value()) {
+        return base::unexpected(std::move(part).error());
+      }
+      frame.request_body_part = *std::move(part);
+      return frame;
+    }
+    case PageMessage::kRequestBodyEnded: {
+      base::expected<PageRequestBodyEnded, std::string> ended =
+          ReadRequestBodyEnded(payload);
+      if (!ended.has_value()) {
+        return base::unexpected(std::move(ended).error());
+      }
+      frame.request_body_ended = *ended;
+      return frame;
+    }
     case PageMessage::kDocumentCommitted: {
       base::expected<PageDocumentCommitted, std::string> committed =
           ReadDocumentCommitted(payload);
@@ -2514,6 +2586,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kCacheStorageAnswer:
     case PageMessage::kIndexedDbCallback:
     case PageMessage::kStorageBucketsAnswer:
+    case PageMessage::kRequestBodyCredit:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -2668,6 +2741,14 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.storage_bucket_answer = *std::move(answer);
       return frame;
     }
+    case PageMessage::kRequestBodyCredit: {
+      base::expected<PageCredit, std::string> credit = ReadCredit(payload);
+      if (!credit.has_value()) {
+        return base::unexpected(std::move(credit).error());
+      }
+      frame.request_body_credit = *credit;
+      return frame;
+    }
     case PageMessage::kStorageEntries: {
       base::expected<PageStorageEntries, std::string> entries =
           ReadStorageEntries(payload);
@@ -2722,6 +2803,8 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kStorageDeleteAll:
     case PageMessage::kStorageUnbind:
     case PageMessage::kNetworkHint:
+    case PageMessage::kRequestBodyPart:
+    case PageMessage::kRequestBodyEnded:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

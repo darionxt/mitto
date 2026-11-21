@@ -5,6 +5,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/functional/bind.h"
@@ -13,14 +14,18 @@
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/synchronization/lock.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/thread_annotations.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_message_port.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/message_event.h"
 #include "mitto/dom/scheduler_task_context.h"
 #include "mitto/dom/user_activation.h"
-#include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
+#include "v8/include/cppgc/cross-thread-persistent.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-object.h"
@@ -34,30 +39,48 @@ TransferableMessage& TransferableMessage::operator=(TransferableMessage&&) =
     default;
 TransferableMessage::~TransferableMessage() = default;
 
+namespace {
+
+// What every pipe's state is held under: a port's end and its peer's may be on
+// two threads, the main thread's and a worker's, and a message may carry ends
+// of other pipes.
+base::Lock& PipeLock() {
+  static base::NoDestructor<base::Lock> lock;
+  return *lock;
+}
+
+}  // namespace
+
 // Both ends of a pipe: what came to each and was not read yet, whether each
-// has closed, and the trap that each has armed. The Page's ports all live on
-// its main thread.
-class MessagePortChannel::Pipe : public base::RefCounted<Pipe> {
+// has closed, and the trap that each has armed. An end belongs to the thread
+// of its port, the main thread's or a worker's, which its trap posts to.
+class MessagePortChannel::Pipe
+    : public base::RefCountedThreadSafe<MessagePortChannel::Pipe> {
  public:
-  Pipe() { All().insert(this); }
+  Pipe() {
+    const base::AutoLock lock(PipeLock());
+    All().insert(this);
+  }
   Pipe(const Pipe&) = delete;
   Pipe& operator=(const Pipe&) = delete;
 
   // Every pipe of the Page.
-  static std::set<Pipe*>& All() {
+  static std::set<Pipe*>& All() EXCLUSIVE_LOCKS_REQUIRED(PipeLock()) {
     static base::NoDestructor<std::set<Pipe*>> pipes;
     return *pipes;
   }
 
-  // Runs the trap that `side` armed, if it has one.
-  void Notify(int side) {
-    if (traps_[side]) {
-      std::move(traps_[side]).Run();
+  // Posts the trap that `side` armed, if it has one, to its thread.
+  void Notify(int side) EXCLUSIVE_LOCKS_REQUIRED(PipeLock()) {
+    if (traps_[side].task) {
+      Trap trap = std::move(traps_[side]);
+      trap.runner->PostTask(FROM_HERE, std::move(trap.task));
     }
   }
 
   // Marks where the ends that `message` carries wait: in the queue of `side`.
-  void MarkQueued(const TransferableMessage& message, int side) {
+  void MarkQueued(const TransferableMessage& message, int side)
+      EXCLUSIVE_LOCKS_REQUIRED(PipeLock()) {
     for (const MessagePortChannel& port : message.ports) {
       if (port.pipe_) {
         port.pipe_->queued_in_[port.side_] = {this, side};
@@ -65,7 +88,8 @@ class MessagePortChannel::Pipe : public base::RefCounted<Pipe> {
     }
   }
 
-  static void MarkTaken(const TransferableMessage& message) {
+  static void MarkTaken(const TransferableMessage& message)
+      EXCLUSIVE_LOCKS_REQUIRED(PipeLock()) {
     for (const MessagePortChannel& port : message.ports) {
       if (port.pipe_) {
         port.pipe_->queued_in_[port.side_] = {nullptr, 0};
@@ -79,8 +103,12 @@ class MessagePortChannel::Pipe : public base::RefCounted<Pipe> {
   // port holds or a message carries on its way, can be read, and so can the
   // ends that wait in its queue. What comes to an end that nothing can read
   // goes, and its other end never hears that it went, as with mojo handles
-  // that travel in a cycle of pipes.
-  static void DropUnreachable() {
+  // that travel in a cycle of pipes. What goes is moved into `dropped`, for
+  // the caller to let go of once it no longer holds the lock, since letting
+  // go of a message closes the ends it carries.
+  static void DropUnreachable(
+      std::vector<std::deque<TransferableMessage>>& dropped)
+      EXCLUSIVE_LOCKS_REQUIRED(PipeLock()) {
     std::set<std::pair<Pipe*, int>> reachable;
     std::vector<std::pair<Pipe*, int>> pending;
     for (Pipe* const pipe : All()) {
@@ -104,35 +132,44 @@ class MessagePortChannel::Pipe : public base::RefCounted<Pipe> {
         }
       }
     }
-    // Their queues go only once every pipe has been looked at, since letting
-    // go of them may free pipes.
-    std::vector<std::deque<TransferableMessage>> dropped;
+    std::vector<Trap> traps;
     for (Pipe* const pipe : All()) {
       for (int side = 0; side < 2; ++side) {
         if (pipe->IsOpen(side) && !reachable.contains({pipe, side})) {
           pipe->unreachable_[side] = true;
-          pipe->traps_[side].Reset();
+          traps.push_back(std::move(pipe->traps_[side]));
           dropped.emplace_back().swap(pipe->queues_[side]);
         }
       }
     }
   }
 
-  bool IsOpen(int side) const { return !closed_[side] && !unreachable_[side]; }
+  bool IsOpen(int side) const EXCLUSIVE_LOCKS_REQUIRED(PipeLock()) {
+    return !closed_[side] && !unreachable_[side];
+  }
+
+  // A trap that an end armed: the task to post to its port's thread.
+  struct Trap {
+    scoped_refptr<base::SingleThreadTaskRunner> runner;
+    base::OnceClosure task;
+  };
 
   std::array<std::deque<TransferableMessage>, 2> queues_;
   std::array<bool, 2> closed_ = {false, false};
   // Whether nothing can read the end of a side again.
   std::array<bool, 2> unreachable_ = {false, false};
-  std::array<base::OnceClosure, 2> traps_;
+  std::array<Trap, 2> traps_;
   // Where the end of each side waits, if a message that is queued carries it:
   // the pipe and the side whose queue holds that message.
   std::array<std::pair<Pipe*, int>, 2> queued_in_ = {
       {{nullptr, 0}, {nullptr, 0}}};
 
  private:
-  friend class base::RefCounted<Pipe>;
-  ~Pipe() { All().erase(this); }
+  friend class base::RefCountedThreadSafe<Pipe>;
+  ~Pipe() {
+    const base::AutoLock lock(PipeLock());
+    All().erase(this);
+  }
 };
 
 // static
@@ -167,22 +204,33 @@ void MessagePortChannel::Send(TransferableMessage message) {
   if (!pipe_) {
     return;
   }
-  const int peer = 1 - side_;
-  if (!pipe_->IsOpen(peer)) {
-    // Dropped, and with it the ends it carried.
-    return;
-  }
-  const bool carries_ends = !message.ports.empty();
-  pipe_->MarkQueued(message, peer);
-  pipe_->queues_[peer].push_back(std::move(message));
-  pipe_->Notify(peer);
-  if (carries_ends) {
-    Pipe::DropUnreachable();
+  // Let go of only once the lock is not held.
+  std::optional<TransferableMessage> not_sent;
+  std::vector<std::deque<TransferableMessage>> dropped;
+  {
+    const base::AutoLock lock(PipeLock());
+    const int peer = 1 - side_;
+    if (!pipe_->IsOpen(peer)) {
+      // Dropped, and with it the ends it carried.
+      not_sent.emplace(std::move(message));
+    } else {
+      const bool carries_ends = !message.ports.empty();
+      pipe_->MarkQueued(message, peer);
+      pipe_->queues_[peer].push_back(std::move(message));
+      pipe_->Notify(peer);
+      if (carries_ends) {
+        Pipe::DropUnreachable(dropped);
+      }
+    }
   }
 }
 
 std::optional<TransferableMessage> MessagePortChannel::Take() {
-  if (!pipe_ || pipe_->queues_[side_].empty()) {
+  if (!pipe_) {
+    return std::nullopt;
+  }
+  const base::AutoLock lock(PipeLock());
+  if (pipe_->queues_[side_].empty()) {
     return std::nullopt;
   }
   TransferableMessage message = std::move(pipe_->queues_[side_].front());
@@ -192,18 +240,31 @@ std::optional<TransferableMessage> MessagePortChannel::Take() {
 }
 
 size_t MessagePortChannel::PendingCount() const {
-  return pipe_ ? pipe_->queues_[side_].size() : 0;
+  if (!pipe_) {
+    return 0;
+  }
+  const base::AutoLock lock(PipeLock());
+  return pipe_->queues_[side_].size();
 }
 
 bool MessagePortChannel::PeerClosed() const {
-  return !pipe_ || pipe_->closed_[1 - side_];
+  if (!pipe_) {
+    return true;
+  }
+  const base::AutoLock lock(PipeLock());
+  return pipe_->closed_[1 - side_];
 }
 
-bool MessagePortChannel::Arm(base::OnceClosure notify) {
-  if (!pipe_ || !pipe_->queues_[side_].empty() || PeerClosed()) {
+bool MessagePortChannel::Arm(scoped_refptr<base::SingleThreadTaskRunner> runner,
+                             base::OnceClosure notify) {
+  if (!pipe_) {
     return false;
   }
-  pipe_->traps_[side_] = std::move(notify);
+  const base::AutoLock lock(PipeLock());
+  if (!pipe_->queues_[side_].empty() || pipe_->closed_[1 - side_]) {
+    return false;
+  }
+  pipe_->traps_[side_] = {std::move(runner), std::move(notify)};
   return true;
 }
 
@@ -211,26 +272,27 @@ void MessagePortChannel::Close() {
   if (!pipe_) {
     return;
   }
+  // Declared before the lock, so that the pipe, and what waited here, go
+  // once the lock is not held: they may close the ends that they carry.
   const scoped_refptr<Pipe> pipe = std::move(pipe_);
+  std::deque<TransferableMessage> unread;
+  Pipe::Trap trap;
+  const base::AutoLock lock(PipeLock());
   // An end that nothing can read goes without its other end hearing of it.
   if (pipe->unreachable_[side_]) {
     return;
   }
   pipe->closed_[side_] = true;
-  pipe->traps_[side_].Reset();
-  // What waited here goes, closing the ends that it carried, which may reach
-  // other pipes.
-  std::deque<TransferableMessage> unread;
+  trap = std::move(pipe->traps_[side_]);
   unread.swap(pipe->queues_[side_]);
-  unread.clear();
   pipe->Notify(1 - side_);
 }
 
-MessagePort::MessagePort(Window* window)
-    : window_(window), closed_(!window || !window->HasContext()) {
+MessagePort::MessagePort(ExecutionContext* context)
+    : context_(context), closed_(!context || !context->HasContext()) {
   if (!closed_) {
     // ContextDestroyed() closes the port.
-    window->AddContextDestroyedCallback(base::BindOnce(
+    context->AddContextDestroyedCallback(base::BindOnce(
         [](cppgc::WeakPersistent<MessagePort> port) {
           if (port) {
             port->Close();
@@ -248,7 +310,7 @@ const bindings::WrapperTypeInfo* MessagePort::GetWrapperTypeInfo() const {
 
 void MessagePort::Trace(cppgc::Visitor* visitor) const {
   EventTarget::Trace(visitor);
-  visitor->Trace(window_);
+  visitor->Trace(context_);
   visitor->Trace(initially_entangled_port_);
 }
 
@@ -304,7 +366,9 @@ void MessagePort::PostMessage(v8::Local<v8::Value> message,
   }
   TransferableMessage sent(*std::move(serialized));
   sent.ports = *std::move(ports);
-  sent.user_activation = options.include_user_activation;
+  // PostMessageHelper::CreateUserActivationSnapshot(): only a window's.
+  sent.user_activation =
+      options.include_user_activation && ExecutionContext::Current().IsWindow();
   if (initially_entangled_port_) {
     sent.task_state = SchedulerTaskContext::Current(isolate);
   }
@@ -339,8 +403,8 @@ void MessagePort::Entangle(MessagePortChannel channel,
                            MessagePort* initially_entangled_port) {
   // In a context that has gone, a port never gets an end: nothing could reach
   // it.
-  Window* const window = window_.Get();
-  if (!window || !window->HasContext()) {
+  ExecutionContext* const context = context_.Get();
+  if (!context || !context->HasContext()) {
     return;
   }
   channel_ = std::move(channel);
@@ -400,12 +464,12 @@ std::optional<std::vector<MessagePortChannel>> MessagePort::DisentanglePorts(
 
 // static
 std::vector<cppgc::Persistent<MessagePort>> MessagePort::EntanglePorts(
-    Window* window,
+    ExecutionContext* context,
     std::vector<MessagePortChannel> channels) {
   std::vector<cppgc::Persistent<MessagePort>> ports;
   ports.reserve(channels.size());
   for (MessagePortChannel& channel : channels) {
-    auto* const port = bindings::MakeGarbageCollected<MessagePort>(window);
+    auto* const port = bindings::MakeGarbageCollected<MessagePort>(context);
     ports.emplace_back(port);
     port->Entangle(std::move(channel), nullptr);
   }
@@ -428,43 +492,54 @@ std::vector<MessagePort*> MessagePort::PortsOf(
 // port that the collector takes closes its end, so it only moves the handle it
 // holds into a task.
 void MessagePort::WaitToReadMore() {
-  const bool armed = channel_.Arm(base::BindOnce(
-      &MessagePort::PostReadTask, cppgc::WeakPersistent<MessagePort>(this),
-      generation_, /*counted=*/false));
+  // The trap posts to this thread from the thread that sends, so it holds
+  // the port by a handle that any thread may let go of.
+  const bool armed = channel_.Arm(
+      ReadTaskRunner(),
+      base::BindOnce(
+          &MessagePort::RunReadTask,
+          cppgc::subtle::WeakCrossThreadPersistent<MessagePort>(this),
+          generation_, /*counted=*/false));
   if (!armed) {
-    PostReadTask(cppgc::WeakPersistent<MessagePort>(this), generation_,
-                 /*counted=*/false);
+    PostReadTask(cppgc::subtle::WeakCrossThreadPersistent<MessagePort>(this),
+                 generation_, /*counted=*/false);
   }
+}
+
+// static
+scoped_refptr<base::SingleThreadTaskRunner> MessagePort::ReadTaskRunner() {
+  // The Page program always makes one before it runs a script.
+  EventLoop* const event_loop = EventLoop::Get();
+  CHECK(event_loop);
+  return event_loop->TaskRunner(TaskType::kPostedMessage);
 }
 
 // SimpleWatcher's task, which runs Connector::OnWatcherHandleReady(), or, when
 // `counted`, Connector::PostDispatchNextMessageFromPipe()'s, on
 // TaskType::kPostedMessage, where Blink's port reads.
 // static
-void MessagePort::PostReadTask(cppgc::WeakPersistent<MessagePort> port,
-                               uint64_t generation,
-                               bool counted) {
-  // The Page program always makes one before it runs a script.
-  EventLoop* const event_loop = EventLoop::Get();
-  CHECK(event_loop);
-  event_loop->TaskRunner(TaskType::kPostedMessage)
-      ->PostTask(FROM_HERE,
-                 base::BindOnce(&MessagePort::RunReadTask, std::move(port),
+void MessagePort::PostReadTask(
+    cppgc::subtle::WeakCrossThreadPersistent<MessagePort> port,
+    uint64_t generation,
+    bool counted) {
+  ReadTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&MessagePort::RunReadTask, std::move(port),
                                 generation, counted));
 }
 
 // static
-void MessagePort::RunReadTask(cppgc::WeakPersistent<MessagePort> port,
-                              uint64_t generation,
-                              bool counted) {
+void MessagePort::RunReadTask(
+    cppgc::subtle::WeakCrossThreadPersistent<MessagePort> port_handle,
+    uint64_t generation,
+    bool counted) {
+  MessagePort* const port = port_handle.Get();
   if (!port || port->generation_ != generation) {
     return;
   }
   if (counted) {
     --port->pending_dispatch_tasks_;
   }
-  RunInWindowContext(port->window_.Get(),
-                     [&] { port->ReadAvailableMessage(); });
+  RunInContext(port->context_.Get(), [&] { port->ReadAvailableMessage(); });
 }
 
 // Connector::ReadAllAvailableMessages(), which dispatches one message for each
@@ -495,16 +570,15 @@ void MessagePort::ReadAvailableMessage() {
   }
   while (pending > pending_dispatch_tasks_) {
     ++pending_dispatch_tasks_;
-    PostReadTask(cppgc::WeakPersistent<MessagePort>(this), generation_,
-                 /*counted=*/true);
+    PostReadTask(cppgc::subtle::WeakCrossThreadPersistent<MessagePort>(this),
+                 generation_, /*counted=*/true);
   }
 }
 
 // DispatchMessageEvent() and CreateMessageEvent().
 void MessagePort::DispatchMessageEvent(TransferableMessage message) {
-  Window* const window = window_.Get();
   const std::vector<cppgc::Persistent<MessagePort>> ports =
-      EntanglePorts(window, std::move(message.ports));
+      EntanglePorts(context_.Get(), std::move(message.ports));
   MessageEvent* const event = MessageEvent::CreateForMessage(
       std::move(message.message), /*origin=*/std::nullopt, /*source=*/nullptr,
       PortsOf(ports),

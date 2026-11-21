@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -17,7 +18,6 @@
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/bar_prop.h"
-#include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/cache_storage.h"
 #include "mitto/dom/cookie_store.h"
 #include "mitto/dom/crash_report_context.h"
@@ -28,7 +28,6 @@
 #include "mitto/dom/document_named_properties.h"
 #include "mitto/dom/dom_file_system.h"
 #include "mitto/dom/event.h"
-#include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/history.h"
@@ -40,7 +39,6 @@
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigator.h"
 #include "mitto/dom/performance.h"
-#include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/scheduler.h"
 #include "mitto/dom/screen.h"
@@ -361,6 +359,18 @@ MediaQueryList* Window::MatchMedia(const std::u16string& query) {
   return MediaQueryList::Create(this, query);
 }
 
+CacheStorageHost* Window::GetCacheStorageHost() const {
+  return GetDocument().GetCacheStorageHost();
+}
+
+IndexedDbHost* Window::GetIndexedDbHost() const {
+  return GetDocument().GetIndexedDbHost();
+}
+
+StorageBucketHost* Window::GetStorageBucketHost() const {
+  return GetDocument().GetStorageBucketHost();
+}
+
 mitto::Performance* Window::Performance() {
   if (!performance_) {
     performance_ = Performance::Create(
@@ -390,6 +400,26 @@ Window* Window::ToWindow() {
 
 bool Window::IsWindow() const {
   return true;
+}
+
+std::u16string Window::Url() const {
+  return GetDocument().UrlForBinding();
+}
+
+EventTarget* Window::ErrorEventTarget() {
+  return this;
+}
+
+url::Origin Window::GetSecurityOrigin() const {
+  return GetDocument().GetOrigin();
+}
+
+GURL Window::CompleteUrl(std::u16string_view url) const {
+  return GetDocument().CompleteUrl(url);
+}
+
+GURL Window::BaseUrl() const {
+  return GetDocument().BaseUrl();
 }
 
 size_t Window::TimerCount() const {
@@ -448,95 +478,6 @@ void Window::WebkitRequestFileSystem(uint16_t type,
             return DOMFileSystem::Create(origin, type)->ToV8(isolate);
           },
           origin, static_cast<DOMFileSystem::Type>(type)));
-}
-
-// Upstream: third_party/blink/renderer/core/fetch/global_fetch.cc
-// Upstream: third_party/blink/renderer/core/fetch/fetch_manager.cc
-v8::Local<v8::Promise> Window::Fetch(
-    const bindings::RequestOrUSVString& input,
-    const bindings::RequestInit& init,
-    bindings::ExceptionState& exception_state) {
-  Request* const request = Request::Create(input, init, exception_state);
-  if (!request) {
-    return v8::Local<v8::Promise>();
-  }
-  // The request's body goes to the fetch, and the Request keeps one that is
-  // used, as Blink's PassRequestData() leaves it.
-  BodyStreamBuffer* const body = request->PassBody(exception_state);
-  if (exception_state.HadException()) {
-    return v8::Local<v8::Promise>();
-  }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  v8::Local<v8::Promise::Resolver> resolver;
-  if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
-    return v8::Local<v8::Promise>();
-  }
-  // A request whose signal has aborted rejects with its reason, before any
-  // check of where it goes.
-  AbortSignal* const signal = request->Signal();
-  if (signal->Aborted()) {
-    std::ignore = resolver->Reject(context, signal->Reason());
-    return resolver->GetPromise();
-  }
-  const url::Origin document_origin = url::Origin::Create(
-      GURL(base::UTF16ToUTF8(GetDocument().UrlForBinding())));
-  // A cross-origin request of mode same-origin fails before anything goes, as
-  // CorsURLLoader fails it. One that needs a CORS preflight goes to the
-  // Session, which makes the preflight first.
-  const bool cross_origin = !document_origin.IsSameOriginWith(request->url());
-  Fetcher* const fetcher = GetFetcher();
-  if (!fetcher ||
-      (cross_origin && request->mode() == FetchMode::kSameOrigin)) {
-    std::ignore = resolver->Reject(
-        context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                     isolate, "Failed to fetch")));
-    return resolver->GetPromise();
-  }
-  FetchRequestData data;
-  // A body of bytes that a script gave whole goes as they are. A stream's
-  // would go as the Session reads it, which the Runtime does not do yet, so
-  // such a fetch fails as Chrome's fails over HTTP/1.1, with the stream
-  // locked to the reader of its upload: a Known Gap.
-  if (body && request->Method() != "GET" && request->Method() != "HEAD") {
-    data.body = body->DrainAsBytes(exception_state);
-    if (exception_state.HadException()) {
-      return v8::Local<v8::Promise>();
-    }
-    if (!data.body && body->IsMadeFromReadableStream()) {
-      bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
-          isolate, body->Stream());
-      std::ignore = resolver->Reject(
-          context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                       isolate, "Failed to fetch")));
-      return resolver->GetPromise();
-    }
-  }
-  data.method = request->Method();
-  data.url = request->url().spec();
-  data.headers = request->GetHeaders()->ToLines();
-  // A fetch's own are mode cors and credentials same-origin.
-  if (request->mode() != FetchMode::kCors) {
-    data.mode = request->mode();
-  }
-  if (request->credentials() != FetchCredentialsMode::kSameOrigin) {
-    data.credentials = request->credentials();
-  }
-  data.referrer = request->referrer();
-  // A request whose policy is the empty string goes with the document's.
-  data.referrer_policy =
-      request->referrer_policy() == FetchReferrerPolicy::kDefault
-          ? GetDocument().GetReferrerPolicy()
-          : request->referrer_policy();
-  data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
-                                       /*render_blocking=*/false);
-  data.keepalive = request->keepalive();
-  fetcher->Fetch(std::move(data), std::make_unique<FetchLoader>(
-                                      isolate, context, resolver,
-                                      /*credentials=*/request->credentials() ==
-                                          FetchCredentialsMode::kInclude,
-                                      signal));
-  return resolver->GetPromise();
 }
 
 void Window::SetDocument(mitto::Document* document) {

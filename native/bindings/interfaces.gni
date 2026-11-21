@@ -209,6 +209,19 @@ mitto_bindings_interfaces = [
     file = "custom_event"
   },
   {
+    name = "DedicatedWorkerGlobalScope"
+    file = "dedicated_worker_global_scope"
+
+    # onmessage and onmessageerror run as every event handler attribute does.
+    implemented = [
+      "name",
+      "postMessage",
+      "close",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+    ]
+  },
+  {
     # location.ancestorOrigins, a Known Gap, gives an empty one.
     name = "DOMStringList"
     file = "dom_string_list"
@@ -3092,6 +3105,73 @@ mitto_bindings_interfaces = [
     name = "WindowProperties"
     file = "window_properties"
     missing = []
+  },
+  {
+    name = "Worker"
+    file = "worker"
+
+    # onmessage and onerror run as every event handler attribute does.
+    implemented = [
+      "terminate",
+      "postMessage",
+    ]
+  },
+  {
+    name = "WorkerLocation"
+    file = "worker_location"
+  },
+  {
+    name = "WorkerNavigator"
+    file = "worker_navigator"
+    implemented = [
+      "hardwareConcurrency",
+      "appCodeName",
+      "appName",
+      "appVersion",
+      "platform",
+      "product",
+      "userAgent",
+      "language",
+      "languages",
+      "onLine",
+      "connection",
+      "deviceMemory",
+      "userAgentData",
+      "permissions",
+      "storage",
+      "locks",
+      "storageBuckets",
+    ]
+  },
+  {
+    name = "WorkerGlobalScope"
+    file = "worker_global_scope"
+
+    # onerror and the other event handlers run as every event handler
+    # attribute does.
+    implemented = [
+      "self",
+      "location",
+      "navigator",
+      "origin",
+      "isSecureContext",
+      "performance",
+      "crypto",
+      "scheduler",
+      "caches",
+      "indexedDB",
+      "structuredClone",
+      "importScripts",
+      "fetch",
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "queueMicrotask",
+      "atob",
+      "btoa",
+      "reportError",
+    ]
   },
   {
     name = "WritableStream"

@@ -122,6 +122,46 @@ constexpr auto kPdfTypes = base::MakeFixedFlatSet<std::string_view>({
     "text/pdf",
 });
 
+// MIMETypeRegistry::IsXMLMIMEType(): text/xml, application/xml, or a type of
+// RFC 3023's form that ends in +xml.
+bool IsXmlMimeType(std::string_view mime_type) {
+  if (mime_type == "text/xml" || mime_type == "application/xml") {
+    return true;
+  }
+  const size_t length = mime_type.size();
+  if (length < 7 || mime_type[0] == '/' || mime_type[length - 5] == '/' ||
+      !mime_type.ends_with("+xml")) {
+    return false;
+  }
+  bool has_slash = false;
+  for (size_t i = 0; i < length - 4; ++i) {
+    const char c = mime_type[i];
+    if (base::IsAsciiAlphaNumeric(c) ||
+        std::string_view("_-+~!$^{}|.%'`#&*").find(c) !=
+            std::string_view::npos) {
+      continue;
+    }
+    if (c != '/' || has_slash) {
+      return false;
+    }
+    has_slash = true;
+  }
+  return true;
+}
+
+// blink::IsJSONMimeType(): application/json, text/json, or a type whose
+// subtype ends in +json.
+bool IsJsonMimeType(std::string_view mime_type) {
+  if (mime_type == "application/json" || mime_type == "text/json") {
+    return true;
+  }
+  const size_t slash = mime_type.find('/');
+  return slash != std::string_view::npos && slash > 0 &&
+         mime_type.find('/', slash + 1) == std::string_view::npos &&
+         mime_type.substr(slash + 1).ends_with("+json") &&
+         mime_type.size() > slash + 1 + 5;
+}
+
 }  // namespace
 
 bool IsSupportedImageMimeType(std::string_view mime_type) {
@@ -148,6 +188,38 @@ bool IsSupportedImagePrefixedMimeType(std::string_view mime_type) {
   return IsSupportedImageMimeType(lower) ||
          (lower.starts_with("image/") &&
           kSupportedNonImageTypes.contains(lower));
+}
+
+DocumentKind DocumentKindOf(std::string_view mime_type) {
+  const std::string lower = base::ToLowerASCII(mime_type);
+  if (lower == "text/html") {
+    return DocumentKind::kHtml;
+  }
+  if (lower == "application/xhtml+xml") {
+    return DocumentKind::kXhtml;
+  }
+  if (lower == "image/svg+xml") {
+    return DocumentKind::kSvg;
+  }
+  if (IsSupportedImageMimeType(lower) || lower == "multipart/x-mixed-replace") {
+    return DocumentKind::kImage;
+  }
+  if (kSupportedMediaTypes.contains(lower)) {
+    return DocumentKind::kMedia;
+  }
+  if (IsJsonMimeType(lower)) {
+    return DocumentKind::kJson;
+  }
+  // MIMETypeRegistry::IsPlainTextMIMEType() and JavaScript's types.
+  if (kSupportedJavascriptTypes.contains(lower) ||
+      (lower.starts_with("text/") && lower != "text/html" &&
+       lower != "text/xml" && lower != "text/xsl")) {
+    return DocumentKind::kText;
+  }
+  if (IsXmlMimeType(lower)) {
+    return DocumentKind::kXml;
+  }
+  return DocumentKind::kHtml;
 }
 
 bool IsSupportedMimeType(std::string_view mime_type) {

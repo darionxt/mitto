@@ -26,6 +26,17 @@ void ConfigurePageIsolate(v8::Isolate::CreateParams& params, int memory_gib);
 // WebAssembly.compileStreaming() reads a Response.
 void InitializePageIsolate(v8::Isolate* isolate);
 
+// Sets `params` as gin and Blink set them for a dedicated worker's thread: the
+// heap's limits of a main thread's, from `memory_gib`, and Atomics.wait()
+// allowed, as on every worker.
+void ConfigureWorkerIsolate(v8::Isolate::CreateParams& params, int memory_gib);
+
+// Has `isolate` ask the Page what Blink answers for a worker's thread, as
+// V8Initializer::InitializeWorker() sets it up: as a main thread's, but with
+// no limit on what WebAssembly compiles at once, and V8's stack limit 500 KB
+// below where the thread's stack is now.
+void InitializeWorkerIsolate(v8::Isolate* isolate);
+
 // What Blink sets on each context it makes: the clock of Temporal.Now,
 // coarsened as performance.now() is for a context that is not cross-origin
 // isolated.

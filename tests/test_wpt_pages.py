@@ -36,7 +36,7 @@ def test_pages_give_what_the_list_says_and_run_out_of_time(tmp_path: Path) -> No
     listed = loads_differences(DIFFERENCES_FILE.read_text(encoding="utf-8"))
 
     with WptServer(tmp_path / "results") as server:
-        # wptrunner's timeout for these tests: the worker one runs out of time in a Page.
+        # wptrunner's timeout for these tests.
         results = {test: run_in_page(server, test, 10.0) for test in _TESTS}
         # A page with no test in it: it loads, and testharness.js never runs to report.
         blank = run_in_page(server, "common/blank.html", 1.0)

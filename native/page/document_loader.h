@@ -44,6 +44,12 @@ class DocumentLoader final : public PageRequests::Client,
                  SendFrame send,
                  PageFrame& frame,
                  uint64_t number);
+  // The same for a navigation that the frame starts, whose number comes once
+  // it has started: SetNumber().
+  DocumentLoader(ScriptRunner& runner,
+                 PageRequests& requests,
+                 SendFrame send,
+                 PageFrame& frame);
 
   DocumentLoader(const DocumentLoader&) = delete;
   DocumentLoader& operator=(const DocumentLoader&) = delete;
@@ -51,6 +57,7 @@ class DocumentLoader final : public PageRequests::Client,
   ~DocumentLoader() override;
 
   uint64_t number() const { return number_; }
+  void SetNumber(uint64_t number) { number_ = number; }
   // DocumentLoader::StopLoading(), once another document takes the place of
   // this one's: the parser stops, and so does the body, if it still comes.
   void StopLoading();
@@ -78,7 +85,7 @@ class DocumentLoader final : public PageRequests::Client,
   const raw_ref<PageRequests> requests_;
   const SendFrame send_;
   const raw_ref<PageFrame> frame_;
-  const uint64_t number_;
+  uint64_t number_;
   bool response_started_ = false;
 
   GURL url_;

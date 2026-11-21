@@ -35,16 +35,15 @@
 #include "mitto/bindings/v8_quota_exceeded_error.h"
 #include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_transform_stream.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/bindings/v8_writable_stream.h"
 #include "mitto/dom/dom_exception.h"
 #include "mitto/dom/dom_rect.h"
 #include "mitto/dom/dom_rect_read_only.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/quota_exceeded_error.h"
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/transform_stream.h"
-#include "mitto/dom/window.h"
 #include "mitto/dom/writable_stream.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -501,16 +500,17 @@ class Serializer final : public v8::ValueSerializer::Delegate {
     return true;
   }
 
-  // AddStreamChannel(): a new port of the window's, entangled with the end
-  // that `stream_channels` gets, which the value carries.
+  // AddStreamChannel(): a new port of the context's, a window's or a
+  // worker's, entangled with the end that `stream_channels` gets, which the
+  // value carries.
   MessagePort* AddStreamChannel(
-      Window* window,
+      ExecutionContext* context,
       std::vector<MessagePortChannel>& stream_channels) {
     // 2. Let port1 be a new MessagePort in the current Realm.
     // 3. Let port2 be a new MessagePort in the current Realm.
     auto [local, remote] = MessagePortChannel::CreatePair();
     auto* const local_port =
-        bindings::MakeGarbageCollected<MessagePort>(window);
+        bindings::MakeGarbageCollected<MessagePort>(context);
     // 4. Entangle port1 and port2.
     local_port->Entangle(std::move(local), nullptr);
     // 9. Set dataHolder.[[port]] to ! StructuredSerializeWithTransfer(port2,
@@ -523,13 +523,13 @@ class Serializer final : public v8::ValueSerializer::Delegate {
   // SerializedScriptValue::TransferReadableStream() and its kin do: false
   // after throwing.
   bool TransferStreams(std::vector<MessagePortChannel>& stream_channels) {
-    Window* const window = bindings::V8Window::ToWrappable(
-        isolate_, isolate_->GetCurrentContext()->Global());
+    ExecutionContext* const context =
+        ExecutionContext::From(isolate_, isolate_->GetCurrentContext());
     // What a stream's Serialize() throws stays on the isolate for the caller.
     bindings::ExceptionState exception_state(isolate_);
     for (const cppgc::Persistent<ReadableStream>& stream :
          transferables_->readable_streams) {
-      stream->Serialize(isolate_, AddStreamChannel(window, stream_channels),
+      stream->Serialize(isolate_, AddStreamChannel(context, stream_channels),
                         exception_state);
       if (exception_state.HadException()) {
         return false;
@@ -537,7 +537,7 @@ class Serializer final : public v8::ValueSerializer::Delegate {
     }
     for (const cppgc::Persistent<WritableStream>& stream :
          transferables_->writable_streams) {
-      stream->Serialize(isolate_, AddStreamChannel(window, stream_channels),
+      stream->Serialize(isolate_, AddStreamChannel(context, stream_channels),
                         exception_state);
       if (exception_state.HadException()) {
         return false;
@@ -545,13 +545,15 @@ class Serializer final : public v8::ValueSerializer::Delegate {
     }
     for (const cppgc::Persistent<TransformStream>& stream :
          transferables_->transform_streams) {
-      stream->Readable()->Serialize(
-          isolate_, AddStreamChannel(window, stream_channels), exception_state);
+      stream->Readable()->Serialize(isolate_,
+                                    AddStreamChannel(context, stream_channels),
+                                    exception_state);
       if (exception_state.HadException()) {
         return false;
       }
-      stream->Writable()->Serialize(
-          isolate_, AddStreamChannel(window, stream_channels), exception_state);
+      stream->Writable()->Serialize(isolate_,
+                                    AddStreamChannel(context, stream_channels),
+                                    exception_state);
       if (exception_state.HadException()) {
         return false;
       }
@@ -775,16 +777,15 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
     return base::UTF8ToUTF16(static_cast<const char*>(bytes), size, &text);
   }
 
-  // CreateEntangledPort(): a new port of the window's that holds the end of
+  // CreateEntangledPort(): a new port of the context's that holds the end of
   // the port of the stream at `index`, or null if there is none.
   MessagePort* TakeStreamPort(uint32_t index) {
     if (!stream_channels_ || index >= stream_channels_->size() ||
         !(*stream_channels_)[index].is_valid()) {
       return nullptr;
     }
-    Window* const window = bindings::V8Window::ToWrappable(
-        isolate_, isolate_->GetCurrentContext()->Global());
-    auto* const port = bindings::MakeGarbageCollected<MessagePort>(window);
+    auto* const port = bindings::MakeGarbageCollected<MessagePort>(
+        ExecutionContext::From(isolate_, isolate_->GetCurrentContext()));
     port->Entangle(std::move((*stream_channels_)[index]), nullptr);
     return port;
   }

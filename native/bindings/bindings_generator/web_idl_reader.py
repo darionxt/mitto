@@ -43,6 +43,9 @@ __all__ = ["Definitions", "read_database"]
 
 # The global object that a Page's scripts run in, by the name that [Exposed] gives it.
 PAGE_GLOBAL_NAME = "Window"
+# The global interface of a Page's dedicated workers, and the names that [Exposed] gives it, as its [Global] does.
+WORKER_GLOBAL_INTERFACE = "DedicatedWorkerGlobalScope"
+WORKER_GLOBAL_NAMES = frozenset({"Worker", "DedicatedWorker"})
 
 # The kinds of definition that the database holds, as web_idl's DatabaseBody.Kind names them, and those that the
 # reader reads on their own. Mixins are merged into the interfaces that include them, unions and typedefs into the
@@ -290,7 +293,12 @@ def condition_of(exposure: Any, global_names: list[str]) -> Condition:
         if exposed_features:
             other.append(f"Exposed with {' or '.join(exposed_features)}")
     else:
-        names = [entry.global_name for entry in exposure.global_names_and_features if entry.global_name != "*"]
+        # bind_gen tests each global name in the context, with the feature that it names beside it.
+        names = [
+            f"{entry.global_name}:{entry.feature}" if entry.feature else entry.global_name
+            for entry in exposure.global_names_and_features
+            if entry.global_name != "*"
+        ]
         if names:
             other.append(f"Exposed={','.join(names)}")
     for feature in exposure.runtime_enabled_features:

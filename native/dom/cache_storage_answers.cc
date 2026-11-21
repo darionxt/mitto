@@ -10,15 +10,14 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/per_isolate_data.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/cache_body_loader.h"
 #include "mitto/dom/cache_storage_host.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/quota_exceeded_error.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/response.h"
-#include "mitto/dom/window.h"
 #include "mitto/header_rules.h"
 #include "url/gurl.h"
 #include "v8/include/v8-context.h"
@@ -210,9 +209,9 @@ Response* ResponseFromCache(CacheStorageHost& host,
 
 bool CacheContextIsAlive(v8::Isolate* isolate,
                          v8::Local<v8::Context> context) {
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
-  return window && window->HasContext();
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  return execution_context && execution_context->HasContext();
 }
 
 void RunInCacheContext(v8::Isolate* isolate,

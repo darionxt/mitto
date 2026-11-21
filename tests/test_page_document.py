@@ -65,8 +65,10 @@ def _run(program: Path, *arguments: str, stdin: str | None = None) -> subprocess
     )
 
 
-def _evaluate(program: Path, script: str, html: str | None = None) -> str:
+def _evaluate(program: Path, script: str, html: str | None = None, disabled_features: str | None = None) -> str:
     options = [] if html is None else [f"--html={html}"]
+    if disabled_features:
+        options.append(f"--disable-blink-features={disabled_features}")
     result = _run(program, *options, script)
     assert (result.returncode, result.stderr) == (0, "")
     return result.stdout.removesuffix("\n")
@@ -1039,4 +1041,221 @@ def test_dom_parser_makes_an_html_document_of_no_window(program: Path) -> None:
         '<script>window.ran = 1</script><template shadowrootmode="open"><b>s</b></template>x</body></html>',
         '["BackCompat",1,null,""]',
         '["UTF-8","http://x.test/a/","http://x.test/a/b"]',
+    ]
+
+
+_PARSER_ERROR_STYLE = (
+    "display: block; white-space: pre; border: 2px solid #c77; padding: 0 1em 0 1em; margin: 1em; "
+    "background-color: #fdd; color: black"
+)
+
+
+def _parser_error(message: str, namespace: bool = True) -> str:
+    xmlns = ' xmlns="http://www.w3.org/1999/xhtml"' if namespace else ""
+    return (
+        f'<parsererror{xmlns} style="{_PARSER_ERROR_STYLE}"><h3>This page contains the following errors:</h3>'
+        f'<div style="font-family:monospace;font-size:12px">{message}</div>'
+        "<h3>Below is a rendering of the page up to the first error.</h3></parsererror>"
+    )
+
+
+_DOM_PARSER_XML_SCRIPT = """
+        const parse = (markup, type = 'text/xml') => new DOMParser().parseFromString(markup, type);
+        const s = (node) => new XMLSerializer().serializeToString(node);
+        const out = [];
+        let d = parse('<root b="2" xmlns="urn:x" a="1"><child/>text<![CDATA[cd]]><!--c--><?pi  d ?></root>');
+        const r = d.documentElement;
+        out.push(JSON.stringify([d.constructor.name, d.contentType, d.readyState, d.compatMode, d.characterSet,
+                                 r.namespaceURI, r.getAttributeNames(),
+                                 [...r.childNodes].map((n) => n.nodeType + ':' + (n.nodeValue ?? n.nodeName))]));
+        out.push(s(d));
+        d = parse('<?xml version="1.0" encoding="latin1" standalone="no"?>\\n<r/>', 'application/xml');
+        out.push(JSON.stringify([d.xmlVersion, d.xmlEncoding, d.xmlStandalone, d.characterSet, s(d)]));
+        d = parse('<?xml version="1.1"?><r/>');
+        out.push(JSON.stringify([d.xmlVersion, d.xmlEncoding, d.xmlStandalone, s(d)]));
+        d = parse('<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" '
+                  + '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml">'
+                  + '<body>&nbsp;&eacute;&amp;</body></html>', 'application/xhtml+xml');
+        out.push(JSON.stringify([d.contentType, d.body.textContent, d.documentElement.constructor.name]));
+        d = parse('<svg xmlns="http://www.w3.org/2000/svg"><title>T</title><script>window.ranSvg = 1</script></svg>',
+                  'image/svg+xml');
+        out.push(JSON.stringify([d.contentType, d.title, d.documentElement.constructor.name, window.ranSvg,
+                                 d.rootElement === d.documentElement, parse('<svg/>').rootElement,
+                                 parse('<a xmlns="http://www.w3.org/2000/svg"/>').rootElement, document.rootElement]));
+        d = parse('<a xmlns:p="urn:p" p:x="1" y="2"><p:b/><c xmlns=""/></a>');
+        const a = d.documentElement;
+        out.push(JSON.stringify([...a.attributes].map((attr) => [attr.name, attr.namespaceURI])
+                                .concat([[a.firstChild.namespaceURI, a.firstChild.prefix, a.lastChild.namespaceURI]])));
+        out.push(s(parse('<!DOCTYPE a [<!ENTITY e "v">]><a>&e;</a>')));
+        out.push(JSON.stringify(parse('<a>\\r\\nb\\rc</a>').documentElement.textContent));
+        d = parse('<a><template xmlns="http://www.w3.org/1999/xhtml"><b>c</b></template></a>');
+        out.push(JSON.stringify([d.querySelector('template').childNodes.length,
+                                 d.querySelector('template').content.childNodes.length]));
+        out.join('\\n')
+    """
+
+
+def test_dom_parser_parses_xml_as_chrome_does(program: Path) -> None:
+    # Chrome 157 parses DOMParser's XML on the Rust xml crate: namespace declarations come before the other attributes,
+    # a processing instruction's data loses its leading spaces, line breaks are normalized, an internal subset's
+    # entities and an XHTML DTD's named references resolve, and scripts never run, as Chrome 157 gave.
+    script = _DOM_PARSER_XML_SCRIPT
+    lone_surrogate = (
+        "JSON.stringify(new DOMParser().parseFromString('<a>\\ud800x</a>', 'text/xml').documentElement.textContent)"
+    )
+
+    assert _evaluate(program, script).split("\n") == [
+        '["XMLDocument","text/xml","complete","CSS1Compat","UTF-8","urn:x",["xmlns","b","a"],'
+        '["1:child","3:text","4:cd","8:c","7:d "]]',
+        '<root xmlns="urn:x" b="2" a="1"><child/>text<![CDATA[cd]]><!--c--><?pi d ?></root>',
+        '["1.0","latin1",false,"UTF-8","<?xml version=\\"1.0\\" encoding=\\"latin1\\" standalone=\\"no\\"?><r/>"]',
+        '["1.0",null,false,"<?xml version=\\"1.0\\"?><r/>"]',
+        '["application/xhtml+xml","\u00a0\u00e9&","HTMLHtmlElement"]',
+        '["image/svg+xml","T","SVGSVGElement",null,true,null,null,null]',
+        '[["xmlns:p","http://www.w3.org/2000/xmlns/"],["p:x","urn:p"],["y",null],["urn:p","p",null]]',
+        "<!DOCTYPE a><a>v</a>",
+        '"\\nb\\nc"',
+        "[0,1]",
+    ]
+    # The Rust reader replaces a lone surrogate (XMLParserReplaceLoneSurrogates), where libxml2 stops on it.
+    assert _evaluate(program, lone_surrogate) == '"\ufffdx"'
+
+
+def test_dom_parser_shows_an_xml_error_as_chrome_does(program: Path) -> None:
+    # The Rust xml crate's message, where the reader stopped, and the parsererror block first in the document's
+    # element, or in an HTML body that holds an SVG root or stands in for a missing one, as Chrome 157 gave.
+    script = """
+        const s = (markup, type = 'text/xml') =>
+            new XMLSerializer().serializeToString(new DOMParser().parseFromString(markup, type));
+        [s('<root><a>x'), s('<a></b>'), s(''), s('<a>&nbsp;</a>'), s('<p:a/>'), s('<a>x</a><b/>'),
+         s('<svg xmlns="http://www.w3.org/2000/svg"><g>', 'image/svg+xml')].join('\\n')
+    """
+
+    html = '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+    assert _evaluate(program, script).split("\n") == [
+        "<root>"
+        + _parser_error("error on line 1 at column 11: Unexpected end of stream: still inside the root element")
+        + "<a/></root>",
+        "<a>" + _parser_error("error on line 1 at column 7: Unexpected closing tag: b != a") + "</a>",
+        html
+        + _parser_error("error on line 1 at column 1: Unexpected end of stream: no root element found", False)
+        + "</body></html>",
+        "<a>" + _parser_error("error on line 1 at column 9: Unexpected entity: nbsp") + "</a>",
+        html + _parser_error("error on line 1 at column 5: Element p:a prefix is unbound", False) + "</body></html>",
+        "<a>" + _parser_error("error on line 1 at column 9: Unexpected token: &lt;") + "x</a>",
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head><style>html, body { height: 100% } parsererror + svg { '
+        "width: 100%; height: 100% }</style></head><body>"
+        + _parser_error("error on line 1 at column 44: Unexpected end of stream: still inside the root element", False)
+        + '<svg xmlns="http://www.w3.org/2000/svg"><g/></svg></body></html>',
+    ]
+
+
+# Every Persona's variations seed turns XMLRustForNonXslt off, so Chrome 157 parses XML on libxml2 there, as these
+# tests do.
+_LIBXML = "XMLRustForNonXslt"
+
+
+def test_dom_parser_shows_libxml2s_errors_as_chrome_does(program: Path) -> None:
+    # libxml2's messages, each with its line break, where libxml2 was, and its errors leave the tree it read so far,
+    # as Chrome 157 gave with XMLRustForNonXslt off. A lone surrogate is an encoding error, as libxml2 reads UTF-16.
+    script = """
+        const s = (markup, type = 'text/xml') =>
+            new XMLSerializer().serializeToString(new DOMParser().parseFromString(markup, type));
+        [s('<root><a>x'), s('<a></b>'), s(''), s('<a>&nbsp;</a>'), s('<p:a/>'), s('<a>x</a><b/>'),
+         s('<a b="1" b="2"/>'), s('<svg xmlns="http://www.w3.org/2000/svg"><g>', 'image/svg+xml'),
+         JSON.stringify(new DOMParser().parseFromString('<a>\\ud800x</a>', 'text/xml').documentElement.textContent)
+        ].join('\\n---\\n')
+    """
+
+    html = '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+    assert _evaluate(program, script, disabled_features=_LIBXML).split("\n---\n") == [
+        "<root>"
+        + _parser_error("error on line 1 at column 11: Premature end of data in tag a line 1\n")
+        + "<a>x</a></root>",
+        "<a>"
+        + _parser_error("error on line 1 at column 8: Opening and ending tag mismatch: a line 1 and b\n")
+        + "</a>",
+        html + _parser_error("error on line 1 at column 1: Document is empty\n", False) + "</body></html>",
+        "<a>" + _parser_error("error on line 1 at column 10: Entity 'nbsp' not defined\n") + "</a>",
+        "<p:a>" + _parser_error("error on line 1 at column 5: Namespace prefix p on a is not defined\n") + "</p:a>",
+        "<a>" + _parser_error("error on line 1 at column 9: Extra content at the end of the document\n") + "x</a>",
+        html + _parser_error("error on line 1 at column 15: Attribute b redefined\n", False) + "</body></html>",
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head><style>html, body { height: 100% } parsererror + svg { '
+        "width: 100%; height: 100% }</style></head><body>"
+        + _parser_error("error on line 1 at column 44: Premature end of data in tag g line 1\n", False)
+        + '<svg xmlns="http://www.w3.org/2000/svg"><g/></svg></body></html>',
+        '"This page contains the following errors:error on line 1 at column 1: Invalid bytes in character encoding\\n'
+        'Below is a rendering of the page up to the first error."',
+    ]
+
+
+def test_dom_parser_parses_xml_on_libxml2_as_chrome_does(program: Path) -> None:
+    # What libxml2 reads without an error is what the Rust xml crate reads, as Chrome 157 gave with XMLRustForNonXslt
+    # off: the cases of test_dom_parser_parses_xml_as_chrome_does.
+    rust = _evaluate(program, _DOM_PARSER_XML_SCRIPT)
+
+    assert _evaluate(program, _DOM_PARSER_XML_SCRIPT, disabled_features=_LIBXML) == rust
+
+
+def test_markup_set_in_an_xml_document_is_read_as_xml_on_libxml2(program: Path) -> None:
+    # innerHTML, outerHTML, insertAdjacentHTML() and createContextualFragment() read their markup on libxml2 in a
+    # document that is not HTML, whatever XMLRustForNonXslt says, with the prefixes and default namespace of the
+    # context in scope, and throw Blink's SyntaxError for markup that is not well formed, as Chrome 157 gave.
+    script = """
+        const parse = (markup, type = 'text/xml') => new DOMParser().parseFromString(markup, type);
+        const s = (node) => new XMLSerializer().serializeToString(node);
+        const attempt = (f) => { try { return f(); } catch (e) { return e.name + ': ' + e.message; } };
+        const out = [];
+        let d = parse('<r xmlns="urn:x" xmlns:p="urn:p"><a/></r>');
+        const r = d.documentElement;
+        r.innerHTML = '<b p:c="1">t<p:d/></b><!--x--><?pi  y?><![CDATA[z]]>&amp;&#65;';
+        out.push(s(r));
+        out.push(JSON.stringify([r.firstChild.namespaceURI, r.firstChild.attributes[0].namespaceURI,
+                                 [...r.childNodes].map((n) => n.nodeType)]));
+        out.push(attempt(() => { r.innerHTML = '<b>'; }));
+        out.push(attempt(() => { r.innerHTML = '<b/><c/>'; return s(r); }));
+        out.push(attempt(() => { r.innerHTML = 'a&nbsp;b'; return s(r); }));
+        out.push(attempt(() => { r.innerHTML = '<b q:c="1"/>'; return s(r); }));
+        out.push(attempt(() => { r.innerHTML = '<q:b/>'; return s(r); }));
+        out.push(attempt(() => { r.innerHTML = '<b xmlns:xmlns="urn:z"/>'; return s(r); }));
+        out.push(attempt(() => { r.innerHTML = ''; return s(r); }));
+        r.innerHTML = '<b/>';
+        out.push(attempt(() => { r.firstChild.outerHTML = '<x/>text<y xmlns=""/>'; return s(r); }));
+        out.push(attempt(() => { r.insertAdjacentHTML('afterbegin', '<p:z/>'); return s(r); }));
+        const range = d.createRange();
+        range.selectNodeContents(r);
+        out.push(attempt(() => s(range.createContextualFragment('<p:e f="g"/>t'))));
+        out.push(attempt(() => s(range.createContextualFragment('<e>'))));
+        d = parse('<html xmlns="http://www.w3.org/1999/xhtml"><head><script>1</script></head><body/></html>',
+                  'application/xhtml+xml');
+        out.push(attempt(() => { d.body.innerHTML = '<p>&nbsp;&eacute;</p><svg xmlns="http://www.w3.org/2000/svg"/>';
+                                 return s(d.body) + ' ' + d.body.lastChild.constructor.name; }));
+        out.push(attempt(() => { d.querySelector('script').innerHTML = '<b>x</b>&amp;';
+                                 return s(d.querySelector('script')); }));
+        out.push(attempt(() => { d.body.innerHTML = '<?xml version="1.0"?><p/>'; return s(d.body); }));
+        out.push(attempt(() => { d.body.innerHTML = '<!DOCTYPE p><p/>'; return s(d.body); }));
+        out.join('\\n---\\n')
+    """
+
+    invalid = "The provided markup is invalid XML, and therefore cannot be inserted into an XML document."
+    root = '<r xmlns="urn:x" xmlns:p="urn:p">'
+    assert _evaluate(program, script).split("\n---\n") == [
+        root + '<b p:c="1">t<p:d/></b><!--x--><?pi y?><![CDATA[z]]>&amp;A</r>',
+        '["urn:x","urn:p",[1,8,7,4,3]]',
+        f"SyntaxError: Failed to set the 'innerHTML' property on 'Element': {invalid}",
+        root + "<b/><c/></r>",
+        f"SyntaxError: Failed to set the 'innerHTML' property on 'Element': {invalid}",
+        "NamespaceError: Failed to set the 'innerHTML' property on 'Element': Namespace prefix q for attribute c is not "
+        "declared.",
+        root + '<q:b xmlns=""/></r>',
+        root + "<b/></r>",
+        '<r xmlns="urn:x" xmlns:p="urn:p"/>',
+        root + '<x/>text<y xmlns=""/></r>',
+        root + '<p:z/><x/>text<y xmlns=""/></r>',
+        '<p:e xmlns:p="urn:p" f="g"/>t',
+        f"SyntaxError: Failed to execute 'createContextualFragment' on 'Range': {invalid}",
+        f"SyntaxError: Failed to set the 'innerHTML' property on 'Element': {invalid}",
+        '<script xmlns="http://www.w3.org/1999/xhtml">&lt;b&gt;x&lt;/b&gt;&amp;amp;</script>',
+        f"SyntaxError: Failed to set the 'innerHTML' property on 'Element': {invalid}",
+        f"SyntaxError: Failed to set the 'innerHTML' property on 'Element': {invalid}",
     ]

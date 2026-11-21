@@ -7,6 +7,7 @@
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_performance_observer.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
 #include "v8/include/v8-isolate.h"
 
@@ -32,8 +33,8 @@ const bindings::WrapperTypeInfo* PerformanceObserver::GetWrapperTypeInfo()
   return &bindings::V8PerformanceObserver::kWrapperTypeInfo;
 }
 
-// Blink's supportedEntryTypes() for a window: the types that
-// supportedEntryTypeMask() gives a window, in alphabetical order, with those
+// Blink's supportedEntryTypes(): the types that supportedEntryTypeMask()
+// gives a window or a dedicated worker, in alphabetical order, with those
 // behind a feature that the Page has.
 // static
 v8::Local<v8::Value> PerformanceObserver::SupportedEntryTypes() {
@@ -42,6 +43,13 @@ v8::Local<v8::Value> PerformanceObserver::SupportedEntryTypes() {
       bindings::PerIsolateData::From(isolate)->features();
   using bindings::RuntimeFeature;
   std::vector<std::u16string> types;
+  if (!ExecutionContext::Current().IsWindow()) {
+    if (features.IsEnabled(RuntimeFeature::kLongAnimationFrameWorker)) {
+      types.push_back(u"long-animation-frame");
+    }
+    types.insert(types.end(), {u"mark", u"measure", u"resource"});
+    return FrozenArrayOfStrings(isolate, types);
+  }
   if (features.IsEnabled(
           RuntimeFeature::kBackForwardCacheRestorationPerformanceEntry)) {
     types.push_back(u"back-forward-cache-restoration");

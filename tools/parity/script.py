@@ -57,7 +57,7 @@ class ScriptBaseline:
 
     @property
     def in_a_page(self) -> bool:
-        """Whether a Page can run its Recording Case: a Page has no frames and no workers yet, so a check skips those."""
+        """Whether a Page can run its Recording Case: a Page has no frames yet, so a check skips those."""
         return _RUNS[self.case].in_a_page
 
 
@@ -182,8 +182,8 @@ def find_script_gaps(baselines: Iterable[ScriptBaseline], recorder: ScriptRecord
     Baselines.
 
     The Page's Normal Form is compared with the Baseline's, and each value at a place that both hide as <machine> is held
-    to what Chrome gives for the Page's Machine. A Baseline whose Recording Case a Page cannot run yet, in a frame or a
-    worker, is skipped.
+    to what Chrome gives for the Page's Machine. A Baseline whose Recording Case a Page cannot run yet, in a frame, is
+    skipped.
 
     Raises:
         BaselineError: No Persona presents the Chrome Release of a Baseline.

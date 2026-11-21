@@ -100,7 +100,7 @@ def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of
     assert set(waiting.values()) <= {280, 283, 285, 289, 291}
 
 
-def test_the_navigations_that_a_page_starts_and_what_a_documents_markup_asks_for_go_through_a_page() -> None:
+def test_a_page_replays_its_own_navigations_its_workers_requests_and_what_a_documents_markup_asks_for() -> None:
     through = {name for name, replay in REPLAYS.items() if replay.through_page}
     # The favicon is the browser's, after the document's load event.
     markup = {case.name for case in DOCUMENT_CASES if case.name.startswith("document_") or case.name == "favicon"}
@@ -111,6 +111,8 @@ def test_the_navigations_that_a_page_starts_and_what_a_documents_markup_asks_for
         "navigation_meta_refresh",
         "redirect_location_1",
         "redirect_location_2",
+        "worker_import_scripts",
+        "worker_fetch",
         *markup,
     }
     assert all(REPLAYS[name].page is not None and REPLAYS[name].made_by_a_page is None for name in through)

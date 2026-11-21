@@ -69,16 +69,6 @@ bool IsJavaScriptMimeType(std::string_view mime_type) {
   return false;
 }
 
-// Blink's ParseContentTypeOptionsHeader(), as the Fetch Standard splits the
-// header.
-bool IsNosniff(std::string_view headers) {
-  const std::string field = HeaderField(headers, "x-content-type-options");
-  const std::string_view first = std::string_view(field).substr(
-      0, std::min(field.find(','), field.size()));
-  return base::EqualsCaseInsensitiveASCII(
-      base::TrimString(first, " \t", base::TRIM_ALL), "nosniff");
-}
-
 // ClassicScript::RunScript() in the current context: compiles and runs
 // `source` as a classic script named `source_url`, whose import() calls
 // resolve against `base_url` with `options`, reports what it throws as an
@@ -142,7 +132,7 @@ std::optional<std::string> RefusedAsScript(const GURL& url,
                                            std::string_view headers) {
   const std::string mime_type = HttpContentType(headers);
   const bool is_javascript = IsJavaScriptMimeType(mime_type);
-  if (IsNosniff(headers) && !is_javascript) {
+  if (IsContentTypeOptionsNosniff(headers) && !is_javascript) {
     return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
                          "' because its MIME type ('",
                          HeaderBytesToUtf8(mime_type),
@@ -163,6 +153,33 @@ std::optional<std::string> RefusedAsScript(const GURL& url,
     }
   }
   if (mime_type.starts_with("text/csv")) {
+    return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
+                         "' because its MIME type ('",
+                         HeaderBytesToUtf8(mime_type),
+                         "') is not executable."});
+  }
+  return std::nullopt;
+}
+
+// Upstream: third_party/blink/renderer/platform/loader/allowed_by_nosniff.cc
+std::optional<std::string> RefusedAsWorkerScript(const GURL& url,
+                                                 std::string_view headers,
+                                                 bool strict) {
+  if (!url.SchemeIsHTTPOrHTTPS()) {
+    const std::string_view path = url.path();
+    if (path.ends_with(".js") || path.ends_with(".mjs")) {
+      return std::nullopt;
+    }
+  }
+  if (url.SchemeIs(url::kDataScheme) || url.SchemeIs(url::kBlobScheme) ||
+      url.SchemeIs(url::kFileSystemScheme)) {
+    return std::nullopt;
+  }
+  if (std::optional<std::string> refused = RefusedAsScript(url, headers)) {
+    return refused;
+  }
+  const std::string mime_type = HttpContentType(headers);
+  if (strict && !IsJavaScriptMimeType(mime_type)) {
     return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
                          "' because its MIME type ('",
                          HeaderBytesToUtf8(mime_type),
