@@ -286,13 +286,23 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"fetch('/beacon', { method: 'POST', body: 'kept', keepalive: true }); close();",
     ),
+    # A module that a worker of a data: URL imports, with what it imports in turn, one of them behind a redirect, none
+    # of them with a CORS header.
+    "/graph-a.js": (
+        "text/javascript",
+        b"import './graph-b.js'; import './redirect-c.js'; (self.loaded ||= []).push('a');",
+    ),
+    "/graph-b.js": ("text/javascript", b"(self.loaded ||= []).push('b');"),
+    "/graph-c.js": ("text/javascript", b"(self.loaded ||= []).push('c');"),
+    "/graph-d.js": ("text/javascript", b"(self.loaded ||= []).push('d');"),
 }
 
 # The path and body of each POST that reached the server, in order.
 _POSTED: list[tuple[str, bytes]] = []
-# The Referer of each GET, by path, and the paths that redirect, to where.
+# The Referer and the header lines of each GET, by path, and the paths that redirect, to where.
 _REFERERS: dict[str, str | None] = {}
-_REDIRECTS = {"/redirect-w.js": "/v2/w.js"}
+_HEADERS: dict[str, list[tuple[str, str]]] = {}
+_REDIRECTS = {"/redirect-w.js": "/v2/w.js", "/redirect-c.js": "/graph-c.js"}
 # The headers of the last GET of /echo, which any origin may read, and how many preflights of it came.
 _ECHOED: dict[str, str] = {}
 _PREFLIGHTS: list[str] = []
@@ -317,6 +327,7 @@ def server() -> Iterator[str]:
         def do_GET(self) -> None:
             path = self.path.partition("?")[0]
             _REFERERS[path] = self.headers.get("Referer")
+            _HEADERS[path] = list(self.headers.items())
             if path == "/echo":
                 _ECHOED.clear()
                 _ECHOED.update(self.headers.items())
@@ -606,6 +617,46 @@ def test_a_worker_of_a_data_url_keeps_one_origin_for_its_preflights(server: str)
 
     assert _evaluate(server, script) == "echo"
     assert _PREFLIGHTS == ["/echo"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_module_worker_of_a_data_url_imports_through_its_creator(server: str) -> None:
+    # As Chrome 157 sends them: its top-level graph from the creator, with the creator's origin and cookies, which needs
+    # no CORS header, the importing module as Referer, and User-Agent before Origin; an import() as the worker itself.
+    _HEADERS.clear()
+    script = """new Promise((resolve) => {
+        document.cookie = 'lax=1';
+        document.cookie = 'strict=1; SameSite=Strict';
+        const src = "import '" + location.origin + "/graph-a.js';" +
+            "import('" + location.origin + "/graph-d.js').then(() => 'ok', (e) => e.name)" +
+            ".then((d) => postMessage([self.loaded, d]));";
+        const worker = new Worker('data:text/javascript,' + encodeURIComponent(src), {type: 'module'});
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == [["b", "c", "a"], "TypeError"]
+    seen = {path: {name.lower(): value for name, value in lines} for path, lines in _HEADERS.items()}
+    for path, referer in [
+        ("/graph-a.js", None),
+        ("/graph-b.js", f"{server}/graph-a.js"),
+        ("/redirect-c.js", f"{server}/graph-a.js"),
+        ("/graph-c.js", f"{server}/graph-a.js"),
+    ]:
+        lines = seen[path]
+        assert (lines["origin"], lines["sec-fetch-site"], lines["sec-fetch-mode"], lines["sec-fetch-dest"]) == (
+            server,
+            "same-origin",
+            "cors",
+            "worker",
+        ), path
+        assert lines.get("referer") == referer, path
+        assert lines.get("cookie") == "lax=1; strict=1", path
+        names = [name.lower() for name, _ in _HEADERS[path]]
+        assert names.index("user-agent") + 1 == names.index("origin"), path
+    lines = seen["/graph-d.js"]
+    assert (lines["origin"], lines["sec-fetch-site"], lines["sec-fetch-dest"]) == ("null", "cross-site", "script")
+    assert "cookie" not in lines
 
 
 @pytest.mark.usefixtures("page_program")

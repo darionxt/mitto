@@ -250,13 +250,18 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   // response that the document has had, such as a module's of another
   // origin. One that is neither, as the base URL of an inline script beneath
   // a base element of another origin, is the document's URL: a Known Gap.
+  // One of a local scheme, as a module worker's of a data: URL is, gives no
+  // Referer, as Referrer Policy strips it to none.
   if (request.referrer == kNoReferrer) {
     data.referrer = kNoReferrer;
   } else if (request.referrer != kClientReferrer) {
     const GURL referrer(request.referrer);
-    if (referrer.is_valid() &&
-        (url::Origin::Create(referrer).IsSameOriginWith(GURL(context->Url())) ||
-         fetcher->HasFinishedResponse(referrer.spec()))) {
+    if (referrer.is_valid() && !referrer.SchemeIsHTTPOrHTTPS()) {
+      data.referrer = kNoReferrer;
+    } else if (referrer.is_valid() &&
+               (url::Origin::Create(referrer).IsSameOriginWith(
+                    GURL(context->Url())) ||
+                fetcher->HasFinishedResponse(referrer.spec()))) {
       data.referrer = referrer.spec();
     }
   }

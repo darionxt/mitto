@@ -315,6 +315,36 @@ void ApplyPageRequest(const PageRequest& asked,
   }
 }
 
+// Moves Origin to just after User-Agent where it comes before it, as a
+// worker's request has them: Chrome 157's worker sends a module script's
+// User-Agent, then Origin, where a window's names Origin first.
+void PutOriginAfterUserAgent(net::HttpRequestHeaders& headers) {
+  const net::HttpRequestHeaders::HeaderVector& lines =
+      headers.GetHeaderVector();
+  const auto named = [&lines](std::string_view name) {
+    return std::ranges::find_if(lines, [name](const auto& line) {
+      return base::EqualsCaseInsensitiveASCII(line.key, name);
+    });
+  };
+  const auto origin = named(net::HttpRequestHeaders::kOrigin);
+  const auto user_agent = named(net::HttpRequestHeaders::kUserAgent);
+  if (origin == lines.end() || user_agent == lines.end() ||
+      origin > user_agent) {
+    return;
+  }
+  net::HttpRequestHeaders moved;
+  for (auto line = lines.begin(); line != lines.end(); ++line) {
+    if (line == origin) {
+      continue;
+    }
+    moved.SetHeader(line->key, line->value);
+    if (line == user_agent) {
+      moved.SetHeader(origin->key, origin->value);
+    }
+  }
+  headers = std::move(moved);
+}
+
 // Returns the header lines of a response that a Page may see: all but those
 // that set cookies, so that no HttpOnly cookie reaches a Page's process.
 // Blink never shows them to a page's scripts either.
@@ -1344,7 +1374,21 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     }
     frame_parent = target->second.parent;
   }
-  const url::Origin& document_origin = context.origin;
+  // A module of a module worker's top-level graph is of destination worker in
+  // mode cors, where the worker's own script, which its creator asks for, is
+  // of mode same-origin. The worker asks for it, and Blink fetches it through
+  // the worker's outside settings, its creator's: from the creator's origin,
+  // with the creator's site for cookies, and with a module script's lines.
+  // The creator stays while the worker does.
+  // Upstream: third_party/blink/renderer/core/workers/worker_global_scope.cc
+  const bool outside_settings = asked.kind == PageRequestKind::kWorker &&
+                                asked.mode == PageRequestMode::kCors;
+  if (outside_settings && !context.is_worker) {
+    Refuse("a module of a worker's graph that no worker asks for");
+    return;
+  }
+  const uint64_t settings_id = outside_settings ? context.parent : context_id;
+  const url::Origin& document_origin = contexts_.at(settings_id).origin;
   const bool is_navigation = asked.kind == PageRequestKind::kNavigation;
   if (is_navigation) {
     PageEvent started;
@@ -1352,8 +1396,10 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     started.url = asked.url;
     Push(std::move(started));
   }
-  const auto with_body = options_.requests_with_body.find(asked.kind);
-  const auto without_body = options_.requests.find(asked.kind);
+  const PageRequestKind template_kind =
+      outside_settings ? PageRequestKind::kModule : asked.kind;
+  const auto with_body = options_.requests_with_body.find(template_kind);
+  const auto without_body = options_.requests.find(template_kind);
   const bool has_body = asked.body || asked.streams_body;
   const PageRequestTemplate* const request_template =
       has_body && with_body != options_.requests_with_body.end()
@@ -1430,12 +1476,19 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   net::HttpRequestHeaders headers = request_template->headers;
   RequestOptions options = request_template->options;
   options.method = asked.method;
-  FillContextFetch(context_id, frame_parent, *options.fetch);
+  FillContextFetch(settings_id, frame_parent, *options.fetch);
+  if (outside_settings) {
+    options.fetch->destination = "worker";
+    options.fetch->from_worker = true;
+  }
   // A navigation that the document starts sends Sec-Fetch-User only with the
   // user's activation, which the browser checks the renderer's word for.
   options.fetch->has_user_activation = asked.user_activation;
   options.validate_cache = asked.reload;
   ApplyPageRequest(asked, headers, options);
+  if (context.is_worker) {
+    PutOriginAfterUserAgent(headers);
+  }
   if (!asked.referrer.empty()) {
     options.fetch->referrer_source = referrer;
   }
@@ -1484,7 +1537,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   if (asked.kind == PageRequestKind::kIframe) {
     frame_navigation_responses_[asked.number] = {.parent = frame_parent,
                                                  .target = asked.target};
-  } else if (asked.kind == PageRequestKind::kWorker) {
+  } else if (asked.kind == PageRequestKind::kWorker && !outside_settings) {
     worker_scripts_[asked.number] = {.creator = context_id};
   }
   StartRequest(
