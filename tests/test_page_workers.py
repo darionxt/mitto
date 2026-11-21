@@ -94,6 +94,12 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b" [undefined, 'navigationStart']]) { try { performance.measure('m', ...args); out.push('ok'); }"
         b" catch (e) { out.push(e.name + ': ' + e.message); } } postMessage(out);",
     ),
+    # The Persona's high-entropy client hints, which settle from a task of the worker's.
+    "/ua-data.js": (
+        "text/javascript",
+        b"navigator.userAgentData.getHighEntropyValues(['architecture', 'platformVersion', 'fullVersionList'])"
+        b".then((v) => postMessage(v), (e) => postMessage(String(e)));",
+    ),
     "/data-imports.js": (
         "text/javascript",
         b"var x = 'a', ran = false; const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return e; } };"
@@ -403,6 +409,22 @@ def test_a_workers_measure_from_a_timing_name_throws_as_in_chrome(server: str) -
         timing("loadEventEnd"),
         timing("navigationStart"),
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_high_entropy_values_are_the_windows(server: str) -> None:
+    script = """Promise.all([
+        new Promise((resolve) => {
+            const worker = new Worker('/ua-data.js');
+            worker.onmessage = (e) => resolve(e.data);
+        }),
+        navigator.userAgentData.getHighEntropyValues(['architecture', 'platformVersion', 'fullVersionList']),
+    ])"""
+
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        worker, window = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+    assert worker == window
+    assert worker["architecture"] != ""
 
 
 @pytest.mark.usefixtures("page_program")
