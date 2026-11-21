@@ -283,7 +283,7 @@ DedicatedWorkerThread::Scope::~Scope() {
   isolate_->Dispose();
   isolate_ = nullptr;
   // The Session forgets the worker, after everything that it sent.
-  params_.sender->Send(EncodeContextGone(params_.id));
+  params_.sender->SendContextGone(params_.id);
   params_.object_proxy->DidTerminateWorkerThread();
 }
 

@@ -111,6 +111,7 @@ uint64_t PageRequests::Send(uint64_t context,
                             PageRequest& request,
                             const SessionSender::ResponseRoute& route) {
   return sender_->SendRequest(
+      context,
       [&](uint64_t number) {
         request.number = number;
         return EncodeRequest(context, request);
@@ -207,7 +208,7 @@ void PageRequests::Cancel(uint64_t number) {
   // It stays open until the Session ends it, so that what the Session sent
   // meanwhile still counts against its credit.
   found->second.client = nullptr;
-  sender_->Send(EncodeCancel(number));
+  sender_->SendForRequest(number, EncodeCancel(number));
 }
 
 void PageRequests::CancelAll() {
@@ -273,7 +274,7 @@ void PageRequests::TookBody(uint64_t number, size_t bytes) {
   PageCredit credit;
   credit.number = number;
   credit.bytes = base::checked_cast<uint32_t>(bytes);
-  sender_->Send(EncodeCredit(credit));
+  sender_->SendForRequest(credit.number, EncodeCredit(credit));
 }
 
 size_t PageRequests::BodyCredit(uint64_t number) const {
@@ -298,7 +299,7 @@ void PageRequests::SendBodyPart(uint64_t number, std::string_view bytes) {
   PageRequestBodyPart part;
   part.number = number;
   part.bytes = std::string(bytes);
-  sender_->Send(EncodeRequestBodyPart(part));
+  sender_->SendForRequest(number, EncodeRequestBodyPart(part));
 }
 
 void PageRequests::EndBody(uint64_t number, bool errored) {
@@ -312,7 +313,7 @@ void PageRequests::EndBody(uint64_t number, bool errored) {
   PageRequestBodyEnded ended;
   ended.number = number;
   ended.errored = errored;
-  sender_->Send(EncodeRequestBodyEnded(ended));
+  sender_->SendForRequest(number, EncodeRequestBodyEnded(ended));
 }
 
 PageRequests::Open* PageRequests::Find(uint64_t number,

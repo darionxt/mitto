@@ -219,7 +219,8 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   committed.source = source;
   committed.navigation = navigation;
   // Documents and workers share the IDs, which the Session holds in order.
-  sender_->SendContext([&committed](uint64_t id) {
+  // The Page makes no frame yet, so each document is a top-level one.
+  sender_->SendTopLevelDocument([&committed](uint64_t id) {
     committed.document = id;
     return EncodeDocumentCommitted(committed);
   });

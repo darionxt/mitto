@@ -73,6 +73,20 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"channel.onmessage = (e) => channel.postMessage(['worker heard', e.data, e.origin]);"
         b"postMessage('listening');",
     ),
+    # A worker that posts to a channel and closes in the same task.
+    "/broadcast-close.js": (
+        "text/javascript",
+        b"new BroadcastChannel('news').postMessage('last words'); close();",
+    ),
+    # A worker that fetches without end, with a worker of its own that does too, and that is busy for a while from
+    # when it says so, past its creator's document being replaced, before it fetches again.
+    "/busy.js": (
+        "text/javascript",
+        b"const go = () => fetch('/data.txt').then(go, go); go(); new Worker('/busy-child.js');"
+        b" postMessage('busy');"
+        b" setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {} go(); }, 0);",
+    ),
+    "/busy-child.js": ("text/javascript", b"const go = () => fetch('/data.txt').then(go, go); go();"),
     "/data-imports.js": (
         "text/javascript",
         b"var x = 'a', ran = false; const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return e; } };"
@@ -393,6 +407,36 @@ def test_a_port_transferred_to_a_worker_carries_messages_both_ways(server: str) 
     })"""
 
     assert _evaluate(server, script) == "across threads!"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_broadcast_reaches_the_window_from_a_worker_that_closes_at_once(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const channel = new BroadcastChannel('news');
+        channel.onmessage = (e) => resolve(e.data);
+        new Worker('/broadcast-close.js');
+        setTimeout(() => resolve('lost'), 5000);
+    })"""
+
+    assert _evaluate(server, script) == "last words"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_document_with_busy_workers_gives_way_to_the_next(server: str) -> None:
+    # The workers' requests and their ends, which the Session forgets with the document, go before the next document
+    # or not at all, so the Page goes on.
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        started = """new Promise((resolve) => {
+            const worker = new Worker('/busy.js');
+            worker.onmessage = (e) => resolve(e.data);
+        })"""
+        assert page.evaluate(started) == "busy"
+        assert page.evaluate("location.href = '/?next'; 'set'") == "set"
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?next"
+        assert page.evaluate(started) == "busy"
+        assert page.evaluate("location.href = '/?last'; 'set'") == "set"
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?last"
+        assert page.evaluate("location.search") == "?last"
 
 
 @pytest.mark.usefixtures("page_program")
