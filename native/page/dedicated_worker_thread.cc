@@ -303,6 +303,10 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetWorkerStarter(nullptr);
     scope_->SetImportedScriptLoader(nullptr);
   }
+  // The fetcher lets its keepalive requests go before the rest are cancelled,
+  // so that they go on without the worker, as a window's do without their
+  // document.
+  fetcher_.reset();
   if (requests_) {
     requests_->CancelAll();
   }

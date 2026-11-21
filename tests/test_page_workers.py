@@ -6,6 +6,7 @@ of them is held to what Chrome 157 does for the same scripts (docs/runtime.md, "
 
 import http.server
 import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -124,7 +125,15 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
     ),
+    # A keepalive fetch that goes on after the worker that started it closes.
+    "/keepalive.js": (
+        "text/javascript",
+        b"fetch('/beacon', { method: 'POST', body: 'kept', keepalive: true }); close();",
+    ),
 }
+
+# The path and body of each POST that reached the server, in order.
+_POSTED: list[tuple[str, bytes]] = []
 
 
 @pytest.fixture
@@ -157,6 +166,13 @@ def server() -> Iterator[str]:
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            _POSTED.append((self.path, body))
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def log_message(self, format: str, *args: Any) -> None:
             pass
@@ -425,6 +441,21 @@ def test_a_workers_high_entropy_values_are_the_windows(server: str) -> None:
         worker, window = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
     assert worker == window
     assert worker["architecture"] != ""
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_keepalive_fetch_outlives_the_worker(server: str) -> None:
+    _POSTED.clear()
+    script = """new Promise((resolve) => {
+        new Worker('/keepalive.js');
+        setTimeout(() => resolve('waited'), 500);
+    })"""
+
+    assert _evaluate(server, script) == "waited"
+    deadline = time.monotonic() + _TIMEOUT_SECONDS
+    while not _POSTED and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _POSTED == [("/beacon", b"kept")]
 
 
 @pytest.mark.usefixtures("page_program")
