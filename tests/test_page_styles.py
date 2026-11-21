@@ -105,6 +105,18 @@ def test_a_sheet_and_its_imports_go_as_a_callers_style_requests(
         assert _value(page_lines, "Referer") == initiator, path
 
 
+def test_an_import_takes_the_decoded_string_of_a_quoted_url(session: mitto.Session, server: RecordingServer) -> None:
+    server.route("/escaped.css", b"p {}", _CSS)
+    server.route("/say's.css", b"p {}", _CSS)
+    url = server.page("/page", r"""<style>@import url("esc\61 ped.css"); @import url( 'say\'s.css' );</style>""")
+
+    with _open_page(session, url):
+        pass
+
+    # The string inside url() decodes its escapes, as the tokenizer reads it, an escaped quote too.
+    assert sorted(server.paths()) == ["/escaped.css", "/page", "/say's.css"]
+
+
 def test_an_import_of_a_sheet_of_another_origin_names_that_sheet_as_referrer(
     session: mitto.Session, server: RecordingServer
 ) -> None:
