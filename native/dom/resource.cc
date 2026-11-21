@@ -18,7 +18,8 @@ constexpr int kHttpResponseCodeFailure = -379;
 
 // Resource::ShouldIgnoreHTTPStatusCodeErrors(): an image takes any status.
 bool IgnoresHttpStatusErrors(ResourceType type) {
-  return type == ResourceType::kImage;
+  // ImageResource's and RawResource's ShouldIgnoreHTTPStatusCodeErrors().
+  return type == ResourceType::kImage || type == ResourceType::kRaw;
 }
 
 bool HasMetadata(const std::vector<IntegrityMetadata>& set,
@@ -98,6 +99,11 @@ bool Resource::HasClients() const {
 void Resource::ResponseReceived(FetchResponseHead head, std::string mime_type) {
   response_ = std::move(head);
   mime_type_ = std::move(mime_type);
+  for (ResourceClient* client : clients_.ToVector()) {
+    if (client) {
+      client->ResponseReceived(*this);
+    }
+  }
 }
 
 void Resource::AppendData(const std::string& bytes) {

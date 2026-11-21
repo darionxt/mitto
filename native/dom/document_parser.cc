@@ -8,18 +8,29 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ref.h"
 #include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
+#include "mitto/bindings/per_isolate_data.h"
+#include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_kinds.h"
 #include "mitto/dom/document_write_intervention.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
+#include "mitto/dom/libxml_tree_builder.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/resource.h"
 #include "mitto/dom/script_element_base.h"
 #include "mitto/dom/script_loader.h"
+#include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
+#include "mitto/dom/xml_tree_builder.h"
+#include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
@@ -37,6 +48,13 @@ constexpr base::TimeDelta kLongParserBudget = base::Milliseconds(500);
 // performs one before the parser prepares a script.
 void PerformMicrotaskCheckpoint() {
   v8::MicrotasksScope::PerformCheckpoint(v8::Isolate::GetCurrent());
+}
+
+bool IsFeatureEnabled(bindings::RuntimeFeature feature) {
+  v8::Isolate* const isolate = v8::Isolate::TryGetCurrent();
+  const bindings::RuntimeFeatureSet* const features =
+      isolate ? bindings::PerIsolateData::FeaturesOf(isolate) : nullptr;
+  return features && features->IsEnabled(feature);
 }
 
 using HeldParser = cppgc::Persistent<DocumentParser>;
@@ -82,13 +100,31 @@ class DocumentParser::InsertionPointRecord {
   const raw_ref<HtmlDocumentParser> tree_;
 };
 
-DocumentParser::DocumentParser(Document& document, Client* client)
+DocumentParser::DocumentParser(Document& document, Client* client, Kind kind)
     : document_(&document),
+      kind_(kind),
       client_(client),
       created_by_script_(!client),
       references_(
           bindings::MakeGarbageCollected<HtmlTreeBuilderReferences>(document)),
       tree_(std::make_unique<HtmlDocumentParser>(document, references_.Get())) {
+  // XMLDocumentParserRs's script runner exists only for a document of a
+  // frame, and a document of no window marks its scripts already started.
+  if (kind_ == Kind::kXml) {
+    // Document::CreateParser(): the Rust xml crate's reader with
+    // XMLParsingRust, or with XMLRustForNonXslt for a document of no frame or
+    // an SVG document, and libxml2 for any other.
+    const bool no_window = !document.DefaultView();
+    if (IsFeatureEnabled(bindings::RuntimeFeature::kXMLParsingRust) ||
+        (IsFeatureEnabled(bindings::RuntimeFeature::kXMLRustForNonXslt) &&
+         (no_window || document.ContentType() == u"image/svg+xml"))) {
+      xml_ = std::make_unique<XmlTreeBuilder>(
+          *references_, /*scripts_already_started=*/no_window);
+    } else {
+      xml_ = std::make_unique<LibxmlTreeBuilder>(
+          *references_, /*scripts_already_started=*/no_window);
+    }
+  }
   // The tree stops after the token that added a style sheet that blocks the
   // parser, which owns it.
   tree_->SetShouldPause(base::BindRepeating(
@@ -102,13 +138,15 @@ DocumentParser::~DocumentParser() = default;
 
 void DocumentParser::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
+  visitor->Trace(json_pre_);
+  visitor->Trace(image_resource_);
   visitor->Trace(references_);
   visitor->Trace(parser_blocking_script_);
   scripts_after_parsing_.Trace(visitor);
 }
 
 MarkupPosition DocumentParser::TextPosition() const {
-  return tree_->TextPosition();
+  return xml_ ? xml_->TextPosition() : tree_->TextPosition();
 }
 
 void DocumentParser::DidReceiveData() {
@@ -120,16 +158,103 @@ void DocumentParser::DidReceiveData() {
   SchedulePumpTokenizer();
 }
 
+void DocumentParser::AppendBytes(const std::string& bytes) {
+  if (IsDetached()) {
+    return;
+  }
+  if (kind_ == Kind::kText && !started_) {
+    started_ = true;
+    tree_->StartTextDocument();
+    return;
+  }
+  if (kind_ != Kind::kImage) {
+    return;
+  }
+  if (!image_resource_) {
+    started_ = true;
+    image_resource_ = bindings::MakeGarbageCollected<Resource>(
+        ResourceType::kImage, GURL(document_->UrlForBinding()),
+        FetchMode::kNoCors, FetchCredentialsMode::kOmit);
+    BuildImageDocument(*document_, *image_resource_);
+    if (IsStopped()) {
+      return;
+    }
+    // The response's type and URL; an image takes no notice of its status.
+    FetchResponseHead head;
+    head.url = base::UTF16ToUTF8(document_->UrlForBinding());
+    image_resource_->ResponseReceived(
+        std::move(head), base::UTF16ToUTF8(document_->ContentType()));
+  }
+  // Nothing more goes to an image that has failed to decode.
+  if (image_resource_->GetStatus() != ResourceStatus::kDecodeError) {
+    image_resource_->AppendData(bytes);
+  }
+}
+
 void DocumentParser::AppendData(std::u16string_view text) {
-  if (!IsDetached()) {
-    tree_->Append(text);
+  if (IsDetached()) {
+    return;
+  }
+  switch (kind_) {
+    case Kind::kHtml:
+    case Kind::kText:
+      tree_->Append(text);
+      return;
+    case Kind::kXml:
+      // DecodedDataDocumentParser gives the parser no empty piece.
+      if (!text.empty()) {
+        xml_->Append(text);
+      }
+      return;
+    case Kind::kJson:
+      // Each piece that decodes to text is a text node of its own, as
+      // insertAdjacentText() adds it.
+      if (!text.empty()) {
+        if (!started_) {
+          started_ = true;
+          json_pre_ = &BuildJsonDocument(*document_);
+        }
+        json_pre_->ParserAppendChild(
+            Text::Create(*document_, std::u16string(text)));
+      }
+      return;
+    case Kind::kImage:
+    case Kind::kMedia:
+      return;
   }
 }
 
 void DocumentParser::FinishData() {
-  if (!IsDetached()) {
-    tree_->Finish();
+  if (IsDetached()) {
+    return;
   }
+  // A media document builds its tree at the end, and an image or JSON
+  // document that has started its tree takes no end of input, which would
+  // make the HTML parser's: an empty JSON body gives what HTML's empty input
+  // gives, and an empty image a document with no children, as in Chrome.
+  if (kind_ == Kind::kMedia) {
+    BuildMediaDocument(*document_);
+    return;
+  }
+  if (kind_ == Kind::kImage) {
+    if (image_resource_) {
+      // ImageDocumentParser::Finish(): all of the body is the image's.
+      const cppgc::Persistent<Resource> content = image_resource_.Get();
+      content->Finish(0);
+      if (!IsDetached()) {
+        ImageDocumentLoaded(*document_, *content);
+      }
+    }
+    return;
+  }
+  if (kind_ == Kind::kJson && started_) {
+    return;
+  }
+  if (xml_) {
+    xml_->Finish();
+    return;
+  }
+  tree_->Finish();
 }
 
 void DocumentParser::Finish() {
@@ -141,7 +266,9 @@ void DocumentParser::Finish() {
   }
   // The explicit end of the input of a script-created parser. The client of
   // a response's parser ends its input once it has given all of the body.
-  if (created_by_script_ && !tree_->HasSeenEndOfFile()) {
+  if (created_by_script_ && xml_ && !xml_->HasSeenEndOfFile()) {
+    xml_->Finish();
+  } else if (created_by_script_ && !xml_ && !tree_->HasSeenEndOfFile()) {
     tree_->Finish();
   }
   should_attempt_to_end_on_eof_ = true;
@@ -158,16 +285,26 @@ bool DocumentParser::HasInsertionPoint() const {
   // Blink models the explicit end of the input of a script-created parser as
   // it models the network's end, which the FIXME there says may differ from
   // the standard.
+  if (xml_) {
+    return created_by_script_ && !xml_->HasSeenEndOfFile();
+  }
   return tree_->HasInsertionPoint() ||
          (created_by_script_ && !tree_->HasSeenEndOfFile());
 }
 
 void DocumentParser::Insert(std::u16string_view source) {
-  if (IsStopped() || source.empty()) {
+  // An XML document's content starts its parser even when empty, as
+  // XMLDocumentParser::DoWrite() makes its context then.
+  if (IsStopped() || (source.empty() && !xml_)) {
     return;
   }
   const HeldParser protect(this);
-  tree_->Insert(source);
+  if (xml_) {
+    // What DOMParser and setting a document's content give an XML document.
+    xml_->Append(source);
+  } else {
+    tree_->Insert(source);
+  }
   // Everything that can be parsed now is, without a yield.
   const ScopedCounter should_complete(should_complete_);
   const ScopedCounter end_if_delayed_forbidden(end_if_delayed_forbidden_);
@@ -203,6 +340,7 @@ void DocumentParser::Detach() {
   // is still on the stack uses them, in which case they go with the parser.
   if (!InPumpSession() && !IsExecutingScript() && !tree_->HasInsertionPoint()) {
     tree_.reset();
+    xml_.reset();
   }
   if (Client* const client = std::exchange(client_, nullptr)) {
     client->ParserDetached();
@@ -288,8 +426,9 @@ bool DocumentParser::PumpTokenizer() {
   const ScopedCounter pump_session(pump_session_nesting_level_);
   // Within a write, in a nested pump and in a script-created parser, it takes
   // all that it can.
+  // Blink's XML parser takes all that it has.
   const bool should_run_until_completion =
-      ShouldComplete() || IsSynchronous() || InNestedPumpSession();
+      ShouldComplete() || IsSynchronous() || InNestedPumpSession() || xml_;
   // Once the document has a body, the parser yields when its budget has run
   // out, which it checks after each script and each piece of the body.
   const base::ElapsedTimer timer;
@@ -305,8 +444,11 @@ bool DocumentParser::PumpTokenizer() {
     return should_yield;
   };
   while (!IsStopped() && !IsPaused()) {
-    Element* const script = tree_->Pump();
-    CheckIfBlockingStylesheetAdded();
+    Element* const script = xml_ ? xml_->Pump() : tree_->Pump();
+    // Blink's XML parser does not wait for style sheets.
+    if (!xml_) {
+      CheckIfBlockingStylesheetAdded();
+    }
     if (IsPaused() && !script) {
       break;
     }
@@ -429,6 +571,11 @@ void DocumentParser::PrepareToStopParsing() {
   }
   state_ = State::kStopping;
   const cppgc::Persistent<Document> document = document_.Get();
+  // XMLDocumentParserRs::EndInternal(): the text that waits, or the block of
+  // the errors, before the document is interactive.
+  if (xml_) {
+    xml_->End();
+  }
   document->SetReadiness(Document::Readiness::kInteractive);
   // Its readystatechange may have detached the parser.
   if (IsDetached()) {
@@ -498,10 +645,26 @@ void DocumentParser::ProcessScriptElementInternal(Element& element) {
   if (!pending_script) {
     return;
   }
+  // XMLParserScriptRunner::ProcessScriptElement(): the XML parser takes no
+  // deferred script, so it drops a module script that waits for the end of
+  // parsing, which never runs, as in Chrome.
+  if (xml_ && pending_script->IsModule()) {
+    if (Window* const window = document_->DefaultView()) {
+      window->AddConsoleMessage(ConsoleLevel::kError,
+                                "Module scripts in XML documents are currently "
+                                "not supported. See crbug.com/717643");
+    }
+    return;
+  }
   switch (pending_script->scheduling_type()) {
     case ScriptSchedulingType::kDefer:
-      scripts_after_parsing_.push_back(pending_script);
-      break;
+      // The XML parser's script runner takes a deferred script as one that
+      // blocks the parser.
+      if (!xml_) {
+        scripts_after_parsing_.push_back(pending_script);
+        break;
+      }
+      [[fallthrough]];
     case ScriptSchedulingType::kParserBlocking:
     case ScriptSchedulingType::kParserBlockingInline:
       CHECK(!parser_blocking_script_);

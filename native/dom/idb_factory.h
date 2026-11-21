@@ -1,8 +1,8 @@
-// The window's indexedDB, IndexedDB's IDBFactory, as Blink's: open() and
-// deleteDatabase() make a request that the Session answers, databases()
-// lists the databases of the document's storage key, and cmp() compares two
-// keys. A document whose origin may not reach IndexedDB, which has no
-// IndexedDbHost, gets Chrome's SecurityError from each but cmp().
+// The indexedDB of a window or a worker, IndexedDB's IDBFactory, as Blink's:
+// open() and deleteDatabase() make a request that the Session answers,
+// databases() lists the databases of the context's storage key, and cmp()
+// compares two keys. A context whose origin may not reach IndexedDB, which has
+// no IndexedDbHost, gets Chrome's SecurityError from each but cmp().
 //
 // Chrome asks its content settings once whether a frame may use IndexedDB,
 // before the first open; a Page's profile allows it, so each call goes to the
@@ -33,14 +33,14 @@ class ExceptionState;
 
 class IDBOpenDBRequest;
 class IndexedDbHost;
+class ExecutionContext;
 class StorageBucket;
-class Window;
 
 class IDBFactory final : public bindings::ScriptWrappable {
  public:
-  explicit IDBFactory(Window* window);
+  explicit IDBFactory(ExecutionContext* execution_context);
   // The factory of `bucket`'s databases, which StorageBucket's indexedDB gives.
-  IDBFactory(Window* window, StorageBucket* bucket);
+  IDBFactory(ExecutionContext* execution_context, StorageBucket* bucket);
   ~IDBFactory() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -60,8 +60,8 @@ class IDBFactory final : public bindings::ScriptWrappable {
       bindings::ExceptionState& exception_state);
 
  private:
-  // GetValidContext(): the window, while it has its context, or null.
-  Window* ValidWindow() const;
+  // GetValidContext(): the context, while it is there, or null.
+  ExecutionContext* ValidContext() const;
   IDBOpenDBRequest* OpenInternal(const std::u16string& name,
                                  int64_t version,
                                  bindings::ExceptionState& exception_state);
@@ -69,7 +69,7 @@ class IDBFactory final : public bindings::ScriptWrappable {
   // The number of the bucket that each of its calls names, 0 for the default.
   uint64_t BucketNumber() const;
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> execution_context_;
   // Kept for as long as the factory is, since its number names the bucket.
   const cppgc::Member<StorageBucket> bucket_;
 };

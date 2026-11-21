@@ -29,6 +29,7 @@
 #define MITTO_DOM_DOCUMENT_PARSER_H_
 
 #include <memory>
+#include <string>
 #include <string_view>
 
 #include "base/memory/raw_ptr.h"
@@ -43,10 +44,12 @@ namespace mitto {
 
 class DocWrittenScriptScanner;
 class Document;
+class XmlReader;
 class Element;
 class HtmlDocumentParser;
 class HtmlTreeBuilderReferences;
 class PendingScript;
+class Resource;
 
 class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
  public:
@@ -63,9 +66,28 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
     virtual void ParserDetached() = 0;
   };
 
+  // What the parser makes of its input, as Blink's parsers of each kind of
+  // document: HTML; a text document, HTML's parser after a pre of the text
+  // (TextDocumentParser); JSON's text in a pre (JSONDocumentParser); and an
+  // image or media document, which builds its tree and reads none of the body
+  // (RawDataDocumentParser), the image's on its first piece and the media's
+  // at its end (document_kinds.h).
+  enum class Kind {
+    kHtml,
+    kText,
+    kJson,
+    kImage,
+    kMedia,
+    // XML, on libxml2 (libxml_tree_builder.h) or on the Rust xml crate's
+    // reader (xml_tree_builder.h), as Blink's Document::CreateParser() picks
+    // XMLDocumentParser or XMLDocumentParserRs by the runtime-enabled
+    // features, whose scripts run as Blink's XMLParserScriptRunner runs them.
+    kXml,
+  };
+
   // The parser of `document`'s response, which `client` feeds, and which the
   // document holds until it has loaded.
-  DocumentParser(Document& document, Client* client);
+  DocumentParser(Document& document, Client* client, Kind kind = Kind::kHtml);
   ~DocumentParser();
 
   void Trace(cppgc::Visitor* visitor) const;
@@ -75,6 +97,10 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // More of the body has arrived (HTMLDocumentParser::Append()): the parser
   // takes it from a task of the networking task source.
   void DidReceiveData();
+  // In FeedParser(): a piece of the body that is not empty has come, before
+  // it is decoded, which starts a text or an image document's tree, and is an
+  // image document's image, as ImageDocumentParser::AppendBytes() feeds it.
+  void AppendBytes(const std::string& bytes);
   // In FeedParser(): adds what was decoded, and ends the input.
   void AppendData(std::u16string_view text);
   void FinishData();
@@ -193,6 +219,13 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   void ContinueScriptsWaitingForParsing();
 
   cppgc::Member<Document> document_;
+  const Kind kind_;
+  // Whether a text, JSON or image document has started its tree, and JSON's
+  // pre.
+  bool started_ = false;
+  cppgc::Member<Element> json_pre_;
+  // An image document's image, the response's body.
+  cppgc::Member<Resource> image_resource_;
   // The loader that feeds the parser of a response, which outlives it while
   // it is attached; null for a script-created parser.
   raw_ptr<Client> client_;
@@ -204,6 +237,9 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // nothing on the stack uses them, as a script that runs may still have an
   // insertion point in them once the parser has stopped.
   std::unique_ptr<HtmlDocumentParser> tree_;
+  // The XML parser's tree builder, which takes the place of the tokenizer
+  // and the HTML tree builder for an XML document.
+  std::unique_ptr<XmlReader> xml_;
   // What writes gave while the parser waits for a script, scanned as Blink's
   // insertion preload scanner does, until the parser goes on.
   std::unique_ptr<DocWrittenScriptScanner> insertion_scanner_;

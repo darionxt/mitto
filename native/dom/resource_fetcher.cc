@@ -203,6 +203,39 @@ Resource* ResourceFetcher::CachedResource(const GURL& url) const {
   return nullptr;
 }
 
+Resource* ResourceFetcher::UnusedPreload(const GURL& url,
+                                         ResourceType type) const {
+  const GURL key = WithoutFragment(url);
+  for (size_t i = resources_.size(); i > 0; --i) {
+    Resource* const resource = resources_[i - 1];
+    if (resource->IsUnusedPreload() && resource->GetType() == type &&
+        WithoutFragment(resource->Url()) == key) {
+      return resource;
+    }
+  }
+  return nullptr;
+}
+
+Resource* ResourceFetcher::MatchPreload(const FetchParameters& params) {
+  Resource* const resource = UnusedPreload(params.url, params.type);
+  if (!resource) {
+    return nullptr;
+  }
+  if (!params.integrity.empty() &&
+      !IntegritySetsEqual(resource->Integrity(), params.integrity)) {
+    return nullptr;
+  }
+  if (resource->Mode() != params.mode ||
+      resource->Credentials() != params.credentials) {
+    return nullptr;
+  }
+  resource->SetIsUnusedPreload(false);
+  if (resource->HttpStatus() == 304) {
+    return nullptr;
+  }
+  return resource;
+}
+
 bool ResourceFetcher::CanUse(const Resource& existing,
                              const FetchParameters& params) const {
   // MustRefetchDueToIntegrityMetadata(): a request with integrity metadata
@@ -253,10 +286,21 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
   if (!window || !params.url.is_valid()) {
     return nullptr;
   }
-  Resource* const existing = CachedResource(params.url);
+  // MatchPreload() first: an unused preload of the URL and type, which a
+  // newer resource of the URL and another type does not hide, and then the
+  // newest resource of the URL, as Blink's memory cache keeps one.
+  Resource* existing = UnusedPreload(params.url, params.type);
+  if (!existing || !CanUse(*existing, params)) {
+    existing = CachedResource(params.url);
+  }
   if (existing && CanUse(*existing, params)) {
     if (existing->IsUnusedPreload() && !params.is_link_preload) {
-      existing->SetIsUnusedPreload(false);
+      // A speculative preload takes it and leaves it unused, as
+      // MatchPreload() returns it before it marks it.
+      if (params.speculative_preload_type ==
+          SpeculativePreloadType::kNotSpeculative) {
+        existing->SetIsUnusedPreload(false);
+      }
       MakePreloadedResourceBlockIfNeeded(*existing, params);
     }
     return existing;

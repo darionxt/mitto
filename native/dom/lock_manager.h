@@ -1,11 +1,12 @@
-// navigator.locks: the Web Locks API of a window, as Blink's LockManager runs
-// it over the Page's LockService. A request checks its options, waits for the
-// first answer about storage access, which the browser gives from a task of
-// its own and the manager keeps, then asks the service, and calls its callback
-// once the lock is granted, or with null once a request that would not wait
-// fails. Its promise settles as the callback's result does, once the lock is
-// let go. A request aborted by its signal before it is granted rejects with the
-// signal's reason. When the window's context goes, its requests and locks go.
+// navigator.locks: the Web Locks API of a window or a worker, as Blink's
+// LockManager runs it over the Page's LockService. A request checks its
+// options, waits for the first answer about storage access, which the browser
+// gives from a task of its own and the manager keeps, then asks the service,
+// and calls its callback once the lock is granted, or with null once a request
+// that would not wait fails. Its promise settles as the callback's result
+// does, once the lock is let go. A request aborted by its signal before it is
+// granted rejects with the signal's reason. When the context goes, its
+// requests and locks go at once.
 //
 // Upstream: third_party/blink/renderer/modules/locks/lock_manager.h
 // Upstream: third_party/blink/renderer/modules/locks/lock_manager.cc
@@ -36,13 +37,13 @@ class ExceptionState;
 }  // namespace bindings
 
 class AbortSignal;
+class ExecutionContext;
 class Lock;
-class Window;
 
 class LockManager final : public bindings::ScriptWrappable {
  public:
-  // The manager of `window`, whose context it lives in.
-  explicit LockManager(Window& window);
+  // The manager of `context`, a window's or a worker's, which it lives in.
+  explicit LockManager(ExecutionContext& context);
   ~LockManager() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -67,7 +68,7 @@ class LockManager final : public bindings::ScriptWrappable {
   class AbortRequest;
 
   // Whether the document may reach Web Locks: not for an opaque origin, nor
-  // once the window's context has gone, for which this throws.
+  // once the context has gone, for which this throws.
   bool CheckAccess(bindings::ExceptionState& exception_state) const;
   // Runs `callback` once the browser has said that the document may use
   // storage, which it answers from a task of its own the first time. A Page's

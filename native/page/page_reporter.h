@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "base/functional/callback.h"
@@ -47,13 +48,24 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
  public:
   // Starts an inspector on `isolate`, as Blink does for each isolate, and has
   // V8 tell this of each promise that is rejected with no handler, and of each
-  // error that nothing caught. One at a time.
+  // error that nothing caught. One at a time on each thread.
   PageReporter(v8::Isolate* isolate, SendFrame send);
 
   PageReporter(const PageReporter&) = delete;
   PageReporter& operator=(const PageReporter&) = delete;
 
   ~PageReporter() override;
+
+  // Where an error that no listener canceled goes instead of the Session, as
+  // a dedicated worker's goes to its Worker, with V8's message of it.
+  using UncaughtSink =
+      base::RepeatingCallback<void(v8::Local<v8::Message> message,
+                                   v8::Local<v8::Value> exception)>;
+  void SetUncaughtSink(UncaughtSink sink) { uncaught_sink_ = std::move(sink); }
+
+  // Whether the isolate's contexts are a worker's, whose console has no
+  // memory. Before the first ContextCreated().
+  void SetForWorker() { for_worker_ = true; }
 
   // Has the console of `context` report here.
   void ContextCreated(v8::Local<v8::Context> context);
@@ -122,6 +134,8 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
 
   const raw_ptr<v8::Isolate> isolate_;
   const SendFrame send_;
+  UncaughtSink uncaught_sink_;
+  bool for_worker_ = false;
   std::unique_ptr<v8_inspector::V8Inspector> inspector_;
   // The promises rejected with no handler since the last report.
   std::vector<Rejection> rejections_;

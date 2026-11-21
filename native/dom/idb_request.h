@@ -46,7 +46,7 @@ class IDBAny;
 class IDBCursor;
 class IDBRequestQueueItem;
 class IDBTransaction;
-class Window;
+class ExecutionContext;
 
 // A DOMException of an IndexedDB error that the Session reports, with
 // `message`: a QuotaExceededError for kQuotaError, as Chrome makes one with
@@ -77,13 +77,13 @@ class IDBRequest : public EventTarget {
     virtual void Invoke(IDBRequest* request) = 0;
   };
 
-  // A request of `transaction` in its window, made by `source`, an
+  // A request of `transaction` in its context, made by `source`, an
   // IDBObjectStore, an IDBIndex or an IDBCursor, which joins the
   // transaction's requests. `transaction` is active.
   static IDBRequest* Create(bindings::ScriptWrappable* source,
                             IDBTransaction* transaction);
 
-  IDBRequest(Window* window,
+  IDBRequest(ExecutionContext* execution_context,
              bindings::ScriptWrappable* source,
              IDBTransaction* transaction);
   ~IDBRequest() override;
@@ -100,9 +100,11 @@ class IDBRequest : public EventTarget {
   std::u16string ReadyState() const;
 
   // What the rest of IndexedDB uses.
-  Window* GetWindow() const { return window_.Get(); }
+  ExecutionContext* GetExecutionContext() const {
+    return execution_context_.Get();
+  }
   // ExecutionContextLifecycleObserver::GetExecutionContext(): whether the
-  // request's window still has its context.
+  // request's context is still there.
   bool HasContext() const;
   ReadyStateValue GetReadyState() const { return ready_state_; }
   bool IsAborted() const { return request_aborted_; }
@@ -168,7 +170,7 @@ class IDBRequest : public EventTarget {
   // or error that follows.
   void TransactionDidFinishAndDispatch();
 
-  // The window's context went: a pending request gives up its result, which
+  // The context went: a pending request gives up its result, which
   // lets its transaction's queue drain.
   void ContextDestroyed();
 
@@ -208,7 +210,7 @@ class IDBRequest : public EventTarget {
                                 IDBKey primary_key,
                                 IndexedDbReturnValue value);
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> execution_context_;
   const cppgc::Member<bindings::ScriptWrappable> source_;
   cppgc::Member<IDBAny> result_;
   cppgc::Member<DOMException> error_;

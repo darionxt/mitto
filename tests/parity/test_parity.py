@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,8 @@ from tools.capture import (
     dumps_normal_form,
     normal_form,
 )
+from tools.capture import server as server_module
+from tools.capture.page import RequestHead, Response
 from tools.parity import (
     BASELINES_DIRECTORY,
     KNOWN_GAPS_FILE_NAME,
@@ -44,11 +47,13 @@ from tools.parity import (
     mismatches,
 )
 from tools.parity.check import record
-from tools.parity.replay import protocol_of, through_page
+from tools.parity.replay import protocol_of, proxy_of, replay, run_of, session_settings, through_page
 
 _REPOSITORY = Path(__file__).parents[2]
 _REGENERATE = "uv run python -m tools.parity"
 _ALL_KINDS = ("navigation", "fetch", "script", "image")
+# Long enough that the Page's load event comes first wherever the tests run.
+_LATE_ANSWER_SECONDS = 0.5
 
 
 def known_gaps(directory: Path) -> list[Gap]:
@@ -91,6 +96,36 @@ def test_the_cases_a_page_makes_differ_from_its_baselines_only_by_the_known_gaps
     """The same for the cases that only a page makes, such as a navigation that no user started, through a Page."""
     monkeypatch.setattr(check, "Session", mitto.Session)
     _differ_only_by_the_known_gaps(by_page=True)
+
+
+@pytest.mark.usefixtures("page_program")
+def test_the_page_leaves_the_start_page_only_once_its_module_has_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The window's load event comes before the module's import()s end, and the Page waits for them, as the start page's
+    script does, so that the navigation cancels none. The server answers the first import() late, so that the load event
+    surely comes first."""
+    run = run_of("navigation_location", HTTP3)
+    assert run is not None
+    paths = {case.name: case.path for case in run.cases}
+    answer = server_module.respond_on
+
+    def answer_late(scheme: str, port: int, request: RequestHead) -> Response:
+        if request.target == paths["module_text"]:
+            time.sleep(_LATE_ANSWER_SECONDS)
+        return answer(scheme, port, request)
+
+    monkeypatch.setattr(server_module, "respond_on", answer_late)
+    with (
+        CaptureServer() as server,
+        Session(
+            persona=CHROME_157_WINDOWS, proxy=proxy_of(server, run), _settings=session_settings(server, run)
+        ) as session,
+    ):
+        replay(session, server, run, "navigation_location")
+    recording = server.recording(run.route, host=run.host)
+    targets = [request.target for connection in recording.connections for request in connection.requests]
+
+    assert targets.index(paths["navigation_location"]) > targets.index(paths["module_dynamic_import"])
+    normal_form(recording, run.cases)
 
 
 def test_the_known_gaps_list_is_written_the_way_the_command_writes_it() -> None:

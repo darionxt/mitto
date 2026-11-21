@@ -527,6 +527,8 @@ class HtmlTreeBuilder {
   }
 
   Element* fragment_root() const { return root_; }
+  // HTMLTreeBuilder::SetShouldSkipLeadingNewline().
+  void SetShouldSkipLeadingNewline(bool skip) { skip_leading_newline_ = skip; }
   // Blink's kAllowScriptingContentAndDoNotMarkAlreadyStarted: the script
   // elements are neither the parser's nor already started.
   void SetScriptsRunnable() { scripts_parser_inserted_ = false; }
@@ -3358,6 +3360,26 @@ Element* HtmlDocumentParser::Pump() {
     }
   }
   return nullptr;
+}
+
+void HtmlDocumentParser::StartTextDocument() {
+  // Two tokens that no markup gave, so that the tokenizer's positions stay
+  // those of the text.
+  HtmlToken meta;
+  meta.type = HtmlToken::Type::kStartTag;
+  meta.name = u"meta";
+  meta.attributes = {{u"name", u"color-scheme"}, {u"content", u"light dark"}};
+  tree_builder_->ProcessToken(meta);
+  HtmlToken pre;
+  pre.type = HtmlToken::Type::kStartTag;
+  pre.name = u"pre";
+  pre.attributes = {
+      {u"style", u"word-wrap: break-word; white-space: pre-wrap;"}};
+  tree_builder_->ProcessToken(pre);
+  // The text's first line feed stays, as the pre's would not, and the rest
+  // is text, as plaintext's is.
+  tree_builder_->SetShouldSkipLeadingNewline(false);
+  tokenizer_->SetState(HtmlTokenizer::State::kPlaintext);
 }
 
 const std::vector<std::string>& HtmlDocumentParser::skipped_rules() const {

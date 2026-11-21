@@ -3,6 +3,7 @@
 #include <utility>
 #include <variant>
 
+#include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/no_destructor.h"
@@ -16,6 +17,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/performance_entry.h"
 #include "mitto/dom/performance_mark.h"
@@ -136,6 +138,11 @@ Performance* Performance::Create(base::TimeTicks time_origin,
   return bindings::MakeGarbageCollected<Performance>(time_origin, timing);
 }
 
+// static
+Performance* Performance::CreateForWorker(base::TimeTicks time_origin) {
+  return bindings::MakeGarbageCollected<Performance>(time_origin, nullptr);
+}
+
 Performance::Performance(base::TimeTicks time_origin,
                          DocumentLoadTiming* timing)
     : time_origin_(time_origin),
@@ -145,10 +152,12 @@ Performance::Performance(base::TimeTicks time_origin,
           base::RandIntInclusive(kMinNavigationId, kMaxNavigationIdForReset))),
       resource_timing_buffer_size_limit_(kDefaultResourceTimingBufferSize) {
   // WindowPerformance's AddVisibilityStateEntry() for the page's visibility
-  // when it is made, at no time, which reads as 0.
-  visibility_state_buffer_.push_back(
-      bindings::MakeGarbageCollected<VisibilityStateEntry>(u"visible", 0.0,
-                                                           navigation_id_));
+  // when it is made, at no time, which reads as 0. A worker has none.
+  if (timing) {
+    visibility_state_buffer_.push_back(
+        bindings::MakeGarbageCollected<VisibilityStateEntry>(u"visible", 0.0,
+                                                             navigation_id_));
+  }
 }
 
 Performance::~Performance() = default;
@@ -183,8 +192,9 @@ double Performance::TimeOrigin() const {
 
 PerformanceNavigationTiming* Performance::NavigationTiming() {
   // Blink makes it when the document commits, which a document of a response
-  // does before any of its scripts runs.
-  if (!navigation_timing_ && document_timing_->has_response) {
+  // does before any of its scripts runs. A worker has none.
+  if (!navigation_timing_ && document_timing_ &&
+      document_timing_->has_response) {
     navigation_timing_ =
         bindings::MakeGarbageCollected<PerformanceNavigationTiming>(
             document_timing_.Get(), time_origin_, navigation_id_);
@@ -217,8 +227,8 @@ Performance::EntryList Performance::EntriesOfType(
     const std::optional<std::u16string>& name) {
   const PerformanceEntry::Kind kind = PerformanceEntry::ToKind(entry_type);
   if (!PerformanceEntry::IsValidTimelineEntryKind(kind)) {
-    Window::Current().AddConsoleMessage(ConsoleLevel::kWarning,
-                                        "Deprecated API for given entry type.");
+    ExecutionContext::Current().AddConsoleMessage(
+        ConsoleLevel::kWarning, "Deprecated API for given entry type.");
     return EntryList();
   }
   EntryList entries;
@@ -393,13 +403,23 @@ double Performance::GetTimeOrFindMarkTime(
   }
   // Or an attribute of performance.timing, relative to the navigation's
   // start.
-  const std::optional<uint64_t> value = Timing()->GetNamedAttribute(mark_name);
-  if (!value) {
+  if (!PerformanceTiming::IsAttributeName(mark_name)) {
     exception_state.ThrowDOMException(
         "SyntaxError",
         base::StrCat({"The mark '", Utf8(mark_name), "' does not exist."}));
     return 0;
   }
+  // A worker has no performance.timing.
+  if (!document_timing_) {
+    exception_state.ThrowTypeError(base::StrCat(
+        {"When converting a mark name ('", Utf8(mark_name),
+         "') to a timestamp given a name that is a read only attribute in the "
+         "PerformanceTiming interface, the global object has to be a Window "
+         "object."}));
+    return 0;
+  }
+  const std::optional<uint64_t> value = Timing()->GetNamedAttribute(mark_name);
+  CHECK(value);
   if (*value == 0) {
     exception_state.ThrowDOMException(
         "InvalidAccessError",
@@ -471,8 +491,11 @@ v8::Local<v8::Object> Performance::ToJSONForBinding() {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   V8ObjectBuilder builder(isolate);
   builder.AddNumber("timeOrigin", TimeOrigin());
-  builder.Add("timing", bindings::ToV8(isolate, Timing()));
-  builder.Add("navigation", bindings::ToV8(isolate, Navigation()));
+  // Performance::BuildJSONValue() alone, for a worker.
+  if (document_timing_) {
+    builder.Add("timing", bindings::ToV8(isolate, Timing()));
+    builder.Add("navigation", bindings::ToV8(isolate, Navigation()));
+  }
   return builder.Result();
 }
 
@@ -506,10 +529,10 @@ void Performance::AddResourceTiming(ResourceTimingInfo info,
               const v8::Local<v8::Context> context =
                   context_handle.Get(isolate);
               const v8::Context::Scope context_scope(context);
-              // A window that has gone fires nothing.
-              const Window* const window =
-                  bindings::V8Window::ToWrappable(isolate, context->Global());
-              if (!window || !window->HasContext()) {
+              // A context that has gone fires nothing.
+              const ExecutionContext* const execution_context =
+                  ExecutionContext::From(isolate, context);
+              if (!execution_context || !execution_context->HasContext()) {
                 return;
               }
               performance->FireResourceTimingBufferFull();

@@ -100,7 +100,7 @@ def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of
     assert set(waiting.values()) <= {280, 283, 284, 285, 289, 291}
 
 
-def test_only_the_navigations_that_a_page_starts_are_replayed_through_a_page_from_the_page_they_came_from() -> None:
+def test_a_page_from_where_they_came_replays_only_its_own_navigations_and_its_workers_requests() -> None:
     through = {name for name, replay in REPLAYS.items() if replay.through_page}
 
     assert through == {
@@ -109,6 +109,8 @@ def test_only_the_navigations_that_a_page_starts_are_replayed_through_a_page_fro
         "navigation_meta_refresh",
         "redirect_location_1",
         "redirect_location_2",
+        "worker_import_scripts",
+        "worker_fetch",
     }
     assert all(REPLAYS[name].page is not None and REPLAYS[name].made_by_a_page is None for name in through)
 

@@ -418,7 +418,7 @@ if (mitto_enable_runtime) {
       "page:mitto_page",
     ]
     if (use_libfuzzer) {
-      deps += [ "dom:html_tree_builder_fuzzer" ]
+      deps += [ "dom:runtime_fuzzers" ]
     }
   }
 }
