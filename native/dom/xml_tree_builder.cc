@@ -53,6 +53,10 @@ bool XmlTreeBuilder::HasSeenEndOfFile() const {
   return finish_called_;
 }
 
+bool XmlTreeBuilder::SawError() const {
+  return builder_.saw_error();
+}
+
 Element* XmlTreeBuilder::Pump() {
   ended_script_ = nullptr;
   while (!builder_.IsStopped() && !saw_end_document_ &&

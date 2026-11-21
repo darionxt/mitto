@@ -7,8 +7,6 @@
 
 #include "base/strings/string_util.h"
 #include "mitto/bindings/exception_state.h"
-#include "mitto/bindings/per_isolate_data.h"
-#include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_html_button_element.h"
 #include "mitto/bindings/v8_html_camera_element.h"
@@ -60,9 +58,6 @@
 #include "mitto/bindings/v8_html_track_element.h"
 #include "mitto/bindings/v8_html_user_media_element.h"
 #include "mitto/bindings/v8_html_video_element.h"
-#include "mitto/css/media_query_evaluator.h"
-#include "mitto/css/media_query_parser.h"
-#include "mitto/css/media_values.h"
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event_handler_attributes.h"
@@ -73,7 +68,6 @@
 #include "mitto/dom/media_query_list.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
-#include "v8/include/v8-isolate.h"
 
 namespace mitto {
 
@@ -1285,19 +1279,7 @@ HTMLPictureElement* PictureParent(Node* parent) {
 // Upstream: third_party/blink/renderer/core/html/html_source_element.cc
 bool HTMLSourceElement::MediaQueryMatches() const {
   const std::u16string* const media = FindAttribute(u"media");
-  if (!media || media->empty()) {
-    return true;
-  }
-  Window* const window = GetDocument().DefaultView();
-  if (!window) {
-    return true;
-  }
-  const MediaQueryFeatures features = MediaQueryFeaturesFor(
-      bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features());
-  MediaValues values = MediaValuesFor(window->Start());
-  values.strict_mode = !GetDocument().InQuirksMode();
-  return MediaQueryEvaluator(values).Eval(
-      *ParseMediaQuerySet(*media, features));
+  return !media || MediaAttributeMatches(GetDocument(), *media);
 }
 
 Node::InsertionNotificationRequest HTMLSourceElement::InsertedInto(

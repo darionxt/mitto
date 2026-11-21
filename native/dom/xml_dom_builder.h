@@ -39,6 +39,9 @@ class XmlReader {
   // Ends the input.
   virtual void Finish() = 0;
   virtual bool HasSeenEndOfFile() const = 0;
+  // Whether the parse has met an error, which gives a document Blink's block
+  // of the errors.
+  virtual bool SawError() const = 0;
   // Builds the tree from what has been read. Returns the script element whose
   // end tag it reached, which the parser processes before it calls this
   // again, or null once it needs more input or is done.

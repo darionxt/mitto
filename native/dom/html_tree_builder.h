@@ -27,6 +27,7 @@
 #include <string_view>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
@@ -123,6 +124,12 @@ class HtmlDocumentParser {
   // goes on, or null once it needs more markup or has reached the end. Call
   // it again to go on.
   Element* Pump();
+  // What Pump() asks after each token, to stop before the next when it says
+  // so, as Blink's parser stops for a style sheet in the body that it
+  // waits for.
+  void SetShouldPause(base::RepeatingCallback<bool()> should_pause) {
+    should_pause_ = std::move(should_pause);
+  }
 
   // TextDocumentParser::InsertFakePreElement(): the start of a text
   // document, a meta of its color scheme and a pre whose text the rest of the
@@ -135,6 +142,7 @@ class HtmlDocumentParser {
   const std::vector<std::string>& skipped_rules() const;
 
  private:
+  base::RepeatingCallback<bool()> should_pause_;
   const cppgc::Persistent<HtmlTreeBuilderReferences> own_references_;
   std::unique_ptr<HtmlTokenizer> tokenizer_;
   std::unique_ptr<HtmlTreeBuilder> tree_builder_;

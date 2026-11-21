@@ -49,6 +49,7 @@ class XmlTreeBuilder final : public XmlReader, public xml_ffi::XmlCallbacks {
   // Ends the input: an end that is still inside the document is an error.
   void Finish() override;
   bool HasSeenEndOfFile() const override;
+  bool SawError() const override;
 
   // Builds the tree from what the reader has. Returns the script element
   // whose end tag it reached, which the parser processes before it calls this

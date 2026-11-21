@@ -114,6 +114,12 @@ void CharacterData::ReplaceDataInternal(uint32_t offset,
     traversals->DidReplaceText(*this, offset, count,
                                static_cast<uint32_t>(data.size()));
   }
+  // CharacterData::DidModifyData(): the parent hears of it, as a style
+  // element reads its text again.
+  if (Node* const parent = ParentNode()) {
+    parent->ChildrenChanged(ChildrenChangeType::kTextChanged, *this,
+                            /*by_parser=*/false);
+  }
 }
 
 void CharacterData::ModifyData(

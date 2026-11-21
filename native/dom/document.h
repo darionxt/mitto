@@ -510,9 +510,29 @@ class Document : public Node {
   // run inside others.
   void PushCurrentScript(Element* element);
   void PopCurrentScript(Element* element);
-  // Whether no style sheet blocks scripts, which none does while a Page loads
-  // no style sheets.
-  bool IsScriptExecutionReady() const { return true; }
+  // Whether no style sheet blocks scripts.
+  bool IsScriptExecutionReady() const {
+    return pending_script_blocking_stylesheets_ == 0;
+  }
+  // Blink's PendingSheetType: what a style sheet that loads holds back.
+  enum class PendingSheetType {
+    kNone,
+    // Nothing: one whose media does not match, or an alternate one.
+    kNonBlocking,
+    // Rendering, but not scripts: one that a script inserted.
+    kDynamicRenderBlocking,
+    // Scripts, and rendering before the body or the parser in it: one that
+    // the parser inserted.
+    kBlocking,
+  };
+  // StyleEngine::AddPendingBlockingSheet() and RemovePendingBlockingSheet()
+  // of a sheet that `owner`, a link or a style element, loads: one of type
+  // kBlocking blocks scripts, and before the body rendering, or in it the
+  // parser. Removing the last that blocks scripts lets the scripts that wait
+  // for them run, from a task, as Document::DidLoadAllScriptBlockingResources()
+  // posts it.
+  void AddPendingBlockingSheet(Element& owner, PendingSheetType type);
+  void RemovePendingBlockingSheet(Element& owner, PendingSheetType type);
   // What holds the load event back, such as an async script that has not
   // run. Once nothing does, CheckCompleted() runs from a task, as Blink's
   // load event delay timer runs it.
@@ -557,6 +577,10 @@ class Document : public Node {
   // Removing the last one begins rendering if the body is there.
   void AddPendingRenderBlockingScript(Element& script);
   void RemovePendingRenderBlockingScript(Element& script);
+  // RenderBlockingResourceManager::AddPendingStylesheet(): whether a style
+  // sheet that `owner` loads blocks rendering, which one before the body
+  // does, as a script does.
+  bool AddPendingRenderBlockingSheet(Element& owner);
   // Document::CheckCompleted(): complete, and the window's load event, once
   // parsing has finished and nothing holds the load event back.
   void CheckCompleted();
@@ -804,6 +828,8 @@ class Document : public Node {
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;
+  int pending_script_blocking_stylesheets_ = 0;
+  int pending_parser_blocking_stylesheets_ = 0;
   bool load_event_check_pending_ = false;
   cppgc::Member<DocumentParser> parser_;
   cppgc::Member<DocumentLoadTiming> load_timing_;

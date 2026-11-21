@@ -24,8 +24,10 @@
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/html_link_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/html_style_element.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/qualified_name.h"
@@ -994,6 +996,13 @@ class HtmlTreeBuilder {
     Element* const element = OwnerDocumentForCurrentNode().CreateElement(
         namespace_uri, std::nullopt, token.name);
     const bool foreign = namespace_uri != html_names::kXhtmlNamespace;
+    // CreateElementFlags::ByParser() and ByFragmentParser(): the link and
+    // style elements that the parser makes hold scripts back.
+    if (!foreign && token.name == u"link") {
+      static_cast<HTMLLinkElement*>(element)->SetCreatedByParser();
+    } else if (!foreign && token.name == u"style") {
+      static_cast<HTMLStyleElement*>(element)->SetCreatedByParser();
+    }
     for (const HtmlAttribute& attribute : token.attributes) {
       if (const std::optional<QualifiedName> name =
               foreign ? ForeignAttributeName(attribute.name) : std::nullopt) {
@@ -1351,6 +1360,9 @@ class HtmlTreeBuilder {
   // open elements: a patching template's patch finishes
   // (Patch::Finalize()), its markers and the template going.
   void FinishParsingChildren(Element& element) {
+    if (element.HasHTMLTagName(u"style")) {
+      static_cast<HTMLStyleElement&>(element).FinishParsingChildren();
+    }
     const auto it = patches_.find(&element);
     if (it == patches_.end()) {
       return;
@@ -3342,6 +3354,9 @@ Element* HtmlDocumentParser::Pump() {
   while (tokenizer_->NextToken(token)) {
     if (Element* const script = tree_builder_->ProcessToken(token)) {
       return script;
+    }
+    if (should_pause_ && should_pause_.Run()) {
+      return nullptr;
     }
   }
   return nullptr;
