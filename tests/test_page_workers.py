@@ -101,6 +101,15 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"navigator.userAgentData.getHighEntropyValues(['architecture', 'platformVersion', 'fullVersionList'])"
         b".then((v) => postMessage(v), (e) => postMessage(String(e)));",
     ),
+    # Marks named as attributes of performance.timing, which a worker may make and measure from.
+    "/timing-marks.js": (
+        "text/javascript",
+        b"const out = []; const t = (f) => { try { out.push(String(f())); } catch (e) { out.push(e.name + ': ' +"
+        b" e.message); } }; t(() => performance.mark('navigationStart').name);"
+        b" t(() => new PerformanceMark('loadEventEnd').name);"
+        b" t(() => typeof performance.measure('m', 'navigationStart').duration);"
+        b" t(() => performance.getEntriesByName('navigationStart').length); postMessage(out);",
+    ),
     "/data-imports.js": (
         "text/javascript",
         b"var x = 'a', ran = false; const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return e; } };"
@@ -425,6 +434,17 @@ def test_a_workers_measure_from_a_timing_name_throws_as_in_chrome(server: str) -
         timing("loadEventEnd"),
         timing("navigationStart"),
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_makes_marks_named_as_timing_attributes_as_in_chrome(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/timing-marks.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    # What Chrome 157.0.8103.79 gave, where a window's marks of these names throw.
+    assert _evaluate(server, script) == ["navigationStart", "loadEventEnd", "number", "1"]
 
 
 @pytest.mark.usefixtures("page_program")
