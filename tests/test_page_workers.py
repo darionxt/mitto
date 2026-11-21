@@ -87,6 +87,13 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b" setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {} go(); }, 0);",
     ),
     "/busy-child.js": ("text/javascript", b"const go = () => fetch('/data.txt').then(go, go); go();"),
+    # performance.measure() from a name of performance.timing, which a worker has not, as Chrome 157.0.8103.79 throws.
+    "/measure.js": (
+        "text/javascript",
+        b"const out = []; for (const args of [['navigationStart'], ['nope'], [{start: 'loadEventEnd'}],"
+        b" [undefined, 'navigationStart']]) { try { performance.measure('m', ...args); out.push('ok'); }"
+        b" catch (e) { out.push(e.name + ': ' + e.message); } } postMessage(out);",
+    ),
     "/data-imports.js": (
         "text/javascript",
         b"var x = 'a', ran = false; const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return e; } };"
@@ -374,6 +381,28 @@ def test_a_worker_reads_its_location_and_its_creators_navigator(server: str) -> 
     assert worker[:6] == [f"{server}/where.js?q#f", "/where.js", f"{server}/where.js?q#f", server, server, True]
     assert worker[6:10] == window
     assert worker[10:] == [True, "[object WorkerNavigator]", "undefined"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_measure_from_a_timing_name_throws_as_in_chrome(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/measure.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    def timing(name: str) -> str:
+        return (
+            f"TypeError: Failed to execute 'measure' on 'Performance': When converting a mark name ('{name}') to a"
+            " timestamp given a name that is a read only attribute in the PerformanceTiming interface, the global"
+            " object has to be a Window object."
+        )
+
+    assert _evaluate(server, script) == [
+        timing("navigationStart"),
+        "SyntaxError: Failed to execute 'measure' on 'Performance': The mark 'nope' does not exist.",
+        timing("loadEventEnd"),
+        timing("navigationStart"),
+    ]
 
 
 @pytest.mark.usefixtures("page_program")
