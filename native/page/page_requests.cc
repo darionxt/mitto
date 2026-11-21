@@ -222,7 +222,8 @@ void PageRequests::CancelAll() {
 }
 
 void PageRequests::Hint(const PageNetworkHint& hint) {
-  send_.Run(EncodeNetworkHint(Window::Current().DocumentId(), hint));
+  const uint64_t document = Window::Current().DocumentId();
+  sender_->SendFromContext(document, EncodeNetworkHint(document, hint));
 }
 
 void PageRequests::LetGo(uint64_t number) {
