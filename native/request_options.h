@@ -54,6 +54,11 @@ struct FetchParams {
 
   // The URL of the page the request comes from. Always valid.
   std::optional<GURL> initiator;
+  // Whether the request comes from an opaque origin, as a dedicated worker of
+  // a data: URL's is, in place of `initiator`: its Origin is "null", it comes
+  // from another site than any URL's, and it names no page to refer from.
+  // `top_frame_origin` then gives the top-level frame that partitions it.
+  bool opaque_initiator = false;
 
   // The referrer policy of the request, or strict-origin-when-cross-origin,
   // Chrome's default, which no Baseline's page changes. A Page's request can
