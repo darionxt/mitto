@@ -1,5 +1,6 @@
 #include "mitto/page/worker_begin_frame_provider.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -7,6 +8,16 @@
 #include "mitto/page/begin_frame_source.h"
 
 namespace mitto {
+namespace {
+
+// How long after its vsync a BeginFrame reaches the worker: Chrome's measured
+// latency, but within half of a display's period that is shorter, so that each
+// frame arrives before its deadline, the next vsync.
+base::TimeDelta ArrivalLatency(const BeginFrameSource::VSync& vsync) {
+  return std::min(BeginFrameSource::kBeginFrameLatency, vsync.interval / 2);
+}
+
+}  // namespace
 
 WorkerBeginFrameProvider::WorkerBeginFrameProvider(
     scoped_refptr<base::SingleThreadTaskRunner> compositor)
@@ -50,11 +61,11 @@ void WorkerBeginFrameProvider::OnBeginFrame(base::TimeTicks frame_time) {
   const base::TimeTicks now = base::TimeTicks::Now();
   if (now > frame_time + vsync.interval) {
     const base::TimeTicks next = vsync.NextAfter(now);
-    PostBeginFrame(next, next + BeginFrameSource::kBeginFrameLatency);
+    PostBeginFrame(next, next + ArrivalLatency(vsync));
     return;
   }
   const base::TimeTicks next = vsync.NextAfter(frame_time);
-  PostBeginFrame(next, next + BeginFrameSource::kBeginFrameLatency);
+  PostBeginFrame(next, next + ArrivalLatency(vsync));
   std::vector<EventLoop::BeginFrameCallback> requests;
   requests.swap(requests_);
   for (EventLoop::BeginFrameCallback& request : requests) {

@@ -786,6 +786,19 @@ def test_a_worker_that_a_window_started_has_animation_frames(server: str) -> Non
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_workers_animation_frames_go_on_at_a_display_of_1000_hz(server: str) -> None:
+    # Its period is shorter than a frame takes to arrive, which the frames still arrive within.
+    machine = mitto.Machine.draw(seed=4, refresh_rate=1000)
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/frames.js');
+        worker.onmessage = (e) => resolve(e.data);
+        setTimeout(() => resolve('stalled'), 5000);
+    })"""
+    with mitto.Session(machine=machine) as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == [True, True, False]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_worker_that_a_worker_started_has_no_animation_frames(server: str) -> None:
     script = """new Promise((resolve) => {
         const worker = new Worker('/nested-frames.js');
