@@ -294,6 +294,9 @@ bool DocumentLoader::FeedParser() {
   if (!waiting_body_.empty()) {
     const std::string bytes = std::move(waiting_body_.front());
     waiting_body_.pop_front();
+    // The Session hears that the piece is taken before anything the parser,
+    // or its preload scanner, asks for from it.
+    requests_->TookBody(number_, bytes.size());
     if (!bytes.empty()) {
       parser_->AppendBytes(bytes);
     }
@@ -301,7 +304,6 @@ bool DocumentLoader::FeedParser() {
     if (parser_) {
       AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
     }
-    requests_->TookBody(number_, bytes.size());
     return true;
   }
   if (body_ended_ && !data_finished_) {

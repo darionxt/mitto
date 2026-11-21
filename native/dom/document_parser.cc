@@ -17,8 +17,8 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_kinds.h"
-#include "mitto/dom/document_write_intervention.h"
 #include "mitto/dom/fetcher.h"
+#include "mitto/dom/html_preload_scanner.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/libxml_tree_builder.h"
@@ -151,9 +151,15 @@ MarkupPosition DocumentParser::TextPosition() const {
 
 void DocumentParser::DidReceiveData() {
   // HTMLDocumentParser::Append() and FinishAppend(): the parser takes what
-  // came from a task, as Chrome's ProcessHtmlDataImmediately is off.
+  // came from a task, as Chrome's ProcessHtmlDataImmediately is off. While it
+  // waits for a script or a style sheet, what came goes into its input now,
+  // where the preload scanner reads it.
   if (IsStopped()) {
     return;
+  }
+  if (IsPaused() && client_ && !InPumpSession()) {
+    while (!IsStopped() && IsPaused() && client_->FeedParser()) {
+    }
   }
   SchedulePumpTokenizer();
 }
@@ -197,7 +203,24 @@ void DocumentParser::AppendData(std::u16string_view text) {
   }
   switch (kind_) {
     case Kind::kHtml:
+      // HTMLDocumentParser::Append(): the preload scanner takes each piece
+      // from the first on, and scans the first, and any while the parser
+      // waits.
+      if (!preload_scanner_ && HasPreloader() && !IsSynchronous()) {
+        preload_scanner_ = std::make_unique<HtmlPreloadScanner>(
+            *document_, TokenPreloadScanner::ScannerType::kMainDocument);
+      }
+      if (preload_scanner_) {
+        preload_scanner_->AppendToEnd(text);
+        if (IsPaused() || !seen_first_byte_) {
+          ScanAndPreload(*preload_scanner_);
+        }
+      }
+      tree_->Append(text);
+      seen_first_byte_ = true;
+      return;
     case Kind::kText:
+      // TextDocumentParser scans nothing, as kDisallowPrefetching has it.
       tree_->Append(text);
       return;
     case Kind::kXml:
@@ -221,6 +244,31 @@ void DocumentParser::AppendData(std::u16string_view text) {
     case Kind::kImage:
     case Kind::kMedia:
       return;
+  }
+}
+
+bool DocumentParser::HasPreloader() const {
+  return document_ && document_->DefaultView() &&
+         document_->DefaultView()->HasContext();
+}
+
+void DocumentParser::ScanAndPreload(HtmlPreloadScanner& scanner) {
+  HtmlPreloadScanner::Result result =
+      scanner.Scan(document_->ValidBaseElementUrl());
+  seen_csp_meta_tags_ += result.csp_meta_tag_count;
+  for (PreloadRequest& request : result.requests) {
+    queued_preloads_.push_back(std::move(request));
+  }
+  // MaybeFetchQueuedPreloads(): AllowPreloadingWithCSPMetaTag is off, so the
+  // queue waits for good once a CSP meta element has been seen.
+  if (queued_preloads_.empty() || seen_csp_meta_tags_) {
+    return;
+  }
+  std::vector<PreloadRequest> preloads = std::move(queued_preloads_);
+  queued_preloads_.clear();
+  const cppgc::Persistent<Document> document = document_.Get();
+  for (const PreloadRequest& preload : preloads) {
+    preload.Start(*document);
   }
 }
 
@@ -309,13 +357,15 @@ void DocumentParser::Insert(std::u16string_view source) {
   const ScopedCounter should_complete(should_complete_);
   const ScopedCounter end_if_delayed_forbidden(end_if_delayed_forbidden_);
   PumpTokenizerIfPossible();
-  // What was written, scanned for the scripts that Chrome's preload scanner
-  // would fetch while the parser waits.
-  if (IsPaused() && document_ && document_->DefaultView()) {
+  // What was written, scanned with a scanner of its own while the parser
+  // waits, as the main scanner cannot take an insertion.
+  if (IsPaused() && HasPreloader()) {
     if (!insertion_scanner_) {
-      insertion_scanner_ = std::make_unique<DocWrittenScriptScanner>();
+      insertion_scanner_ = std::make_unique<HtmlPreloadScanner>(
+          *document_, TokenPreloadScanner::ScannerType::kInsertion);
     }
-    insertion_scanner_->Scan(source, *document_);
+    insertion_scanner_->AppendToEnd(source);
+    ScanAndPreload(*insertion_scanner_);
   }
   EndIfDelayed();
 }
@@ -335,6 +385,9 @@ void DocumentParser::Detach() {
     script->Dispose();
   }
   scripts_after_parsing_.clear();
+  preload_scanner_.reset();
+  insertion_scanner_.reset();
+  queued_preloads_.clear();
   document_ = nullptr;
   // The tokenizer and the tree builder go now, unless a pump or a script that
   // is still on the stack uses them, in which case they go with the parser.
@@ -477,6 +530,16 @@ bool DocumentParser::PumpTokenizer() {
     if (check_yield()) {
       break;
     }
+  }
+  // A parser that waits for a script or a style sheet has its preload
+  // scanner read ahead, from where the parser stopped if it had none.
+  if (!IsStopped() && IsPaused() && HasPreloader()) {
+    if (!preload_scanner_) {
+      preload_scanner_ = std::make_unique<HtmlPreloadScanner>(
+          *document_, TokenPreloadScanner::ScannerType::kMainDocument);
+      preload_scanner_->AppendToEnd(tree_->UnreadInput());
+    }
+    ScanAndPreload(*preload_scanner_);
   }
   if (should_yield) {
     ++times_yielded_;

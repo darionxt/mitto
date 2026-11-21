@@ -114,6 +114,10 @@ class HTMLImageElement final : public HTMLElement {
   float image_device_pixel_ratio_ = 1;
 };
 
+// HTMLImageElement::SupportedImageType(): no type, an empty one, or one that
+// a decoder takes, as ContentType::GetType() reads it.
+bool SupportedImageType(const std::u16string* type);
+
 }  // namespace mitto
 
 #endif  // MITTO_DOM_HTML_IMAGE_ELEMENT_H_

@@ -4,6 +4,7 @@ A replay does what a caller of the public API can do today, and what it cannot d
 gains something a case needs, the replay here passes it on, and those gaps leave the known-gaps list. See docs/parity.md.
 """
 
+import time
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -18,6 +19,7 @@ from tools.capture import (
     CREDENTIALS_COOKIE_SET_PATH,
     CROSS_SITE_HOST,
     DOCUMENT_CASES,
+    DOCUMENT_LAST_PATH,
     DOCUMENT_PATH,
     DOCUMENT_RUNS,
     DOCUMENTS_FORMS_PATH,
@@ -58,6 +60,8 @@ _WORKER_ANSWERED = """new Promise((resolve, reject) => {
 })"""
 # How long a Page's document stays where it is before a replay takes it that it navigates no further.
 _SETTLED_SECONDS = 3.0
+# How often a replay looks for the request that ends a page that does not navigate.
+_POLL_SECONDS = 0.1
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +96,9 @@ class Replay:
             a Page does not do yet first: the step of that script that makes the request, which for a request that is no
             navigation settles once the request has ended.
         lands_at: The case whose page the navigation ends at, for a hop of a redirect, or nothing for the case itself.
+        until: For a page that does not navigate, the path that its own script asks for last: the Page stays open until
+            the server has had a request for it, by when every other request of the page has ended, so that closing
+            the Page cancels none.
     """
 
     kind: RequestKind
@@ -111,6 +118,7 @@ class Replay:
     through_page: bool = False
     page_script: str | None = None
     lands_at: str | None = None
+    until: str | None = None
 
 
 def _hops(prefix: str, kind: RequestKind, page: str) -> dict[str, Replay]:
@@ -304,16 +312,30 @@ def _document_replays() -> dict[str, Replay]:
         "frame_nested_fetch": Replay(
             RequestKind.FETCH, asks=(DOCUMENTS_FRAMES_PATH,), page=_PATHS["frame_nested"], made_by_a_page=285
         ),
-        "document_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_preload_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_preload_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_preload_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_preload_font": Replay(RequestKind.FONT, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_image_small": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_style_body": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_script_deferred": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        "document_preload_style": Replay(
+            RequestKind.STYLE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_preload_script": Replay(
+            RequestKind.SCRIPT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_preload_image": Replay(
+            RequestKind.IMAGE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_preload_font": Replay(
+            RequestKind.FONT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        "document_image_small": Replay(
+            RequestKind.IMAGE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        "document_style_body": Replay(
+            RequestKind.STYLE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_script_deferred": Replay(
+            RequestKind.SCRIPT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
         "favicon": Replay(RequestKind.FAVICON, page=DOCUMENT_PATH),
         "navigation_form_get": Replay(RequestKind.NAVIGATION, page=DOCUMENTS_FORMS_PATH),
         "navigation_form_text": Replay(
@@ -482,6 +504,10 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
     if steps.page is None:
         raise ValueError(f"{case} names no page to open")
     page_url = server.url(run.route, host=steps.page_host or run.host, path=steps.page)
+    if steps.until is not None:
+        with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS):  # pyright: ignore[reportPrivateUsage]
+            _wait_for_request(server, run, steps.until)
+        return
     lands_at = _PATHS[steps.lands_at or case]
     with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         if steps.page_script is not None:
@@ -500,3 +526,18 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
                 return
             except RequestError:
                 continue
+
+
+def _wait_for_request(server: CaptureServer, run: Run, path: str) -> None:
+    """Wait until the server has had a request for `path` on a run's route.
+
+    Raises:
+        TimeoutError: No such request came in time.
+    """
+    deadline = time.monotonic() + _PAGE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        recording = server.recording(run.route, host=run.host)
+        if any(request.target == path for connection in recording.connections for request in connection.requests):
+            return
+        time.sleep(_POLL_SECONDS)
+    raise TimeoutError(f"the page asked for no {path} in {_PAGE_TIMEOUT_SECONDS:g} seconds")
