@@ -402,11 +402,22 @@ bool FromV8Promise(v8::Isolate* isolate,
                    v8::Local<v8::Value> value,
                    v8::Local<v8::Promise>* promise);
 
-// Reports an exception that a page's callback threw and nothing caught, as
-// Blink's V8ScriptRunner::ReportException() does: through the isolate's
-// exception reporter, which fires the window's error event and tells the
-// console, or on standard error if it has none. Without `message`, V8 makes
-// one from the exception, which says where an error was made.
+// Reports an exception that nothing caught through the isolate's exception
+// reporter, which fires the window's error event and tells the console, or
+// on standard error if it has none.
+//
+// With the `message` of the TryCatch that caught what a page's callback or
+// script threw, it goes as V8 reports what a verbose TryCatch of Blink's
+// caught: MessageHandler::ReportMessage() has the message say what the
+// exception's toString() gives, side effects and all, or "exception" if that
+// throws, for an object that is not an error, where V8's own message reads
+// only its data properties, and so says nothing of a DOMException, whose name
+// and message are accessors.
+//
+// Without one, it goes as Blink's V8ScriptRunner::ReportException() reports
+// what a module's evaluation threw or reportError() was given: V8 makes a
+// message from the exception, which says where an error was made, and what V8
+// reads of it.
 void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception);
 void ReportException(v8::Isolate* isolate,
                      v8::Local<v8::Value> exception,

@@ -57,21 +57,34 @@ ErrorMessageInfo DescribeErrorMessage(v8::Isolate* isolate,
                                       ExecutionContext& execution_context,
                                       v8::Local<v8::Message> message);
 
-// Tells the console of an error that no listener canceled.
-using ReportToConsole = base::FunctionRef<void(v8::Local<v8::Value> exception)>;
+// Tells the console of an error that no listener canceled, with the text of
+// V8's message of it.
+using ReportToConsole = base::FunctionRef<void(v8::Local<v8::Value> exception,
+                                               const std::u16string& text)>;
 
 // Reports `exception`, which nothing caught, and of which V8 made `message`,
 // as Blink's MessageHandlerInMainThread() and DispatchErrorEvent() do: fires
 // an ErrorEvent at the global object of the isolate's current context, a
-// window or a worker's global scope, with the message, place and error that
-// `message` gives, and then calls `to_console` unless a listener canceled it.
-// An error thrown while the error listeners run goes to the console alone,
-// after the one they run for. Without a context, it goes to the console
-// alone.
+// window or a worker's global scope, with `text`, what the message says as
+// V8 gives it its message listeners (bindings::ReportException()), and the
+// place and error that `message` gives, and then calls `to_console` unless a
+// listener canceled it. An error thrown while the error listeners run goes to
+// the console alone, after the one they run for. Without a context, it goes
+// to the console alone.
 void ReportUncaughtError(v8::Isolate* isolate,
                          v8::Local<v8::Message> message,
                          v8::Local<v8::Value> exception,
+                         std::u16string text,
                          ReportToConsole to_console);
+
+// What the console says of `exception`, an error that no listener canceled,
+// whose ErrorEvent said `text`, as Blink's ErrorEvent::MessageForConsole()
+// gives it: for a DOMException with a message, which V8's message may say
+// nothing of, "Uncaught " and its name and message, as V8Initializer's
+// ExtractMessageForConsole() has it, and else `text`.
+std::u16string MessageForConsole(v8::Isolate* isolate,
+                                 v8::Local<v8::Value> exception,
+                                 const std::u16string& text);
 
 // Whether the rejection of `reason`, of a promise rejected with no handler,
 // fires events at the window, as Blink decides for each from V8's message of

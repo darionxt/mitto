@@ -1,0 +1,35 @@
+<!doctype html><title>thrown</title><script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+// What the window's error event says of what is thrown that is not an error. V8's message reads only an object's data
+// properties, but reports what a callback or a classic script threw with its toString(), and so says the name and
+// message of a DOMException, whose are accessors. What reportError() gets or a module's evaluation throws gets no more
+// than V8 reads.
+const log = [];
+window.addEventListener('error', (e) => log.push(e.message));
+class Getters { get name() { log.push('name read'); return 'Named'; } get message() { return 'by getters'; } }
+Object.setPrototypeOf(Getters.prototype, Error.prototype);
+reportError(new DOMException('reported', 'TypeError'));
+reportError({toString() { return 'reported toString'; }});
+reportError(new DOMException());
+reportError(new DOMException('reported with no name', ''));
+setTimeout(() => { throw new DOMException('from a timer', 'TypeError'); });
+setTimeout(() => { document.querySelector('!'); });
+setTimeout(() => { throw new DOMException(); });
+setTimeout(() => { throw new DOMException('thrown with no name', ''); });
+setTimeout(() => { throw new Getters(); });
+setTimeout(() => { throw Object.create(DOMException.prototype); });
+setTimeout(() => { throw {toString() { return 'its own toString'; }}; });
+setTimeout(() => { requestAnimationFrame(() => { throw new DOMException('from a frame', 'TypeError'); }); }, 20);
+setTimeout(() => {
+  const script = document.createElement('script');
+  script.textContent = "throw new DOMException('from a classic script', 'TypeError');";
+  document.body.append(script);
+}, 100);
+setTimeout(() => {
+  const script = document.createElement('script');
+  script.type = 'module';
+  script.textContent = "throw new DOMException('from a module script', 'TypeError');";
+  document.body.append(script);
+}, 150);
+setTimeout(() => done(log), 400);
+</script><body>

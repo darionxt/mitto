@@ -31823,8 +31823,6 @@
 {"test": "workers/interfaces/SharedWorkerGlobalScope/name/setting.html", "subtest": "setting name", "chrome": "PASS", "mitto": "FAIL: Failed to read the 'port' property from 'SharedWorker': Not implemented.", "owner": "out"},
 {"test": "workers/interfaces/WorkerGlobalScope/location/redirect-sharedworker.html", "subtest": null, "chrome": "1 subtests", "mitto": "0 subtests", "owner": "out"},
 {"test": "workers/interfaces/WorkerGlobalScope/location/redirect-sharedworker.html", "subtest": null, "chrome": "OK", "mitto": "ERROR: Uncaught TypeError: Failed to read the 'port' property from 'SharedWorker': Not implemented.", "owner": "out"},
-{"test": "workers/interfaces/WorkerGlobalScope/onerror/message-classic-DOMException.html", "subtest": null, "chrome": null, "mitto": "FLAKY"},
-{"test": "workers/interfaces/WorkerGlobalScope/onerror/message-module-DOMException.html", "subtest": null, "chrome": null, "mitto": "FLAKY"},
 {"test": "workers/interfaces/WorkerUtils/importScripts/blob-url.worker.html", "subtest": null, "chrome": null, "mitto": "FLAKY", "owner": "#283"},
 {"test": "workers/modules/dedicated-worker-import-blob-url.any.html", "subtest": "Dynamic import and then static import.", "chrome": "PASS", "mitto": "FAIL: promise_test: Unhandled rejection with value: \"unknown error\"", "owner": "#283"},
 {"test": "workers/modules/dedicated-worker-import-blob-url.any.html", "subtest": "Dynamic import.", "chrome": "PASS", "mitto": "FAIL: promise_test: Unhandled rejection with value: \"unknown error\"", "owner": "#283"},

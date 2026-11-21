@@ -52,10 +52,12 @@ class PerIsolateData {
   // Reports an exception that a page's callback threw and nothing caught, as
   // Blink's V8Initializer::MessageHandlerInMainThread() does: the window's
   // error event, and then the console. `message` is V8's message of it, which
-  // says where it was thrown.
+  // says where it was thrown, and `text` what the message says, as V8 gives it
+  // its message listeners (ReportException() in v8_conversions.h).
   using ExceptionReporter =
       base::RepeatingCallback<void(v8::Local<v8::Value> exception,
-                                   v8::Local<v8::Message> message)>;
+                                   v8::Local<v8::Message> message,
+                                   std::u16string text)>;
 
   // Tells the Session that a document reached a Known Gap, named as the
   // listing names it, such as "Navigator.prototype.getBattery".
