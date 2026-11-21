@@ -11024,7 +11024,6 @@
 {"test": "encoding/textdecoder-fatal-streaming.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
 {"test": "encoding/textdecoder-fatal.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
 {"test": "encoding/textdecoder-ignorebom.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
-{"test": "encoding/textdecoder-labels.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
 {"test": "encoding/textdecoder-mistakes.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
 {"test": "encoding/textdecoder-streaming.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
 {"test": "encoding/textdecoder-utf16-surrogates.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
