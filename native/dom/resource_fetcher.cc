@@ -148,6 +148,15 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
     std::string mime_type =
         GetMimeTypeAndCharset(HeaderField(head.headers, "content-type"))
             .mime_type;
+    // ResourceLoader::CheckResponseNosniff(): a style request's response
+    // that says nosniff fails unless it is text/css, with Chrome's console
+    // error.
+    if (resource_->GetType() == ResourceType::kCSSStyleSheet &&
+        IsContentTypeOptionsNosniff(head.headers) &&
+        !base::EqualsCaseInsensitiveASCII(mime_type, "text/css")) {
+      FailNosniffStyle(head, mime_type);
+      return;
+    }
     resource_->ResponseReceived(head, std::move(mime_type));
   }
   void OnResponseBody(std::string bytes) override {
@@ -171,6 +180,32 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
   }
 
  private:
+  // HandleError() of a response that the check blocked: the request ends,
+  // which destroys this, and the resource fails.
+  void FailNosniffStyle(const FetchResponseHead& head,
+                        const std::string& mime_type) {
+    const cppgc::Persistent<Resource> resource = resource_;
+    ResourceFetcher* const fetcher = fetcher_.Get();
+    if (fetcher) {
+      Document* const document = fetcher->document_.Get();
+      if (Window* const window = document ? document->DefaultView() : nullptr) {
+        window->AddConsoleMessage(
+            ConsoleLevel::kError,
+            "Refused to apply style from '" + head.url +
+                "' because its MIME type ('" + mime_type +
+                "') is not a supported stylesheet MIME type, and strict MIME "
+                "checking is enabled.");
+      }
+    }
+    resource->SetCancelLoad(base::OnceClosure());
+    Cancel();
+    // ResourceError::CancelledDueToAccessCheckError(): ERR_ABORTED.
+    resource->Finish(kAborted);
+    if (fetcher) {
+      fetcher->LoadFinished(*resource);
+    }
+  }
+
   const cppgc::Persistent<Resource> resource_;
   const cppgc::WeakPersistent<ResourceFetcher> fetcher_;
   raw_ptr<FetchController> controller_ = nullptr;

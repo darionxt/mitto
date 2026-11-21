@@ -6,6 +6,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/header_rules.h"
 
 namespace mitto {
 
@@ -63,6 +64,14 @@ FetchReferrerPolicy FetchReferrerPolicyFromString(std::u16string_view value) {
     }
   }
   return FetchReferrerPolicy::kDefault;
+}
+
+bool IsContentTypeOptionsNosniff(std::string_view headers) {
+  const std::string field = HeaderField(headers, "x-content-type-options");
+  const std::string_view first = std::string_view(field).substr(
+      0, std::min(field.find(','), field.size()));
+  return base::EqualsCaseInsensitiveASCII(
+      base::TrimString(first, " \t", base::TRIM_ALL), "nosniff");
 }
 
 FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value) {

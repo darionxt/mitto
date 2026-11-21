@@ -188,6 +188,31 @@ def test_an_import_goes_under_the_policy_that_its_sheets_response_names(
     assert _value(plain_lines, "Referer") == server.url("/plain.css")
 
 
+def test_a_sheet_whose_response_says_nosniff_loads_only_as_text_css(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    nosniff = [("X-Content-Type-Options", "nosniff")]
+    server.route("/plain.css", b"p {}", "text/plain", nosniff)
+    server.route("/css.css", b"p {}", _CSS, nosniff)
+    url = server.page(
+        "/page",
+        "<script>window.events = [];</script>"
+        "<link rel=stylesheet href=plain.css onload=\"events.push('plain load')\" onerror=\"events.push('plain error')\">"
+        "<link rel=stylesheet href=css.css onload=\"events.push('css load')\" onerror=\"events.push('css error')\">",
+    )
+
+    with _open_page(session, url) as page:
+        events = page.evaluate("events.slice().sort()", timeout=TIMEOUT_SECONDS)
+        errors = [message.text for message in page.console_messages if message.level == "error"]
+
+    # ResourceLoader::CheckResponseNosniff(): a style request's response that says nosniff fails unless it is text/css.
+    assert events == ["css load", "plain error"]
+    assert errors == [
+        f"Refused to apply style from '{server.url('/plain.css')}' because its MIME type ('text/plain') is not a "
+        "supported stylesheet MIME type, and strict MIME checking is enabled."
+    ]
+
+
 def test_an_import_of_a_sheet_of_another_origin_names_that_sheet_as_referrer(
     session: mitto.Session, server: RecordingServer
 ) -> None:
