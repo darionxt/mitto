@@ -8,7 +8,8 @@
 // a default namespace. The high five bits say how big the pieces are that a
 // document comes in. The rest is the markup, in UTF-8. A document must get the
 // same tree whole as in pieces, save what pieces change in Chrome too: where
-// libxml2 places an error, and some documents of the Rust crate.
+// libxml2 places an error, a document whose internal subset libxml2 takes to
+// end inside a processing instruction, and some documents of the Rust crate.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -224,6 +225,82 @@ struct ParsedDocument {
   bool pieces_leave_alone;
 };
 
+// Whether libxml2's push parser reads the internal subset of `markup` with
+// less of it in pieces than whole, as in Chrome. It reads the subset once a
+// `]`, blanks and `>` have come outside quotes and comments, as
+// xmlParseLookupInternalSubset() looks for them, which may be inside a
+// processing instruction, whose end the parser then looks for in what has
+// come: `<!DOCTYPE a [<?x ]> ?>]><a>t</a>` is a document whole, and an error
+// that the instruction never ends when a piece ends just after its `]>`.
+bool SubsetEndsInsideProcessingInstruction(std::u16string_view markup) {
+  size_t at = markup.find(u"<!DOCTYPE");
+  if (at == std::u16string_view::npos) {
+    return false;
+  }
+  // The external ID's literals, up to the subset's `[`.
+  char16_t quote = 0;
+  for (at += 9; at < markup.size(); ++at) {
+    const char16_t c = markup[at];
+    if (quote) {
+      if (c == quote) {
+        quote = 0;
+      }
+    } else if (c == '"' || c == '\'') {
+      quote = c;
+    } else if (c == '>') {
+      return false;
+    } else if (c == '[') {
+      break;
+    }
+  }
+  const auto is_blank = [](char16_t c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+  };
+  // xmlParseLookupInternalSubset()'s scan from just after `[`, beside where
+  // the parser's processing instructions start and end.
+  bool in_instruction = false;
+  char16_t state = 0;
+  size_t i = at + 1;
+  while (i < markup.size()) {
+    const char16_t c = markup[i];
+    const std::u16string_view rest = markup.substr(i);
+    if (in_instruction && rest.starts_with(u"?>")) {
+      in_instruction = false;
+    }
+    if (state == '-') {
+      if (rest.starts_with(u"-->")) {
+        state = 0;
+        i += 3;
+        continue;
+      }
+    } else if (state == ']' || state == ' ') {
+      if (c == '>') {
+        return in_instruction;
+      }
+      if (is_blank(c)) {
+        state = ' ';
+      } else if (state == ' ' || c != ']') {
+        state = 0;
+        continue;
+      }
+    } else if (state != 0) {
+      if (c == state) {
+        state = 0;
+      }
+    } else if (rest.starts_with(u"<!--")) {
+      state = '-';
+      i += 4;
+      continue;
+    } else if (rest.starts_with(u"<?")) {
+      in_instruction = true;
+    } else if (c == '"' || c == '\'' || c == ']') {
+      state = c;
+    }
+    ++i;
+  }
+  return false;
+}
+
 // A document of no window, whose scripts never run, so no reader gives the
 // parser a script to wait for.
 ParsedDocument ParseDocument(std::u16string_view markup,
@@ -352,7 +429,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     const ParsedDocument whole =
         ParseDocument(markup, markup.size() + 1, libxml);
     const ParsedDocument in_pieces = ParseDocument(markup, piece_size, libxml);
-    if (libxml || whole.pieces_leave_alone) {
+    if (libxml ? !SubsetEndsInsideProcessingInstruction(markup)
+               : whole.pieces_leave_alone) {
       CHECK_EQ(whole.dump, in_pieces.dump);
     }
   } else {
