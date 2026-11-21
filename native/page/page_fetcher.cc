@@ -132,6 +132,7 @@ class PageFetcher::Request final : public PageRequests::Client,
     // Destroys this.
     fetcher_->Finished(number_);
   }
+  void OnRequestBodyCredit() override { client_->OnBodyRoom(); }
 
   // FetchController:
   void TookBody(size_t bytes) override {
@@ -141,6 +142,15 @@ class PageFetcher::Request final : public PageRequests::Client,
     fetcher_->requests_->Cancel(number_);
     // Destroys this.
     fetcher_->Finished(number_);
+  }
+  size_t BodyRoom() const override {
+    return fetcher_->requests_->BodyCredit(number_);
+  }
+  void SendBody(std::string_view bytes) override {
+    fetcher_->requests_->SendBodyPart(number_, bytes);
+  }
+  void EndBody(bool errored) override {
+    fetcher_->requests_->EndBody(number_, errored);
   }
 
  private:
@@ -183,6 +193,7 @@ PageRequestKind KindOf(const FetchRequestData& data) {
       return PageRequestKind::kPrefetch;
     case FetchDestination::kJson:
     case FetchDestination::kText:
+    case FetchDestination::kWorker:
       // Only a module's fetch has these destinations.
       NOTREACHED();
   }
@@ -242,6 +253,7 @@ void PageFetcher::Fetch(FetchRequestData data,
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);
   page_request.body = std::move(data.body);
+  page_request.streams_body = data.streams_body;
   if (data.mode) {
     page_request.mode = ToPageRequestMode(*data.mode);
   }
@@ -258,9 +270,12 @@ void PageFetcher::Fetch(FetchRequestData data,
     page_request.priority = ToPagePriority(*data.priority);
   }
   page_request.keepalive = data.keepalive;
+  // A request with no entry in the Performance Timeline, as the favicon's.
   started.set_number(
-      requests_->Start(std::move(page_request), started, data.render_blocking,
-                       data.resource_timing));
+      data.resource_timing
+          ? requests_->Start(std::move(page_request), started,
+                             data.render_blocking)
+          : requests_->StartUntimed(std::move(page_request), started));
   open_.emplace(started.number(), std::move(request));
 }
 

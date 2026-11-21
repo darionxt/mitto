@@ -69,7 +69,7 @@ class ScriptRun:
             first case's whole Normal Form on 2026-11-12, and on 2026-11-13 50 KB for what a frame's differs in, and
             250 KB for what a worker's differs in.
         in_a_page: Whether a Page can run it, so that a Parity Check compares a Page with its Baselines. A Page has no
-            frames and no workers yet.
+            frames yet.
         own_values: What the probe gives at the places of a top-level page's machine that the case decides instead,
             such as a frame's size, which the Normal Form keeps.
     """
@@ -149,7 +149,6 @@ DEDICATED_WORKER = ScriptRun(
     _WORKER_PATH + _RECORD,
     WORKER_MACHINE_PLACES,
     250_000,
-    in_a_page=False,
 )
 """The probe in a dedicated worker that a top-level page starts."""
 

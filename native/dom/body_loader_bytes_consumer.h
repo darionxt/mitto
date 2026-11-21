@@ -24,7 +24,7 @@
 
 namespace mitto {
 
-class Window;
+class ExecutionContext;
 
 // What brings a body as it loads: a fetch's request, or a body that the Cache
 // API stored.
@@ -47,9 +47,9 @@ class BodyLoaderBytesConsumer final : public BytesConsumer {
   CPPGC_USING_PRE_FINALIZER(BodyLoaderBytesConsumer, Dispose);
 
  public:
-  // The body that `loader` brings, read in `window`'s context, in which what
-  // it tells its client later runs.
-  BodyLoaderBytesConsumer(BodyLoader* loader, Window* window);
+  // The body that `loader` brings, read in `context`, a window's or a
+  // worker's, in which what it tells its client later runs.
+  BodyLoaderBytesConsumer(BodyLoader* loader, ExecutionContext* context);
   ~BodyLoaderBytesConsumer() override;
 
   // What its loader tells it.
@@ -86,7 +86,7 @@ class BodyLoaderBytesConsumer final : public BytesConsumer {
   void Dispose();
 
   raw_ptr<BodyLoader> loader_;
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
   // What has come and not been read: the bytes of `buffer_` from `offset_`.
   std::string buffer_;
   size_t offset_ = 0;

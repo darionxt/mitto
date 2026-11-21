@@ -159,6 +159,15 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
     std::string mime_type =
         GetMimeTypeAndCharset(HeaderField(head.headers, "content-type"))
             .mime_type;
+    // ResourceLoader::CheckResponseNosniff(): a style request's response
+    // that says nosniff fails unless it is text/css, with Chrome's console
+    // error.
+    if (resource_->GetType() == ResourceType::kCSSStyleSheet &&
+        IsContentTypeOptionsNosniff(head.headers) &&
+        !base::EqualsCaseInsensitiveASCII(mime_type, "text/css")) {
+      FailNosniffStyle(head, mime_type);
+      return;
+    }
     resource_->ResponseReceived(head, std::move(mime_type));
   }
   void OnResponseBody(std::string bytes) override {
@@ -195,6 +204,32 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
   }
 
  private:
+  // HandleError() of a response that the check blocked: the request ends,
+  // which destroys this, and the resource fails.
+  void FailNosniffStyle(const FetchResponseHead& head,
+                        const std::string& mime_type) {
+    const cppgc::Persistent<Resource> resource = resource_;
+    ResourceFetcher* const fetcher = fetcher_.Get();
+    if (fetcher) {
+      Document* const document = fetcher->document_.Get();
+      if (Window* const window = document ? document->DefaultView() : nullptr) {
+        window->AddConsoleMessage(
+            ConsoleLevel::kError,
+            "Refused to apply style from '" + head.url +
+                "' because its MIME type ('" + mime_type +
+                "') is not a supported stylesheet MIME type, and strict MIME "
+                "checking is enabled.");
+      }
+    }
+    resource->SetCancelLoad(base::OnceClosure());
+    Cancel();
+    // ResourceError::CancelledDueToAccessCheckError(): ERR_ABORTED.
+    resource->Finish(kAborted);
+    if (fetcher) {
+      fetcher->LoadFinished(*resource);
+    }
+  }
+
   const cppgc::Persistent<Resource> resource_;
   const cppgc::WeakPersistent<ResourceFetcher> fetcher_;
   const ResourceLoadScheduler::ClientId scheduler_client_id_;
@@ -248,6 +283,39 @@ Resource* ResourceFetcher::CachedResource(const GURL& url) const {
   return nullptr;
 }
 
+Resource* ResourceFetcher::UnusedPreload(const GURL& url,
+                                         ResourceType type) const {
+  const GURL key = WithoutFragment(url);
+  for (size_t i = resources_.size(); i > 0; --i) {
+    Resource* const resource = resources_[i - 1];
+    if (resource->IsUnusedPreload() && resource->GetType() == type &&
+        WithoutFragment(resource->Url()) == key) {
+      return resource;
+    }
+  }
+  return nullptr;
+}
+
+Resource* ResourceFetcher::MatchPreload(const FetchParameters& params) {
+  Resource* const resource = UnusedPreload(params.url, params.type);
+  if (!resource) {
+    return nullptr;
+  }
+  if (!params.integrity.empty() &&
+      !IntegritySetsEqual(resource->Integrity(), params.integrity)) {
+    return nullptr;
+  }
+  if (resource->Mode() != params.mode ||
+      resource->Credentials() != params.credentials) {
+    return nullptr;
+  }
+  resource->SetIsUnusedPreload(false);
+  if (resource->HttpStatus() == 304) {
+    return nullptr;
+  }
+  return resource;
+}
+
 bool ResourceFetcher::CanUse(const Resource& existing,
                              const FetchParameters& params) const {
   // MustRefetchDueToIntegrityMetadata(): a request with integrity metadata
@@ -298,13 +366,21 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
   if (!window || !params.url.is_valid()) {
     return nullptr;
   }
-  Resource* const existing = CachedResource(params.url);
+  // MatchPreload() first: an unused preload of the URL and type, which a
+  // newer resource of the URL and another type does not hide, and then the
+  // newest resource of the URL, as Blink's memory cache keeps one.
+  Resource* existing = UnusedPreload(params.url, params.type);
+  if (!existing || !CanUse(*existing, params)) {
+    existing = CachedResource(params.url);
+  }
   if (existing && CanUse(*existing, params)) {
-    // MatchPreload(): an element's request takes a preload.
-    if (existing->IsUnusedPreload() && !params.is_link_preload &&
-        params.speculative_preload_type ==
-            SpeculativePreloadType::kNotSpeculative) {
-      existing->SetIsUnusedPreload(false);
+    if (existing->IsUnusedPreload() && !params.is_link_preload) {
+      // A speculative preload takes it and leaves it unused, as
+      // MatchPreload() returns it before it marks it.
+      if (params.speculative_preload_type ==
+          SpeculativePreloadType::kNotSpeculative) {
+        existing->SetIsUnusedPreload(false);
+      }
       if (existing->IsLinkPreload()) {
         MakePreloadedResourceBlockIfNeeded(*existing, params);
       }
@@ -471,9 +547,13 @@ void ResourceFetcher::CancelLoad(Resource& resource) {
 void ResourceFetcher::MakePreloadedResourceBlockIfNeeded(
     Resource& resource,
     const FetchParameters& params) {
-  // A preload that a request of a load-blocking type matches while it loads
-  // holds the load event back from then on.
-  if (!resource.IsLoading() || !IsLoadEventBlockingResourceType(params.type)) {
+  // A link preload that a request of a load-blocking type matches while it
+  // loads holds the load event back from then on, once, as Blink moves its
+  // loader out of non_blocking_loaders_.
+  if (!resource.IsLoading() || !IsLoadEventBlockingResourceType(params.type) ||
+      std::ranges::any_of(blocking_.ToVector(), [&resource](Resource* item) {
+        return item == &resource;
+      })) {
     return;
   }
   blocking_.push_back(&resource);

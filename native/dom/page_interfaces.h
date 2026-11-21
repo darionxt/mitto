@@ -1,9 +1,11 @@
-// Makes a Page's context: a Window for its global object, the interfaces that
-// the Runtime implements, and the window's document.
+// Makes a Page's contexts: a window's, with a Window for its global object, the
+// interfaces that the Runtime implements, and the window's document, and a
+// dedicated worker's.
 
 #ifndef MITTO_DOM_PAGE_INTERFACES_H_
 #define MITTO_DOM_PAGE_INTERFACES_H_
 
+#include <string>
 #include <string_view>
 
 #include "base/functional/function_ref.h"
@@ -27,6 +29,16 @@ using DidCreateScriptContext =
 v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
                                       std::u16string_view markup,
                                       DidCreateScriptContext did_create);
+
+// Makes a context whose global object is a DedicatedWorkerGlobalScope named
+// `name`, made from its template as Blink's WorkerOrWorkletScriptController
+// makes a dedicated worker's context, calls `did_create`, and installs what
+// the context decides, the interface objects that it exposes among it. The
+// isolate must have the bindings::PerIsolateData of a worker, and the caller a
+// handle scope.
+v8::Local<v8::Context> NewWorkerContext(v8::Isolate* isolate,
+                                        std::u16string name,
+                                        DidCreateScriptContext did_create);
 
 }  // namespace mitto
 

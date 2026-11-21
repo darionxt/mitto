@@ -111,6 +111,114 @@ def test_a_sheet_and_its_imports_go_as_a_callers_style_requests(
         assert _value(page_lines, "Referer") == initiator, path
 
 
+def test_an_import_takes_the_decoded_string_of_a_quoted_url(session: mitto.Session, server: RecordingServer) -> None:
+    server.route("/escaped.css", b"p {}", _CSS)
+    server.route("/say's.css", b"p {}", _CSS)
+    url = server.page("/page", r"""<style>@import url("esc\61 ped.css"); @import url( 'say\'s.css' );</style>""")
+
+    with _open_page(session, url):
+        pass
+
+    # The string inside url() decodes its escapes, as the tokenizer reads it, an escaped quote too.
+    assert sorted(without_favicon(server.paths())) == ["/escaped.css", "/page", "/say's.css"]
+
+
+def test_a_link_type_with_parameters_names_a_style_sheet(session: mitto.Session, server: RecordingServer) -> None:
+    server.route("/parameters.css", b"p {}", _CSS)
+    server.route("/spaced.css", b"p {}", _CSS)
+    server.route("/other.css", b"p {}", _CSS)
+    url = server.page(
+        "/page",
+        '<link rel="stylesheet" type="text/css; charset=utf-8" href="parameters.css">'
+        '<link rel="stylesheet" type=" TEXT/CSS " href="spaced.css">'
+        '<link rel="stylesheet" type="text/plain; x=text/css" href="other.css">',
+    )
+
+    with _open_page(session, url):
+        pass
+
+    # The type's MIME type, without white space or parameters, as Blink's ContentType::GetType() takes it.
+    assert sorted(without_favicon(server.paths())) == ["/page", "/parameters.css", "/spaced.css"]
+
+
+def test_an_import_takes_the_encoding_that_decoded_its_sheet(session: mitto.Session, server: RecordingServer) -> None:
+    server.route("/declared.css", b'@import "undeclared.css";', "text/css; charset=windows-1251")
+    server.route("/undeclared.css", '@import "\u0438\u043c\u044f.css";'.encode("cp1251"), _CSS)
+    named = "/%D0%B8%D0%BC%D1%8F.css"
+    server.route(named, b"p {}", _CSS)
+    url = server.page("/page", '<meta charset="utf-8"><link rel="stylesheet" href="declared.css">')
+
+    with _open_page(session, url):
+        pass
+
+    # A sheet that says nothing of its encoding decodes as the sheet that imports it was decoded, as Blink gives the
+    # import the parent's CSSStyleSheetResource::Encoding().
+    assert sorted(without_favicon(server.paths())) == [named, "/declared.css", "/page", "/undeclared.css"]
+
+
+def test_a_style_element_reads_its_text_again_once_a_script_changes_it(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    server.route("/first.css", b"p {}", _CSS)
+    server.route("/next.css", b"p {}", _CSS)
+    url = server.page("/page", "<style id=s>@import 'first.css';</style>")
+
+    with _open_page(session, url) as page:
+        page.evaluate("s.firstChild.data = \"@import 'next.css';\"; true")
+        assert server.wait_for_path("/next.css")
+
+    # CharacterData::DidModifyData() tells the parent, and the style element makes its sheet again.
+    assert sorted(without_favicon(server.paths())) == ["/first.css", "/next.css", "/page"]
+
+
+def test_an_import_goes_under_the_policy_that_its_sheets_response_names(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    server.route("/private.css", b"@import 'from-private.css';", _CSS, [("Referrer-Policy", "no-referrer")])
+    server.route("/from-private.css", b"p {}", _CSS)
+    server.route("/plain.css", b"@import 'from-plain.css';", _CSS)
+    server.route("/from-plain.css", b"p {}", _CSS)
+    url = server.page(
+        "/page",
+        '<link rel="stylesheet" href="private.css"><link rel="stylesheet" referrerpolicy="no-referrer" href="plain.css">',
+    )
+
+    with _open_page(session, url):
+        pass
+
+    # CSSStyleSheetResource::GetReferrerPolicy(): the sheet's Referrer-Policy, else the document's, whatever policy
+    # fetched the sheet.
+    (private_lines,) = server.headers_of("/from-private.css")
+    (plain_lines,) = server.headers_of("/from-plain.css")
+    assert _value(private_lines, "Referer") is None
+    assert _value(plain_lines, "Referer") == server.url("/plain.css")
+
+
+def test_a_sheet_whose_response_says_nosniff_loads_only_as_text_css(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    nosniff = [("X-Content-Type-Options", "nosniff")]
+    server.route("/plain.css", b"p {}", "text/plain", nosniff)
+    server.route("/css.css", b"p {}", _CSS, nosniff)
+    url = server.page(
+        "/page",
+        "<script>window.events = [];</script>"
+        "<link rel=stylesheet href=plain.css onload=\"events.push('plain load')\" onerror=\"events.push('plain error')\">"
+        "<link rel=stylesheet href=css.css onload=\"events.push('css load')\" onerror=\"events.push('css error')\">",
+    )
+
+    with _open_page(session, url) as page:
+        events = page.evaluate("events.slice().sort()", timeout=TIMEOUT_SECONDS)
+        errors = [message.text for message in page.console_messages if message.level == "error"]
+
+    # ResourceLoader::CheckResponseNosniff(): a style request's response that says nosniff fails unless it is text/css.
+    assert events == ["css load", "plain error"]
+    assert errors == [
+        f"Refused to apply style from '{server.url('/plain.css')}' because its MIME type ('text/plain') is not a "
+        "supported stylesheet MIME type, and strict MIME checking is enabled."
+    ]
+
+
 def test_an_import_of_a_sheet_of_another_origin_names_that_sheet_as_referrer(
     session: mitto.Session, server: RecordingServer
 ) -> None:

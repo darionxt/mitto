@@ -49,6 +49,9 @@ class AnimationFrameController;
 class BarProp;
 class CrashReportContext;
 class CacheStorage;
+class CacheStorageHost;
+class IndexedDbHost;
+class StorageBucketHost;
 class CookieStore;
 class Storage;
 class Crypto;
@@ -88,7 +91,11 @@ class Window final : public WindowProperties, public ExecutionContext {
   Window* WindowForBinding() { return this; }
   Window* Self() { return this; }
   mitto::Document* Document() const { return document_.Get(); }
-  mitto::Performance* Performance();
+  mitto::Performance* Performance() override;
+  // The document's.
+  CacheStorageHost* GetCacheStorageHost() const override;
+  IndexedDbHost* GetIndexedDbHost() const override;
+  StorageBucketHost* GetStorageBucketHost() const override;
   // DOMWindowFileSystem's: the file system of the document's origin, from a
   // task of its own, as Chrome's browser opens one for a new profile, or an
   // error for an opaque origin or a type other than TEMPORARY and PERSISTENT.
@@ -96,9 +103,6 @@ class Window final : public WindowProperties, public ExecutionContext {
                                int64_t size,
                                v8::Local<v8::Object> success_callback,
                                v8::Local<v8::Object> error_callback);
-  v8::Local<v8::Promise> Fetch(const bindings::RequestOrUSVString& input,
-                               const bindings::RequestInit& init,
-                               bindings::ExceptionState& exception_state);
   mitto::Navigator* Navigator();
   mitto::Navigator* ClientInformation() { return Navigator(); }
   mitto::Screen* Screen();
@@ -120,8 +124,8 @@ class Window final : public WindowProperties, public ExecutionContext {
   v8::Local<v8::Value> OpenerForBindings() const;
   void SetOpenerForBindings(v8::Local<v8::Value> opener,
                             bindings::ExceptionState& exception_state);
-  std::u16string Origin() const;
-  bool IsSecureContextForBindings() const;
+  std::u16string Origin() const override;
+  bool IsSecureContextForBindings() const override;
   // Chrome keys agent clusters by origin by default.
   bool OriginAgentCluster() const { return true; }
   bool OffscreenBuffering() const { return true; }
@@ -194,6 +198,11 @@ class Window final : public WindowProperties, public ExecutionContext {
 
   // ExecutionContext:
   bool IsWindow() const override;
+  std::u16string Url() const override;
+  EventTarget* ErrorEventTarget() override;
+  url::Origin GetSecurityOrigin() const override;
+  GURL CompleteUrl(std::u16string_view url) const override;
+  GURL BaseUrl() const override;
   // The timers of geolocation's requests count too.
   size_t TimerCount() const override;
 
@@ -258,7 +267,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   DocumentLoadTiming& GetDocumentLoadTiming();
   // The window's module map and the rest of its module machinery, made the
   // first time, as Blink's Modulator::From() makes the context's.
-  Modulator* GetModulator();
+  Modulator* GetModulator() override;
 
  private:
   // The window's bars, each an object of its own, as Blink's are.

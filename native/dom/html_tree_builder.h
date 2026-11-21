@@ -134,6 +134,12 @@ class HtmlDocumentParser {
     should_pause_ = std::move(should_pause);
   }
 
+  // TextDocumentParser::InsertFakePreElement(): the start of a text
+  // document, a meta of its color scheme and a pre whose text the rest of the
+  // input is, as Blink's parser of a text file makes them before its first
+  // piece.
+  void StartTextDocument();
+
   // The rules the tree builder could not follow so far, each once, in the
   // order it first met them.
   const std::vector<std::string>& skipped_rules() const;

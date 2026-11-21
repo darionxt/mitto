@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/time/time.h"
@@ -9,17 +10,20 @@
 namespace mitto {
 namespace {
 
-// V8's tasks for the main thread, as tasks of the main thread's task runner.
-class MainThreadTaskRunner final : public v8::TaskRunner {
+PagePlatform* g_platform = nullptr;
+
+// V8's tasks for an isolate's thread, the main thread or a worker's, as tasks
+// of that thread's task runner.
+class ThreadTaskRunner final : public v8::TaskRunner {
  public:
-  explicit MainThreadTaskRunner(
+  explicit ThreadTaskRunner(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner)
       : task_runner_(std::move(task_runner)) {}
 
-  MainThreadTaskRunner(const MainThreadTaskRunner&) = delete;
-  MainThreadTaskRunner& operator=(const MainThreadTaskRunner&) = delete;
+  ThreadTaskRunner(const ThreadTaskRunner&) = delete;
+  ThreadTaskRunner& operator=(const ThreadTaskRunner&) = delete;
 
-  ~MainThreadTaskRunner() override = default;
+  ~ThreadTaskRunner() override = default;
 
   // v8::TaskRunner:
   bool IdleTasksEnabled() override { return false; }
@@ -64,10 +68,32 @@ PagePlatform::PagePlatform(
     std::unique_ptr<v8::Platform> delegate,
     scoped_refptr<base::SingleThreadTaskRunner> main_thread)
     : delegate_(std::move(delegate)),
-      main_thread_(
-          std::make_shared<MainThreadTaskRunner>(std::move(main_thread))) {}
+      main_thread_(std::make_shared<ThreadTaskRunner>(std::move(main_thread))) {
+  CHECK(!g_platform);
+  g_platform = this;
+}
 
-PagePlatform::~PagePlatform() = default;
+PagePlatform::~PagePlatform() {
+  g_platform = nullptr;
+}
+
+// static
+PagePlatform* PagePlatform::Get() {
+  return g_platform;
+}
+
+void PagePlatform::RegisterIsolate(
+    v8::Isolate* isolate,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  const base::AutoLock lock(lock_);
+  workers_[isolate] =
+      std::make_shared<ThreadTaskRunner>(std::move(task_runner));
+}
+
+void PagePlatform::UnregisterIsolate(v8::Isolate* isolate) {
+  const base::AutoLock lock(lock_);
+  workers_.erase(isolate);
+}
 
 v8::PageAllocator* PagePlatform::GetPageAllocator() {
   return delegate_->GetPageAllocator();
@@ -92,7 +118,9 @@ int PagePlatform::NumberOfWorkerThreads() {
 std::shared_ptr<v8::TaskRunner> PagePlatform::GetForegroundTaskRunner(
     v8::Isolate* isolate,
     v8::TaskPriority priority) {
-  return main_thread_;
+  const base::AutoLock lock(lock_);
+  const auto worker = workers_.find(isolate);
+  return worker == workers_.end() ? main_thread_ : worker->second;
 }
 
 bool PagePlatform::IdleTasksEnabled(v8::Isolate* isolate) {

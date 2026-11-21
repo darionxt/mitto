@@ -9,8 +9,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_conversions.h"
-#include "mitto/bindings/v8_window.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/execution_context.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
@@ -34,10 +33,10 @@ void Settle(v8::Isolate* isolate,
   const v8::Local<v8::Context> context = context_handle.Get(isolate);
   const v8::Context::Scope context_scope(context);
   // A resolver of a context that has gone settles nothing, as Blink's does
-  // once its execution context is destroyed.
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
-  if (!window || !window->HasContext()) {
+  // once its execution context is destroyed: a window's or a worker's.
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  if (!execution_context || !execution_context->HasContext()) {
     return;
   }
   const v8::Local<v8::Promise::Resolver> resolver =
@@ -74,9 +73,9 @@ void CallCallbackInterface(v8::Isolate* isolate,
     return;
   }
   const v8::Context::Scope context_scope(context);
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
-  if (!window || !window->HasContext()) {
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  if (!execution_context || !execution_context->HasContext()) {
     return;
   }
   v8::Local<v8::Value> argument = std::move(make_argument).Run(isolate);

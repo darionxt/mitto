@@ -316,6 +316,7 @@ def test_a_check_compares_the_normal_form_and_the_values_of_the_machine() -> Non
 
 
 def test_a_case_that_a_page_cannot_run_yet_is_skipped() -> None:
+    # A Page has dedicated workers, and no frames yet.
     machine = Machine.draw(seed=7)
     empty: Form = {"format": 1, "objects": [], "values": {}, "reports": []}
     baselines = [ScriptBaseline("157", case, empty) for case in ("page", "same_origin_frame", "worker")]
@@ -327,8 +328,8 @@ def test_a_case_that_a_page_cannot_run_yet_is_skipped() -> None:
 
     find_script_gaps(baselines, recorder)
 
-    assert recorded == ["page"]
-    assert [baseline.in_a_page for baseline in baselines] == [True, False, False]
+    assert recorded == ["page", "worker"]
+    assert [baseline.in_a_page for baseline in baselines] == [True, False, True]
 
 
 def test_a_frames_own_viewport_is_behaviour_and_the_rest_of_the_machine_is_the_machines() -> None:

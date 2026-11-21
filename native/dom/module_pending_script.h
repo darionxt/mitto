@@ -52,12 +52,12 @@ class ModulePendingScript final : public PendingScript {
 
   // PendingScript:
   bool IsExternal() const override;
+  bool IsModule() const override;
   bool IsReady() const override;
 
  private:
   // PendingScript:
   bool HasScript() const override;
-  bool IsModule() const override;
   void RunScript() override;
 
   cppgc::Member<ModulePendingScriptTreeClient> module_tree_client_;

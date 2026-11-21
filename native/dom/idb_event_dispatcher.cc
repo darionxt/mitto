@@ -9,7 +9,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/persistent.h"
 
@@ -68,7 +68,7 @@ Event* MakeIDBEvent(const std::u16string& type, bool bubbles, bool cancelable) {
   return event;
 }
 
-void PostIDBTask(Window* window, base::OnceClosure task) {
+void PostIDBTask(ExecutionContext* execution_context, base::OnceClosure task) {
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
@@ -76,11 +76,13 @@ void PostIDBTask(Window* window, base::OnceClosure task) {
       ->PostTask(
           FROM_HERE,
           base::BindOnce(
-              [](cppgc::WeakPersistent<Window> window, base::OnceClosure task) {
-                RunInWindowContext(window.Get(),
-                                   [&] { std::move(task).Run(); });
+              [](cppgc::WeakPersistent<ExecutionContext> execution_context,
+                 base::OnceClosure task) {
+                RunInContext(execution_context.Get(),
+                             [&] { std::move(task).Run(); });
               },
-              cppgc::WeakPersistent<Window>(window), std::move(task)));
+              cppgc::WeakPersistent<ExecutionContext>(execution_context),
+              std::move(task)));
 }
 
 }  // namespace mitto

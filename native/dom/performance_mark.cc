@@ -5,9 +5,9 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/v8_performance_mark.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/performance_timing.h"
-#include "mitto/dom/window.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
 
@@ -18,7 +18,8 @@ PerformanceMark* PerformanceMark::Create(
     const std::u16string& mark_name,
     const bindings::PerformanceMarkOptions& options,
     bindings::ExceptionState& exception_state) {
-  Performance& performance = *Window::Current().Performance();
+  ExecutionContext& context = ExecutionContext::Current();
+  Performance& performance = *context.Performance();
   double start = 0;
   if (options.start_time) {
     start = *options.start_time;
@@ -31,8 +32,9 @@ PerformanceMark* PerformanceMark::Create(
   } else {
     start = performance.Now();
   }
-  // A window's mark may not take the name of a PerformanceTiming attribute.
-  if (PerformanceTiming::IsAttributeName(mark_name)) {
+  // A window's mark may not take the name of a PerformanceTiming attribute,
+  // which a worker's may, as it has no performance.timing.
+  if (context.IsWindow() && PerformanceTiming::IsAttributeName(mark_name)) {
     exception_state.ThrowDOMException(
         "SyntaxError",
         base::StrCat({"'", base::UTF16ToUTF8(mark_name),

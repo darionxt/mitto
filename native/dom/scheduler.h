@@ -33,12 +33,12 @@ namespace bindings {
 class ExceptionState;
 }  // namespace bindings
 
-class Window;
+class ExecutionContext;
 
 class Scheduler final : public bindings::ScriptWrappable {
  public:
-  // The scheduler of `window`.
-  explicit Scheduler(Window* window);
+  // The scheduler of `context`, a window's or a worker's.
+  explicit Scheduler(ExecutionContext* context);
   ~Scheduler() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -59,10 +59,10 @@ class Scheduler final : public bindings::ScriptWrappable {
   void PendingTaskEnded() { --pending_tasks_; }
 
  private:
-  // Whether the window still runs its context, or throws if not.
+  // Whether the Page still runs the context, or throws if not.
   bool CheckAttached(bindings::ExceptionState& exception_state) const;
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
   size_t pending_tasks_ = 0;
 };
 

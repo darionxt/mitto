@@ -1,6 +1,8 @@
 #include "mitto/css/style_sheet_imports.h"
 
 #include <array>
+#include <map>
+#include <string>
 
 #include "base/strings/string_util.h"
 #include "mitto/css/css_token.h"
@@ -87,6 +89,9 @@ bool IsWhitespace(const CssToken& token) {
 // after a prelude with neither, which still ends a statement.
 struct Prelude {
   std::vector<CssToken> tokens;
+  // The string of each url() among `tokens`, by index, that holds nothing
+  // else, as ConsumeUrlAsStringView() takes it.
+  std::map<size_t, std::u16string> url_strings;
   bool has_block = false;
 };
 
@@ -105,9 +110,22 @@ Prelude ConsumePrelude(CssTokenStream& stream) {
     }
     if (token.block_type == CssBlockType::kBlockStart) {
       // A block within the prelude, such as supports(...), stays one token
-      // here and is skipped whole.
+      // here and is skipped whole, but for the string of a url(): white
+      // space, the string, white space and the block's end.
       prelude.tokens.push_back(token);
+      const CssToken& block = prelude.tokens.back();
       const CssTokenStream::BlockGuard guard(stream);
+      if (block.type == CssTokenType::kFunction &&
+          base::EqualsCaseInsensitiveASCII(block.value, u"url")) {
+        stream.ConsumeWhitespace();
+        if (!stream.AtEnd() && stream.Peek().type == CssTokenType::kString) {
+          CssToken string = stream.ConsumeIncludingWhitespace();
+          if (stream.AtEnd()) {
+            prelude.url_strings[prelude.tokens.size() - 1] =
+                std::move(string.value);
+          }
+        }
+      }
       continue;
     }
     prelude.tokens.push_back(stream.Consume());
@@ -117,9 +135,7 @@ Prelude ConsumePrelude(CssTokenStream& stream) {
 
 // The URL that a prelude of @import starts with, as
 // CSSParserImpl::ConsumeImportRule() reads it: a URL, or url() or a string.
-bool ParseImportPrelude(std::u16string_view text,
-                        const Prelude& prelude,
-                        StyleSheetImport& import) {
+bool ParseImportPrelude(const Prelude& prelude, StyleSheetImport& import) {
   size_t i = 0;
   const std::vector<CssToken>& tokens = prelude.tokens;
   while (i < tokens.size() && IsWhitespace(tokens[i])) {
@@ -133,19 +149,12 @@ bool ParseImportPrelude(std::u16string_view text,
     import.url = url.value;
   } else if (url.type == CssTokenType::kFunction &&
              base::EqualsCaseInsensitiveASCII(url.value, u"url")) {
-    // url("...") with a string inside, whose contents the block skipped:
-    // they stand between its start and end in the sheet.
-    const std::u16string_view inside = base::TrimWhitespace(
-        text.substr(url.end, std::u16string_view::npos), base::TRIM_LEADING);
-    if (inside.empty() || (inside[0] != '"' && inside[0] != '\'')) {
+    // url("...") holding a string alone, decoded as the tokenizer reads it.
+    const auto string = prelude.url_strings.find(i);
+    if (string == prelude.url_strings.end()) {
       return false;
     }
-    const char16_t quote = inside[0];
-    const size_t close = inside.find(quote, 1);
-    if (close == std::u16string_view::npos) {
-      return false;
-    }
-    import.url = std::u16string(inside.substr(1, close - 1));
+    import.url = string->second;
   } else {
     return false;
   }
@@ -229,7 +238,7 @@ std::vector<StyleSheetImport> FindStyleSheetImports(
       } else if (name == u"import") {
         StyleSheetImport import;
         if (allowed <= AllowedRules::kAllowImportRules && !prelude.has_block &&
-            ParseImportPrelude(text, prelude, import)) {
+            ParseImportPrelude(prelude, import)) {
           imports.push_back(std::move(import));
           rule = RuleKind::kImport;
         }

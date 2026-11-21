@@ -22,6 +22,7 @@
 #include "mitto/dom/script_loader.h"
 #include "mitto/dom/window.h"
 #include "mitto/encoding/text_encoding_registry.h"
+#include "mitto/encoding/url_with_encoding.h"
 #include "mitto/mime_types.h"
 #include "v8/include/v8-isolate.h"
 
@@ -189,8 +190,13 @@ void PreloadRequest::Start(Document& document) const {
     }
     return;
   }
-  const GURL url = base_url.is_valid() ? base_url.Resolve(stripped)
-                                       : document.CompleteUrl(stripped);
+  // PreloadRequest::CompleteURL(): against the predicted base, with the
+  // document's encoding for the query, as Document::CompleteURLWithOverride()
+  // resolves it.
+  const GURL url =
+      base_url.is_valid()
+          ? ResolveUrlWithEncoding(base_url, stripped, document.Encoding())
+          : document.CompleteUrl(stripped);
   if (!url.is_valid()) {
     return;
   }

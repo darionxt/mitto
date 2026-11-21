@@ -25,7 +25,7 @@
 namespace mitto {
 
 class AbortSignal;
-class Window;
+class ExecutionContext;
 
 class SchedulerTaskContext final
     : public cppgc::GarbageCollected<SchedulerTaskContext> {
@@ -39,20 +39,20 @@ class SchedulerTaskContext final
   // yield().
   static EventLoop::Queue QueueFor(Priority priority, bool continuation);
 
-  SchedulerTaskContext(Window* window,
+  SchedulerTaskContext(ExecutionContext* context,
                        AbortSignal* abort_source,
                        Priority priority);
 
   void Trace(cppgc::Visitor* visitor) const;
 
-  // Whether a yield() of `window`'s scheduler inherits this, as
-  // SchedulerTaskContext::CanPropagateTo() says: only within its own window.
-  bool CanPropagateTo(const Window* window) const;
+  // Whether a yield() of `context`'s scheduler inherits this, as
+  // SchedulerTaskContext::CanPropagateTo() says: only within its own context.
+  bool CanPropagateTo(const ExecutionContext* context) const;
   AbortSignal* abort_source() const { return abort_source_.Get(); }
   Priority priority() const { return priority_; }
 
  private:
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
   const cppgc::Member<AbortSignal> abort_source_;
   const Priority priority_;
 };

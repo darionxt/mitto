@@ -576,6 +576,10 @@ def test_the_timeline_holds_the_navigation_and_the_page_s_requests_as_chrome_s(
         "firstInTimeline": True,
         "tag": "[object PerformanceNavigationTiming]",
     }
+    # The preload scanner asks for both scripts at once, so their entries may start at the same coarsened time, and
+    # then stand in the order their responses ended, as in Chrome.
+    resources = result["resources"]
+    resources[:2] = sorted(resources[:2], key=lambda entry: entry["name"] != "<o>/a.js")
     assert result == {
         # performance.timing, chrome.loadTimes() and timeOrigin read what the navigation's entry does.
         "legacyAgrees": [],
