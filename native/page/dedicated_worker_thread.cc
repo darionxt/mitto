@@ -19,6 +19,7 @@
 #include "base/time/time.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_dedicated_worker_global_scope.h"
+#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/dedicated_worker_global_scope.h"
 #include "mitto/dom/dom_timer.h"
@@ -26,7 +27,6 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/page_interfaces.h"
-#include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/window_tasks.h"
@@ -410,6 +410,9 @@ void DedicatedWorkerThread::Scope::OnResponse(FrameFromSession frame) {
       return;
     case PageMessage::kResponseEnded:
       requests_->OnResponseEnded(frame.ended);
+      return;
+    case PageMessage::kRequestBodyCredit:
+      requests_->OnRequestBodyCredit(frame.request_body_credit);
       return;
     default:
       NOTREACHED();

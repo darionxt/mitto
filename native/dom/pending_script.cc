@@ -105,6 +105,7 @@ void PendingScript::ExecuteScriptBlock() {
 
 void PendingScript::Dispose() {
   StopWatchingForLoad();
+  DisposeInternal();
   // Rendering is no longer blocked on the element, as Blink's Dispose()
   // unblocks it, which running the script does first.
   if (Element* const element = element_.Get()) {

@@ -59,6 +59,14 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"fetch('/data.txt').then((r) => r.text()).then((t) => postMessage([t, performance.now() > 0]));",
     ),
     "/data.txt": ("text/plain", b"data from the server"),
+    # A fetch() whose body is a stream, which goes only over HTTP/2 or HTTP/3, so over this server's HTTP/1.1 it fails
+    # with the stream read once and locked, as a window's does in Chrome.
+    "/uploads.js": (
+        "text/javascript",
+        b"let pulls = 0; const body = new ReadableStream({ pull(c) { pulls++; c.enqueue(new Uint8Array([1])); } });"
+        b" fetch('/data.txt', { method: 'POST', duplex: 'half', body }).then(() => 'fulfilled', (e) => 'rejected ' + e)"
+        b".then((s) => setTimeout(() => postMessage([s, pulls, body.locked].join(' / ')), 0));",
+    ),
     "/broadcast.js": (
         "text/javascript",
         b"const channel = new BroadcastChannel('news');"
@@ -362,6 +370,16 @@ def test_a_worker_fetches_through_the_session(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == ["data from the server", True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_stream_body_fails_over_http1_as_a_windows_does(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/uploads.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "rejected TypeError: Failed to fetch / 1 / true"
 
 
 @pytest.mark.usefixtures("page_program")

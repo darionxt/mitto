@@ -140,6 +140,34 @@ def test_the_pages_of_a_session_share_its_buckets(server_origin: str) -> None:
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_deleted_bucket_lets_the_commit_its_task_sent_end_first(server_origin: str, tmp_path: Path) -> None:
+    # A transaction made in the task that deletes its bucket commits once the task's microtasks have run, after the
+    # delete() call, and completes before the deletion closes its connection, as in Chrome. Repeated, since a Page
+    # that sent the deletion first aborted it now and then.
+    with (
+        mitto.Session(_storage=tmp_path / "storage") as session,
+        session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        outcome = page.evaluate(
+            "(async () => { const seen = [];"
+            " for (let i = 0; i < 20; ++i) {"
+            " const b = await navigator.storageBuckets.open(`b${i}`);"
+            " const db = await new Promise((resolve) => { const r = b.indexedDB.open('d');"
+            " r.onupgradeneeded = () => r.result.createObjectStore('s'); r.onsuccess = () => resolve(r.result); });"
+            " const log = []; db.onclose = () => log.push('close');"
+            " const tx = db.transaction('s', 'readwrite');"
+            " tx.oncomplete = () => log.push('complete'); tx.onabort = () => log.push('abort');"
+            " await navigator.storageBuckets.delete(`b${i}`);"
+            " await new Promise((resolve) => setTimeout(resolve, 30));"
+            " seen.push(log.join()); }"
+            " return seen; })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert outcome == ["complete,close"] * 20
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_bucket_deleted_in_one_page_closes_another_page_s_connection(server_origin: str) -> None:
     with (
         mitto.Session() as session,

@@ -8,7 +8,6 @@
 
 #include "base/check.h"
 #include "base/containers/span.h"
-#include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -18,7 +17,6 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/error_reporting.h"
-#include "mitto/dom/fetcher.h"
 #include "mitto/dom/referrer_script_info.h"
 #include "mitto/dom/script_element_base.h"
 #include "mitto/dom/window.h"
@@ -200,46 +198,6 @@ std::optional<std::string> RefusedAsWorkerScript(const GURL& url,
   return std::nullopt;
 }
 
-// What a script's fetch hears, which keeps the script until the fetch ends.
-class ClassicPendingScript::FetchClient final : public mitto::FetchClient {
- public:
-  explicit FetchClient(ClassicPendingScript& script) : script_(&script) {}
-
-  FetchClient(const FetchClient&) = delete;
-  FetchClient& operator=(const FetchClient&) = delete;
-
-  ~FetchClient() override = default;
-
-  // FetchClient:
-  void OnStarted(FetchController& controller) override {
-    controller_ = &controller;
-  }
-  void OnResponseStarted(const FetchResponseHead& head) override {
-    status_ = head.status;
-    response_url_ = GURL(head.url);
-    headers_ = head.headers;
-    opaque_ = head.opaque;
-  }
-  void OnResponseBody(std::string bytes) override {
-    body_ += bytes;
-    // A script's body is taken as it comes.
-    controller_->TookBody(bytes.size());
-  }
-  void OnResponseEnded(int net_error) override {
-    script_->NotifyFinished(net_error, status_, response_url_, headers_,
-                            opaque_, std::move(body_));
-  }
-
- private:
-  const cppgc::Persistent<ClassicPendingScript> script_;
-  raw_ptr<FetchController> controller_ = nullptr;
-  int status_ = 0;
-  GURL response_url_;
-  std::string headers_;
-  bool opaque_ = false;
-  std::string body_;
-};
-
 // static
 ClassicPendingScript* ClassicPendingScript::CreateInline(
     ScriptElementBase& element,
@@ -263,18 +221,13 @@ ClassicPendingScript* ClassicPendingScript::CreateInline(
 // static
 ClassicPendingScript* ClassicPendingScript::Fetch(
     ScriptElementBase& element,
-    const GURL& url,
-    FetchRequestData request,
-    const ScriptFetchOptions& options,
-    IntegrityMetadataSet integrity,
-    std::string encoding,
-    bool render_blocking) {
+    const FetchParameters& params,
+    const ScriptFetchOptions& options) {
   ClassicPendingScript* const script =
       bindings::MakeGarbageCollected<ClassicPendingScript>(
           element, /*is_external=*/true, options);
-  script->integrity_ = std::move(integrity);
-  script->encoding_ = std::move(encoding);
-  script->StartFetch(url, std::move(request), render_blocking);
+  script->integrity_ = params.integrity;
+  script->StartFetch(params);
   return script;
 }
 
@@ -289,26 +242,32 @@ ClassicPendingScript::ClassicPendingScript(ScriptElementBase& element,
 ClassicPendingScript::~ClassicPendingScript() = default;
 
 void ClassicPendingScript::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(resource_);
   PendingScript::Trace(visitor);
 }
 
-void ClassicPendingScript::StartFetch(const GURL& url,
-                                      FetchRequestData request,
-                                      bool render_blocking) {
-  fetch_url_ = url;
-  Window* const window = original_window();
-  Fetcher* const fetcher = window ? window->GetFetcher() : nullptr;
-  if (!fetcher) {
+void ClassicPendingScript::StartFetch(const FetchParameters& params) {
+  fetch_url_ = params.url;
+  Document* const document = original_element_document();
+  Resource* const resource = document && original_window()
+                                 ? document->Fetcher().RequestResource(params)
+                                 : nullptr;
+  if (!resource) {
     // A window with no Session to fetch through, as the Page program's
     // given a script.
     state_ = State::kErrorOccurred;
     return;
   }
-  request.destination = FetchDestination::kScript;
-  request.method = "GET";
-  request.url = url.spec();
-  request.render_blocking = render_blocking;
-  fetcher->Fetch(std::move(request), std::make_unique<FetchClient>(*this));
+  resource_ = resource;
+  // A resource that has ended tells the script at once.
+  resource->AddClient(this);
+}
+
+void ClassicPendingScript::DisposeInternal() {
+  if (Resource* const resource = resource_.Get()) {
+    resource_ = nullptr;
+    resource->RemoveClient(this);
+  }
 }
 
 bool ClassicPendingScript::IsExternal() const {
@@ -351,12 +310,16 @@ bool ClassicPendingScript::IsEligibleForLowPriorityAsyncScriptExecution()
   return !ToScriptElement(*element())->IsPotentiallyRenderBlocking();
 }
 
-void ClassicPendingScript::NotifyFinished(int net_error,
-                                          int status,
-                                          const GURL& response_url,
-                                          const std::string& headers,
-                                          bool opaque,
-                                          std::string body) {
+void ClassicPendingScript::NotifyFinished(Resource& resource) {
+  if (&resource != resource_.Get() || state_ != State::kWaitingForResource) {
+    return;
+  }
+  resource.RemoveClient(this);
+  const int status = resource.HttpStatus();
+  const GURL response_url(resource.Response().url);
+  const std::string& headers = resource.Response().headers;
+  const bool opaque = resource.Response().opaque;
+  const std::string& body = resource.Body();
   // Each Window's console says the errors of its documents' scripts.
   Window* const window = original_window();
   Document* const document = original_element_document();
@@ -368,7 +331,7 @@ void ClassicPendingScript::NotifyFinished(int net_error,
   }
   // The HTML Standard's fetch a classic script: a response with an ok status
   // and all of its body.
-  if (net_error != 0 || status < 200 || status > 299) {
+  if (resource.ErrorOccurred() || status < 200 || status > 299) {
     AdvanceReadyState(State::kErrorOccurred);
     return;
   }
@@ -390,10 +353,10 @@ void ClassicPendingScript::NotifyFinished(int net_error,
     AdvanceReadyState(State::kErrorOccurred);
     return;
   }
-  // ScriptResource's decoder.
+  // ScriptResource's decoder, of the request that made the resource.
   const std::unique_ptr<TextResourceDecoder> decoder =
       BuildClassicScriptDecoder(
-          encoding_,
+          resource.Charset(),
           GetMimeTypeAndCharset(HeaderField(headers, "content-type")).charset);
   source_ = decoder->Decode(base::as_byte_span(body));
   source_ += decoder->Flush();

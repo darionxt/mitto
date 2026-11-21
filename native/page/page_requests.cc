@@ -67,7 +67,8 @@ uint64_t PageRequests::Start(PageRequest request,
   timed.start_time = base::TimeTicks::Now();
   // A module's initiator type is "script" too, as ModuleScriptLoader sets it.
   timed.initiator_type = request.kind == PageRequestKind::kScript ||
-                                 request.kind == PageRequestKind::kModule
+                                 request.kind == PageRequestKind::kModule ||
+                                 request.kind == PageRequestKind::kModuleJson
                              ? u"script"
                              : u"fetch";
   timed.url = base::UTF8ToUTF16(request.url);
@@ -82,6 +83,7 @@ uint64_t PageRequests::Start(PageRequest request,
   const uint64_t number = Send(context.ContextId(), request);
   Open& open = open_[number];
   open.client = &client;
+  open.streams_body = request.streams_body;
   open.timed = std::move(timed);
   return number;
 }
@@ -274,6 +276,45 @@ void PageRequests::TookBody(uint64_t number, size_t bytes) {
   sender_->Send(EncodeCredit(credit));
 }
 
+size_t PageRequests::BodyCredit(uint64_t number) const {
+  const auto found = open_.find(number);
+  if (found == open_.end() || found->second.body_ended) {
+    return 0;
+  }
+  return base::checked_cast<size_t>(found->second.body_credited -
+                                    found->second.body_sent);
+}
+
+void PageRequests::SendBodyPart(uint64_t number, std::string_view bytes) {
+  const auto found = open_.find(number);
+  if (found == open_.end()) {
+    return;
+  }
+  Open& open = found->second;
+  CHECK(open.streams_body);
+  CHECK(!open.body_ended);
+  CHECK_LE(bytes.size(), open.body_credited - open.body_sent);
+  open.body_sent += bytes.size();
+  PageRequestBodyPart part;
+  part.number = number;
+  part.bytes = std::string(bytes);
+  sender_->Send(EncodeRequestBodyPart(part));
+}
+
+void PageRequests::EndBody(uint64_t number, bool errored) {
+  const auto found = open_.find(number);
+  if (found == open_.end()) {
+    return;
+  }
+  CHECK(found->second.streams_body);
+  CHECK(!found->second.body_ended);
+  found->second.body_ended = true;
+  PageRequestBodyEnded ended;
+  ended.number = number;
+  ended.errored = errored;
+  sender_->Send(EncodeRequestBodyEnded(ended));
+}
+
 PageRequests::Open* PageRequests::Find(uint64_t number,
                                        std::string_view message) {
   if (number == kNavigationRequest && !navigation_seen_ && navigation_client_) {
@@ -331,6 +372,26 @@ void PageRequests::OnResponseBody(PageResponseBody body) {
   open->untaken += body.bytes.size();
   // The client may take the bytes, and give credit, before this returns.
   open->client->OnResponseBody(std::move(body.bytes));
+}
+
+void PageRequests::OnRequestBodyCredit(const PageCredit& credit) {
+  Open* const open = Find(credit.number, "credit for the body");
+  if (!open) {
+    return;
+  }
+  // The Session gives credit for one window at first, and after that for
+  // what it has taken.
+  if (!open->streams_body ||
+      credit.bytes > open->body_sent + kBodyWindow - open->body_credited) {
+    refuse_.Run(base::StrCat({"credit for more of the body of request ",
+                              base::NumberToString(credit.number),
+                              " than the Page sent"}));
+    return;
+  }
+  open->body_credited += credit.bytes;
+  if (open->client && !open->body_ended) {
+    open->client->OnRequestBodyCredit();
+  }
 }
 
 void PageRequests::OnResponseEnded(const PageResponseEnded& ended) {

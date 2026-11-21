@@ -5,27 +5,12 @@ on:
   pull_request:
     # ready_for_review starts the run when a draft is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
+    # A pull request runs the library's builds and, when it needs it, the Runtime's fuzz build, so the Page program's
+    # tests, which only the Runtime's other builds run, start nothing here.
     paths:
       - .github/workflows/sanitizers.yml
       - native/**
-      - tests/data/document_encodings.json
-      - tests/data/page_cases.json
-      - tests/page_cases.js
       - tests/test_core_test_program.py
-      - tests/test_page_abort.py
-      - tests/test_page_bindings.py
-      - tests/test_page_common_members.py
-      - tests/test_page_document.py
-      - tests/test_page_document_encodings.py
-      - tests/test_page_known_gaps.py
-      - tests/test_page_media.py
-      - tests/test_page_performance.py
-      - tests/test_page_probe.py
-      - tests/test_page_program.py
-      - tests/test_page_reachable_objects.py
-      - tests/test_page_text_encoding.py
-      - tools/capture/probe.js
-      - tools/capture/probe.py
       - tools/workspace/**
   push:
     branches: [main]
@@ -69,14 +54,57 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Each of the Runtime's builds takes an hour or more when main's build directory does not cover a change, and holds a
+  # runner for that long while CI's jobs wait for one. So a pull request skips runtime-asan and runtime-ubsan, and runs
+  # runtime-fuzz only when it changes what that build fuzzes. main builds all six on the push that merges it, and the
+  # nightly run builds them from nothing.
+  changes:
+    name: What the pull request changes
+    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      runtime-fuzz: ${{ steps.diff.outputs.runtime-fuzz }}
+    steps:
+      # The merge commit and its parents, without the files' contents: only their names are read.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+          filter: blob:none
+          sparse-checkout: .github
+      - id: diff
+        run: |
+          # What merging the pull request changes on main, with both names of a file that it moves.
+          files="$(git diff --name-only --no-renames HEAD^1 HEAD)"
+          runtime_fuzz=false
+          while read -r file; do
+            case "$file" in
+              # The tree builder and the tokenizer that it runs, the XML parsers, with the bridge to the Rust xml crate
+              # and the code that builds their trees, both fuzz targets with their dictionaries and seeds, and the
+              # export, which pins V8, libxml2 and the Rust xml crate. Not native/dom/BUILD.gn, which nearly every
+              # change to the Runtime touches.
+              native/dom/html_tree_builder.* | native/html/* | \
+                native/dom/libxml_tree_builder.* | native/dom/xml_tree_builder.* | native/dom/xml_dom_builder.* | \
+                native/dom/xml_errors.* | native/xml/* | \
+                native/test/html_tree_builder_fuzzer.* | native/test/html_tree_builder_corpus/* | \
+                native/test/xml_parser_fuzzer.* | native/test/xml_parser_corpus/* | \
+                tools/workspace/*)
+                echo "$file changes what runtime-fuzz fuzzes."
+                runtime_fuzz=true
+                ;;
+            esac
+          done <<< "$files"
+          echo "runtime-fuzz=$runtime_fuzz" >> "$GITHUB_OUTPUT"
+
   native:
     name: Native core, ${{ matrix.config }}
     # A draft pull request skips the sanitizers and the fuzz targets: they run once it is marked ready for review, and
     # on every push to main.
     if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
-    # From nothing, as in the nightly run, the Runtime takes 63 to 85 minutes to build, and the library under a
-    # sanitizer 17 to 26.
+    # From nothing, as in the nightly run, the library takes 17 to 26 minutes to build under a sanitizer, and the
+    # Runtime, in the jobs below, 63 to 85.
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -92,20 +120,14 @@ jobs:
           - config: fuzz
             tests: fuzz
             files: client_hints_fuzzer cookies_fuzzer page_messages_fuzzer request_options_fuzzer session_settings_fuzzer socks5_auth_fuzzer html_tokenizer_fuzzer media_query_fuzzer css_selector_fuzzer libsanitizer_shared_hooks.so
-          # The Runtime's Page program, which builds without the library.
-          - config: runtime-asan
-            tests: page
-            files: mitto_page html_tree_builder_test libsanitizer_shared_hooks.so
-          - config: runtime-ubsan
-            tests: page
-            files: mitto_page html_tree_builder_test
-          # The tree builder's fuzz target, which builds with V8, as the Page program does.
-          - config: runtime-fuzz
-            tests: runtime-fuzz
-            files: html_tree_builder_fuzzer libsanitizer_shared_hooks.so
     env:
       UV_LOCKED: "1"
-    steps:
+      CONFIG: ${{ matrix.config }}
+      TESTS: ${{ matrix.tests }}
+      FILES: ${{ matrix.files }}
+    # The Runtime's jobs below run the same steps. Each of them is a job of its own, not a part of this matrix, so that
+    # a pull request can skip it.
+    steps: &steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -117,7 +139,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/native-core
-          key: native-core-${{ matrix.config }}-${{ hashFiles('.github/workflows/sanitizers.yml', 'native/**', 'tools/workspace/**') }}
+          key: native-core-${{ env.CONFIG }}-${{ hashFiles('.github/workflows/sanitizers.yml', 'native/**', 'tools/workspace/**') }}
       - id: tag
         run: echo "tag=$(cat tools/workspace/chromium_tag)" >> "$GITHUB_OUTPUT"
       # What the export compiles to changes only with tools/workspace, so main and pull requests reuse the build
@@ -127,13 +149,10 @@ jobs:
         if: steps.cached-build.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ matrix.config }}
-          key: native-objects-${{ matrix.config }}-${{ hashFiles('tools/workspace/**') }}
+          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ env.CONFIG }}
+          key: native-objects-${{ env.CONFIG }}-${{ hashFiles('tools/workspace/**') }}
       - name: Build the native core
         if: steps.cached-build.outputs.cache-hit != 'true'
-        env:
-          CONFIG: ${{ matrix.config }}
-          FILES: ${{ matrix.files }}
         run: |
           set -o pipefail
           uv run tools/workspace/export.py build "$RUNNER_TEMP/export" --config "$CONFIG" | tee "$RUNNER_TEMP/build.log"
@@ -156,45 +175,45 @@ jobs:
       - if: steps.cached-build.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ matrix.config }}
+          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ env.CONFIG }}
           key: ${{ steps.cached-objects.outputs.cache-primary-key }}
       - name: Run the C test program against a local server
-        if: matrix.tests == 'library'
+        if: env.TESTS == 'library'
         run: uv run pytest tests/test_core_test_program.py -rs
         env:
           MITTO_CORE_TEST: ${{ runner.temp }}/native-core/mitto_core_test
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Run html5lib's tokenizer tests
-        if: matrix.tests == 'library'
+        if: env.TESTS == 'library'
         run: |
           "$RUNNER_TEMP/native-core/html_tokenizer_test" native/test/html5lib_tokenizer native/test/html5lib_tokenizer_failures.txt
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Run Blink's media query tests
-        if: matrix.tests == 'library'
+        if: env.TESTS == 'library'
         run: |
           "$RUNNER_TEMP/native-core/media_query_test"
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Run the Page program's tests
-        if: matrix.tests == 'page'
+        if: env.TESTS == 'page'
         run: uv run pytest tests/test_page_program.py tests/test_page_abort.py tests/test_page_bindings.py tests/test_page_common_members.py tests/test_page_document.py tests/test_page_document_encodings.py tests/test_page_known_gaps.py tests/test_page_media.py tests/test_page_performance.py tests/test_page_probe.py tests/test_page_reachable_objects.py tests/test_page_text_encoding.py -rs
         env:
           MITTO_PAGE_PROGRAM: ${{ runner.temp }}/native-core/mitto_page
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Run html5lib's tree construction tests
-        if: matrix.tests == 'page'
+        if: env.TESTS == 'page'
         run: |
           "$RUNNER_TEMP/native-core/html_tree_builder_test" native/test/html5lib_tree native/test/html5lib_tree_failures.txt
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Fuzz the code that reads a Session's settings, a request's options, cookies, a SOCKS5 proxy's answers, client hints, HTML, media queries, selectors and what a Page sends
-        if: matrix.tests == 'fuzz'
+        if: env.TESTS == 'fuzz'
         run: |
           mkdir "$RUNNER_TEMP/crashes"
           for target in session_settings request_options cookies socks5_auth client_hints html_tokenizer media_query css_selector page_messages; do
@@ -209,22 +228,66 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           # A pull request only checks that new code does not fail quickly. main and the nightly run look harder.
           FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && 60 || 300 }}
-      - name: Fuzz the tree builder
-        if: matrix.tests == 'runtime-fuzz'
+      - name: Fuzz the tree builder and the XML parsers
+        if: env.TESTS == 'runtime-fuzz'
         run: |
-          mkdir "$RUNNER_TEMP/crashes" "$RUNNER_TEMP/corpus-html_tree_builder"
-          "$RUNNER_TEMP/native-core/html_tree_builder_fuzzer" \
-            -max_total_time="$FUZZ_SECONDS" \
-            -dict=native/test/html_tree_builder_fuzzer.dict \
-            -artifact_prefix="$RUNNER_TEMP/crashes/html_tree_builder-" \
-            "$RUNNER_TEMP/corpus-html_tree_builder" native/test/html_tree_builder_corpus
+          mkdir "$RUNNER_TEMP/crashes"
+          for target in html_tree_builder xml_parser; do
+            mkdir "$RUNNER_TEMP/corpus-$target"
+            "$RUNNER_TEMP/native-core/${target}_fuzzer" \
+              -max_total_time="$FUZZ_SECONDS" \
+              -dict="native/test/${target}_fuzzer.dict" \
+              -artifact_prefix="$RUNNER_TEMP/crashes/$target-" \
+              "$RUNNER_TEMP/corpus-$target" "native/test/${target}_corpus"
+          done
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && 60 || 300 }}
       # A run is random, so the input that crashed it is the only way to repeat it.
-      - if: failure() && (matrix.tests == 'fuzz' || matrix.tests == 'runtime-fuzz')
+      - if: failure() && (env.TESTS == 'fuzz' || env.TESTS == 'runtime-fuzz')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ matrix.tests == 'fuzz' && 'fuzzer-crashes' || 'tree-builder-fuzzer-crashes' }}
+          name: ${{ env.TESTS == 'fuzz' && 'fuzzer-crashes' || 'runtime-fuzzer-crashes' }}
           path: ${{ runner.temp }}/crashes
           if-no-files-found: ignore
+
+  # The Runtime's Page program, which builds without the library. A pull request skips it.
+  runtime-asan:
+    name: Native core, runtime-asan
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      UV_LOCKED: "1"
+      CONFIG: runtime-asan
+      TESTS: page
+      FILES: mitto_page html_tree_builder_test libsanitizer_shared_hooks.so
+    steps: *steps
+
+  runtime-ubsan:
+    name: Native core, runtime-ubsan
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      UV_LOCKED: "1"
+      CONFIG: runtime-ubsan
+      TESTS: page
+      FILES: mitto_page html_tree_builder_test
+    steps: *steps
+
+  # The tree builder's and the XML parsers' fuzz targets, which build with V8, as the Page program does. A pull request
+  # runs them only when it changes what they fuzz.
+  runtime-fuzz:
+    name: Native core, runtime-fuzz
+    needs: changes
+    # Outside a pull request changes is skipped, which would skip this job too without !cancelled().
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.runtime-fuzz == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      UV_LOCKED: "1"
+      CONFIG: runtime-fuzz
+      TESTS: runtime-fuzz
+      FILES: html_tree_builder_fuzzer xml_parser_fuzzer libsanitizer_shared_hooks.so
+    steps: *steps

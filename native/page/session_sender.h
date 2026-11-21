@@ -50,9 +50,10 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // that `encode` makes of it, and returns it. Any thread.
   uint64_t SendContext(base::FunctionRef<std::string(uint64_t id)> encode);
 
-  // Hands `frame`, a frame of a response, to the route of its request, and
-  // forgets the route once the request ends. Returns false for a request that
-  // has none, whose response goes to the main thread. The I/O thread.
+  // Hands `frame`, a frame of a response or credit for a request body, to the
+  // route of its request, and forgets the route once the request ends.
+  // Returns false for a request that has none, whose response goes to the
+  // main thread. The I/O thread.
   bool Route(FrameFromSession& frame);
 
  private:

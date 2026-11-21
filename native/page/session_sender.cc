@@ -6,7 +6,8 @@ namespace mitto {
 
 namespace {
 
-// The number of the request whose response `frame` is part of.
+// The number of the request whose response, or credit for whose body,
+// `frame` is.
 uint64_t RequestOf(const FrameFromSession& frame) {
   switch (frame.type) {
     case PageMessage::kResponseStarted:
@@ -15,6 +16,8 @@ uint64_t RequestOf(const FrameFromSession& frame) {
       return frame.body.number;
     case PageMessage::kResponseEnded:
       return frame.ended.number;
+    case PageMessage::kRequestBodyCredit:
+      return frame.request_body_credit.number;
     default:
       return kNavigationRequest;
   }

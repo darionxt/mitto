@@ -62,6 +62,7 @@ class RequestKind(StrEnum):
         STYLE: A stylesheet that a link element or an @import asks for.
         FONT: A font that a stylesheet's @font-face asks for.
         MODULE: A module script, or what one imports.
+        MODULE_JSON: A JSON module that a module imports with `with {type: "json"}`.
         XHR: A page's XMLHttpRequest.
         WORKER: The script of a dedicated worker, which the browser asks for.
         BEACON: A page's navigator.sendBeacon().
@@ -81,6 +82,7 @@ class RequestKind(StrEnum):
     BEACON = "beacon"
     IFRAME = "iframe"
     FAVICON = "favicon"
+    MODULE_JSON = "module_json"
 
 
 class RequestDefaults(TypedDict):

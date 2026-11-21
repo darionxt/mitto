@@ -344,15 +344,20 @@
     return log;
   });
 
-  // Expiration.
+  // Expiration. The expiry is a second in the past: Date.now() is the page's
+  // clock, and the check runs on the native core's, as on the browser
+  // process's in Chrome. On Windows each process reads the wall clock once a
+  // minute and adds what its own counter has run since, so the two clocks
+  // drift a millisecond or two apart, and a millisecond in the past can still
+  // lie ahead for the check.
   out.expiry = await outcome(async () => {
     const bucket = await m.open('exp', {expires: Date.now() + 1e6});
-    await bucket.setExpires(Date.now() - 1);
+    await bucket.setExpires(Date.now() - 1000);
     const usable = await outcome(async () => [typeof (await bucket.expires()), (await bucket.estimate()).usage]);
     const keys = await m.keys();
     const afterKeys = await outcome(() => bucket.estimate());
     const other = await m.open('exp2', {expires: Date.now() + 1e6});
-    await other.setExpires(Date.now() - 1);
+    await other.setExpires(Date.now() - 1000);
     const reopened = await m.open('exp2');
     return {
       usable,
