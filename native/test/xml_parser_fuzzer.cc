@@ -73,8 +73,70 @@ constexpr auto kPieceSizes = std::to_array<size_t>(
     {1,   2,   3,   4,    5,    7,    8, 11, 13, 16, 17, 31, 32, 64, 100, 128,
      255, 256, 512, 1000, 1024, 4096, 0, 0,  0,  0,  0,  0,  0,  0,  0,   0});
 
-// The tree under `root`, one node to a line, walked without recursion.
-std::string Dump(const Node& root) {
+// Takes `prefix` and then digits off the front of `text`, if it starts so.
+bool ConsumeNumberAfter(std::string_view& text, std::string_view prefix) {
+  if (!text.starts_with(prefix)) {
+    return false;
+  }
+  size_t end = prefix.size();
+  while (end < text.size() && base::IsAsciiDigit(text[end])) {
+    ++end;
+  }
+  if (end == prefix.size()) {
+    return false;
+  }
+  text.remove_prefix(end);
+  return true;
+}
+
+// The messages of an error block, one after another as XMLErrors writes them,
+// "<type> on line <line> at column <column>: <message>", with each one's line
+// and column left out. libxml2 places an error where its input ends when it
+// stopped there, so where a piece ended, in Chrome as here: a processing
+// instruction that never ends in the internal subset, which libxml2 reads once
+// the subset's `]>` has come, is an error at column 51 of its document whole,
+// and at column 40, just after `]>`, when `]>` ended a piece.
+std::string WithoutErrorPlaces(std::string_view messages) {
+  std::string out;
+  while (!messages.empty()) {
+    const size_t newline = messages.find('\n');
+    std::string_view line = messages.substr(
+        0, newline == std::string_view::npos ? newline : newline + 1);
+    messages.remove_prefix(line.size());
+    for (const std::string_view type : {"error", "warning"}) {
+      std::string_view rest = line;
+      if (rest.starts_with(type)) {
+        rest.remove_prefix(type.size());
+        if (ConsumeNumberAfter(rest, " on line ") &&
+            ConsumeNumberAfter(rest, " at column ") && rest.starts_with(": ")) {
+          out += type;
+          out += " on line # at column #";
+          line = rest;
+          break;
+        }
+      }
+    }
+    out += line;
+  }
+  return out;
+}
+
+// Whether `node` is the text of the messages of Blink's error block.
+bool IsErrorMessages(const Node& node) {
+  const Node* const parent = node.ParentNode();
+  if (node.GetNodeType() != Node::kTextNode || !parent ||
+      parent->GetNodeType() != Node::kElementNode ||
+      !static_cast<const Element*>(parent)->HasHTMLTagName(u"div")) {
+    return false;
+  }
+  const Node* const block = parent->ParentNode();
+  return block && block->GetNodeType() == Node::kElementNode &&
+         static_cast<const Element*>(block)->HasHTMLTagName(u"parsererror");
+}
+
+// The tree under `root`, one node to a line, walked without recursion, with
+// the places of its errors left out when `without_error_places`.
+std::string Dump(const Node& root, bool without_error_places) {
   std::string out;
   const Node* node = root.FirstChild();
   int depth = 0;
@@ -102,7 +164,8 @@ std::string Dump(const Node& root) {
         if (element->HasHTMLTagName(u"template")) {
           out += "\n{" +
                  Dump(*static_cast<const mitto::HTMLTemplateElement*>(element)
-                           ->Content()) +
+                           ->Content(),
+                      without_error_places) +
                  "}";
         }
         break;
@@ -119,12 +182,15 @@ std::string Dump(const Node& root) {
         break;
       case Node::kTextNode:
       case Node::kCdataSectionNode:
-      case Node::kCommentNode:
-        out += std::to_string(node->GetNodeType()) + "\"" +
-               base::UTF16ToUTF8(
-                   static_cast<const mitto::CharacterData*>(node)->Data()) +
-               "\"";
+      case Node::kCommentNode: {
+        std::string data = base::UTF16ToUTF8(
+            static_cast<const mitto::CharacterData*>(node)->Data());
+        if (without_error_places && IsErrorMessages(*node)) {
+          data = WithoutErrorPlaces(data);
+        }
+        out += std::to_string(node->GetNodeType()) + "\"" + data + "\"";
         break;
+      }
       default:
         break;
     }
@@ -158,40 +224,6 @@ struct ParsedDocument {
   bool pieces_leave_alone;
 };
 
-// `dump` with the line and column of each error in its block left out. libxml2
-// places an error where its input ends when it stopped there, so where a piece
-// ended, in Chrome as here: a processing instruction that never ends in the
-// internal subset, which libxml2 reads once the subset's `]>` has come, is an
-// error at column 51 of its document whole, and at column 40, just after `]>`,
-// when `]>` ended a piece.
-std::string WithoutErrorPlaces(std::string_view dump) {
-  std::string out;
-  while (!dump.empty()) {
-    size_t mark = std::string_view::npos;
-    size_t mark_size = 0;
-    for (const std::string_view candidate : {" on line ", " at column "}) {
-      const size_t at = dump.find(candidate);
-      if (at < mark) {
-        mark = at;
-        mark_size = candidate.size();
-      }
-    }
-    if (mark == std::string_view::npos) {
-      out += dump;
-      break;
-    }
-    out += dump.substr(0, mark + mark_size);
-    dump.remove_prefix(mark + mark_size);
-    size_t digits = 0;
-    while (digits < dump.size() && base::IsAsciiDigit(dump[digits])) {
-      ++digits;
-    }
-    out += '#';
-    dump.remove_prefix(digits);
-  }
-  return out;
-}
-
 // A document of no window, whose scripts never run, so no reader gives the
 // parser a script to wait for.
 ParsedDocument ParseDocument(std::u16string_view markup,
@@ -220,7 +252,8 @@ ParsedDocument ParseDocument(std::u16string_view markup,
   reader->Finish();
   CHECK(!reader->Pump());
   reader->End();
-  std::string dump = Dump(*document);
+  // libxml2's errors keep their messages but not their places.
+  std::string dump = Dump(*document, /*without_error_places=*/libxml);
   const bool pieces_leave_alone =
       document->LastChild() == document->DocumentElement() &&
       dump.find(" parsererror") == std::string::npos;
@@ -256,7 +289,7 @@ void ParseFragment(std::u16string_view markup, int context_kind) {
   const v8::TryCatch try_catch(isolate);
   mitto::LibxmlTreeBuilder::ParseFragment(markup, *fragment, context.Get(),
                                           *references);
-  Dump(*fragment);
+  Dump(*fragment, /*without_error_places=*/false);
 }
 
 // Sets V8 up once, as the test program does, for every input, with a context
@@ -319,10 +352,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     const ParsedDocument whole =
         ParseDocument(markup, markup.size() + 1, libxml);
     const ParsedDocument in_pieces = ParseDocument(markup, piece_size, libxml);
-    if (libxml) {
-      CHECK_EQ(WithoutErrorPlaces(whole.dump),
-               WithoutErrorPlaces(in_pieces.dump));
-    } else if (whole.pieces_leave_alone) {
+    if (libxml || whole.pieces_leave_alone) {
       CHECK_EQ(whole.dump, in_pieces.dump);
     }
   } else {
