@@ -117,6 +117,54 @@ def test_an_import_takes_the_decoded_string_of_a_quoted_url(session: mitto.Sessi
     assert sorted(server.paths()) == ["/escaped.css", "/page", "/say's.css"]
 
 
+def test_a_link_type_with_parameters_names_a_style_sheet(session: mitto.Session, server: RecordingServer) -> None:
+    server.route("/parameters.css", b"p {}", _CSS)
+    server.route("/spaced.css", b"p {}", _CSS)
+    server.route("/other.css", b"p {}", _CSS)
+    url = server.page(
+        "/page",
+        '<link rel="stylesheet" type="text/css; charset=utf-8" href="parameters.css">'
+        '<link rel="stylesheet" type=" TEXT/CSS " href="spaced.css">'
+        '<link rel="stylesheet" type="text/plain; x=text/css" href="other.css">',
+    )
+
+    with _open_page(session, url):
+        pass
+
+    # The type's MIME type, without white space or parameters, as Blink's ContentType::GetType() takes it.
+    assert sorted(server.paths()) == ["/page", "/parameters.css", "/spaced.css"]
+
+
+def test_an_import_takes_the_encoding_that_decoded_its_sheet(session: mitto.Session, server: RecordingServer) -> None:
+    server.route("/declared.css", b'@import "undeclared.css";', "text/css; charset=windows-1251")
+    server.route("/undeclared.css", '@import "\u0438\u043c\u044f.css";'.encode("cp1251"), _CSS)
+    named = "/%D0%B8%D0%BC%D1%8F.css"
+    server.route(named, b"p {}", _CSS)
+    url = server.page("/page", '<meta charset="utf-8"><link rel="stylesheet" href="declared.css">')
+
+    with _open_page(session, url):
+        pass
+
+    # A sheet that says nothing of its encoding decodes as the sheet that imports it was decoded, as Blink gives the
+    # import the parent's CSSStyleSheetResource::Encoding().
+    assert sorted(server.paths()) == [named, "/declared.css", "/page", "/undeclared.css"]
+
+
+def test_a_style_element_reads_its_text_again_once_a_script_changes_it(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    server.route("/first.css", b"p {}", _CSS)
+    server.route("/next.css", b"p {}", _CSS)
+    url = server.page("/page", "<style id=s>@import 'first.css';</style>")
+
+    with _open_page(session, url) as page:
+        page.evaluate("s.firstChild.data = \"@import 'next.css';\"; true")
+        assert server.wait_for_path("/next.css")
+
+    # CharacterData::DidModifyData() tells the parent, and the style element makes its sheet again.
+    assert sorted(server.paths()) == ["/first.css", "/next.css", "/page"]
+
+
 def test_an_import_of_a_sheet_of_another_origin_names_that_sheet_as_referrer(
     session: mitto.Session, server: RecordingServer
 ) -> None:

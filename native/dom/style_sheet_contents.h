@@ -122,13 +122,21 @@ class StyleRuleImport final : public cppgc::GarbageCollected<StyleRuleImport>,
   bool loading_ = false;
 };
 
+// A fetched style sheet's text, and the encoding that decoded it, which its
+// imports ask for, as Blink gives a sheet's parser context
+// CSSStyleSheetResource::Encoding().
+struct DecodedStyleSheet {
+  std::u16string text;
+  std::string encoding;
+};
+
 // CSSStyleSheetResource::SheetText(): the text of a fetched style sheet,
 // decoded by a byte order mark, else its response's charset, else @charset,
 // else the charset hint of the request that made it; or nothing for one that
 // failed, or whose Content-Type is not text/css, none or
 // application/x-unknown-content-type, unless `lax`, for a sheet of the
 // document's origin in quirks mode.
-std::u16string StyleSheetText(const Resource& resource, bool lax);
+DecodedStyleSheet DecodeStyleSheet(const Resource& resource, bool lax);
 
 // Whether a sheet's text is held to its MIME type laxly: one that is not
 // opaque, in a document in quirks mode.

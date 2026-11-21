@@ -92,6 +92,16 @@ bool IsSupportedType(ResourceType type, std::u16string_view mime_type) {
   }
 }
 
+// ContentType::GetType(): the type without white space or parameters.
+std::u16string_view MimeTypeOfContentType(std::u16string_view type) {
+  type = base::TrimWhitespace(type, base::TRIM_ALL);
+  const size_t semicolon = type.find(';');
+  if (semicolon != std::u16string_view::npos) {
+    type = base::TrimWhitespace(type.substr(0, semicolon), base::TRIM_ALL);
+  }
+  return type;
+}
+
 // An attribute's value, or "" for none.
 std::u16string_view AttributeOrEmpty(const Element& element,
                                      std::u16string_view name) {
@@ -346,8 +356,8 @@ bool HTMLLinkElement::IsAlternate() const {
 
 bool HTMLLinkElement::LoadStylesheetIfNeeded() {
   const LinkRelAttribute rel(AttributeOrEmpty(*this, u"rel"));
-  const std::u16string type =
-      base::ToLowerASCII(AttributeOrEmpty(*this, u"type"));
+  const std::u16string type = base::ToLowerASCII(
+      MimeTypeOfContentType(AttributeOrEmpty(*this, u"type")));
   const std::u16string_view href =
       StripHTMLSpaces(AttributeOrEmpty(*this, u"href"));
   Document& document = GetDocument();
@@ -494,12 +504,13 @@ void HTMLLinkElement::StyleSheetFinished(Resource& resource) {
   if (sheet_) {
     ClearSheet();
   }
+  DecodedStyleSheet decoded =
+      DecodeStyleSheet(resource, IsLaxMimeTypeCheck(document, resource));
   sheet_ = bindings::MakeGarbageCollected<StyleSheetContents>(
       document, GURL(resource.Response().url), resource.Url(),
-      std::move(referrer), resource.Charset(), this, nullptr);
+      std::move(referrer), std::move(decoded.encoding), this, nullptr);
   sheet_->SetRenderBlocking(render_blocking_);
-  sheet_->ParseAuthorStyleSheet(
-      StyleSheetText(resource, IsLaxMimeTypeCheck(document, resource)));
+  sheet_->ParseAuthorStyleSheet(decoded.text);
   loading_ = false;
   if (resource.ErrorOccurred()) {
     sheet_->SetLoadErrorOccurred();
