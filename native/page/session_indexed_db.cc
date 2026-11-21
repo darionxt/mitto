@@ -132,12 +132,22 @@ void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
   if (NamesWhatWent(call)) {
     return;
   }
+  // What the Session tells the connection that an open makes may come before
+  // the context has run the open's success, such as the versionchange of an
+  // upgrade that waits behind it, and goes to the context after that success,
+  // so its route is there from when the open goes.
+  if (call.op == IndexedDbCallOp::kOpen) {
+    sender_->AddIndexedDbConnection(host_, call.connection);
+  }
   const uint64_t number =
       sender_->SendIndexedDbCall(host_, [this, &call](uint64_t number) {
         call.call = number;
         return EncodeIndexedDb(document_, call);
       });
   calls_.emplace(number, std::move(answer));
+  if (call.op == IndexedDbCallOp::kOpen) {
+    opens_.emplace(number, call.connection);
+  }
 }
 
 void SessionIndexedDb::Tell(PageIndexedDbCall call) {
@@ -194,6 +204,7 @@ void SessionIndexedDb::DocumentCommitted(uint64_t document) {
   document_ = document;
   calls_.clear();
   listeners_.clear();
+  opens_.clear();
   transaction_connections_.clear();
 }
 
@@ -229,12 +240,27 @@ void SessionIndexedDb::OnCallback(uint64_t host,
                               ", which no script waits for"}));
     return;
   }
-  Answer answer = EndsCall(callback) ? std::move(found->second) : found->second;
-  if (EndsCall(callback)) {
+  const uint64_t call = callback.call;
+  const bool ends = EndsCall(callback);
+  Answer answer = ends ? std::move(found->second) : found->second;
+  if (ends) {
     calls_.erase(found);
-    sender_->ForgetIndexedDbCall(callback.call);
+    sender_->ForgetIndexedDbCall(call);
   }
   answer.Run(std::move(callback));
+  if (!ends) {
+    return;
+  }
+  // An open that ended with no database that listens, as one that failed,
+  // lets its connection's route go.
+  const auto open = opens_.find(call);
+  if (open == opens_.end()) {
+    return;
+  }
+  if (!listeners_.contains(open->second)) {
+    sender_->ForgetIndexedDbConnection(open->second);
+  }
+  opens_.erase(open);
 }
 
 }  // namespace mitto

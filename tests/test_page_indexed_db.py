@@ -171,6 +171,30 @@ def test_an_upgrade_in_one_page_asks_another_page_s_connection_to_close(server_o
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_version_change_right_after_an_open_reaches_its_new_connection(server_origin: str) -> None:
+    # The open's success and the upgrade's versionchange both come while the script is busy: the connection hears
+    # the versionchange after its success, closes, and the upgrade goes on.
+    script = """(async () => {
+        await new Promise((resolve) => {
+            const open = indexedDB.open('v', 1);
+            open.onsuccess = () => { open.result.close(); resolve(); };
+        });
+        const first = indexedDB.open('v');
+        first.onsuccess = () => { first.result.onversionchange = () => first.result.close(); };
+        const second = indexedDB.open('v', 2);
+        const outcome = new Promise((resolve) => {
+            second.onsuccess = () => resolve('upgraded');
+            setTimeout(() => resolve('blocked'), 3000);
+        });
+        for (const end = Date.now() + 500; Date.now() < end;) {}
+        return outcome;
+    })()"""
+
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "upgraded"
+
+
+@pytest.mark.usefixtures("page_program")
 def test_another_session_has_databases_of_its_own(server_origin: str) -> None:
     with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         page.evaluate(
