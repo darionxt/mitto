@@ -48,6 +48,9 @@ struct FetchParameters {
   FetchMode mode = FetchMode::kNoCors;
   FetchCredentialsMode credentials = FetchCredentialsMode::kInclude;
   FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+  // kClientReferrer for the document's URL, or a URL of the document's
+  // origin, such as an importing style sheet's.
+  std::string referrer = kClientReferrer;
   FetchPriorityHint priority_hint = FetchPriorityHint::kAuto;
   // FetchParameters::kLazyLoad, as an async script or a lazy image has.
   bool lazy = false;

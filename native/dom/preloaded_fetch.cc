@@ -7,6 +7,7 @@
 #include "base/memory/ptr_util.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/resource.h"
 #include "mitto/dom/window_tasks.h"
 #include "v8/include/cppgc/garbage-collected.h"
@@ -45,18 +46,24 @@ class PreloadedFetch::Observer final : public cppgc::GarbageCollected<Observer>,
 // static
 void PreloadedFetch::Start(Resource& resource,
                            std::unique_ptr<FetchClient> client,
-                           WindowTasks& tasks) {
+                           ExecutionContext& context) {
+  WindowTasks* const tasks = context.GetTasks();
+  CHECK(tasks);
   auto fetch =
       base::WrapUnique(new PreloadedFetch(resource, std::move(client)));
   fetch->client_->OnStarted(*fetch);
+  // A navigation lets the context go before its fetches, whose requests end
+  // with no word to their clients, so the resource might never end.
+  context.AddContextDestroyedCallback(base::BindOnce(
+      &PreloadedFetch::Cancel, fetch->weak_factory_.GetWeakPtr()));
   // It is the resource's client at once, as ThreadableLoader is, which keeps
   // a load going that nothing else uses, and hears of what has come from a
   // task, as Resource::AddClient() tells a client.
   fetch->observer_ = bindings::MakeGarbageCollected<Observer>(
       fetch->weak_factory_.GetWeakPtr());
   resource.AddClient(fetch->observer_.Get());
-  tasks.PostTask(TaskType::kNetworking,
-                 base::BindOnce(&PreloadedFetch::Attach, std::move(fetch)));
+  tasks->PostTask(TaskType::kNetworking,
+                  base::BindOnce(&PreloadedFetch::Attach, std::move(fetch)));
 }
 
 PreloadedFetch::PreloadedFetch(Resource& resource,
@@ -108,8 +115,10 @@ void PreloadedFetch::Cancel() {
   if (!delivering_) {
     // Before the task, which destroys this: the resource may let its load go
     // now.
-    resource_->RemoveClient(observer_.Get());
-    observer_.Clear();
+    if (Observer* const observer = observer_.Get()) {
+      resource_->RemoveClient(observer);
+      observer_.Clear();
+    }
     client_.reset();
     return;
   }

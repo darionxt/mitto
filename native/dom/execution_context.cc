@@ -329,7 +329,7 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     if (Resource* const preload =
             static_cast<Window*>(this)->GetDocument().Fetcher().MatchPreload(
                 params)) {
-      PreloadedFetch::Start(*preload, std::move(loader), *tasks);
+      PreloadedFetch::Start(*preload, std::move(loader), *this);
       return resolver->GetPromise();
     }
   }

@@ -286,6 +286,8 @@ class Node : public EventTarget {
     kNonElementInserted,
     kElementRemoved,
     kNonElementRemoved,
+    // A child's character data changed.
+    kTextChanged,
   };
 
   // Called on this node and each node inside it once the insertion that put
@@ -298,7 +300,8 @@ class Node : public EventTarget {
   // `insertion_point`, its old parent or an ancestor of it.
   virtual void RemovedFrom(Node& insertion_point) {}
   // Called once `child` has been inserted into this node's children or
-  // removed from them, by the parser if `by_parser`.
+  // removed from them, by the parser if `by_parser`, or once its character
+  // data has changed.
   virtual void ChildrenChanged(ChildrenChangeType type,
                                Node& child,
                                bool by_parser) {}

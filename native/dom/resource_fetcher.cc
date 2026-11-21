@@ -148,6 +148,15 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
     std::string mime_type =
         GetMimeTypeAndCharset(HeaderField(head.headers, "content-type"))
             .mime_type;
+    // ResourceLoader::CheckResponseNosniff(): a style request's response
+    // that says nosniff fails unless it is text/css, with Chrome's console
+    // error.
+    if (resource_->GetType() == ResourceType::kCSSStyleSheet &&
+        IsContentTypeOptionsNosniff(head.headers) &&
+        !base::EqualsCaseInsensitiveASCII(mime_type, "text/css")) {
+      FailNosniffStyle(head, mime_type);
+      return;
+    }
     resource_->ResponseReceived(head, std::move(mime_type));
   }
   void OnResponseBody(std::string bytes) override {
@@ -171,6 +180,32 @@ class ResourceFetcher::ResourceLoader final : public FetchClient {
   }
 
  private:
+  // HandleError() of a response that the check blocked: the request ends,
+  // which destroys this, and the resource fails.
+  void FailNosniffStyle(const FetchResponseHead& head,
+                        const std::string& mime_type) {
+    const cppgc::Persistent<Resource> resource = resource_;
+    ResourceFetcher* const fetcher = fetcher_.Get();
+    if (fetcher) {
+      Document* const document = fetcher->document_.Get();
+      if (Window* const window = document ? document->DefaultView() : nullptr) {
+        window->AddConsoleMessage(
+            ConsoleLevel::kError,
+            "Refused to apply style from '" + head.url +
+                "' because its MIME type ('" + mime_type +
+                "') is not a supported stylesheet MIME type, and strict MIME "
+                "checking is enabled.");
+      }
+    }
+    resource->SetCancelLoad(base::OnceClosure());
+    Cancel();
+    // ResourceError::CancelledDueToAccessCheckError(): ERR_ABORTED.
+    resource->Finish(kAborted);
+    if (fetcher) {
+      fetcher->LoadFinished(*resource);
+    }
+  }
+
   const cppgc::Persistent<Resource> resource_;
   const cppgc::WeakPersistent<ResourceFetcher> fetcher_;
   raw_ptr<FetchController> controller_ = nullptr;
@@ -309,6 +344,12 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
       params.type, params.url, params.mode, params.credentials);
   resource->SetIntegrity(params.integrity);
   resource->SetCharset(params.charset);
+  // ResourceFetcher::PrepareRequest(): one that leaves its referrer policy to
+  // the document goes with the document's.
+  resource->SetReferrerPolicy(params.referrer_policy ==
+                                      FetchReferrerPolicy::kDefault
+                                  ? document->GetReferrerPolicy()
+                                  : params.referrer_policy);
   resource->SetIsUnusedPreload(params.is_link_preload);
   resource->SetFetcher(this);
   resources_.push_back(resource);
@@ -354,16 +395,12 @@ void ResourceFetcher::StartLoad(Resource& resource,
   if (params.credentials != kind_credentials) {
     request.credentials = params.credentials;
   }
-  // One that leaves its referrer policy to the document goes with the
-  // document's.
-  request.referrer_policy =
-      params.referrer_policy == FetchReferrerPolicy::kDefault
-          ? document_->GetReferrerPolicy()
-          : params.referrer_policy;
+  request.referrer_policy = resource.ReferrerPolicy();
   const FetchPriority priority = ComputeLoadPriority(params);
   if (priority != TypeToPriority(params.type)) {
     request.priority = priority;
   }
+  request.referrer = params.referrer;
   request.render_blocking = params.render_blocking;
   // A fetch of a type that blocks the load event holds it back, unless it is
   // a link preload or nothing lets it go.

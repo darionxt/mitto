@@ -96,6 +96,12 @@ FetchPriorityHint FetchPriorityHintFromAttribute(std::u16string_view value);
 // Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
 FetchReferrerPolicy FetchReferrerPolicyFromString(std::u16string_view value);
 
+// Whether header lines, as FetchResponseHead has them, say
+// X-Content-Type-Options: nosniff, as Blink's ParseContentTypeOptionsHeader()
+// reads the field's first value, as the Fetch Standard splits it.
+// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
+bool IsContentTypeOptionsNosniff(std::string_view headers);
+
 // The referrer policy that a Referrer-Policy header names: the last of its
 // comma-separated tokens that names one, without white space around it, and
 // kDefault where none does.
