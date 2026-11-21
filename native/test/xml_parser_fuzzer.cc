@@ -148,7 +148,8 @@ std::string Dump(const Node& root) {
 
 struct ParsedDocument {
   std::string dump;
-  // Whether the document has an error block. Only a document of libxml2's
+  // Whether the parse met an error, which put Blink's error block in, as the
+  // reader says, whatever the document's own text. Only a document of libxml2's
   // that has none, whole and in pieces, must not change with the pieces,
   // since in Chrome as here libxml2's errors follow what has come: an error's
   // place, and the input that its message quotes, run to where the input
@@ -198,7 +199,7 @@ ParsedDocument ParseDocument(std::u16string_view markup,
   CHECK(!reader->Pump());
   reader->End();
   std::string dump = Dump(*document);
-  const bool has_error_block = dump.find(" parsererror") != std::string::npos;
+  const bool has_error_block = reader->SawError();
   const bool pieces_leave_alone =
       document->LastChild() == document->DocumentElement() && !has_error_block;
   return {std::move(dump), has_error_block, pieces_leave_alone};

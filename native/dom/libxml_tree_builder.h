@@ -59,6 +59,7 @@ class LibxmlTreeBuilder final : public XmlReader {
   // The input has ended: libxml2 reads its end, as Blink's DoEnd() tells it.
   void Finish() override;
   bool HasSeenEndOfFile() const override;
+  bool SawError() const override;
 
   // Plays back what libxml2 read. Returns the script element whose end tag it
   // reached, which the parser processes before it calls this again, or null
