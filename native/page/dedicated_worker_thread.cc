@@ -341,6 +341,11 @@ DedicatedWorkerThread::Scope::~Scope() {
   scope_.Clear();
   context_.Reset();
   worker_starter_.reset();
+  // What the Cache API, IndexedDB and Storage Buckets wait to hear holds the
+  // isolate's handles, so they go before it does.
+  cache_storage_.reset();
+  indexed_db_.reset();
+  storage_buckets_.reset();
   fetcher_.reset();
   requests_.reset();
   animation_frames_.reset();
@@ -357,7 +362,7 @@ DedicatedWorkerThread::Scope::~Scope() {
   isolate_->Dispose();
   isolate_ = nullptr;
   // The Session forgets the worker, after everything that it sent.
-  params_.sender->Send(EncodeContextGone(params_.id));
+  params_.sender->SendContextGone(params_.id);
   params_.object_proxy->DidTerminateWorkerThread();
 }
 
@@ -381,6 +386,10 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetStorageBucketHost(nullptr);
     scope_->SetAnimationFrames(nullptr);
   }
+  // The fetcher lets its keepalive requests go before the rest are cancelled,
+  // so that they go on without the worker, as a window's do without their
+  // document.
+  fetcher_.reset();
   if (requests_) {
     requests_->CancelAll();
   }
@@ -555,6 +564,9 @@ void DedicatedWorkerThread::Scope::OnResponse(FrameFromSession frame) {
       return;
     case PageMessage::kResponseEnded:
       requests_->OnResponseEnded(frame.ended);
+      return;
+    case PageMessage::kRequestBodyCredit:
+      requests_->OnRequestBodyCredit(frame.request_body_credit);
       return;
     default:
       NOTREACHED();
@@ -743,9 +755,10 @@ void DedicatedWorkerThread::RunClassicScript(ScriptResponse response) {
           base::Unretained(this), std::move(response)));
 }
 
-void DedicatedWorkerThread::PostMessage(SerializedScriptValue message,
-                                        std::vector<MessagePortChannel> ports,
-                                        bool user_activation) {
+void DedicatedWorkerThread::PostMessageToWorkerGlobalScope(
+    SerializedScriptValue message,
+    std::vector<MessagePortChannel> ports,
+    bool user_activation) {
   message_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(

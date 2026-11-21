@@ -10,6 +10,7 @@
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/document_loader.h"
+#include "mitto/page/page_fetcher.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cookie_jar.h"
@@ -69,6 +70,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   page_request.url = request.url.spec();
   page_request.user_activation = request.user_activation;
   page_request.reload = request.reload;
+  page_request.referrer_policy = ToPageReferrerPolicy(request.referrer_policy);
   // A worker's thread may number a request in between, so the loader learns
   // its number once the request has it.
   provisional_->SetNumber(
@@ -98,10 +100,12 @@ void PageFrame::StopAllLoaders() {
   }
 }
 
-Document& PageFrame::CommitNavigation(DocumentLoader& loader,
-                                      const GURL& url,
-                                      base::TimeTicks navigation_start,
-                                      const PageConnection& connection) {
+Document& PageFrame::CommitNavigation(
+    DocumentLoader& loader,
+    const GURL& url,
+    base::TimeTicks navigation_start,
+    const PageConnection& connection,
+    const std::optional<std::u16string>& xml_content_type) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
   Document& old_document = Window::Current().GetDocument();
   // The old document's entries, which the new one keeps those of its origin
@@ -132,8 +136,8 @@ Document& PageFrame::CommitNavigation(DocumentLoader& loader,
   const GURL old_url(old_document.UrlForBinding());
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
-  Document& document = runner_->CommitDocument(current_->number(), url,
-                                               navigation_start, connection);
+  Document& document = runner_->CommitDocument(
+      current_->number(), url, navigation_start, connection, xml_content_type);
   // The old document's unload times go to a new one of its origin, as
   // Blink's UnloadEventTimingInfo carries them.
   DocumentLoadTiming& timing = runner_->document_load_timing();

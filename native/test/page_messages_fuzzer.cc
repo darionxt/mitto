@@ -95,6 +95,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK((frame->request.target != 0) ==
                 (frame->request.kind == mitto::PageRequestKind::kIframe));
           CHECK(!frame->request.no_referrer || frame->request.referrer.empty());
+          // Only a fetch's body streams, and then none comes with it.
+          CHECK(!frame->request.streams_body ||
+                (frame->request.kind == mitto::PageRequestKind::kFetch &&
+                 !frame->request.body));
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
           CHECK(base::IsStringUTF8AllowingNoncharacters(
               frame->request.referrer));
@@ -232,6 +236,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kStorageUnbind:
           CHECK_EQ(payload.size(), 8u);
           break;
+        case mitto::PageMessage::kRequestBodyPart:
+          CHECK_GT(frame->request_body_part.bytes.size(), 0u);
+          CHECK_LE(frame->request_body_part.bytes.size(), mitto::kBodyWindow);
+          CHECK_EQ(frame->request_body_part.bytes.size() + 8, payload.size());
+          break;
+        case mitto::PageMessage::kRequestBodyEnded:
+          CHECK_EQ(payload.size(), 9u);
+          break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
         case mitto::PageMessage::kResponseStarted:
@@ -251,6 +263,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kCacheStorageAnswer:
         case mitto::PageMessage::kIndexedDbCallback:
         case mitto::PageMessage::kStorageBucketsAnswer:
+        case mitto::PageMessage::kRequestBodyCredit:
           // Only a Session sends these.
           NOTREACHED();
       }

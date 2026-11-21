@@ -564,11 +564,11 @@ void Cache::OnResponse(uint64_t barrier,
     if (ExecutionContext* const context = context_.Get()) {
       context->AddConsoleMessage(
           ConsoleLevel::kError,
-          base::StrCat(
-              {state->method_name, " failed for '",
-               state->requests[index]->url().spec(),
-               "': Response status ", base::NumberToString(response->Status()),
-               " is not a successful status (200-299)."}));
+          base::StrCat({state->method_name, " failed for '",
+                        state->requests[index]->url().spec(),
+                        "': Response status ",
+                        base::NumberToString(response->Status()),
+                        " is not a successful status (200-299)."}));
     }
     FailBarrier(barrier, CacheCallException(isolate, "", "Request failed",
                                             state->member, "Cache"));

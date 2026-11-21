@@ -8,6 +8,7 @@
 #ifndef MITTO_DOM_NAVIGATION_CLIENT_H_
 #define MITTO_DOM_NAVIGATION_CLIENT_H_
 
+#include "mitto/dom/fetcher.h"
 #include "url/gurl.h"
 
 namespace mitto {
@@ -24,6 +25,8 @@ struct NavigationRequest {
   bool reload = false;
   // One that replaces the current entry of the session history.
   bool replace = false;
+  // The referrer policy of the document that starts it.
+  FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
 };
 
 class NavigationClient {

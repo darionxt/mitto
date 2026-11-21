@@ -39,6 +39,28 @@ PageCredentialsMode ToPageCredentialsMode(FetchCredentialsMode credentials) {
   }
 }
 
+// A request's priority byte: one more than the net::RequestPriority that
+// Blink's WebURLRequest::ConvertToNetPriority() gives, which the Page program,
+// with no //net, names by number: IDLE 1, LOWEST 2, LOW 3, MEDIUM 4 and
+// HIGHEST 5.
+// Upstream: third_party/blink/renderer/platform/exported/web_url_request.cc
+uint8_t ToPagePriority(FetchPriority priority) {
+  switch (priority) {
+    case FetchPriority::kVeryLow:
+      return 1 + 1;
+    case FetchPriority::kLow:
+      return 1 + 2;
+    case FetchPriority::kMedium:
+      return 1 + 3;
+    case FetchPriority::kHigh:
+      return 1 + 4;
+    case FetchPriority::kVeryHigh:
+      return 1 + 5;
+  }
+}
+
+}  // namespace
+
 PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy) {
   switch (policy) {
     case FetchReferrerPolicy::kDefault:
@@ -61,28 +83,6 @@ PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy) {
       return PageReferrerPolicy::kUnsafeUrl;
   }
 }
-
-// A request's priority byte: one more than the net::RequestPriority that
-// Blink's WebURLRequest::ConvertToNetPriority() gives, which the Page program,
-// with no //net, names by number: IDLE 1, LOWEST 2, LOW 3, MEDIUM 4 and
-// HIGHEST 5.
-// Upstream: third_party/blink/renderer/platform/exported/web_url_request.cc
-uint8_t ToPagePriority(FetchPriority priority) {
-  switch (priority) {
-    case FetchPriority::kVeryLow:
-      return 1 + 1;
-    case FetchPriority::kLow:
-      return 1 + 2;
-    case FetchPriority::kMedium:
-      return 1 + 3;
-    case FetchPriority::kHigh:
-      return 1 + 4;
-    case FetchPriority::kVeryHigh:
-      return 1 + 5;
-  }
-}
-
-}  // namespace
 
 // One fetch, between the Page's requests and the DOM's client.
 class PageFetcher::Request final : public PageRequests::Client,
@@ -130,6 +130,7 @@ class PageFetcher::Request final : public PageRequests::Client,
     // Destroys this.
     fetcher_->Finished(number_);
   }
+  void OnRequestBodyCredit() override { client_->OnBodyRoom(); }
 
   // FetchController:
   void TookBody(size_t bytes) override {
@@ -139,6 +140,15 @@ class PageFetcher::Request final : public PageRequests::Client,
     fetcher_->requests_->Cancel(number_);
     // Destroys this.
     fetcher_->Finished(number_);
+  }
+  size_t BodyRoom() const override {
+    return fetcher_->requests_->BodyCredit(number_);
+  }
+  void SendBody(std::string_view bytes) override {
+    fetcher_->requests_->SendBodyPart(number_, bytes);
+  }
+  void EndBody(bool errored) override {
+    fetcher_->requests_->EndBody(number_, errored);
   }
 
  private:
@@ -150,6 +160,40 @@ class PageFetcher::Request final : public PageRequests::Client,
   // The response's URL, once it has started.
   std::optional<std::string> response_url_;
 };
+
+namespace {
+
+// The Request Kind of a request: a module script, or what one imports, by
+// its destination, where a text module, whose Request Kind comes once Chrome
+// 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
+// send a JavaScript module's lines, Known Gaps; a classic script; an image;
+// a style sheet; a font; or a fetch.
+PageRequestKind KindOf(const FetchRequestData& data) {
+  if (data.is_module) {
+    return data.destination == FetchDestination::kJson
+               ? PageRequestKind::kModuleJson
+               : PageRequestKind::kModule;
+  }
+  switch (data.destination) {
+    case FetchDestination::kEmpty:
+      return PageRequestKind::kFetch;
+    case FetchDestination::kScript:
+      return PageRequestKind::kScript;
+    case FetchDestination::kImage:
+      return PageRequestKind::kImage;
+    case FetchDestination::kStyle:
+      return PageRequestKind::kStyle;
+    case FetchDestination::kFont:
+      return PageRequestKind::kFont;
+    case FetchDestination::kJson:
+    case FetchDestination::kText:
+    case FetchDestination::kWorker:
+      // Only a module's fetch has these destinations.
+      NOTREACHED();
+  }
+}
+
+}  // namespace
 
 PageFetcher::PageFetcher(PageRequests& requests) : requests_(requests) {}
 
@@ -198,34 +242,12 @@ void PageFetcher::Fetch(FetchRequestData data,
     keepalive_bytes_ += body_size;
   }
   PageRequest page_request;
-  // A module script and what one imports go as a module, whatever their
-  // destination: the json, style and text ones send a JavaScript module's
-  // lines, a Known Gap.
-  if (data.is_module) {
-    page_request.kind = PageRequestKind::kModule;
-  } else {
-    switch (data.destination) {
-      case FetchDestination::kEmpty:
-        page_request.kind = PageRequestKind::kFetch;
-        break;
-      case FetchDestination::kScript:
-        page_request.kind = PageRequestKind::kScript;
-        break;
-      case FetchDestination::kImage:
-        page_request.kind = PageRequestKind::kImage;
-        break;
-      case FetchDestination::kJson:
-      case FetchDestination::kStyle:
-      case FetchDestination::kText:
-      case FetchDestination::kWorker:
-        // Only a module's fetch has these destinations.
-        NOTREACHED();
-    }
-  }
+  page_request.kind = KindOf(data);
   page_request.url = std::move(data.url);
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);
   page_request.body = std::move(data.body);
+  page_request.streams_body = data.streams_body;
   if (data.mode) {
     page_request.mode = ToPageRequestMode(*data.mode);
   }

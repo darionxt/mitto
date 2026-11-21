@@ -14,6 +14,7 @@
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/window.h"
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
@@ -227,7 +228,14 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   data.is_module = true;
   data.mode = FetchMode::kCors;
   data.credentials = options_.credentials_mode;
-  data.referrer_policy = request.options.referrer_policy;
+  // A request whose policy is the empty string goes with the document's. A
+  // worker's would go with the policy of its script's response, which a
+  // worker does not have: a Known Gap.
+  data.referrer_policy =
+      request.options.referrer_policy == FetchReferrerPolicy::kDefault &&
+              context->IsWindow()
+          ? static_cast<Window*>(context)->GetDocument().GetReferrerPolicy()
+          : request.options.referrer_policy;
   // The referrer is the base URL of the script that imports it, which the
   // Session takes from the document's origin, or as the final URL of a
   // response that the document has had, such as a module's of another

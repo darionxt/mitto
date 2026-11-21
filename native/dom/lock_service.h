@@ -87,10 +87,9 @@ class LockService {
                       Mode mode,
                       WaitMode wait);
   // The client let go of the request or the lock of `lock_id`, as when its end
-  // of the pipe closes.
-  void ReleaseLock(std::string origin, int64_t lock_id);
-  // The same at once, for a client whose context goes, whose thread may run no
-  // task again, as a worker's that ends.
+  // of the pipe closes, at once: the client calls it from a task of its own,
+  // after what it asked before, or as its context goes, whose thread may run
+  // no task again, as a worker's that ends.
   void ReleaseLockNow(const std::string& origin, int64_t lock_id);
   // The held locks and the waiting requests of the lock group of `origin`, as
   // they stand once the question has reached the service, by name. `answer`

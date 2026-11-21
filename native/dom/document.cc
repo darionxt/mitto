@@ -14,6 +14,7 @@
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -65,6 +66,7 @@
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/svg_element.h"
 #include "mitto/dom/svg_element_factory.h"
+#include "mitto/dom/svg_elements.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/tree_walker.h"
 #include "mitto/dom/window.h"
@@ -170,11 +172,18 @@ std::u16string StripAndCollapseWhitespace(const std::u16string& text) {
 
 // static
 Document* Document::Create() {
-  // new Document(): the origin of the current window's document.
+  // new Document(): the origin of the current window's document. A context
+  // that is no window's, as the XML fuzz target's, whose fragments make
+  // template documents, gives none.
   Document* const document = bindings::MakeGarbageCollected<Document>(false);
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (isolate && isolate->InContext() && Window::Current().HasDocument()) {
-    document->SetOrigin(Window::Current().GetDocument().GetOrigin());
+  if (!isolate || !isolate->InContext()) {
+    return document;
+  }
+  const Window* const window = bindings::V8Window::ToWrappable(
+      isolate, isolate->GetCurrentContext()->Global());
+  if (window && window->HasDocument()) {
+    document->SetOrigin(window->GetDocument().GetOrigin());
   }
   return document;
 }
@@ -270,6 +279,15 @@ void Document::SetDesignMode(const std::u16string& value) {
 
 // Blink's ScrollingElementNoLayout(): the root element in standards mode, and
 // in quirks mode the body, which nothing lays out as a scroll container.
+SVGSVGElement* Document::RootElement() const {
+  Element* const element = DocumentElement();
+  if (!element || element->NamespaceURI() != html_names::kSvgNamespace ||
+      element->LocalName() != u"svg") {
+    return nullptr;
+  }
+  return static_cast<SVGSVGElement*>(element);
+}
+
 Element* Document::ScrollingElement() const {
   if (!InQuirksMode()) {
     return DocumentElement();
@@ -661,7 +679,8 @@ std::u16string Document::CharacterSet() const {
 }
 
 void Document::SetEncoding(std::string_view encoding,
-                           bool detected_heuristically) {
+                           bool detected_heuristically,
+                           bool saw_decoding_error) {
   DCHECK(!encoding.empty());
   // The loader sets the encoding after each piece of the body, so the tree is
   // searched only when windows-1252 gives way to another.
@@ -693,6 +712,7 @@ void Document::SetEncoding(std::string_view encoding,
   }
   encoding_ = std::string(encoding);
   encoding_detected_heuristically_ = detected_heuristically;
+  saw_decoding_error_ = saw_decoding_error;
 }
 
 void Document::SetTitle(const std::u16string& title) {
@@ -1324,6 +1344,7 @@ Element* Document::CreateElement(
   } else {
     return Element::Create(*this, namespace_uri, prefix, local_name);
   }
+  saw_elements_in_known_namespaces_ = true;
   if (prefix) {
     element->SetPrefixForCreateElementNS(prefix);
   }
@@ -1438,6 +1459,56 @@ void Document::UpdateBaseUrl() {
   }
 }
 
+void Document::ParseAndSetReferrerPolicy(std::u16string_view policy,
+                                         ReferrerPolicySource source) {
+  FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+  bool policy_is_valid = false;
+  if (source == ReferrerPolicySource::kHttpHeader) {
+    // SecurityPolicy::ReferrerPolicyFromHeaderValue(): the last token that
+    // names a policy, and none at all if a token is not letters and hyphens.
+    policy_is_valid = true;
+    for (const std::u16string_view token : base::SplitStringPiece(
+             policy, u",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
+      const FetchReferrerPolicy parsed = FetchReferrerPolicyFromString(token);
+      if (parsed != FetchReferrerPolicy::kDefault) {
+        referrer_policy = parsed;
+      } else if (!std::ranges::all_of(token, [](char16_t c) {
+                   return base::IsAsciiAlpha(c) || c == '-';
+                 })) {
+        policy_is_valid = false;
+        break;
+      }
+    }
+    policy_is_valid =
+        policy_is_valid && referrer_policy != FetchReferrerPolicy::kDefault;
+  } else {
+    referrer_policy = FetchReferrerPolicyFromStringWithLegacyKeywords(policy);
+    policy_is_valid = referrer_policy != FetchReferrerPolicy::kDefault;
+  }
+  if (policy_is_valid) {
+    referrer_policy_ = referrer_policy;
+    return;
+  }
+  // A header that names no policy leaves the document's, with no message.
+  if (source == ReferrerPolicySource::kHttpHeader || !window_) {
+    return;
+  }
+  const std::string reason =
+      policy.find(',') != std::u16string_view::npos
+          ? "A policy specified by a meta element must contain only one token."
+          : base::StrCat(
+                {"The value '", base::UTF16ToUTF8(policy),
+                 "' is not one of 'always', 'default', 'never', "
+                 "'origin-when-crossorigin', 'no-referrer', "
+                 "'no-referrer-when-downgrade', 'origin', "
+                 "'origin-when-cross-origin', 'same-origin', 'strict-origin', "
+                 "'strict-origin-when-cross-origin', or 'unsafe-url'."});
+  window_->AddConsoleMessage(
+      ConsoleLevel::kError,
+      base::StrCat({"Failed to set referrer policy: ", reason,
+                    " The referrer policy has been left unchanged."}));
+}
+
 ResourceFetcher& Document::Fetcher() {
   if (!fetcher_) {
     fetcher_ = bindings::MakeGarbageCollected<ResourceFetcher>(*this);
@@ -1501,15 +1572,22 @@ void Document::SetLoadTiming(DocumentLoadTiming* timing) {
   load_timing_ = timing;
 }
 
-DocumentParser& Document::OpenForNavigation(DocumentParser::Client& client) {
-  return ImplicitOpen(&client);
+DocumentParser& Document::OpenForNavigation(DocumentParser::Client& client,
+                                            DocumentParser::Kind kind) {
+  return ImplicitOpen(&client, kind);
 }
 
-DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client) {
+DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client,
+                                       DocumentParser::Kind kind) {
   RemoveChildren();
   SetCompatibilityMode(CompatibilityMode::kNoQuirks);
   DetachParser();
-  parser_ = bindings::MakeGarbageCollected<DocumentParser>(*this, client);
+  // Document::CreateParser(): a document that is not HTML has the XML
+  // parser.
+  if (!is_html_) {
+    kind = DocumentParser::Kind::kXml;
+  }
+  parser_ = bindings::MakeGarbageCollected<DocumentParser>(*this, client, kind);
   // The parser may run scripts before this returns, so it is held here.
   const cppgc::Persistent<DocumentParser> parser = parser_.Get();
   parsing_state_ = ParsingState::kParsing;
@@ -1638,6 +1716,9 @@ void Document::DispatchLoadEventAndFinalize() {
   load_event_progress_ = LoadEventProgress::kLoadEventInProgress;
   // The parser goes, in case the load event's listeners write.
   DetachParser();
+  if (run_before_load_event_) {
+    std::move(run_before_load_event_).Run();
+  }
   if (Window* const window = window_.Get()) {
     // LocalDOMWindow::DispatchLoadEvent(): load at the window, with the
     // document as its target, its times marked the first time.

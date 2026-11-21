@@ -73,6 +73,9 @@ class SessionIndexedDb final : public IndexedDbHost {
   uint64_t first_number_ = 0;
   std::map<uint64_t, Answer> calls_;
   std::map<uint64_t, Answer> listeners_;
+  // The connection of each open that waits for its end, whose route the
+  // Session's callbacks take from when the open goes.
+  std::map<uint64_t, uint64_t> opens_;
   // The connection of each transaction, which an abort names.
   std::map<uint64_t, uint64_t> transaction_connections_;
   base::WeakPtrFactory<SessionIndexedDb> weak_factory_{this};
