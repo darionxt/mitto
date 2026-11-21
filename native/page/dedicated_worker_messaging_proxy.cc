@@ -227,7 +227,7 @@ void DedicatedWorkerMessagingProxy::PostMessageToWorkerGlobalScope(
     queued_messages_.emplace_back(std::move(message), std::move(ports));
     return;
   }
-  thread_->PostMessage(std::move(message), std::move(ports));
+  thread_->PostMessageToWorkerGlobalScope(std::move(message), std::move(ports));
 }
 
 void DedicatedWorkerMessagingProxy::Terminate() {
@@ -280,10 +280,11 @@ void DedicatedWorkerMessagingProxy::OnResponseStarted(
 }
 
 void DedicatedWorkerMessagingProxy::StartThread(PageWorkerStarted started) {
-  params_.id = creator_.sender->SendContext([&started](uint64_t id) {
-    started.worker = id;
-    return EncodeWorkerStarted(started);
-  });
+  params_.id =
+      creator_.sender->SendContext(started.creator, [&started](uint64_t id) {
+        started.worker = id;
+        return EncodeWorkerStarted(started);
+      });
   params_.object_proxy =
       std::make_unique<ObjectProxy>(weak_factory_.GetWeakPtr());
   thread_ = std::make_unique<DedicatedWorkerThread>(std::move(params_));
@@ -301,9 +302,14 @@ void DedicatedWorkerMessagingProxy::OnResponseEnded(int net_error) {
     return;
   }
   if (!response_started_) {
-    // DedicatedWorker::OnScriptLoadStartFailed(): no thread ever started.
+    // DedicatedWorker::OnScriptLoadStartFailed(): no thread ever started, and
+    // the Worker hears nothing more.
+    terminated_ = true;
     RunWithWorker(
         base::BindOnce([](Worker& worker) { worker.DidFailToFetchScript(); }));
+    if (Worker* const worker = worker_.Get()) {
+      worker->DidEnd();
+    }
     return;
   }
   response_.net_error = net_error;
@@ -359,7 +365,8 @@ void DedicatedWorkerMessagingProxy::DidEvaluateScript() {
   while (!queued_messages_.empty() && thread_ && !terminated_) {
     QueuedMessage queued = std::move(queued_messages_.front());
     queued_messages_.pop_front();
-    thread_->PostMessage(std::move(queued.message), std::move(queued.ports));
+    thread_->PostMessageToWorkerGlobalScope(std::move(queued.message),
+                                            std::move(queued.ports));
   }
 }
 
@@ -379,6 +386,11 @@ void DedicatedWorkerMessagingProxy::TerminateFromWorker() {
 void DedicatedWorkerMessagingProxy::WorkerThreadTerminated() {
   terminated_ = true;
   thread_.reset();
+  // After everything that the worker's thread posted on this queue, its
+  // errors among it.
+  if (Worker* const worker = worker_.Get()) {
+    worker->DidEnd();
+  }
 }
 
 void DedicatedWorkerMessagingProxy::RunWithWorker(

@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
@@ -47,6 +48,9 @@ class PageRequests {
     // The end: net::OK when all of the body has come, and otherwise why the
     // request failed, with or without a response. Nothing more comes.
     virtual void OnResponseEnded(int net_error) = 0;
+    // For a request whose body streams: the Session has given credit for
+    // more of it.
+    virtual void OnRequestBodyCredit() {}
 
    protected:
     virtual ~Client() = default;
@@ -116,10 +120,19 @@ class PageRequests {
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);
 
+  // For request `number`, whose body streams: how many more bytes of the body
+  // the Session has given credit for, none until it starts reading it; sends
+  // `bytes` of it, at most that many; and ends it, which fails the request if
+  // `errored`. Once the request has ended these do nothing.
+  size_t BodyCredit(uint64_t number) const;
+  void SendBodyPart(uint64_t number, std::string_view bytes);
+  void EndBody(uint64_t number, bool errored);
+
   // What the Session sends.
   void OnResponseStarted(const PageResponseStarted& response);
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(const PageResponseEnded& ended);
+  void OnRequestBodyCredit(const PageCredit& credit);
 
  private:
   // What the entry of a request of the Page's is made of: ResourceFetcher's
@@ -153,6 +166,13 @@ class PageRequests {
     // kBodyWindow.
     size_t untaken = 0;
     bool started = false;
+    // For a body that streams: how much of it the Session has given credit
+    // for, which it does first when it starts reading it, and how much the
+    // Page has sent.
+    bool streams_body = false;
+    bool body_ended = false;
+    uint64_t body_credited = 0;
+    uint64_t body_sent = 0;
     // For a request of the Page's, not the navigation.
     std::optional<Timed> timed;
   };

@@ -118,4 +118,8 @@ FetchResponseHead& FetchResponseHead::operator=(const FetchResponseHead&) =
     default;
 FetchResponseHead::~FetchResponseHead() = default;
 
+size_t FetchController::BodyRoom() const {
+  return 0;
+}
+
 }  // namespace mitto

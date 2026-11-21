@@ -33,6 +33,9 @@ class HTMLMetaElement final : public HTMLElement {
  private:
   // ProcessHttpEquiv().
   void ProcessHttpEquiv();
+  // HTMLMetaElement::ProcessContent(): what a name and its content set, such
+  // as a referrer policy.
+  void ProcessContent();
 };
 
 }  // namespace mitto

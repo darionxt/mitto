@@ -2,9 +2,12 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -16,12 +19,16 @@
 #include "mitto/bindings/v8_worker_global_scope.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/body_stream_buffer.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/preloaded_fetch.h"
 #include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/request.h"
+#include "mitto/dom/resource.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/worker_global_scope.h"
 #include "v8/include/v8-context.h"
@@ -259,21 +266,19 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   }
   FetchRequestData data;
   // A body of bytes that a script gave whole goes as they are. A stream's
-  // would go as the Session reads it, which the Runtime does not do yet, so
-  // such a fetch fails as Chrome's fails over HTTP/1.1, with the stream
-  // locked to the reader of its upload: a Known Gap.
+  // goes as the Session reads it, through a reader of its own that locks it
+  // now, as Blink's DrainAsChunkedDataPipeGetter() does: a chunked upload,
+  // which goes only over HTTP/2 or HTTP/3.
+  BytesConsumer* upload_body = nullptr;
   if (body && request->Method() != "GET" && request->Method() != "HEAD") {
     data.body = body->DrainAsBytes(exception_state);
     if (exception_state.HadException()) {
       return v8::Local<v8::Promise>();
     }
     if (!data.body && body->IsMadeFromReadableStream()) {
-      bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
+      upload_body = bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
           isolate, body->Stream());
-      std::ignore = resolver->Reject(
-          context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                       isolate, "Failed to fetch")));
-      return resolver->GetPromise();
+      data.streams_body = true;
     }
   }
   data.method = request->Method();
@@ -287,15 +292,48 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     data.credentials = request->credentials();
   }
   data.referrer = request->referrer();
-  data.referrer_policy = request->referrer_policy();
+  // A request whose policy is the empty string goes with the document's. A
+  // worker's would go with the policy of its script's response, which it does
+  // not have: a Known Gap.
+  data.referrer_policy =
+      request->referrer_policy() == FetchReferrerPolicy::kDefault && IsWindow()
+          ? static_cast<Window*>(this)->GetDocument().GetReferrerPolicy()
+          : request->referrer_policy();
   data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
                                        /*render_blocking=*/false);
   data.keepalive = request->keepalive();
-  fetcher->Fetch(std::move(data), std::make_unique<FetchLoader>(
-                                      isolate, context, resolver,
-                                      /*credentials=*/request->credentials() ==
-                                          FetchCredentialsMode::kInclude,
-                                      signal));
+  auto loader = std::make_unique<FetchLoader>(
+      isolate, context, resolver,
+      /*credentials=*/request->credentials() == FetchCredentialsMode::kInclude,
+      signal, upload_body, upload_body ? body->Stream() : nullptr);
+  // A window's GET takes what a link preloaded as fetch, as Blink's
+  // ThreadableLoader asks the document's ResourceFetcher for a resource of
+  // type kRaw, with what Resource::CanReuse() wants of the request beside its
+  // mode and credentials mode: no keepalive, and no header of a conditional
+  // request.
+  WindowTasks* const tasks = GetTasks();
+  const Headers& headers = *request->GetHeaders();
+  if (IsWindow() && tasks && data.method == "GET" && !data.keepalive &&
+      std::ranges::none_of(
+          std::to_array<std::string_view>({"if-match", "if-modified-since",
+                                           "if-none-match", "if-range",
+                                           "if-unmodified-since"}),
+          [&headers](std::string_view name) {
+            return headers.GetValue(name).has_value();
+          })) {
+    FetchParameters params;
+    params.url = request->url();
+    params.type = ResourceType::kRaw;
+    params.mode = request->mode();
+    params.credentials = request->credentials();
+    if (Resource* const preload =
+            static_cast<Window*>(this)->GetDocument().Fetcher().MatchPreload(
+                params)) {
+      PreloadedFetch::Start(*preload, std::move(loader), *tasks);
+      return resolver->GetPromise();
+    }
+  }
+  fetcher->Fetch(std::move(data), std::move(loader));
   return resolver->GetPromise();
 }
 

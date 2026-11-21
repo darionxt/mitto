@@ -21,6 +21,7 @@
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/html_tree_builder.h"
+#include "mitto/dom/libxml_tree_builder.h"
 #include "mitto/dom/markup_serializer.h"
 #include "mitto/dom/mutation_observer.h"
 #include "mitto/dom/named_node_map.h"
@@ -1083,11 +1084,9 @@ std::u16string Element::GetHTML(
 NodeVector Element::ParseFragment(const std::u16string& html,
                                   Element& context,
                                   bindings::ExceptionState& exception_state) {
+  // A document that is not HTML parses markup as XML, on libxml2.
   if (!GetDocument().IsHTMLDocument()) {
-    // A document that is not HTML parses markup as XML, which the Runtime
-    // does not have yet.
-    exception_state.ThrowTypeError("Not implemented.");
-    return {};
+    return ParseXmlFragment(context, html, exception_state);
   }
   return ParseHtmlFragment(context, html);
 }

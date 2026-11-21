@@ -227,6 +227,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kResponseStarted:
       case PageMessage::kResponseBody:
       case PageMessage::kResponseEnded:
+      case PageMessage::kRequestBodyCredit:
         if (!started_) {
           Refuse("a response came before the start");
           return;
@@ -344,6 +345,8 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kUncaughtError:
       case PageMessage::kRequest:
       case PageMessage::kCredit:
+      case PageMessage::kRequestBodyPart:
+      case PageMessage::kRequestBodyEnded:
       case PageMessage::kGetCookies:
       case PageMessage::kSetCookie:
       case PageMessage::kLoaded:
@@ -412,18 +415,19 @@ class SessionLink final : public PageChannel::Delegate
     // What the Page's BroadcastChannels send to the Session's other Pages. A
     // message too large for a frame stays in the Page.
     BroadcastChannelService::Get().SetSessionSender(base::BindRepeating(
-        [](SendFrame send, const std::string& name, bool locked,
-           std::vector<uint8_t> data) {
+        [](scoped_refptr<SessionSender> sender, const std::string& name,
+           bool locked, std::vector<uint8_t> data) {
           PageBroadcast broadcast;
           broadcast.name = name;
           broadcast.locked = locked;
           broadcast.data.assign(data.begin(), data.end());
           if (BroadcastFits(broadcast)) {
-            send.Run(EncodeBroadcast(ExecutionContext::Current().ContextId(),
-                                     broadcast));
+            const uint64_t context = ExecutionContext::Current().ContextId();
+            sender->SendFromContext(context,
+                                    EncodeBroadcast(context, broadcast));
           }
         },
-        send));
+        sender_));
     cache_storage_->SetSender(sender_, misc_platform_api_, refuse);
     indexed_db_->SetSend(send, refuse);
     storage_buckets_->SetSend(send, refuse);
@@ -471,6 +475,9 @@ class SessionLink final : public PageChannel::Delegate
         return;
       case PageMessage::kResponseEnded:
         runner_->OnResponseEnded(frame.ended);
+        return;
+      case PageMessage::kRequestBodyCredit:
+        runner_->OnRequestBodyCredit(frame.request_body_credit);
         return;
       default:
         NOTREACHED();

@@ -1774,7 +1774,13 @@ def test_a_page_that_refuses_its_time_zone_ends_and_says_why(
         _, call = evaluate(native_library, page, b"1")
         why = 'the Page refused a message from the library: the time zone "Mars/Olympus_Mons" is unknown'
         refused = _native.PageErrorCode.REFUSED
-        assert next_page_event(native_library, page) == (_native.PageEventType.EVALUATED, refused, call, "", why)
-        assert next_page_event(native_library, page) == (_native.PageEventType.ENDED, refused, 0, "", why)
+        evaluated = (_native.PageEventType.EVALUATED, refused, call, "", why)
+        ended = (_native.PageEventType.ENDED, refused, 0, "", why)
+        # The Page refuses its start without waiting for the call. A call that the library has before the Page ends
+        # fails before ENDED, as one in progress, and one that comes after fails after it, as a later call (mitto.h).
+        # A thread that wakes late, as on a busy runner, gives the second order.
+        assert {next_page_event(native_library, page), next_page_event(native_library, page)} == {evaluated, ended}
+        _, later = evaluate(native_library, page, b"2")
+        assert next_page_event(native_library, page) == (_native.PageEventType.EVALUATED, refused, later, "", why)
     finally:
         native_library.mitto_page_close(page)

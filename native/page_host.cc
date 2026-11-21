@@ -98,6 +98,7 @@ constexpr auto kRequestKindNames =
         {"beacon", PageRequestKind::kBeacon},
         {"iframe", PageRequestKind::kIframe},
         {"favicon", PageRequestKind::kFavicon},
+        {"module_json", PageRequestKind::kModuleJson},
     });
 constexpr std::string_view kWithBodySuffix = "_with_body";
 constexpr std::string_view kSecFetchMode = "Sec-Fetch-Mode";
@@ -924,6 +925,9 @@ class PageHost::Request final : public RequestClient {
   // Lets the job go on without this Request, if it is still running, held to
   // the same checks, and still counting among the keepalive requests in
   // flight until it ends.
+  // A body that streams from the document, of which the library does not
+  // have all yet, fails from a later task, as Blink's BytesUploader answers
+  // GetSize() with ERR_FAILED once its context is destroyed.
   void DetachJob() {
     if (job_) {
       job_->Detach(base::BindRepeating(
@@ -931,6 +935,10 @@ class PageHost::Request final : public RequestClient {
              const RequestEvent& event) { return checks->Allows(event); },
           base::Owned(std::make_unique<ResponseChecks>(response_checks_)),
           base::Owned(std::move(keepalive_share_))));
+      if (body_channel_ && !end_written_) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&RunningRequest::FailBody, job_));
+      }
       job_.reset();
     }
   }
@@ -962,6 +970,41 @@ class PageHost::Request final : public RequestClient {
         FROM_HERE, base::BindOnce(&RunningRequest::ReadBody, job_));
   }
 
+  // A body that streams from the Page, which the job reads from `channel` as
+  // //net asks for it, as Chrome's network service reads a fetch()'s stream
+  // from the data pipe that Blink's BytesUploader writes.
+  void set_body_channel(scoped_refptr<RequestChannel> channel) {
+    body_channel_ = std::move(channel);
+  }
+  bool streams_body() const { return body_channel_ != nullptr; }
+  // Whether the Page has ended the body that streams.
+  bool page_ended_body() const { return page_ended_body_; }
+  // Whether `size` more bytes of the body fit in the credit that the library
+  // gave the Page.
+  bool BodyPartFits(size_t size) const { return size <= body_credit_; }
+  // Bytes of the body that the Page sent, which wait for room in the channel.
+  void AddBodyPart(std::string_view bytes) {
+    body_credit_ -= static_cast<uint32_t>(bytes.size());
+    body_waiting_.append(bytes);
+    WriteBody();
+  }
+  // The Page's end of the body: all of it has come, or its stream errored,
+  // which fails the request with ERR_FAILED from a later task, as
+  // BytesUploader's answer of ERR_FAILED to GetSize() fails it in Chrome.
+  // Upstream: third_party/blink/renderer/core/fetch/bytes_uploader.cc
+  void EndBody(bool errored) {
+    page_ended_body_ = true;
+    if (errored) {
+      body_waiting_.clear();
+      if (job_) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&RunningRequest::FailBody, job_));
+      }
+      return;
+    }
+    WriteBody();
+  }
+
   // RequestClient:
   bool AllowsResponse(const RequestEvent& event) override {
     return response_checks_.Allows(event);
@@ -983,6 +1026,21 @@ class PageHost::Request final : public RequestClient {
     host_->OnBodyRead(*this, size);
   }
   void OnTotals(const RequestTotals& totals) override { totals_ = totals; }
+  void OnBodyWanted() override {
+    // The channel's events are for a caller on another thread, and this one
+    // has heard of its own.
+    RequestEvent event;
+    while (body_channel_->NextEvent(base::TimeDelta(), event) == net::OK) {
+    }
+    // //net's first read of the body is where Chrome's network service asks
+    // the renderer to start reading the stream, with StartReading(), which
+    // here is the Page's first credit, of one window.
+    if (!body_started_) {
+      body_started_ = true;
+      GiveBodyCredit(kBodyWindow);
+    }
+    WriteBody();
+  }
   void OnFinished(int net_error) override {
     // The job goes after this, and so does this Request.
     job_ = nullptr;
@@ -990,6 +1048,53 @@ class PageHost::Request final : public RequestClient {
   }
 
  private:
+  // Writes what waits of the body into the channel, all at once as far as
+  // the channel has room, as ChunkedDataPipeUploadDataStream reads what its
+  // data pipe holds, then the end once the Page has ended it, and gives the
+  // Page credit for what went. What the job no longer wants, as after a 303,
+  // goes as well.
+  // Upstream: services/network/chunked_data_pipe_upload_data_stream.cc
+  void WriteBody() {
+    bool wake = false;
+    size_t taken = 0;
+    if (!body_waiting_.empty()) {
+      const int result =
+          body_channel_->WriteBody(base::as_byte_span(body_waiting_), wake);
+      // ERR_IO_PENDING: //net has yet to take the last write, and
+      // OnBodyWanted() says when it has.
+      DCHECK_NE(result, net::ERR_INVALID_ARGUMENT);
+      if (result == 0) {
+        taken = body_waiting_.size();
+      } else if (result > 0) {
+        taken = static_cast<size_t>(result);
+      }
+      body_waiting_.erase(0, taken);
+    }
+    if (body_waiting_.empty() && page_ended_body_ && !end_written_) {
+      end_written_ = true;
+      bool wake_for_end = false;
+      body_channel_->EndBody(wake_for_end);
+      wake = wake || wake_for_end;
+    }
+    if (taken > 0) {
+      GiveBodyCredit(static_cast<uint32_t>(taken));
+    }
+    // //net's read of the body that waits goes on from a later task, since
+    // this may run within it.
+    if (wake && job_) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(&RunningRequest::SendBody, job_));
+    }
+  }
+
+  void GiveBodyCredit(uint32_t bytes) {
+    body_credit_ += bytes;
+    PageCredit credit;
+    credit.number = number_;
+    credit.bytes = bytes;
+    host_->channel_->Send(EncodeRequestBodyCredit(credit));
+  }
+
   const raw_ref<PageHost> host_;
   const uint64_t number_;
   const GURL first_url_;
@@ -1015,6 +1120,16 @@ class PageHost::Request final : public RequestClient {
   bool cross_origin_redirect_ = false;
   base::TimeTicks last_redirect_end_;
   RequestTotals totals_;
+  // A body that streams from the Page: its channel, what the Page sent that
+  // waits for room there, how much more the Page may send, whether //net has
+  // started reading it, and whether the Page, and then the channel, has ended
+  // it.
+  scoped_refptr<RequestChannel> body_channel_;
+  std::string body_waiting_;
+  uint32_t body_credit_ = 0;
+  bool body_started_ = false;
+  bool page_ended_body_ = false;
+  bool end_written_ = false;
 };
 
 // One storage area that the Page has bound, and its observer, which the Page
@@ -1165,7 +1280,7 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
     navigation_options.fetch->initiator = std::nullopt;
     StartRequest(kNavigationRequest, kNoDocument, url::Origin(), *options_.url,
                  navigation.headers, std::move(navigation_options),
-                 std::nullopt, FetchChecks{.is_navigation = true});
+                 std::nullopt, nullptr, FetchChecks{.is_navigation = true});
   }
   return true;
 }
@@ -1177,10 +1292,14 @@ void PageHost::StartRequest(uint64_t number,
                             net::HttpRequestHeaders headers,
                             RequestOptions options,
                             std::optional<std::vector<char>> body,
+                            scoped_refptr<RequestChannel> body_channel,
                             FetchChecks checks) {
   auto request =
       std::make_unique<Request>(*this, number, document_origin, url, checks);
   request->set_context(context_id);
+  if (body_channel) {
+    request->set_body_channel(body_channel);
+  }
   if (checks.keepalive) {
     request->set_keepalive_share(std::make_unique<KeepaliveShare>(
         network_->keepalive_in_flight(), keepalive_in_flight_,
@@ -1188,9 +1307,9 @@ void PageHost::StartRequest(uint64_t number,
   }
   Request& client = *request;
   requests_.emplace(number, std::move(request));
-  client.set_job(
-      network_->StartPageRequest(client, std::move(url), std::move(headers),
-                                 std::move(options), std::move(body)));
+  client.set_job(network_->StartPageRequest(
+      client, std::move(url), std::move(headers), std::move(options),
+      std::move(body), std::move(body_channel)));
 }
 
 void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
@@ -1235,8 +1354,9 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   }
   const auto with_body = options_.requests_with_body.find(asked.kind);
   const auto without_body = options_.requests.find(asked.kind);
+  const bool has_body = asked.body || asked.streams_body;
   const PageRequestTemplate* const request_template =
-      asked.body && with_body != options_.requests_with_body.end()
+      has_body && with_body != options_.requests_with_body.end()
           ? &with_body->second
       : without_body != options_.requests.end() ? &without_body->second
                                                 : nullptr;
@@ -1318,7 +1438,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   if (!asked.referrer.empty()) {
     options.fetch->referrer_source = referrer;
   }
-  if (asked.body && !std::ranges::any_of(lines, [](const auto& entry) {
+  if (has_body && !std::ranges::any_of(lines, [](const auto& entry) {
         return base::EqualsCaseInsensitiveASCII(
             entry.first, net::HttpRequestHeaders::kContentType);
       })) {
@@ -1348,6 +1468,18 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   if (asked.body) {
     body.emplace(asked.body->begin(), asked.body->end());
   }
+  // A fetch() whose body is a stream: a chunked upload, which //net makes
+  // only over HTTP/2 or HTTP/3, as Chrome's ChunkedDataPipeUploadDataStream
+  // allows no HTTP/1.1, of mode cors-with-forced-preflight, as Blink's
+  // FetchManager gives it.
+  // Upstream: third_party/blink/renderer/core/fetch/fetch_manager.cc
+  scoped_refptr<RequestChannel> body_channel;
+  if (asked.streams_body) {
+    body_channel = base::MakeRefCounted<RequestChannel>();
+    body_channel->OpenBody(std::nullopt);
+    options.stream_body = true;
+    options.fetch->force_preflight = true;
+  }
   if (asked.kind == PageRequestKind::kIframe) {
     frame_navigation_responses_[asked.number] = {.parent = frame_parent,
                                                  .target = asked.target};
@@ -1357,6 +1489,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   StartRequest(
       asked.number, context_id, document_origin, std::move(url),
       std::move(headers), std::move(options), std::move(body),
+      std::move(body_channel),
       FetchChecks{
           .cors = options_mode == RequestMode::kCors,
           .same_origin = options_mode == RequestMode::kSameOrigin,
@@ -1420,6 +1553,48 @@ void PageHost::OnCredit(const PageCredit& credit) {
   }
   request.AddCredit(credit.bytes);
   request.ReadIfCredited();
+}
+
+PageHost::Request* PageHost::RequestWithBodyStream(uint64_t number,
+                                                   std::string_view what) {
+  const auto found = requests_.find(number);
+  if (found == requests_.end()) {
+    // The request may have ended since the Page sent this.
+    if (number > last_request_number_) {
+      Refuse(base::StrCat({what, " of request ", base::NumberToString(number),
+                           ", which the Page has not asked for"}));
+    }
+    return nullptr;
+  }
+  Request& request = *found->second;
+  if (!request.streams_body() || request.page_ended_body()) {
+    Refuse(base::StrCat({what, " of request ", base::NumberToString(number),
+                         ", whose body does not stream or has ended"}));
+    return nullptr;
+  }
+  return &request;
+}
+
+void PageHost::OnRequestBodyPart(const PageRequestBodyPart& part) {
+  Request* const request =
+      RequestWithBodyStream(part.number, "a part of the body");
+  if (!request) {
+    return;
+  }
+  if (!request->BodyPartFits(part.bytes.size())) {
+    Refuse(base::StrCat({"more of the body of request ",
+                         base::NumberToString(part.number),
+                         " than the library gave credit for"}));
+    return;
+  }
+  request->AddBodyPart(part.bytes);
+}
+
+void PageHost::OnRequestBodyEnded(const PageRequestBodyEnded& ended) {
+  if (Request* const request =
+          RequestWithBodyStream(ended.number, "the end of the body")) {
+    request->EndBody(ended.errored);
+  }
 }
 
 void PageHost::OnResponseStarted(Request& request, RequestEvent event) {
@@ -2867,6 +3042,12 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCancel:
       OnCancel(frame->cancelled);
       return;
+    case PageMessage::kRequestBodyPart:
+      OnRequestBodyPart(frame->request_body_part);
+      return;
+    case PageMessage::kRequestBodyEnded:
+      OnRequestBodyEnded(frame->request_body_ended);
+      return;
     case PageMessage::kKnownGap: {
       PageEvent event;
       event.type = MITTO_PAGE_EVENT_KNOWN_GAP;
@@ -2946,6 +3127,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCacheStorageAnswer:
     case PageMessage::kIndexedDbCallback:
     case PageMessage::kStorageBucketsAnswer:
+    case PageMessage::kRequestBodyCredit:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }

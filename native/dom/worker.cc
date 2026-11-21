@@ -175,4 +175,9 @@ void Worker::DidFailToFetchScript() {
   DispatchEvent(event);
 }
 
+void Worker::DidEnd() {
+  terminated_ = true;
+  keep_alive_.Clear();
+}
+
 }  // namespace mitto

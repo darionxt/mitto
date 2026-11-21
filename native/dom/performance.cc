@@ -3,6 +3,7 @@
 #include <utility>
 #include <variant>
 
+#include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/no_destructor.h"
@@ -402,13 +403,23 @@ double Performance::GetTimeOrFindMarkTime(
   }
   // Or an attribute of performance.timing, relative to the navigation's
   // start.
-  const std::optional<uint64_t> value = Timing()->GetNamedAttribute(mark_name);
-  if (!value) {
+  if (!PerformanceTiming::IsAttributeName(mark_name)) {
     exception_state.ThrowDOMException(
         "SyntaxError",
         base::StrCat({"The mark '", Utf8(mark_name), "' does not exist."}));
     return 0;
   }
+  // A worker has no performance.timing.
+  if (!document_timing_) {
+    exception_state.ThrowTypeError(base::StrCat(
+        {"When converting a mark name ('", Utf8(mark_name),
+         "') to a timestamp given a name that is a read only attribute in the "
+         "PerformanceTiming interface, the global object has to be a Window "
+         "object."}));
+    return 0;
+  }
+  const std::optional<uint64_t> value = Timing()->GetNamedAttribute(mark_name);
+  CHECK(value);
   if (*value == 0) {
     exception_state.ThrowDOMException(
         "InvalidAccessError",

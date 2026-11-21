@@ -18,7 +18,8 @@ PerformanceMark* PerformanceMark::Create(
     const std::u16string& mark_name,
     const bindings::PerformanceMarkOptions& options,
     bindings::ExceptionState& exception_state) {
-  Performance& performance = *ExecutionContext::Current().Performance();
+  ExecutionContext& context = ExecutionContext::Current();
+  Performance& performance = *context.Performance();
   double start = 0;
   if (options.start_time) {
     start = *options.start_time;
@@ -31,8 +32,9 @@ PerformanceMark* PerformanceMark::Create(
   } else {
     start = performance.Now();
   }
-  // A window's mark may not take the name of a PerformanceTiming attribute.
-  if (PerformanceTiming::IsAttributeName(mark_name)) {
+  // A window's mark may not take the name of a PerformanceTiming attribute,
+  // which a worker's may, as it has no performance.timing.
+  if (context.IsWindow() && PerformanceTiming::IsAttributeName(mark_name)) {
     exception_state.ThrowDOMException(
         "SyntaxError",
         base::StrCat({"'", base::UTF16ToUTF8(mark_name),

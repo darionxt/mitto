@@ -1,7 +1,7 @@
 // A classic script that a script element has prepared: its source text, or
-// its fetch through the Session and the checks that Blink makes of what comes,
-// until it is ready, and then running it, as Blink's ClassicPendingScript and
-// ClassicScript do.
+// its fetch through its document's ResourceFetcher and the checks that Blink
+// makes of what comes, until it is ready, and then running it, as Blink's
+// ClassicPendingScript and ClassicScript do.
 //
 // Upstream: third_party/blink/renderer/core/script/classic_pending_script.cc
 // Upstream: third_party/blink/renderer/core/script/classic_script.cc
@@ -14,11 +14,13 @@
 #include <string>
 #include <string_view>
 
-#include "mitto/dom/fetcher.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/resource.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/script_fetch_options.h"
 #include "mitto/dom/subresource_integrity.h"
 #include "url/gurl.h"
+#include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
@@ -39,7 +41,7 @@ std::optional<std::string> RefusedAsWorkerScript(const GURL& url,
                                                  std::string_view headers,
                                                  bool strict);
 
-class ClassicPendingScript final : public PendingScript {
+class ClassicPendingScript final : public PendingScript, public ResourceClient {
  public:
   // An inline script of `element`, which is ready, whose errors name
   // `source_url`, empty for a script that the parser did not insert, and
@@ -53,19 +55,16 @@ class ClassicPendingScript final : public PendingScript {
                                             const ScriptFetchOptions& options,
                                             int start_line,
                                             int start_column);
-  // `element`'s script at `url`, which this fetches through its window's
-  // Fetcher, with the mode, credentials mode, referrer policy and priority
-  // that `request` has, as a script that blocks rendering if
-  // `render_blocking`, checks against `integrity`, and decodes as `encoding`
-  // unless its response or a byte order mark names another. Its import()
-  // calls take `options`.
+  // `element`'s script that `params` asks for, which this fetches through
+  // its document's ResourceFetcher, with the mode, credentials mode, referrer
+  // policy and priority hint that it has, as a script that blocks rendering
+  // if it says so, and checks against its integrity metadata. It decodes as
+  // the encoding of the request that made the resource, which a request of
+  // the same URL may have made before, unless its response or a byte order
+  // mark names another. Its import() calls take `options`.
   static ClassicPendingScript* Fetch(ScriptElementBase& element,
-                                     const GURL& url,
-                                     FetchRequestData request,
-                                     const ScriptFetchOptions& options,
-                                     IntegrityMetadataSet integrity,
-                                     std::string encoding,
-                                     bool render_blocking);
+                                     const FetchParameters& params,
+                                     const ScriptFetchOptions& options);
 
   ClassicPendingScript(ScriptElementBase& element,
                        bool is_external,
@@ -76,13 +75,15 @@ class ClassicPendingScript final : public PendingScript {
 
   // PendingScript:
   bool IsExternal() const override;
+  bool IsModule() const override;
   bool IsReady() const override;
   bool IsEligibleForLowPriorityAsyncScriptExecution() const override;
 
- private:
-  class FetchClient;
-  friend class FetchClient;
+  // ResourceClient: ClassicPendingScript::NotifyFinished(), the checks of the
+  // response.
+  void NotifyFinished(Resource& resource) override;
 
+ private:
   enum class State {
     kWaitingForResource,
     kReady,
@@ -91,19 +92,12 @@ class ClassicPendingScript final : public PendingScript {
 
   // PendingScript:
   bool HasScript() const override;
-  bool IsModule() const override;
   void RunScript() override;
+  // ClassicPendingScript::DisposeInternal(): a script that goes lets go of
+  // its fetch, which is cancelled when nothing else uses it.
+  void DisposeInternal() override;
 
-  void StartFetch(const GURL& url,
-                  FetchRequestData request,
-                  bool render_blocking);
-  // ClassicPendingScript::NotifyFinished(): the checks of the response.
-  void NotifyFinished(int net_error,
-                      int status,
-                      const GURL& response_url,
-                      const std::string& headers,
-                      bool opaque,
-                      std::string body);
+  void StartFetch(const FetchParameters& params);
   void AdvanceReadyState(State state);
 
   const bool is_external_;
@@ -120,7 +114,7 @@ class ClassicPendingScript final : public PendingScript {
   bool muted_errors_ = false;
   GURL fetch_url_;
   IntegrityMetadataSet integrity_;
-  std::string encoding_;
+  cppgc::Member<Resource> resource_;
 };
 
 }  // namespace mitto

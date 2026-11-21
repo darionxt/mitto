@@ -63,6 +63,10 @@ class PendingScript : public cppgc::GarbageCollected<PendingScript> {
   }
   // Whether it came from a src, which fires load once it has run.
   virtual bool IsExternal() const = 0;
+  // Whether it is a module script, which has no current script, whose
+  // document ignores destructive writes while it runs, and which the XML
+  // parser drops.
+  virtual bool IsModule() const = 0;
   // Whether it has its source, or has failed: the HTML Standard's "ready to
   // be parser-executed".
   virtual bool IsReady() const = 0;
@@ -86,12 +90,12 @@ class PendingScript : public cppgc::GarbageCollected<PendingScript> {
   //
   // Whether the script's script is null, which fires error.
   virtual bool HasScript() const = 0;
-  // Whether it is a module script, which has no current script, and whose
-  // document ignores destructive writes while it runs.
-  virtual bool IsModule() const = 0;
   // Runs the script's script in the current context. It is called after
   // Dispose(), which keeps what the script needs.
   virtual void RunScript() = 0;
+  // What the subclass lets go of when the script is disposed of, such as its
+  // fetch.
+  virtual void DisposeInternal() {}
 
   // Tells the one that watches it that it is ready.
   void PendingScriptFinished();

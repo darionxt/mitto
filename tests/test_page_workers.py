@@ -6,6 +6,7 @@ of them is held to what Chrome 157 does for the same scripts (docs/runtime.md, "
 
 import http.server
 import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -59,11 +60,55 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"fetch('/data.txt').then((r) => r.text()).then((t) => postMessage([t, performance.now() > 0]));",
     ),
     "/data.txt": ("text/plain", b"data from the server"),
+    # A fetch() whose body is a stream, which goes only over HTTP/2 or HTTP/3, so over this server's HTTP/1.1 it fails
+    # with the stream read once and locked, as a window's does in Chrome.
+    "/uploads.js": (
+        "text/javascript",
+        b"let pulls = 0; const body = new ReadableStream({ pull(c) { pulls++; c.enqueue(new Uint8Array([1])); } });"
+        b" fetch('/data.txt', { method: 'POST', duplex: 'half', body }).then(() => 'fulfilled', (e) => 'rejected ' + e)"
+        b".then((s) => setTimeout(() => postMessage([s, pulls, body.locked].join(' / ')), 0));",
+    ),
     "/broadcast.js": (
         "text/javascript",
         b"const channel = new BroadcastChannel('news');"
         b"channel.onmessage = (e) => channel.postMessage(['worker heard', e.data, e.origin]);"
         b"postMessage('listening');",
+    ),
+    # A worker that posts to a channel and closes in the same task.
+    "/broadcast-close.js": (
+        "text/javascript",
+        b"new BroadcastChannel('news').postMessage('last words'); close();",
+    ),
+    # A worker that fetches without end, with a worker of its own that does too, and that is busy for a while from
+    # when it says so, past its creator's document being replaced, before it fetches again.
+    "/busy.js": (
+        "text/javascript",
+        b"const go = () => fetch('/data.txt').then(go, go); go(); new Worker('/busy-child.js');"
+        b" postMessage('busy');"
+        b" setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {} go(); }, 0);",
+    ),
+    "/busy-child.js": ("text/javascript", b"const go = () => fetch('/data.txt').then(go, go); go();"),
+    # performance.measure() from a name of performance.timing, which a worker has not, as Chrome 157.0.8103.79 throws.
+    "/measure.js": (
+        "text/javascript",
+        b"const out = []; for (const args of [['navigationStart'], ['nope'], [{start: 'loadEventEnd'}],"
+        b" [undefined, 'navigationStart']]) { try { performance.measure('m', ...args); out.push('ok'); }"
+        b" catch (e) { out.push(e.name + ': ' + e.message); } } postMessage(out);",
+    ),
+    # The Persona's high-entropy client hints, which settle from a task of the worker's.
+    "/ua-data.js": (
+        "text/javascript",
+        b"navigator.userAgentData.getHighEntropyValues(['architecture', 'platformVersion', 'fullVersionList'])"
+        b".then((v) => postMessage(v), (e) => postMessage(String(e)));",
+    ),
+    # Marks named as attributes of performance.timing, which a worker may make and measure from.
+    "/timing-marks.js": (
+        "text/javascript",
+        b"const out = []; const t = (f) => { try { out.push(String(f())); } catch (e) { out.push(e.name + ': ' +"
+        b" e.message); } }; t(() => performance.mark('navigationStart').name);"
+        b" t(() => new PerformanceMark('loadEventEnd').name);"
+        b" t(() => typeof performance.measure('m', 'navigationStart').duration);"
+        b" t(() => performance.getEntriesByName('navigationStart').length); postMessage(out);",
     ),
     "/apis.js": (
         "text/javascript",
@@ -118,7 +163,15 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
     ),
+    # A keepalive fetch that goes on after the worker that started it closes.
+    "/keepalive.js": (
+        "text/javascript",
+        b"fetch('/beacon', { method: 'POST', body: 'kept', keepalive: true }); close();",
+    ),
 }
+
+# The path and body of each POST that reached the server, in order.
+_POSTED: list[tuple[str, bytes]] = []
 
 
 @pytest.fixture
@@ -151,6 +204,13 @@ def server() -> Iterator[str]:
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            _POSTED.append((self.path, body))
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def log_message(self, format: str, *args: Any) -> None:
             pass
@@ -384,6 +444,70 @@ def test_a_worker_reads_its_location_and_its_creators_navigator(server: str) -> 
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_workers_measure_from_a_timing_name_throws_as_in_chrome(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/measure.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    def timing(name: str) -> str:
+        return (
+            f"TypeError: Failed to execute 'measure' on 'Performance': When converting a mark name ('{name}') to a"
+            " timestamp given a name that is a read only attribute in the PerformanceTiming interface, the global"
+            " object has to be a Window object."
+        )
+
+    assert _evaluate(server, script) == [
+        timing("navigationStart"),
+        "SyntaxError: Failed to execute 'measure' on 'Performance': The mark 'nope' does not exist.",
+        timing("loadEventEnd"),
+        timing("navigationStart"),
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_makes_marks_named_as_timing_attributes_as_in_chrome(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/timing-marks.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    # What Chrome 157.0.8103.79 gave, where a window's marks of these names throw.
+    assert _evaluate(server, script) == ["navigationStart", "loadEventEnd", "number", "1"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_high_entropy_values_are_the_windows(server: str) -> None:
+    script = """Promise.all([
+        new Promise((resolve) => {
+            const worker = new Worker('/ua-data.js');
+            worker.onmessage = (e) => resolve(e.data);
+        }),
+        navigator.userAgentData.getHighEntropyValues(['architecture', 'platformVersion', 'fullVersionList']),
+    ])"""
+
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        worker, window = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+    assert worker == window
+    assert worker["architecture"] != ""
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_keepalive_fetch_outlives_the_worker(server: str) -> None:
+    _POSTED.clear()
+    script = """new Promise((resolve) => {
+        new Worker('/keepalive.js');
+        setTimeout(() => resolve('waited'), 500);
+    })"""
+
+    assert _evaluate(server, script) == "waited"
+    deadline = time.monotonic() + _TIMEOUT_SECONDS
+    while not _POSTED and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _POSTED == [("/beacon", b"kept")]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_worker_fetches_through_the_session(server: str) -> None:
     script = """new Promise((resolve) => {
         const worker = new Worker('/fetches.js');
@@ -391,6 +515,16 @@ def test_a_worker_fetches_through_the_session(server: str) -> None:
     })"""
 
     assert _evaluate(server, script) == ["data from the server", True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_stream_body_fails_over_http1_as_a_windows_does(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/uploads.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == "rejected TypeError: Failed to fetch / 1 / true"
 
 
 @pytest.mark.usefixtures("page_program")
@@ -404,6 +538,37 @@ def test_a_port_transferred_to_a_worker_carries_messages_both_ways(server: str) 
     })"""
 
     assert _evaluate(server, script) == "across threads!"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_broadcast_reaches_the_window_from_a_worker_that_closes_at_once(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const channel = new BroadcastChannel('news');
+        channel.onmessage = (e) => resolve(e.data);
+        new Worker('/broadcast-close.js');
+        setTimeout(() => resolve('lost'), 5000);
+    })"""
+
+    assert _evaluate(server, script) == "last words"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_document_with_busy_workers_gives_way_to_the_next(server: str) -> None:
+    # The workers' requests and their ends, which the Session forgets with the document, go before the next document
+    # or not at all, so the Page goes on.
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        started = """new Promise((resolve) => {
+            const worker = new Worker('/busy.js');
+            worker.onmessage = (e) => resolve(e.data);
+        })"""
+        assert page.evaluate(started) == "busy"
+        assert page.evaluate("location.href = '/?next'; 'set'") == "set"
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?next"
+        assert page.evaluate(started) == "busy"
+        assert page.evaluate("location.href = '/?last'; 'set'") == "set"
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?last"
+        assert page.evaluate("location.search") == "?last"
+
 
 
 @pytest.mark.usefixtures("page_program")
