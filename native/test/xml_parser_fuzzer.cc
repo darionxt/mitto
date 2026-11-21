@@ -8,8 +8,9 @@
 // a default namespace. The high five bits say how big the pieces are that a
 // document comes in. The rest is the markup, in UTF-8. A document must get the
 // same tree whole as in pieces, save what pieces change in Chrome too: where
-// libxml2 places an error, a document whose internal subset libxml2 takes to
-// end inside a processing instruction, and some documents of the Rust crate.
+// libxml2 places its first error and which errors follow it, a document whose
+// internal subset libxml2 takes to end inside a processing instruction, and
+// some documents of the Rust crate.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -92,14 +93,20 @@ bool ConsumeNumberAfter(std::string_view& text, std::string_view prefix) {
 }
 
 // The messages of an error block, one after another as XMLErrors writes them,
-// "<type> on line <line> at column <column>: <message>", with each one's line
-// and column left out. libxml2 places an error where its input ends when it
-// stopped there, so where a piece ended, in Chrome as here: a processing
-// instruction that never ends in the internal subset, which libxml2 reads once
-// the subset's `]>` has come, is an error at column 51 of its document whole,
-// and at column 40, just after `]>`, when `]>` ended a piece.
-std::string WithoutErrorPlaces(std::string_view messages) {
+// "<type> on line <line> at column <column>: <message>", cut to the first one,
+// without its line and column, since pieces change the rest in Chrome too.
+// libxml2 places an error where its input ends when it stopped there, so where
+// a piece ended: a processing instruction that never ends in the internal
+// subset, which libxml2 reads once the subset's `]>` has come, is an error at
+// column 51 of its document whole, and at column 40, just after `]>`, when
+// `]>` ended a piece. And an error that breaks well-formedness turns libxml2's
+// SAX off, after which xmlParseChunk() takes no more pieces, while the input
+// it has already been given goes on to give more errors and no more nodes: a
+// comment with `--` and a NUL later is one error in pieces of one character,
+// and two whole.
+std::string FirstErrorWithoutPlace(std::string_view messages) {
   std::string out;
+  bool seen_one = false;
   while (!messages.empty()) {
     const size_t newline = messages.find('\n');
     std::string_view line = messages.substr(
@@ -111,6 +118,10 @@ std::string WithoutErrorPlaces(std::string_view messages) {
         rest.remove_prefix(type.size());
         if (ConsumeNumberAfter(rest, " on line ") &&
             ConsumeNumberAfter(rest, " at column ") && rest.starts_with(": ")) {
+          if (seen_one) {
+            return out;
+          }
+          seen_one = true;
           out += type;
           out += " on line # at column #";
           line = rest;
@@ -137,8 +148,9 @@ bool IsErrorMessages(const Node& node) {
 }
 
 // The tree under `root`, one node to a line, walked without recursion, with
-// the places of its errors left out when `without_error_places`.
-std::string Dump(const Node& root, bool without_error_places) {
+// its error block's messages cut to the first, without its place, when
+// `first_error_without_place`.
+std::string Dump(const Node& root, bool first_error_without_place) {
   std::string out;
   const Node* node = root.FirstChild();
   int depth = 0;
@@ -167,7 +179,7 @@ std::string Dump(const Node& root, bool without_error_places) {
           out += "\n{" +
                  Dump(*static_cast<const mitto::HTMLTemplateElement*>(element)
                            ->Content(),
-                      without_error_places) +
+                      first_error_without_place) +
                  "}";
         }
         break;
@@ -187,8 +199,8 @@ std::string Dump(const Node& root, bool without_error_places) {
       case Node::kCommentNode: {
         std::string data = base::UTF16ToUTF8(
             static_cast<const mitto::CharacterData*>(node)->Data());
-        if (without_error_places && IsErrorMessages(*node)) {
-          data = WithoutErrorPlaces(data);
+        if (first_error_without_place && IsErrorMessages(*node)) {
+          data = FirstErrorWithoutPlace(data);
         }
         out += std::to_string(node->GetNodeType()) + "\"" + data + "\"";
         break;
@@ -404,8 +416,8 @@ ParsedDocument ParseDocument(std::u16string_view markup,
   reader->Finish();
   CHECK(!reader->Pump());
   reader->End();
-  // libxml2's errors keep their messages but not their places.
-  std::string dump = Dump(*document, /*without_error_places=*/libxml);
+  // libxml2's first error keeps its message but not its place.
+  std::string dump = Dump(*document, /*first_error_without_place=*/libxml);
   const bool pieces_leave_alone =
       document->LastChild() == document->DocumentElement() &&
       dump.find(" parsererror") == std::string::npos;
@@ -441,7 +453,7 @@ void ParseFragment(std::u16string_view markup, int context_kind) {
   const v8::TryCatch try_catch(isolate);
   mitto::LibxmlTreeBuilder::ParseFragment(markup, *fragment, context.Get(),
                                           *references);
-  Dump(*fragment, /*without_error_places=*/false);
+  Dump(*fragment, /*first_error_without_place=*/false);
 }
 
 // Sets V8 up once, as the test program does, for every input, with a context
