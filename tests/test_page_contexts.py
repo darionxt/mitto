@@ -31,7 +31,7 @@ pytestmark = [
 _TIMEOUT_SECONDS = 60
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 23
+_PROTOCOL_VERSION = 25
 
 _FAKE_PAGE = textwrap.dedent(
     """\

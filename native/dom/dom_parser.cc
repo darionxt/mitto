@@ -1,13 +1,14 @@
 #include "mitto/dom/dom_parser.h"
 
-#include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_dom_parser.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/xml_document.h"
 
 namespace mitto {
+
 
 // static
 DOMParser* DOMParser::Create() {
@@ -31,15 +32,17 @@ Document* DOMParser::ParseFromString(
     const std::u16string& string,
     const std::u16string& type,
     bindings::ExceptionState& exception_state) {
-  if (type != u"text/html") {
-    exception_state.ThrowTypeError(
-        bindings::ExceptionMessages::NotImplemented());
-    return nullptr;
-  }
   // DocumentInit with the window's URL and the window as its execution
-  // context, which gives the window's origin, and no frame.
+  // context, which gives the window's origin, and no frame: an HTML document,
+  // or an XML document whose MIME type is the one given, which the parser
+  // that the runtime-enabled features pick reads (document_parser.h).
+  Document* document = nullptr;
+  if (type == u"text/html") {
+    document = HTMLDocument::Create();
+  } else {
+    document = XMLDocument::Create(type);
+  }
   const Document& creator = window_->GetDocument();
-  HTMLDocument* const document = HTMLDocument::Create();
   document->SetUrl(creator.UrlForBinding());
   document->SetOrigin(creator.GetOrigin());
   document->SetAllowDeclarativeShadowRoots(false);

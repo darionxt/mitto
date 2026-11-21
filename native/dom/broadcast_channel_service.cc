@@ -116,21 +116,22 @@ void BroadcastChannelService::Post(uint64_t connection,
       session_sender_.Run(from->name, locked, message.wire_data());
     }
   }
-  CurrentRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          [](BroadcastChannelService* service,
-             std::vector<std::pair<uint64_t,
-                                   scoped_refptr<base::SingleThreadTaskRunner>>>
-                 recipients,
-             bool locked, std::vector<uint8_t> data) {
-            for (auto& [recipient, runner] : recipients) {
-              service->Deliver(recipient, std::move(runner), locked,
-                               /*same_agent_cluster=*/true, data);
-            }
-          },
-          base::Unretained(this), std::move(recipients), locked,
-          message.wire_data()));
+  // The hop to the service and the one back, each a task of the recipient's
+  // thread, so that a sender that closes in the same task loses none, as a
+  // message that has gone into Blink's pipe stays there.
+  for (auto& [recipient, runner] : recipients) {
+    runner->PostTask(
+        FROM_HERE, base::BindOnce(
+                       [](BroadcastChannelService* service, uint64_t recipient,
+                          scoped_refptr<base::SingleThreadTaskRunner> runner,
+                          bool locked, std::vector<uint8_t> data) {
+                         service->Deliver(recipient, std::move(runner), locked,
+                                          /*same_agent_cluster=*/true,
+                                          std::move(data));
+                       },
+                       base::Unretained(this), recipient, runner, locked,
+                       message.wire_data()));
+  }
 }
 
 void BroadcastChannelService::OnSessionMessage(const std::string& origin,

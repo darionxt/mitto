@@ -2,8 +2,8 @@
 // checks the script's URL and starts a dedicated worker through its context's
 // WorkerStarter, postMessage() and terminate() go to the worker, and the
 // worker's messages and errors come back as events, each from a task of the
-// creator's context. A Worker stays alive until it is terminated or its
-// context goes, as Blink's HasPendingActivity() keeps it.
+// creator's context. A Worker stays alive until it is terminated, its worker
+// ends or its context goes, as Blink's HasPendingActivity() keeps it.
 //
 // Upstream: third_party/blink/renderer/core/workers/dedicated_worker.h
 // Upstream: third_party/blink/renderer/core/workers/dedicated_worker.cc
@@ -76,6 +76,10 @@ class Worker final : public EventTarget {
   // The worker's script did not come, or was not one to run: a plain error
   // event, as Blink's DidFailToFetchScript() fires.
   void DidFailToFetchScript();
+  // The worker has ended, its thread gone or never started, so nothing more
+  // comes and this need not stay alive, as Blink's HasPendingActivity() is
+  // false once its proxy has been asked to terminate.
+  void DidEnd();
 
  private:
   // Starts the worker, as DedicatedWorker::Start() does once the checks of
@@ -84,7 +88,7 @@ class Worker final : public EventTarget {
 
   std::unique_ptr<WorkerMessagingProxy> proxy_;
   bool terminated_ = false;
-  // HasPendingActivity(): until it is terminated.
+  // HasPendingActivity(): until it is terminated or its worker ends.
   cppgc::Persistent<Worker> keep_alive_;
 };
 

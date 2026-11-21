@@ -317,6 +317,7 @@ void StartNavigation(Window& window,
   navigation.url = url;
   navigation.reload = type == FrameLoadType::kReload;
   navigation.replace = type == FrameLoadType::kReplaceCurrentItem;
+  navigation.referrer_policy = document.GetReferrerPolicy();
   client->BeginNavigation(navigation);
 }
 
