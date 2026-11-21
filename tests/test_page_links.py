@@ -128,6 +128,30 @@ def test_a_fetch_keeps_a_loading_preload_whose_link_goes_in_the_same_task(
     assert server.paths().count("/slow") == 1
 
 
+def test_a_navigation_lets_go_of_a_fetch_that_took_a_loading_preload(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    hold = threading.Event()
+    server.routes["/slow"] = Route(
+        b"slow", headers=[("Content-Type", "text/plain"), ("Cache-Control", "no-store")], hold=hold
+    )
+    second = server.page("/second", "<p>second</p>")
+    url = server.page("/", '<link rel="preload" href="/slow" as="fetch" crossorigin>')
+
+    with _open_page(session, url) as page:
+        assert server.wait_for_path("/slow")
+        assert page.evaluate("window.slow = fetch('/slow'); location.href = '/second'; 'set'") == "set"
+        page.wait_for_navigation(timeout=TIMEOUT_SECONDS)
+        hold.set()
+        text = page.evaluate("document.querySelector('p').textContent", timeout=TIMEOUT_SECONDS)
+        assert page.url == second
+
+    # The old window's fetch goes with its context, as Blink's FetchManager disposes its loaders, and nothing of it
+    # reaches the new document.
+    assert text == "second"
+    assert server.paths().count("/slow") == 1
+
+
 def test_a_preload_of_another_type_of_the_same_url_hides_no_preload(
     session: mitto.Session, server: RecordingServer
 ) -> None:

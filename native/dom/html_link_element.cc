@@ -26,6 +26,7 @@
 #include "mitto/dom/subresource_integrity.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
+#include "mitto/encoding/text_encoding_registry.h"
 #include "mitto/mime_types.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
@@ -89,6 +90,16 @@ bool IsSupportedType(ResourceType type, std::u16string_view mime_type) {
     case ResourceType::kRaw:
       return true;
   }
+}
+
+// ContentType::GetType(): the type without white space or parameters.
+std::u16string_view MimeTypeOfContentType(std::u16string_view type) {
+  type = base::TrimWhitespace(type, base::TRIM_ALL);
+  const size_t semicolon = type.find(';');
+  if (semicolon != std::u16string_view::npos) {
+    type = base::TrimWhitespace(type.substr(0, semicolon), base::TRIM_ALL);
+  }
+  return type;
 }
 
 // An attribute's value, or "" for none.
@@ -178,6 +189,8 @@ const bindings::WrapperTypeInfo* HTMLLinkElement::GetWrapperTypeInfo() const {
 void HTMLLinkElement::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(pending_resource_);
   visitor->Trace(module_preload_);
+  visitor->Trace(style_resource_);
+  visitor->Trace(sheet_);
   HTMLElement::Trace(visitor);
 }
 
@@ -191,6 +204,21 @@ void HTMLLinkElement::AttributeChanged(const QualifiedName& name,
   // The attributes that HTMLLinkElement::ParseAttribute() processes the link
   // anew for, unless the value stays the same, as
   // HTMLLinkElementAttributeValueChanges, stable, has it.
+  if (name.local_name == u"disabled") {
+    SetDisabledState(new_value != nullptr);
+    return;
+  }
+  if (name.local_name == u"blocking") {
+    // UnblockRenderingForPendingSheet(): a sheet that a script inserted, and
+    // that no longer asks to block rendering, blocks nothing more.
+    if (!IsPotentiallyRenderBlocking() && StyleSheetIsLoading() &&
+        pending_sheet_type_ ==
+            Document::PendingSheetType::kDynamicRenderBlocking) {
+      GetDocument().RemovePendingBlockingSheet(*this, pending_sheet_type_);
+      pending_sheet_type_ = Document::PendingSheetType::kNonBlocking;
+    }
+    return;
+  }
   if (name.local_name != u"rel" && name.local_name != u"href" &&
       name.local_name != u"type" && name.local_name != u"as" &&
       name.local_name != u"media" && name.local_name != u"sizes") {
@@ -200,7 +228,7 @@ void HTMLLinkElement::AttributeChanged(const QualifiedName& name,
   if (same && name.local_name != u"sizes") {
     return;
   }
-  Process();
+  Process(/*media_change=*/name.local_name == u"media");
 }
 
 Node::InsertionNotificationRequest HTMLLinkElement::InsertedInto(
@@ -217,6 +245,13 @@ void HTMLLinkElement::RemovedFrom(Node& insertion_point) {
   if (insertion_point.IsConnected() &&
       !GetDocument().StatePreservingAtomicMoveInProgress()) {
     Abort();
+    // LinkStyle::OwnerRemoved(): its sheet goes, and blocks nothing more.
+    if (StyleSheetIsLoading()) {
+      RemovePendingSheet();
+    }
+    if (sheet_) {
+      ClearSheet();
+    }
   }
 }
 
@@ -243,19 +278,296 @@ void HTMLLinkElement::Abort() {
   }
 }
 
-void HTMLLinkElement::Process() {
-  // LinkLoader::LoadLink(): what it loaded before goes.
-  Abort();
-  if (!ShouldLoadLink()) {
+void HTMLLinkElement::Process(bool media_change) {
+  // LinkStyle::Process(): a link that moves keeps what it loads, and a sheet
+  // that has come takes the new media without a fetch.
+  if (GetDocument().StatePreservingAtomicMoveInProgress() ||
+      (sheet_ && media_change)) {
     return;
   }
-  if (Resource* const resource = PreloadIfNeeded()) {
-    pending_resource_ = resource;
-    adding_client_ = true;
-    resource->AddClient(this);
-    adding_client_ = false;
+  // LinkLoader::LoadLink(), unless the link has a sheet: what it preloaded
+  // before goes.
+  if (!sheet_) {
+    Abort();
+    if (!ShouldLoadLink()) {
+      return;
+    }
+    if (Resource* const resource = PreloadIfNeeded()) {
+      pending_resource_ = resource;
+      adding_client_ = true;
+      resource->AddClient(this);
+      adding_client_ = false;
+    }
+    ModulePreloadIfNeeded();
   }
-  ModulePreloadIfNeeded();
+  // A link that names no sheet any more keeps none.
+  if (!LoadStylesheetIfNeeded() && sheet_) {
+    ClearSheet();
+  }
+}
+
+void HTMLLinkElement::SetDisabledState(bool disabled) {
+  const DisabledState old_state = disabled_state_;
+  disabled_state_ =
+      disabled ? DisabledState::kDisabled : DisabledState::kEnabledViaScript;
+  if (!disabled) {
+    explicitly_enabled_ = true;
+  }
+  if (old_state == disabled_state_) {
+    return;
+  }
+  const bool is_alternate =
+      LinkRelAttribute(AttributeOrEmpty(*this, u"rel")).is_alternate;
+  if (StyleSheetIsLoading()) {
+    // A sheet that loads blocks nothing once disabled, and blocks scripts
+    // once a script enables it, if it is an alternate one or was disabled.
+    if (disabled_state_ == DisabledState::kDisabled) {
+      RemovePendingSheet();
+    }
+    if (disabled_state_ == DisabledState::kEnabledViaScript &&
+        (is_alternate || old_state == DisabledState::kDisabled)) {
+      AddPendingSheet(Document::PendingSheetType::kBlocking);
+    }
+    return;
+  }
+  if (sheet_) {
+    ClearSheet();
+    return;
+  }
+  if (disabled_state_ == DisabledState::kEnabledViaScript) {
+    Process();
+  }
+}
+
+bool HTMLLinkElement::StyleSheetIsLoading() const {
+  return loading_ || (sheet_ && sheet_->IsLoading());
+}
+
+void HTMLLinkElement::ClearSheet() {
+  sheet_->ClearOwner();
+  sheet_ = nullptr;
+}
+
+bool HTMLLinkElement::IsAlternate() const {
+  return disabled_state_ == DisabledState::kUnset &&
+         LinkRelAttribute(AttributeOrEmpty(*this, u"rel")).is_alternate &&
+         !explicitly_enabled_;
+}
+
+bool HTMLLinkElement::LoadStylesheetIfNeeded() {
+  const LinkRelAttribute rel(AttributeOrEmpty(*this, u"rel"));
+  const std::u16string type = base::ToLowerASCII(
+      MimeTypeOfContentType(AttributeOrEmpty(*this, u"type")));
+  const std::u16string_view href =
+      StripHTMLSpaces(AttributeOrEmpty(*this, u"href"));
+  Document& document = GetDocument();
+  const GURL url = href.empty() ? GURL() : document.CompleteUrl(href);
+  // A sheet loads only for a document in a frame.
+  if (disabled_state_ == DisabledState::kDisabled || !rel.is_style_sheet ||
+      !(type.empty() || type == u"text/css") || !ActiveWindowOf(document) ||
+      !url.is_valid()) {
+    return false;
+  }
+  // What it loaded before goes.
+  if (Resource* const resource = style_resource_.Get()) {
+    RemovePendingSheet();
+    style_resource_ = nullptr;
+    loading_ = false;
+    resource->RemoveClient(this);
+  }
+  if (!ShouldLoadLink()) {
+    return true;
+  }
+  const std::u16string* media = FindAttribute(u"media");
+  const bool media_matches = !media || MediaAttributeMatches(document, *media);
+  // ComputePendingSheetTypeAndRenderBlockingBehavior(): what is not needed
+  // for layout now holds nothing back, and loads at a low priority.
+  const bool critical = media_matches && !IsAlternate();
+  Document::PendingSheetType sheet_type =
+      Document::PendingSheetType::kNonBlocking;
+  bool render_blocking = false;
+  if (critical) {
+    if (created_by_parser_) {
+      // A sheet that the parser put in the body blocks the parser, but not
+      // rendering, and its fetch gets no boost for it.
+      HTMLElement* const body = document.Body();
+      sheet_type = Document::PendingSheetType::kBlocking;
+      render_blocking = !body || !body->IsInclusiveAncestorOf(*this);
+    } else if (IsPotentiallyRenderBlocking()) {
+      sheet_type = Document::PendingSheetType::kDynamicRenderBlocking;
+      render_blocking = true;
+    }
+  }
+  AddPendingSheet(sheet_type);
+  render_blocking_ = render_blocking;
+  FetchParameters params;
+  params.url = url;
+  params.type = ResourceType::kCSSStyleSheet;
+  params.lazy = !critical;
+  params.render_blocking = render_blocking;
+  const std::u16string* cross_origin = FindAttribute(u"crossorigin");
+  switch (CrossOriginAttributeFromValue(
+      cross_origin ? std::optional<std::u16string>(*cross_origin)
+                   : std::nullopt)) {
+    case CrossOriginAttribute::kNotSet:
+      break;
+    case CrossOriginAttribute::kAnonymous:
+      params.mode = FetchMode::kCors;
+      params.credentials = FetchCredentialsMode::kSameOrigin;
+      break;
+    case CrossOriginAttribute::kUseCredentials:
+      params.mode = FetchMode::kCors;
+      params.credentials = FetchCredentialsMode::kInclude;
+      break;
+  }
+  if (const std::u16string* policy = FindAttribute(u"referrerpolicy")) {
+    params.referrer_policy = FetchReferrerPolicyFromString(*policy);
+  }
+  if (const std::u16string* hint = FindAttribute(u"fetchpriority")) {
+    params.priority_hint = FetchPriorityHintFromAttribute(*hint);
+  }
+  const std::u16string* integrity = FindAttribute(u"integrity");
+  if (integrity && !integrity->empty()) {
+    params.integrity = ParseIntegrityAttribute(*integrity, nullptr);
+  }
+  // LinkStyle::GetCharset(): its charset attribute, if it names an
+  // encoding, or else the document's.
+  const std::u16string* charset = FindAttribute(u"charset");
+  params.charset = charset ? CanonicalTextEncodingName(*charset) : "";
+  if (params.charset.empty()) {
+    params.charset = document.Encoding();
+  }
+  loading_ = true;
+  Resource* const resource = document.Fetcher().RequestResource(params);
+  if (!resource) {
+    // A fetch that never starts fails at once.
+    loading_ = false;
+    RemovePendingSheet();
+    ScheduleEvent(/*loaded=*/false);
+    return true;
+  }
+  style_resource_ = resource;
+  resource->AddClient(this);
+  return true;
+}
+
+bool HTMLLinkElement::IsPotentiallyRenderBlocking() const {
+  for (const std::u16string_view token : base::SplitStringPiece(
+           AttributeOrEmpty(*this, u"blocking"), u" \t\n\f\r",
+           base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    if (token == u"render") {
+      return true;
+    }
+  }
+  return created_by_parser_ &&
+         LinkRelAttribute(AttributeOrEmpty(*this, u"rel")).is_style_sheet;
+}
+
+void HTMLLinkElement::StyleSheetFinished(Resource& resource) {
+  style_resource_ = nullptr;
+  resource.RemoveClient(this);
+  // A link that left its document while its sheet loaded keeps none.
+  if (!IsConnected()) {
+    loading_ = false;
+    RemovePendingSheet();
+    if (sheet_) {
+      ClearSheet();
+    }
+    return;
+  }
+  Document& document = GetDocument();
+  // A sheet whose body does not match its integrity metadata fails, with
+  // Chrome's console errors.
+  if (!resource.ErrorOccurred() && HasAttribute(u"integrity") &&
+      !resource.Integrity().empty()) {
+    std::vector<std::string> messages;
+    const bool passed = CheckSubresourceIntegrity(
+        resource.Integrity(), resource.Body(), resource.Url().spec(),
+        !resource.Response().opaque, resource.Response().headers, messages);
+    if (Window* const window = ActiveWindowOf(document)) {
+      for (std::string& message : messages) {
+        window->AddConsoleMessage(ConsoleLevel::kError, std::move(message));
+      }
+    }
+    if (!passed) {
+      loading_ = false;
+      RemovePendingSheet();
+      ScheduleEvent(/*loaded=*/false);
+      return;
+    }
+  }
+  // The sheet's imports resolve against its response's URL and go with it as
+  // referrer, under the policy that its response names.
+  StyleSheetReferrer referrer;
+  referrer.referrer = resource.Response().url;
+  referrer.policy = StyleSheetReferrerPolicy(resource);
+  if (sheet_) {
+    ClearSheet();
+  }
+  DecodedStyleSheet decoded =
+      DecodeStyleSheet(resource, IsLaxMimeTypeCheck(document, resource));
+  sheet_ = bindings::MakeGarbageCollected<StyleSheetContents>(
+      document, GURL(resource.Response().url), resource.Url(),
+      std::move(referrer), std::move(decoded.encoding), this, nullptr);
+  sheet_->SetRenderBlocking(render_blocking_);
+  sheet_->ParseAuthorStyleSheet(decoded.text);
+  loading_ = false;
+  if (resource.ErrorOccurred()) {
+    sheet_->SetLoadErrorOccurred();
+  }
+  sheet_->CheckLoaded();
+}
+
+void HTMLLinkElement::SheetLoaded(bool error) {
+  // LinkStyle::SheetLoaded(), then
+  // NotifyLoadedSheetAndAllCriticalSubresources().
+  if (StyleSheetIsLoading()) {
+    return;
+  }
+  RemovePendingSheet();
+  ScheduleEvent(/*loaded=*/!error);
+}
+
+void HTMLLinkElement::AddPendingSheet(Document::PendingSheetType type) {
+  if (type <= pending_sheet_type_) {
+    return;
+  }
+  pending_sheet_type_ = type;
+  if (type != Document::PendingSheetType::kNonBlocking) {
+    GetDocument().AddPendingBlockingSheet(*this, type);
+  }
+}
+
+void HTMLLinkElement::RemovePendingSheet() {
+  const Document::PendingSheetType type = pending_sheet_type_;
+  pending_sheet_type_ = Document::PendingSheetType::kNone;
+  if (type == Document::PendingSheetType::kDynamicRenderBlocking ||
+      type == Document::PendingSheetType::kBlocking) {
+    GetDocument().RemovePendingBlockingSheet(*this, type);
+  }
+}
+
+void HTMLLinkElement::ScheduleEvent(bool loaded) {
+  Document& document = GetDocument();
+  Window* const window = ActiveWindowOf(document);
+  WindowTasks* const tasks = window ? window->GetTasks() : nullptr;
+  if (!tasks) {
+    return;
+  }
+  // The task holds the load event back until it fires, and checks it then.
+  document.IncrementLoadEventDelayCount();
+  tasks->PostTask(
+      TaskType::kDOMManipulation,
+      base::BindOnce(
+          [](const cppgc::Persistent<HTMLLinkElement>& link,
+             const cppgc::WeakPersistent<Document>& document, bool loaded) {
+            link->DispatchLinkEvent(loaded);
+            if (document) {
+              document->DecrementLoadEventDelayCountAndCheckLoadEvent();
+            }
+          },
+          cppgc::Persistent<HTMLLinkElement>(this),
+          cppgc::WeakPersistent<Document>(&document), loaded));
 }
 
 Resource* HTMLLinkElement::PreloadIfNeeded() {
@@ -487,6 +799,10 @@ void HTMLLinkElement::ModulePreloadFinished(ModulePreloadClient& client,
 }
 
 void HTMLLinkElement::NotifyFinished(Resource& resource) {
+  if (&resource == style_resource_.Get()) {
+    StyleSheetFinished(resource);
+    return;
+  }
   if (&resource != pending_resource_.Get()) {
     return;
   }
