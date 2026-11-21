@@ -15,6 +15,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
+from tests.page_server import FAVICON_PATH
 from tools.capture import CASES, HTTP1, HTTP2, HTTP3, CaptureServer, normal_form
 from tools.capture.cases import CROSS_SITE_HOST
 from tools.capture.http1 import Http1Request
@@ -287,7 +288,8 @@ def test_a_stream_body_fails_over_http1_with_nothing_sent_as_in_chrome(capture: 
     assert _run(capture, HTTP1, _UPLOADS_OVER_HTTP1) == {
         name: chrome for name, (_, chrome) in _UPLOADS_OVER_HTTP1.items()
     }
-    assert _requests(capture, HTTP1) == {f"GET {_PAGE_PATH}"}
+    # The favicon comes after the document's load, before or after the test looks.
+    assert _requests(capture, HTTP1) - {f"GET {FAVICON_PATH}"} == {f"GET {_PAGE_PATH}"}
 
 
 @pytest.mark.usefixtures("page_program")
