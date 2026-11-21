@@ -57,7 +57,8 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
     ),
     "/fetches.js": (
         "text/javascript",
-        b"fetch('/data.txt').then((r) => r.text()).then((t) => postMessage([t, performance.now() > 0]));",
+        b"fetch('/data.txt').then((r) => r.text()).then((t) => postMessage([t, performance.now() > 0,"
+        b"performance.getEntriesByType('resource').map((e) => [e.name.replace(location.origin, ''), e.initiatorType])]));",
     ),
     "/data.txt": ("text/plain", b"data from the server"),
     # A fetch() whose body is a stream, which goes only over HTTP/2 or HTTP/3, so over this server's HTTP/1.1 it fails
@@ -94,6 +95,12 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"postMessage('busy'); setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {}"
         b" caches.keys(); caches.open('late').then((c) => c.put('/late', new Response('late'))); }, 0);",
+    ),
+    # The same, before it opens a database and asks for its storage buckets.
+    "/busy-storage.js": (
+        "text/javascript",
+        b"postMessage('busy'); setTimeout(() => { const end = Date.now() + 1500; while (Date.now() < end) {}"
+        b" indexedDB.open('late'); navigator.storageBuckets.keys(); }, 0);",
     ),
     # performance.measure() from a name of performance.timing, which a worker has not, as Chrome 157.0.8103.79 throws.
     "/measure.js": (
@@ -179,6 +186,58 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"  await cache.put('/held', new Response('x'.repeat(1 << 20)));"
         b"  self.kept = [cache, await cache.match('/held')];"
         b"  postMessage('holding');"
+        b"})().catch((e) => postMessage(String(e)));",
+    ),
+    "/indexed-db.js": (
+        "text/javascript",
+        b"const open = indexedDB.open('shared', 1);"
+        b"open.onupgradeneeded = () => open.result.createObjectStore('things');"
+        b"open.onsuccess = () => {"
+        b"  const database = open.result;"
+        b"  const transaction = database.transaction('things', 'readwrite');"
+        b"  transaction.objectStore('things').put({by: 'the worker'}, 'key');"
+        b"  transaction.oncomplete = async () => {"
+        b"    database.close();"
+        b"    postMessage([(await indexedDB.databases()).map((info) => [info.name, info.version])]);"
+        b"  };"
+        b"};"
+        b"open.onerror = () => postMessage(String(open.error));",
+    ),
+    "/frames.js": (
+        "text/javascript",
+        b"const times = []; let cancelledRan = false;"
+        b"cancelAnimationFrame(requestAnimationFrame(() => { cancelledRan = true; }));"
+        b"const step = (time) => {"
+        b"  times.push(time);"
+        b"  if (times.length < 3) { requestAnimationFrame(step); return; }"
+        b"  postMessage([times[0] < times[1] && times[1] < times[2], times[2] <= performance.now(), cancelledRan]);"
+        b"};"
+        b"requestAnimationFrame(step);",
+    ),
+    "/nested-frames.js": (
+        "text/javascript",
+        b"const inner = new Worker('/no-frames.js'); inner.onmessage = (e) => postMessage(e.data);",
+    ),
+    "/no-frames.js": (
+        "text/javascript",
+        b"try { requestAnimationFrame(() => {}); postMessage('no error'); } catch (e) { postMessage(String(e)); }",
+    ),
+    "/activation.js": (
+        "text/javascript",
+        b"onmessage = (e) => {"
+        b"  const channel = new MessageChannel();"
+        b"  channel.port2.onmessage = (m) => postMessage([e.userActivation && e.userActivation.hasBeenActive,"
+        b"    m.userActivation]);"
+        b"  channel.port1.postMessage(null, {includeUserActivation: true});"
+        b"};",
+    ),
+    "/buckets.js": (
+        "text/javascript",
+        b"(async () => {"
+        b"  const bucket = await navigator.storageBuckets.open('drafts');"
+        b"  const cache = await bucket.caches.open('in-a-bucket');"
+        b"  await cache.put('/data.txt', new Response('in the bucket'));"
+        b"  postMessage([bucket.name, await navigator.storageBuckets.keys()]);"
         b"})().catch((e) => postMessage(String(e)));",
     ),
     "/port.js": (
@@ -536,7 +595,8 @@ def test_a_worker_fetches_through_the_session(server: str) -> None:
         worker.onmessage = (e) => resolve(e.data);
     })"""
 
-    assert _evaluate(server, script) == ["data from the server", True]
+    # The worker's own timeline has an entry of its request, as Chrome's does.
+    assert _evaluate(server, script) == ["data from the server", True, [["/data.txt", "fetch"]]]
 
 
 @pytest.mark.usefixtures("page_program")
@@ -607,6 +667,22 @@ def test_a_workers_cache_questions_after_its_document_has_gone_go_nowhere(server
         # Past the worker's busy loop and what it asked then.
         assert page.evaluate("new Promise((resolve) => setTimeout(() => resolve(location.search), 2500))") == "?next"
         assert page.evaluate("caches.keys()") == []
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_storage_calls_after_its_document_has_gone_go_nowhere(server: str) -> None:
+    # What the forgotten worker asks of IndexedDB and Storage Buckets goes nowhere, and what waits for an answer goes
+    # with its thread, so the Page goes on.
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        started = """new Promise((resolve) => {
+            const worker = new Worker('/busy-storage.js');
+            worker.onmessage = (e) => resolve(e.data);
+        })"""
+        assert page.evaluate(started) == "busy"
+        assert page.evaluate("location.href = '/?next'; 'set'") == "set"
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS).url == f"{server}/?next"
+        assert page.evaluate("new Promise((resolve) => setTimeout(() => resolve(location.search), 2500))") == "?next"
+        assert page.evaluate("indexedDB.databases().then((list) => list.map((info) => info.name))") == []
 
 
 @pytest.mark.usefixtures("page_program")
@@ -681,6 +757,92 @@ def test_a_worker_that_ends_lets_go_of_its_caches(server: str) -> None:
     })()"""
 
     assert _evaluate(server, script) == ["holding", True, True, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_reaches_the_databases_of_its_origin(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/indexed-db.js');
+        worker.onmessage = (e) => {
+            const open = indexedDB.open('shared');
+            open.onsuccess = () => {
+                const get = open.result.transaction('things').objectStore('things').get('key');
+                get.onsuccess = () => resolve([e.data, get.result]);
+            };
+        };
+    })"""
+
+    assert _evaluate(server, script) == [[[["shared", 1]]], {"by": "the worker"}]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_a_window_started_has_animation_frames(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/frames.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == [True, True, False]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_animation_frames_go_on_at_a_display_of_1000_hz(server: str) -> None:
+    # Its period is shorter than a frame takes to arrive, and a thread that wakes late, as a loaded Host's does, misses
+    # every deadline: a late frame is dropped, but never the one after it, so the frames go on.
+    machine = mitto.Machine.draw(seed=4, refresh_rate=1000)
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/frames.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+    with mitto.Session(machine=machine) as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [True, True, False]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_a_worker_started_has_no_animation_frames(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/nested-frames.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == (
+        "NotSupportedError: Failed to execute 'requestAnimationFrame' on 'DedicatedWorkerGlobalScope': "
+        "requestAnimationFrame not supported in this Worker."
+    )
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_snapshot_of_user_activation_goes_only_from_a_window(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/activation.js');
+        const answers = [];
+        worker.onmessage = (e) => {
+            answers.push(e.data);
+            if (answers.length === 1) {
+                worker.postMessage(null);
+            } else {
+                resolve(answers);
+            }
+        };
+        worker.postMessage(null, {includeUserActivation: true});
+    })"""
+
+    # A Page has had no user activation, and a worker's port takes no snapshot, as in Chrome.
+    assert _evaluate(server, script) == [[False, None], [None, None]]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_opens_the_storage_buckets_of_its_origin(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/buckets.js');
+        worker.onmessage = async (e) => {
+            const bucket = await navigator.storageBuckets.open('drafts');
+            const response = await bucket.caches.match('/data.txt');
+            resolve([e.data, await navigator.storageBuckets.keys(), response && (await response.text())]);
+        };
+    })"""
+
+    assert _evaluate(server, script) == [["drafts", ["drafts"]], ["drafts"], "in the bucket"]
 
 
 @pytest.mark.usefixtures("page_program")

@@ -82,6 +82,9 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     bool strict_mime_type = false;
     // Whether its creator is a secure context.
     bool secure_context = true;
+    // Whether it begins frames for requestAnimationFrame(), as a worker that
+    // a window starts does, from the frame's compositor.
+    bool begin_frames = false;
     // What its creator reads of the browser and the machine.
     PageStart start;
     PageConnection connection;
@@ -125,7 +128,8 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
   // Hands a message of its Worker's to the worker's global scope, from a task
   // of the worker's.
   void PostMessageToWorkerGlobalScope(SerializedScriptValue message,
-                                      std::vector<MessagePortChannel> ports);
+                                      std::vector<MessagePortChannel> ports,
+                                      bool user_activation);
   // Ends the worker, as WorkerThread::Terminate() does: what waits in its
   // queues never runs, and a script that still runs 2 seconds later is
   // stopped.

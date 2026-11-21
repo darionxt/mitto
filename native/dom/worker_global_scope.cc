@@ -18,6 +18,7 @@
 #include "mitto/dom/crypto.h"
 #include "mitto/dom/dedicated_worker_messaging.h"
 #include "mitto/dom/error_reporting.h"
+#include "mitto/dom/idb_factory.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
@@ -58,6 +59,7 @@ void WorkerGlobalScope::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(crypto_);
   visitor->Trace(scheduler_);
   visitor->Trace(caches_);
+  visitor->Trace(indexed_db_);
 }
 
 mitto::Crypto* WorkerGlobalScope::Crypto() {
@@ -90,6 +92,21 @@ mitto::CacheStorage* WorkerGlobalScope::Caches(
 
 CacheStorageHost* WorkerGlobalScope::GetCacheStorageHost() const {
   return cache_storage_host_;
+}
+
+IDBFactory* WorkerGlobalScope::IndexedDB() {
+  if (!indexed_db_) {
+    indexed_db_ = bindings::MakeGarbageCollected<IDBFactory>(this);
+  }
+  return indexed_db_.Get();
+}
+
+IndexedDbHost* WorkerGlobalScope::GetIndexedDbHost() const {
+  return indexed_db_host_;
+}
+
+StorageBucketHost* WorkerGlobalScope::GetStorageBucketHost() const {
+  return storage_bucket_host_;
 }
 
 WorkerNavigator* WorkerGlobalScope::Navigator() {

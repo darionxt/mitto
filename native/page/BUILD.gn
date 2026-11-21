@@ -105,6 +105,8 @@ executable("mitto_page") {
     "wall_clock_clamper.h",
     "wasm_response_extensions.cc",
     "wasm_response_extensions.h",
+    "worker_begin_frame_provider.cc",
+    "worker_begin_frame_provider.h",
     "worker_scheduler.cc",
     "worker_scheduler.h",
   ]

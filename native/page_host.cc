@@ -2954,7 +2954,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     }
     if (context->is_worker && frame->type != PageMessage::kRequest &&
         frame->type != PageMessage::kBroadcast &&
-        frame->type != PageMessage::kCacheStorage) {
+        frame->type != PageMessage::kCacheStorage &&
+        frame->type != PageMessage::kIndexedDb &&
+        frame->type != PageMessage::kStorageBuckets) {
       Refuse(base::StrCat({"message type ", base::NumberToString(type),
                            " of a worker, which only a document sends"}));
       return;

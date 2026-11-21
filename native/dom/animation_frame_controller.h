@@ -7,6 +7,10 @@
 // before the callbacks. The Page lays nothing out, so these are the only
 // rendering steps that its frames run.
 //
+// A dedicated worker's, as Blink's WorkerAnimationFrameProvider runs them,
+// runs all of a frame's callbacks in one microtask, each with the frame's time
+// since the worker's time origin, coarsened as performance.now() is.
+//
 // Upstream: third_party/blink/renderer/core/frame/local_dom_window.cc
 // Upstream: third_party/blink/renderer/core/dom/scripted_animation_controller.cc
 // Upstream: third_party/blink/renderer/core/dom/frame_request_callback_collection.cc
@@ -19,6 +23,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "base/functional/callback.h"
@@ -36,9 +41,12 @@ class EventTarget;
 
 class AnimationFrameController {
  public:
-  // The callbacks run in `context`.
-  AnimationFrameController(v8::Isolate* isolate,
-                           v8::Local<v8::Context> context);
+  // The callbacks run in `context`, a window's, or with
+  // `worker_time_origin`, a dedicated worker's.
+  AnimationFrameController(
+      v8::Isolate* isolate,
+      v8::Local<v8::Context> context,
+      std::optional<base::TimeTicks> worker_time_origin = std::nullopt);
 
   AnimationFrameController(const AnimationFrameController&) = delete;
   AnimationFrameController& operator=(const AnimationFrameController&) = delete;
@@ -71,15 +79,19 @@ class AnimationFrameController {
  private:
   struct FrameCallback;
   struct QueuedEvent;
+  struct WorkerFrame;
 
   void ScheduleAnimationIfNeeded();
   void ServiceScriptedAnimations(base::TimeTicks frame_time);
   void DispatchEvents();
   void ExecuteFrameCallbacks(double high_res_now_ms,
                              double high_res_now_ms_legacy);
+  // The microtask of a worker's frame.
+  static void RunWorkerFrameCallbacks(void* data);
 
   const raw_ptr<v8::Isolate> isolate_;
   const std::unique_ptr<v8::Global<v8::Context>> context_;
+  const std::optional<base::TimeTicks> worker_time_origin_;
   // Those that wait for the next frame, and those that the current frame
   // runs.
   std::vector<std::unique_ptr<FrameCallback>> callbacks_;

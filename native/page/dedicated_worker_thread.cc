@@ -19,6 +19,7 @@
 #include "base/time/time.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_dedicated_worker_global_scope.h"
+#include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/dedicated_worker_global_scope.h"
@@ -41,6 +42,8 @@
 #include "mitto/page/page_reporter.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cache_storage.h"
+#include "mitto/page/session_indexed_db.h"
+#include "mitto/page/session_storage_buckets.h"
 #include "mitto/page/worker_scheduler.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-array-buffer.h"
@@ -107,7 +110,8 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
 
   void RunClassicScript(ScriptResponse response);
   void ReceiveMessage(SerializedScriptValue message,
-                      std::vector<MessagePortChannel> ports);
+                      std::vector<MessagePortChannel> ports,
+                      bool user_activation);
   // PrepareForShutdownOnWorkerThread(): the context goes, which ends the
   // worker's own workers, and every queue shuts down. Then the thread's loop
   // ends.
@@ -144,9 +148,12 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   cppgc::Persistent<DedicatedWorkerGlobalScope> scope_;
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<WindowTasks> tasks_;
+  std::unique_ptr<AnimationFrameController> animation_frames_;
   std::unique_ptr<PageRequests> requests_;
   std::unique_ptr<PageFetcher> fetcher_;
   std::unique_ptr<SessionCacheStorage> cache_storage_;
+  std::unique_ptr<SessionIndexedDb> indexed_db_;
+  std::unique_ptr<SessionStorageBuckets> storage_buckets_;
   std::unique_ptr<PageWorkerStarter> worker_starter_;
   int reports_queued_ = 0;
   bool shut_down_ = false;
@@ -209,6 +216,11 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetTimers(timers_.get());
   tasks_ = std::make_unique<WindowTasks>(isolate_, context);
   scope_->SetTasks(tasks_.get());
+  if (params_.begin_frames) {
+    animation_frames_ = std::make_unique<AnimationFrameController>(
+        isolate_, context, data_->time_origin());
+    scope_->SetAnimationFrames(animation_frames_.get());
+  }
   // The worker's requests are its own, and their responses come to this
   // thread, on its networking queue.
   requests_ = std::make_unique<PageRequests>(
@@ -225,8 +237,9 @@ void DedicatedWorkerThread::Scope::Start() {
           base::Unretained(this)));
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
   scope_->SetFetcher(fetcher_.get());
-  // The worker's own Cache API, as its creator's frame's storage key reaches
-  // it, unless its origin may not reach caches.
+  // The worker's own Cache API, IndexedDB and Storage Buckets, as its
+  // creator's frame's storage key reaches them, unless its origin is opaque
+  // and may not.
   if (!params_.origin.opaque()) {
     cache_storage_ = std::make_unique<SessionCacheStorage>();
     cache_storage_->SetSender(
@@ -234,6 +247,18 @@ void DedicatedWorkerThread::Scope::Start() {
         params_.refuse);
     cache_storage_->DocumentCommitted(params_.id);
     scope_->SetCacheStorageHost(cache_storage_.get());
+    indexed_db_ = std::make_unique<SessionIndexedDb>();
+    indexed_db_->SetSender(params_.sender,
+                           scheduler_->TaskRunner(TaskType::kDatabaseAccess),
+                           params_.refuse);
+    indexed_db_->DocumentCommitted(params_.id);
+    scope_->SetIndexedDbHost(indexed_db_.get());
+    storage_buckets_ = std::make_unique<SessionStorageBuckets>();
+    storage_buckets_->SetSender(
+        params_.sender, scheduler_->TaskRunner(TaskType::kMiscPlatformAPI),
+        params_.refuse);
+    storage_buckets_->DocumentCommitted(params_.id);
+    scope_->SetStorageBucketHost(storage_buckets_.get());
   }
   scope_->SetConsoleSink(base::BindRepeating(
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
@@ -280,11 +305,14 @@ DedicatedWorkerThread::Scope::~Scope() {
   scope_.Clear();
   context_.Reset();
   worker_starter_.reset();
-  // The Cache API's questions that wait for answers hold the isolate's
-  // handles, so they go before it does.
+  // What the Cache API, IndexedDB and Storage Buckets wait to hear holds the
+  // isolate's handles, so they go before it does.
   cache_storage_.reset();
+  indexed_db_.reset();
+  storage_buckets_.reset();
   fetcher_.reset();
   requests_.reset();
+  animation_frames_.reset();
   tasks_.reset();
   timers_.reset();
   reporter_.reset();
@@ -318,6 +346,9 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetWorkerStarter(nullptr);
     scope_->SetImportedScriptLoader(nullptr);
     scope_->SetCacheStorageHost(nullptr);
+    scope_->SetIndexedDbHost(nullptr);
+    scope_->SetStorageBucketHost(nullptr);
+    scope_->SetAnimationFrames(nullptr);
   }
   // The fetcher lets its keepalive requests go before the rest are cancelled,
   // so that they go on without the worker, as a window's do without their
@@ -402,7 +433,8 @@ void DedicatedWorkerThread::Scope::RunClassicScript(ScriptResponse response) {
 
 void DedicatedWorkerThread::Scope::ReceiveMessage(
     SerializedScriptValue message,
-    std::vector<MessagePortChannel> ports) {
+    std::vector<MessagePortChannel> ports,
+    bool user_activation) {
   if (shut_down_) {
     return;
   }
@@ -412,7 +444,7 @@ void DedicatedWorkerThread::Scope::ReceiveMessage(
   // end.
   const v8::MicrotasksScope microtasks_scope(
       context_.Get(isolate_), v8::MicrotasksScope::kDoNotRunMicrotasks);
-  scope_->ReceiveMessage(std::move(message), std::move(ports));
+  scope_->ReceiveMessage(std::move(message), std::move(ports), user_activation);
 }
 
 void DedicatedWorkerThread::Scope::OnResponse(FrameFromSession frame) {
@@ -623,18 +655,20 @@ void DedicatedWorkerThread::RunClassicScript(ScriptResponse response) {
 
 void DedicatedWorkerThread::PostMessageToWorkerGlobalScope(
     SerializedScriptValue message,
-    std::vector<MessagePortChannel> ports) {
+    std::vector<MessagePortChannel> ports,
+    bool user_activation) {
   message_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](DedicatedWorkerThread* thread, SerializedScriptValue message,
-             std::vector<MessagePortChannel> ports) {
+             std::vector<MessagePortChannel> ports, bool user_activation) {
             if (thread->scope_) {
               thread->scope_->ReceiveMessage(std::move(message),
-                                             std::move(ports));
+                                             std::move(ports), user_activation);
             }
           },
-          base::Unretained(this), std::move(message), std::move(ports)));
+          base::Unretained(this), std::move(message), std::move(ports),
+          user_activation));
 }
 
 void DedicatedWorkerThread::Terminate() {

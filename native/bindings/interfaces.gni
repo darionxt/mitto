@@ -217,6 +217,8 @@ mitto_bindings_interfaces = [
       "name",
       "postMessage",
       "close",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
     ]
   },
   {
@@ -3138,6 +3140,7 @@ mitto_bindings_interfaces = [
       "permissions",
       "storage",
       "locks",
+      "storageBuckets",
     ]
   },
   {
@@ -3156,6 +3159,7 @@ mitto_bindings_interfaces = [
       "crypto",
       "scheduler",
       "caches",
+      "indexedDB",
       "structuredClone",
       "importScripts",
       "fetch",

@@ -31,12 +31,13 @@ class WorkerMessagingProxy {
  public:
   virtual ~WorkerMessagingProxy() = default;
 
-  // Hands `message`, with the ports it transfers, to the worker's global
-  // scope once its top-level script has run, or drops it once the worker is
-  // ending.
+  // Hands `message`, with the ports it transfers and whether it carries a
+  // snapshot of the creator's user activation, to the worker's global scope
+  // once its top-level script has run, or drops it once the worker is ending.
   virtual void PostMessageToWorkerGlobalScope(
       SerializedScriptValue message,
-      std::vector<MessagePortChannel> ports) = 0;
+      std::vector<MessagePortChannel> ports,
+      bool user_activation) = 0;
   // Ends the worker, as Blink's TerminateGlobalScope() does: from now on its
   // Worker hears nothing more of it but the errors it reported before.
   virtual void Terminate() = 0;

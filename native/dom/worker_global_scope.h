@@ -36,6 +36,9 @@ class ExceptionState;
 
 class CacheStorage;
 class CacheStorageHost;
+class IDBFactory;
+class IndexedDbHost;
+class StorageBucketHost;
 class Crypto;
 class ImportedScriptLoader;
 class Scheduler;
@@ -62,6 +65,10 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   // time, or null after throwing a SecurityError for a worker whose origin
   // may not reach caches.
   mitto::CacheStorage* Caches(bindings::ExceptionState& exception_state);
+  // GlobalIndexedDB::indexedDB(): the worker's IDBFactory, made the first
+  // time, which a worker whose origin may not reach IndexedDB has too: its
+  // calls throw.
+  IDBFactory* IndexedDB();
   // The worker's origin, its creator's, serialized.
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
@@ -82,12 +89,20 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   GURL CompleteUrl(std::u16string_view url) const override;
   GURL BaseUrl() const override;
   CacheStorageHost* GetCacheStorageHost() const override;
+  IndexedDbHost* GetIndexedDbHost() const override;
+  StorageBucketHost* GetStorageBucketHost() const override;
 
   // What the Page uses.
   // Where the worker's Cache API reaches the Session: none for a worker of an
   // opaque origin, or once the worker has ended.
   void SetCacheStorageHost(CacheStorageHost* host) {
     cache_storage_host_ = host;
+  }
+  // Where the worker's IndexedDB reaches the Session, the same.
+  void SetIndexedDbHost(IndexedDbHost* host) { indexed_db_host_ = host; }
+  // Where the worker's Storage Buckets API reaches the Session, the same.
+  void SetStorageBucketHost(StorageBucketHost* host) {
+    storage_bucket_host_ = host;
   }
   // The worker's URL, its script's final one, as InitializeURL() takes it
   // once the script has come, and its origin, its creator's or an opaque one
@@ -121,10 +136,13 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   cppgc::Member<mitto::Crypto> crypto_;
   cppgc::Member<mitto::Scheduler> scheduler_;
   cppgc::Member<mitto::CacheStorage> caches_;
+  cppgc::Member<IDBFactory> indexed_db_;
   GURL url_;
   url::Origin origin_;
   raw_ptr<ImportedScriptLoader> imported_script_loader_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
+  raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
+  raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   bool module_ = false;
   bool closing_ = false;
 };

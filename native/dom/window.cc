@@ -363,6 +363,14 @@ CacheStorageHost* Window::GetCacheStorageHost() const {
   return GetDocument().GetCacheStorageHost();
 }
 
+IndexedDbHost* Window::GetIndexedDbHost() const {
+  return GetDocument().GetIndexedDbHost();
+}
+
+StorageBucketHost* Window::GetStorageBucketHost() const {
+  return GetDocument().GetStorageBucketHost();
+}
+
 mitto::Performance* Window::Performance() {
   if (!performance_) {
     performance_ = Performance::Create(

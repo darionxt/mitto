@@ -4,12 +4,13 @@
 // contexts to be larger than those before them, so this takes each such
 // number under one lock with the sending of the frame that carries it, and two
 // threads' frames reach the Session in the order of their numbers, the
-// questions of the Cache API among them. It also keeps where the response of
-// each request of a worker goes, and where each answer of the Cache API goes,
-// for the I/O thread to hand it to the thread of the context that asked, and
-// which contexts the Session has forgotten: under the same lock, nothing that
-// such a context sends goes after the frame that made the Session forget it,
-// as Chrome's browser drops what the pipes of a context that went still carry.
+// questions of the Cache API and of Storage Buckets and the calls of IndexedDB
+// among them. It also keeps where the response of each request of a worker
+// goes, and where each answer of those goes, for the I/O thread to hand it to
+// the thread of the context that asked, and which contexts the Session has
+// forgotten: under the same lock, nothing that such a context sends goes after
+// the frame that made the Session forget it, as Chrome's browser drops what
+// the pipes of a context that went still carry.
 
 #ifndef MITTO_PAGE_SESSION_SENDER_H_
 #define MITTO_PAGE_SESSION_SENDER_H_
@@ -27,7 +28,9 @@
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
 #include "mitto/cache_storage_messages.h"
+#include "mitto/indexed_db_messages.h"
 #include "mitto/page_messages.h"
+#include "mitto/storage_bucket_messages.h"
 
 namespace mitto {
 
@@ -41,6 +44,16 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   using CacheStorageRoute =
       base::RepeatingCallback<void(uint64_t host,
                                    PageCacheStorageAnswer answer)>;
+  // Takes what IndexedDB's Session sends the host numbered `host`, on the I/O
+  // thread, for the host's thread.
+  using IndexedDbRoute =
+      base::RepeatingCallback<void(uint64_t host,
+                                   PageIndexedDbCallback callback)>;
+  // Takes a Storage Buckets answer to the host numbered `host`, on the I/O
+  // thread, for the host's thread.
+  using StorageBucketRoute =
+      base::RepeatingCallback<void(uint64_t host,
+                                   PageStorageBucketAnswer answer)>;
 
   // `send` hands a frame to the I/O thread, from any thread.
   explicit SessionSender(base::RepeatingCallback<void(std::string)> send);
@@ -118,6 +131,50 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // numbered is a refusal, which this returns. The I/O thread.
   std::optional<std::string> RouteCacheStorage(PageCacheStorageAnswer answer);
 
+  // The IndexedDB of `context`, whose callbacks go to `route`: its number.
+  // Any thread, as are the others below but the last.
+  uint64_t AddIndexedDbHost(uint64_t context, IndexedDbRoute route);
+  // The host has gone, or its document has: what it asked and opened goes
+  // unheard.
+  void RemoveIndexedDbHost(uint64_t host);
+  // A number for a connection, a transaction or a cursor that no other of the
+  // Page's has.
+  uint64_t NextIndexedDbNumber();
+  // Takes a number as the Page's next IndexedDB call, of `host`, sends the
+  // frame that `encode` makes of it, and returns it. What answers it goes to
+  // the host until ForgetIndexedDbCall(). A call of a context that the
+  // Session has forgotten takes its number and goes nowhere, and nothing
+  // answers it.
+  uint64_t SendIndexedDbCall(
+      uint64_t host,
+      base::FunctionRef<std::string(uint64_t call)> encode);
+  void ForgetIndexedDbCall(uint64_t call);
+  // What the Session tells connection `connection` goes to `host` until
+  // ForgetIndexedDbConnection().
+  void AddIndexedDbConnection(uint64_t host, uint64_t connection);
+  void ForgetIndexedDbConnection(uint64_t connection);
+  // Hands `callback` to the route of its host. One for a host that has gone
+  // goes unheard, and an answer to a call that the Page never numbered is a
+  // refusal, which this returns. The I/O thread.
+  std::optional<std::string> RouteIndexedDb(PageIndexedDbCallback callback);
+
+  // The Storage Buckets API of `context`, whose answers go to `route`: its
+  // number. Any thread, as are the others below but the last.
+  uint64_t AddStorageBucketHost(uint64_t context, StorageBucketRoute route);
+  // The host has gone, or its document has: what it asked goes unheard.
+  void RemoveStorageBucketHost(uint64_t host);
+  // Takes the number of the Page's next Storage Buckets question, of `host`,
+  // sends the frame that `encode` makes of it, and returns it. A question of a
+  // context that the Session has forgotten takes its number and goes nowhere,
+  // and no answer comes.
+  uint64_t SendStorageBucketQuestion(
+      uint64_t host,
+      base::FunctionRef<std::string(uint64_t question)> encode);
+  // Hands `answer` to the route of its host. One for a host that has gone
+  // goes unheard, and one for a question that the Page never numbered is a
+  // refusal, which this returns. The I/O thread.
+  std::optional<std::string> RouteStorageBucket(PageStorageBucketAnswer answer);
+
  private:
   friend class base::RefCountedThreadSafe<SessionSender>;
   ~SessionSender();
@@ -137,12 +194,23 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // that went nowhere.
   std::set<uint64_t> forgotten_ GUARDED_BY(lock_);
   std::set<uint64_t> unsent_requests_ GUARDED_BY(lock_);
-  struct CacheStorageHost {
+  // A host of a context's, whose answers go to `route`.
+  template <typename Route>
+  struct Host {
     uint64_t context;
-    CacheStorageRoute route;
+    Route route;
   };
+
+  // Whether `host` is one of a context that the Session has forgotten.
+  template <typename Route>
+  bool OfForgotten(const Host<Route>* host) const
+      EXCLUSIVE_LOCKS_REQUIRED(lock_) {
+    return host && forgotten_.contains(host->context);
+  }
+
   uint64_t last_cache_storage_host_ GUARDED_BY(lock_) = 0;
-  std::map<uint64_t, CacheStorageHost> cache_storage_hosts_ GUARDED_BY(lock_);
+  std::map<uint64_t, Host<CacheStorageRoute>> cache_storage_hosts_
+      GUARDED_BY(lock_);
   uint64_t last_cache_storage_question_ GUARDED_BY(lock_) = 0;
   uint64_t last_cache_storage_put_body_ GUARDED_BY(lock_) = 0;
   // The host of each question that waits for its answer, of each put body
@@ -150,6 +218,21 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   std::map<uint64_t, uint64_t> cache_storage_questions_ GUARDED_BY(lock_);
   std::map<uint64_t, uint64_t> cache_storage_put_bodies_ GUARDED_BY(lock_);
   std::map<uint64_t, uint64_t> cache_storage_bodies_ GUARDED_BY(lock_);
+  uint64_t last_indexed_db_host_ GUARDED_BY(lock_) = 0;
+  std::map<uint64_t, Host<IndexedDbRoute>> indexed_db_hosts_ GUARDED_BY(lock_);
+  // The last of the numbers that calls, connections, transactions and cursors
+  // share.
+  uint64_t last_indexed_db_number_ GUARDED_BY(lock_) = 0;
+  // The host of each call that waits for what answers it, and of each
+  // connection that hears what the Session tells it.
+  std::map<uint64_t, uint64_t> indexed_db_calls_ GUARDED_BY(lock_);
+  std::map<uint64_t, uint64_t> indexed_db_connections_ GUARDED_BY(lock_);
+  uint64_t last_storage_bucket_host_ GUARDED_BY(lock_) = 0;
+  std::map<uint64_t, Host<StorageBucketRoute>> storage_bucket_hosts_
+      GUARDED_BY(lock_);
+  uint64_t last_storage_bucket_question_ GUARDED_BY(lock_) = 0;
+  // The host of each question that waits for its answer.
+  std::map<uint64_t, uint64_t> storage_bucket_questions_ GUARDED_BY(lock_);
 };
 
 }  // namespace mitto

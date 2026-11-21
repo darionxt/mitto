@@ -79,9 +79,9 @@ class DedicatedWorkerMessagingProxy final : public WorkerMessagingProxy,
   ~DedicatedWorkerMessagingProxy() override;
 
   // WorkerMessagingProxy:
-  void PostMessageToWorkerGlobalScope(
-      SerializedScriptValue message,
-      std::vector<MessagePortChannel> ports) override;
+  void PostMessageToWorkerGlobalScope(SerializedScriptValue message,
+                                      std::vector<MessagePortChannel> ports,
+                                      bool user_activation) override;
   void Terminate() override;
 
   // PageRequests::Client, for the worker's script:
@@ -102,13 +102,15 @@ class DedicatedWorkerMessagingProxy final : public WorkerMessagingProxy,
   // A message that waits for the top-level script to have run.
   struct QueuedMessage {
     QueuedMessage(SerializedScriptValue message,
-                  std::vector<MessagePortChannel> ports);
+                  std::vector<MessagePortChannel> ports,
+                  bool user_activation);
     QueuedMessage(QueuedMessage&&);
     QueuedMessage& operator=(QueuedMessage&&);
     ~QueuedMessage();
 
     SerializedScriptValue message;
     std::vector<MessagePortChannel> ports;
+    bool user_activation = false;
   };
 
   // Tells the Session of the worker, which `started` describes, and starts

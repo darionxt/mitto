@@ -89,6 +89,10 @@ StorageManager* WorkerNavigator::Storage() {
   return navigator_->Storage();
 }
 
+StorageBucketManager* WorkerNavigator::StorageBuckets() {
+  return navigator_->StorageBuckets();
+}
+
 // LockManager::locks(): the worker's own, made the first time.
 mitto::LockManager* WorkerNavigator::Locks() {
   if (!locks_) {

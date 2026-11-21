@@ -5,8 +5,9 @@
 // queues of a worker, throttleable, pausable, pausable without virtual time
 // and unpausable, all at the normal priority, so they run in the order they
 // were ready whichever queue holds them, beside a default queue, V8's, a
-// control queue before them, and the queues of scheduler.postTask(). Nothing
-// throttles a worker, as BlinkSchedulerWorkerThrottling is off.
+// control queue before them, the queues of scheduler.postTask(), and the
+// compositor's queue, which its BeginFrames come on. Nothing throttles a
+// worker, as BlinkSchedulerWorkerThrottling is off.
 //
 // Upstream: third_party/blink/renderer/platform/scheduler/worker/worker_thread_scheduler.cc
 // Upstream: third_party/blink/renderer/platform/scheduler/worker/worker_scheduler_impl.cc
@@ -26,6 +27,7 @@
 #include "base/task/sequence_manager/task_queue.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/page/worker_begin_frame_provider.h"
 
 namespace mitto {
 
@@ -83,6 +85,7 @@ class WorkerScheduler final : public EventLoop {
   base::sequence_manager::TaskQueue::Handle v8_queue_;
   base::sequence_manager::TaskQueue::Handle control_queue_;
   base::sequence_manager::TaskQueue::Handle idle_queue_;
+  base::sequence_manager::TaskQueue::Handle compositor_queue_;
   std::array<base::sequence_manager::TaskQueue::Handle, kWorkerQueueCount>
       worker_queues_;
   std::array<base::sequence_manager::TaskQueue::Handle,
@@ -94,6 +97,8 @@ class WorkerScheduler final : public EventLoop {
   scoped_refptr<base::SingleThreadTaskRunner> v8_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> control_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> idle_runner_;
+  // Made on the worker's thread, with the first frame that it asks for.
+  std::unique_ptr<WorkerBeginFrameProvider> begin_frames_;
   std::array<scoped_refptr<base::SingleThreadTaskRunner>, kWorkerQueueCount>
       worker_runners_;
   std::array<scoped_refptr<base::SingleThreadTaskRunner>,

@@ -21,6 +21,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_exception.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/quota_exceeded_error.h"
 #include "mitto/dom/storage_bucket.h"
 #include "mitto/dom/storage_bucket_host.h"
@@ -69,16 +70,17 @@ v8::Local<v8::Value> UnknownError(v8::Isolate* isolate,
       ->ToV8(isolate);
 }
 
-// The Window and its host for a call, or an exception thrown for none.
+// The host of the current context, a window's or a worker's, for a call, or
+// an exception thrown for none.
 StorageBucketHost* HostForCall(bindings::ExceptionState& exception_state) {
-  Window& window = Window::Current();
-  if (!window.HasContext()) {
+  ExecutionContext& context = ExecutionContext::Current();
+  if (!context.HasContext()) {
     exception_state.ThrowTypeError(kDestroyed);
     return nullptr;
   }
   // CanAccessStorageBuckets(): an origin that is not opaque, which only a
-  // document that the Session loaded over HTTP or HTTPS has.
-  StorageBucketHost* const host = window.GetDocument().GetStorageBucketHost();
+  // document that the Session loaded over HTTP or HTTPS has, or its worker.
+  StorageBucketHost* const host = context.GetStorageBucketHost();
   if (!host) {
     exception_state.ThrowDOMException("SecurityError", kDenied);
   }
@@ -93,7 +95,7 @@ using Settle =
 
 // Asks the Session from a task of its own, and settles the promise of
 // `resolver` with what `settle` makes of the answer in a task of its own,
-// unless the window has gone. Chrome's browser acts on a call of
+// unless its context has gone. Chrome's browser acts on a call of
 // BucketManagerHost only after hops through its quota manager's threads, by
 // which time what the page's task sent beside it has arrived, such as the
 // commit that a transaction sends once the task's microtasks have run: a
@@ -104,16 +106,23 @@ void Ask(v8::Isolate* isolate,
          StorageBucketHost& host,
          PageStorageBucketCall call,
          Settle settle) {
-  Window& window = Window::Current();
+  ExecutionContext& execution_context = ExecutionContext::Current();
+  // A window stays while another document takes the place of its document,
+  // whose remote goes with it; a worker has no document.
+  Window* const window =
+      execution_context.IsWindow() ? &Window::Current() : nullptr;
   auto ask = base::BindOnce(
-      [](v8::Isolate* isolate, cppgc::WeakPersistent<Window> window,
+      [](v8::Isolate* isolate,
+         cppgc::WeakPersistent<ExecutionContext> execution_context,
+         bool of_window, cppgc::WeakPersistent<Window> window,
          cppgc::WeakPersistent<Document> document, StorageBucketHost* host,
          PageStorageBucketCall call, v8::Global<v8::Context> context_handle,
          v8::Global<v8::Promise::Resolver> resolver_handle, Settle settle) {
-        // Nothing goes once the document's context has, as its remote goes
-        // with it.
-        if (!window || !window->HasContext() || !document ||
-            &window->GetDocument() != document.Get()) {
+        // Nothing goes once the context has, or the window's document, as its
+        // remote goes with it.
+        if (!execution_context || !execution_context->HasContext() ||
+            (of_window && (!window || !document ||
+                           &window->GetDocument() != document.Get()))) {
           return;
         }
         host->Ask(
@@ -133,9 +142,11 @@ void Ask(v8::Isolate* isolate,
                 isolate, std::move(context_handle), std::move(resolver_handle),
                 std::move(settle)));
       },
-      isolate, cppgc::WeakPersistent<Window>(&window),
-      cppgc::WeakPersistent<Document>(&window.GetDocument()), &host,
-      std::move(call),
+      isolate, cppgc::WeakPersistent<ExecutionContext>(&execution_context),
+      window != nullptr, cppgc::WeakPersistent<Window>(window),
+      cppgc::WeakPersistent<Document>(window ? &window->GetDocument()
+                                             : nullptr),
+      &host, std::move(call),
       v8::Global<v8::Context>(isolate, isolate->GetCurrentContext()),
       v8::Global<v8::Promise::Resolver>(isolate, resolver), std::move(settle));
   EventLoop::Get()
@@ -199,8 +210,8 @@ v8::Local<v8::Promise> StorageBucketManager::Open(
   }
   Ask(isolate, resolver, *host, std::move(call),
       base::BindOnce(
-          [](cppgc::WeakPersistent<Window> window, StorageBucketHost* host,
-             std::u16string name, v8::Isolate* isolate,
+          [](cppgc::WeakPersistent<ExecutionContext> execution_context,
+             StorageBucketHost* host, std::u16string name, v8::Isolate* isolate,
              v8::Local<v8::Context> context,
              v8::Local<v8::Promise::Resolver> resolver,
              PageStorageBucketAnswer answer) {
@@ -208,10 +219,10 @@ v8::Local<v8::Promise> StorageBucketManager::Open(
             switch (answer.error) {
               case StorageBucketError::kNone:
                 std::ignore = resolver->Resolve(
-                    context,
-                    bindings::MakeGarbageCollected<StorageBucket>(
-                        window.Get(), host, std::move(name), answer.bucket)
-                        ->ToV8(isolate));
+                    context, bindings::MakeGarbageCollected<StorageBucket>(
+                                 execution_context.Get(), host, std::move(name),
+                                 answer.bucket)
+                                 ->ToV8(isolate));
                 return;
               case StorageBucketError::kUnknown:
                 std::ignore = resolver->Reject(
@@ -247,7 +258,8 @@ v8::Local<v8::Promise> StorageBucketManager::Open(
                 return;
             }
           },
-          cppgc::WeakPersistent<Window>(&Window::Current()), host, name));
+          cppgc::WeakPersistent<ExecutionContext>(&ExecutionContext::Current()),
+          host, name));
   return resolver->GetPromise();
 }
 

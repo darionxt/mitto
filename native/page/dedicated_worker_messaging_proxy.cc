@@ -114,8 +114,11 @@ DedicatedWorkerMessagingProxy::Creator::~Creator() = default;
 
 DedicatedWorkerMessagingProxy::QueuedMessage::QueuedMessage(
     SerializedScriptValue message,
-    std::vector<MessagePortChannel> ports)
-    : message(std::move(message)), ports(std::move(ports)) {}
+    std::vector<MessagePortChannel> ports,
+    bool user_activation)
+    : message(std::move(message)),
+      ports(std::move(ports)),
+      user_activation(user_activation) {}
 DedicatedWorkerMessagingProxy::QueuedMessage::QueuedMessage(QueuedMessage&&) =
     default;
 DedicatedWorkerMessagingProxy::QueuedMessage&
@@ -141,6 +144,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   params_.module = options.module;
   params_.strict_mime_type = !context.IsWindow();
   params_.secure_context = data->secure_context();
+  params_.begin_frames = context.IsWindow();
   params_.start = context.Start();
   params_.connection = context.Connection();
   params_.features = data->features();
@@ -219,15 +223,18 @@ DedicatedWorkerMessagingProxy::~DedicatedWorkerMessagingProxy() {
 
 void DedicatedWorkerMessagingProxy::PostMessageToWorkerGlobalScope(
     SerializedScriptValue message,
-    std::vector<MessagePortChannel> ports) {
+    std::vector<MessagePortChannel> ports,
+    bool user_activation) {
   if (terminated_) {
     return;
   }
   if (!evaluated_ || !thread_) {
-    queued_messages_.emplace_back(std::move(message), std::move(ports));
+    queued_messages_.emplace_back(std::move(message), std::move(ports),
+                                  user_activation);
     return;
   }
-  thread_->PostMessageToWorkerGlobalScope(std::move(message), std::move(ports));
+  thread_->PostMessageToWorkerGlobalScope(std::move(message), std::move(ports),
+                                          user_activation);
 }
 
 void DedicatedWorkerMessagingProxy::Terminate() {
@@ -366,7 +373,8 @@ void DedicatedWorkerMessagingProxy::DidEvaluateScript() {
     QueuedMessage queued = std::move(queued_messages_.front());
     queued_messages_.pop_front();
     thread_->PostMessageToWorkerGlobalScope(std::move(queued.message),
-                                            std::move(queued.ports));
+                                            std::move(queued.ports),
+                                            queued.user_activation);
   }
 }
 

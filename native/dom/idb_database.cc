@@ -20,6 +20,7 @@
 #include "mitto/dom/dom_string_list.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/idb_cursor.h"
 #include "mitto/dom/idb_event_dispatcher.h"
 #include "mitto/dom/idb_key_conversion.h"
@@ -28,15 +29,16 @@
 #include "mitto/dom/idb_transaction.h"
 #include "mitto/dom/idb_version_change_event.h"
 #include "mitto/dom/indexed_db_host.h"
-#include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 
 namespace mitto {
 
-IDBDatabase::IDBDatabase(Window* window,
+IDBDatabase::IDBDatabase(ExecutionContext* execution_context,
                          IndexedDbHost* host,
                          uint64_t connection)
-    : window_(window), host_(host), connection_(connection) {
+    : execution_context_(execution_context),
+      host_(host),
+      connection_(connection) {
   host_->ListenToConnection(
       connection_, base::BindRepeating(
                        [](cppgc::WeakPersistent<IDBDatabase> database,
@@ -45,13 +47,13 @@ IDBDatabase::IDBDatabase(Window* window,
                          if (!target) {
                            return;
                          }
-                         RunInWindowContext(target->GetWindow(), [&] {
+                         RunInContext(target->GetExecutionContext(), [&] {
                            target->OnConnectionCallback(std::move(callback));
                          });
                        },
                        cppgc::WeakPersistent<IDBDatabase>(this)));
-  if (window) {
-    window->AddContextDestroyedCallback(base::BindOnce(
+  if (execution_context) {
+    execution_context->AddContextDestroyedCallback(base::BindOnce(
         [](cppgc::WeakPersistent<IDBDatabase> database) {
           if (database) {
             database->ContextDestroyed();
@@ -69,14 +71,14 @@ const bindings::WrapperTypeInfo* IDBDatabase::GetWrapperTypeInfo() const {
 
 void IDBDatabase::Trace(cppgc::Visitor* visitor) const {
   EventTarget::Trace(visitor);
-  visitor->Trace(window_);
+  visitor->Trace(execution_context_);
   visitor->Trace(version_change_transaction_);
   transactions_.Trace(visitor);
 }
 
 bool IDBDatabase::HasContext() const {
-  Window* const window = window_.Get();
-  return window && window->HasContext();
+  ExecutionContext* const execution_context = execution_context_.Get();
+  return execution_context && execution_context->HasContext();
 }
 
 void IDBDatabase::SetMetadata(const IDBDatabaseMetadata& metadata) {
@@ -363,8 +365,8 @@ IDBTransaction* IDBDatabase::Transaction(
                     durability);
 
   return IDBTransaction::CreateNonVersionChange(
-      window_.Get(), host_, transaction_id, scope, transaction_mode, durability,
-      this);
+      execution_context_.Get(), host_, transaction_id, scope, transaction_mode,
+      durability, this);
 }
 
 void IDBDatabase::DeleteObjectStore(const std::u16string& name,
@@ -567,8 +569,8 @@ void IDBDatabase::AskForRequest(PageIndexedDbCall call,
                    if (!target) {
                      return;
                    }
-                   RunInWindowContext(target->GetWindow(),
-                                      [&] { (target->*on_answer)(answer); });
+                   RunInContext(target->GetExecutionContext(),
+                                [&] { (target->*on_answer)(answer); });
                  },
                  cppgc::WeakPersistent<IDBRequest>(request), on_answer));
 }
@@ -654,9 +656,8 @@ void IDBDatabase::GetAll(uint64_t transaction_id,
                    if (!target) {
                      return;
                    }
-                   RunInWindowContext(target->GetWindow(), [&] {
-                     target->OnGetAll(result_type, answer);
-                   });
+                   RunInContext(target->GetExecutionContext(),
+                                [&] { target->OnGetAll(result_type, answer); });
                  },
                  cppgc::WeakPersistent<IDBRequest>(request), result_type));
 }
@@ -692,7 +693,7 @@ void IDBDatabase::OpenCursor(int64_t object_store_id,
           [](IndexedDbHost* host, cppgc::WeakPersistent<IDBRequest> request,
              uint64_t cursor, PageIndexedDbCallback answer) {
             IDBRequest* const target = request.Get();
-            if (target && RunInWindowContext(target->GetWindow(), [&] {
+            if (target && RunInContext(target->GetExecutionContext(), [&] {
                   target->OnOpenCursor(cursor, answer);
                 })) {
               return;
