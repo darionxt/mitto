@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/check_op.h"
@@ -253,20 +254,76 @@ bool SubsetEndsInsideProcessingInstruction(std::u16string_view markup) {
       break;
     }
   }
+  if (at >= markup.size()) {
+    return false;
+  }
+  // Where the parser's processing instructions are, from just after `[`: one
+  // starts with `<?` outside comments and the literals of declarations, and
+  // ends with `?>`, whatever quotes it holds.
+  std::vector<bool> in_instruction(markup.size(), false);
+  enum class Place { kSubset, kInstruction, kComment, kDeclaration };
+  Place place = Place::kSubset;
+  char16_t literal = 0;
+  for (size_t i = at + 1; i < markup.size();) {
+    const std::u16string_view rest = markup.substr(i);
+    switch (place) {
+      case Place::kSubset:
+        if (rest.starts_with(u"<?")) {
+          place = Place::kInstruction;
+          in_instruction[i] = in_instruction[i + 1] = true;
+          i += 2;
+          continue;
+        }
+        if (rest.starts_with(u"<!--")) {
+          place = Place::kComment;
+          i += 4;
+          continue;
+        }
+        if (rest.starts_with(u"<!")) {
+          place = Place::kDeclaration;
+          i += 2;
+          continue;
+        }
+        break;
+      case Place::kInstruction:
+        if (rest.starts_with(u"?>")) {
+          place = Place::kSubset;
+          i += 2;
+          continue;
+        }
+        in_instruction[i] = true;
+        break;
+      case Place::kComment:
+        if (rest.starts_with(u"-->")) {
+          place = Place::kSubset;
+          i += 3;
+          continue;
+        }
+        break;
+      case Place::kDeclaration:
+        if (literal) {
+          if (markup[i] == literal) {
+            literal = 0;
+          }
+        } else if (markup[i] == '"' || markup[i] == '\'') {
+          literal = markup[i];
+        } else if (markup[i] == '>') {
+          place = Place::kSubset;
+        }
+        break;
+    }
+    ++i;
+  }
   const auto is_blank = [](char16_t c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
   };
-  // xmlParseLookupInternalSubset()'s scan from just after `[`, beside where
-  // the parser's processing instructions start and end.
-  bool in_instruction = false;
+  // xmlParseLookupInternalSubset()'s scan from just after `[`, to where it
+  // takes the subset to end.
   char16_t state = 0;
   size_t i = at + 1;
   while (i < markup.size()) {
     const char16_t c = markup[i];
     const std::u16string_view rest = markup.substr(i);
-    if (in_instruction && rest.starts_with(u"?>")) {
-      in_instruction = false;
-    }
     if (state == '-') {
       if (rest.starts_with(u"-->")) {
         state = 0;
@@ -275,7 +332,7 @@ bool SubsetEndsInsideProcessingInstruction(std::u16string_view markup) {
       }
     } else if (state == ']' || state == ' ') {
       if (c == '>') {
-        return in_instruction;
+        return in_instruction[i];
       }
       if (is_blank(c)) {
         state = ' ';
@@ -291,8 +348,6 @@ bool SubsetEndsInsideProcessingInstruction(std::u16string_view markup) {
       state = '-';
       i += 4;
       continue;
-    } else if (rest.starts_with(u"<?")) {
-      in_instruction = true;
     } else if (c == '"' || c == '\'' || c == ']') {
       state = c;
     }
