@@ -234,9 +234,32 @@ struct ParsedDocument {
 // come: `<!DOCTYPE a [<?x ]> ?>]><a>t</a>` is a document whole, and an error
 // that the instruction never ends when a piece ends just after its `]>`.
 bool SubsetEndsInsideProcessingInstruction(std::u16string_view markup) {
-  size_t at = markup.find(u"<!DOCTYPE");
-  if (at == std::u16string_view::npos) {
-    return false;
+  const auto is_blank = [](char16_t c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+  };
+  // The document type declaration, after the prolog's blanks, comments and
+  // processing instructions, the XML declaration among them.
+  size_t at = markup.starts_with(u"\uFEFF") ? 1 : 0;
+  while (true) {
+    const std::u16string_view rest = markup.substr(at);
+    if (!rest.empty() && is_blank(rest[0])) {
+      ++at;
+      continue;
+    }
+    const bool instruction = rest.starts_with(u"<?");
+    if (instruction || rest.starts_with(u"<!--")) {
+      const std::u16string_view end = instruction ? u"?>" : u"-->";
+      const size_t found = rest.find(end, instruction ? 2 : 4);
+      if (found == std::u16string_view::npos) {
+        return false;
+      }
+      at += found + end.size();
+      continue;
+    }
+    if (!rest.starts_with(u"<!DOCTYPE")) {
+      return false;
+    }
+    break;
   }
   // The external ID's literals, up to the subset's `[`.
   char16_t quote = 0;
@@ -314,9 +337,6 @@ bool SubsetEndsInsideProcessingInstruction(std::u16string_view markup) {
     }
     ++i;
   }
-  const auto is_blank = [](char16_t c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-  };
   // xmlParseLookupInternalSubset()'s scan from just after `[`, to where it
   // takes the subset to end.
   char16_t state = 0;
