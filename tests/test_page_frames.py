@@ -26,6 +26,8 @@ _PAGE = b"<!doctype html><title>t</title><body><p id=x>top</p>"
 _TESTS = Path(__file__).parent
 _CASES = (_TESTS / "frames_cases.js").read_text()
 _AS_CHROME = json.loads((_TESTS / "data" / "frames_cases.json").read_text())
+_SRCDOC_CASES = (_TESTS / "frames_srcdoc_cases.js").read_text()
+_SRCDOC_AS_CHROME = json.loads((_TESTS / "data" / "frames_srcdoc_cases.json").read_text())
 
 
 @pytest.fixture
@@ -39,17 +41,23 @@ def page_program(native_library: Any) -> None:
 
 @pytest.fixture
 def page_url() -> Iterator[str]:
-    """The URL of a page with a paragraph on 127.0.0.1, which is a secure context."""
+    """The URL of a page with a paragraph on 127.0.0.1, which is a secure context, where /from-... answers with its
+    request's Referer."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
+            # A path that starts with /from- answers with the Referer that came, or "none".
+            if self.path.startswith("/from-"):
+                body, content_type = (self.headers.get("Referer") or "none").encode(), "text/plain"
+            else:
+                body, content_type = _PAGE, "text/html"
             self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", str(len(_PAGE)))
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(_PAGE)
+            self.wfile.write(body)
 
         def log_message(self, format: str, *args: Any) -> None:
             pass
@@ -67,6 +75,19 @@ def test_frames_without_the_network_are_chrome_s(page_url: str) -> None:
         record = page.evaluate(_CASES)
     origin = page_url.rstrip("/")
     as_chrome = json.loads(json.dumps(_AS_CHROME["record"]).replace("ORIGIN", origin))
+
+    assert set(record) == set(as_chrome)
+    for section, expected in as_chrome.items():
+        assert record[section] == expected, section
+
+
+@pytest.mark.usefixtures("page_program")
+def test_srcdoc_and_about_blank_frames_are_chrome_s(page_url: str) -> None:
+    # tests/frames_srcdoc_cases.js against tests/data/frames_srcdoc_cases.json, as Chrome for Testing 157 gave it.
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        record = page.evaluate(_SRCDOC_CASES)
+    origin = page_url.rstrip("/")
+    as_chrome = json.loads(json.dumps(_SRCDOC_AS_CHROME["record"]).replace("ORIGIN", origin))
 
     assert set(record) == set(as_chrome)
     for section, expected in as_chrome.items():
@@ -117,3 +138,22 @@ def test_a_frame_s_document_reads_its_parent_s_cookies_and_goes_with_its_element
     """
     with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         assert page.evaluate(script) == ["shared=yes", ["from_frame=1", "shared=yes"]]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_frame_sends_its_parent_s_referrer_and_an_about_blank_frame_none(page_url: str) -> None:
+    # Blink's OutgoingReferrer(): a srcdoc document's is its parent's URL, and about:blank gives none, as Chrome 157
+    # sent them (#261). The Session works out both from the documents it heard of.
+    script = """
+      (async () => {
+        const srcdoc = document.createElement('iframe');
+        srcdoc.srcdoc = '<script>parent.fromSrcdoc = fetch("/from-srcdoc").then(r => r.text());<\\/script>';
+        await new Promise((resolve) => { srcdoc.onload = resolve; document.body.appendChild(srcdoc); });
+        const blank = document.createElement('iframe');
+        document.body.appendChild(blank);
+        const fromBlank = blank.contentWindow.eval('fetch("/from-blank").then(r => r.text())');
+        return [await window.fromSrcdoc, await fromBlank];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == [page_url, "none"]
