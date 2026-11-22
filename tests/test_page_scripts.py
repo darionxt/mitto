@@ -220,7 +220,8 @@ _CASES["inserted_moved"] = Case(
 )
 
 # SVG scripts that the DOM inserts: as soon as each arrives, unless an async attribute that comes and goes made them
-# run in order. Each first script waits until the second has been served.
+# run in order. The first async script waits until the second has run, since two that arrive together may run in
+# either order, and the first ordered one until the second has been served.
 _CASES["svg_inserted_order"] = Case(
     {
         "/": _page(
@@ -236,8 +237,8 @@ _CASES["svg_inserted_order"] = Case(
             "svgScript('a2');"
             "</script>"
         ),
-        "/a1.js": _js("log('a1 ' + current());", hold="served:/a2.js"),
-        "/a2.js": _js("log('a2 ' + current());"),
+        "/a1.js": _js("log('a1 ' + current());", hold="a2"),
+        "/a2.js": _js("log('a2 ' + current()); mark('a2');"),
         "/o1.js": _js("log('o1 ' + current());", hold="served:/o2.js"),
         "/o2.js": _js("log('o2 ' + current());"),
     }
