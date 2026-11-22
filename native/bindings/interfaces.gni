@@ -1653,6 +1653,7 @@ mitto_bindings_interfaces = [
     file = "notification"
     made_by_known_gaps = true
     implemented = [
+      "constructor",
       "maxActions",
       "permission",
       "requestPermission",

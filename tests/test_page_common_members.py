@@ -355,6 +355,33 @@ _NOTIFICATION_AS_CHROME = {
         "return Promise.race([Notification.requestPermission.call({}), new Promise(r => setTimeout(() => r('pending'), 300))])",
         "value: pending",
     ),
+    "new Notification with actions": (
+        "return new Notification('t', {silent: true, vibrate: [], actions: [{action: 'a', title: 'b'}]})",
+        "threw: TypeError: Failed to construct 'Notification': Actions are only supported for persistent notifications"
+        " shown using ServiceWorkerRegistration.showNotification().",
+    ),
+    "new Notification silent with a vibration pattern": (
+        "return new Notification('t', {silent: true, vibrate: 200})",
+        "threw: TypeError: Failed to construct 'Notification': Silent notifications must not specify vibration patterns.",
+    ),
+    "new Notification that renotifies without a tag": (
+        "return new Notification('t', {renotify: true})",
+        "threw: TypeError: Failed to construct 'Notification': Notifications which set the renotify flag must specify a"
+        " non-empty tag.",
+    ),
+    "new Notification with a function as data": (
+        "return new Notification('t', {data: () => 1})",
+        "threw: DataCloneError: Failed to construct 'Notification': () => 1 could not be cloned.",
+    ),
+    "new Notification with a shared buffer as data": (
+        "return new Notification('t', {data: new WebAssembly.Memory({shared: true, initial: 1, maximum: 1}).buffer})",
+        "threw: DataCloneError: Failed to construct 'Notification': A SharedArrayBuffer can not be serialized for storage.",
+    ),
+    "new Notification fires error": (
+        "return new Promise((r) => { const n = new Notification('t', {data: {x: 1}}); n.onerror = (e) =>"
+        " r([e.constructor.name, e.type].join()); n.onshow = () => r('show'); })",
+        "value: Event,error",
+    ),
 }
 
 

@@ -4,10 +4,16 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_notification.h"
+#include "mitto/dom/event.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/serialized_script_value.h"
+#include "mitto/dom/window_task.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -20,6 +26,55 @@ namespace mitto {
 // static
 Notification* Notification::Create() {
   return bindings::MakeGarbageCollected<Notification>();
+}
+
+// static
+Notification* Notification::Create(const std::u16string& title,
+                                   const bindings::NotificationOptions& options,
+                                   bindings::ExceptionState& exception_state) {
+  // Notification::Create(): the constructor is on for a desktop, a Page has
+  // no service worker, and NotificationTriggers, which a showTrigger needs,
+  // is off.
+  if (!options.actions.empty()) {
+    exception_state.ThrowTypeError(
+        "Actions are only supported for persistent notifications shown using "
+        "ServiceWorkerRegistration.showNotification().");
+    return nullptr;
+  }
+  // CreateNotificationData().
+  if (options.vibrate && options.silent) {
+    exception_state.ThrowTypeError(
+        "Silent notifications must not specify vibration patterns.");
+    return nullptr;
+  }
+  if (options.renotify && options.tag.empty()) {
+    exception_state.ThrowTypeError(
+        "Notifications which set the renotify flag must specify a non-empty "
+        "tag.");
+    return nullptr;
+  }
+  if (!options.data.IsEmpty() && !options.data->IsNull()) {
+    // The serializer throws its DataCloneError on the isolate.
+    const bindings::TryRethrowScope rethrow_scope(exception_state.GetIsolate(),
+                                                  exception_state);
+    if (!SerializedScriptValue::SerializeForStorage(
+            exception_state.GetIsolate(), options.data)) {
+      return nullptr;
+    }
+  }
+  Notification* const notification = Create();
+  // SchedulePrepareShow() and PrepareShow(): a Page has no permission to show
+  // it, so error fires from a task of its own.
+  PostTaskInContext(&ExecutionContext::Current(), TaskType::kMiscPlatformAPI,
+                    base::BindOnce(
+                        [](cppgc::Persistent<Notification> notification) {
+                          Event* const event =
+                              Event::Create(u"error", bindings::EventInit());
+                          event->SetTrusted(true);
+                          notification->DispatchEvent(event);
+                        },
+                        cppgc::Persistent<Notification>(notification)));
+  return notification;
 }
 
 // static
