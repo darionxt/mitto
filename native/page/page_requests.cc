@@ -208,9 +208,12 @@ void PageRequests::Cancel(uint64_t number) {
     return;
   }
   // ResourceFetcher::HandleLoaderError() adds the entry of a request that the
-  // page let go, as of now, but for a worker's script, which never loaded.
-  if (found->second.timed && !found->second.timed->worker_script) {
-    AddResourceTiming(*found->second.timed, base::TimeTicks::Now(), nullptr);
+  // page let go, as of now, but for a worker's script, whose worker never
+  // loads it and so gets none, even if the Session has finished the response.
+  if (found->second.timed) {
+    if (!found->second.timed->worker_script) {
+      AddResourceTiming(*found->second.timed, base::TimeTicks::Now(), nullptr);
+    }
     found->second.timed.reset();
   }
   // It stays open until the Session ends it, so that what the Session sent

@@ -754,6 +754,21 @@ def test_a_workers_script_is_in_its_creators_timeline_as_in_chrome(server: str) 
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_worker_terminated_before_its_script_reached_it_has_no_entry(server: str) -> None:
+    # The creator stays busy until the Session has surely finished the script, then terminates the worker before it
+    # hears of the response: no entry, as in Chrome 157.
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/hello.js');
+        const until = performance.now() + 300;
+        while (performance.now() < until) {}
+        worker.terminate();
+        setTimeout(() => resolve(performance.getEntriesByType('resource').filter((e) => e.name.endsWith('.js')).length), 300);
+    })"""
+
+    assert _evaluate(server, script) == 0
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_workers_performance_timeline_has_no_navigation(server: str) -> None:
     script = """new Promise((resolve) => {
         const worker = new Worker('/timeline.js');
