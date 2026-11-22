@@ -91,9 +91,11 @@ class PageRequests {
                  bool render_blocking = false,
                  std::u16string initiator_type = std::u16string());
 
-  // The same, but with no entry in the Performance Timeline, as for a
-  // worker's script, which Chrome's browser fetches.
-  uint64_t StartUntimed(PageRequest request, Client& client);
+  // The same for a dedicated worker's script, which Chrome's browser fetches
+  // and its WorkerMainScriptLoader times in the creator's timeline as
+  // "other": from when the response started, with none of the request's own
+  // steps, nor its redirects, and only for an ok response that ends whole.
+  uint64_t StartWorkerScript(PageRequest request, Client& client);
   // The same for a synchronous request, as importScripts() makes one: this
   // thread waits for each part of its response and hands it to `client`,
   // which takes each part of the body as it comes, and returns once it has
@@ -158,6 +160,8 @@ class PageRequests {
     // of Kind worker in mode cors, whose entry goes to the creator's
     // timeline.
     bool outside_settings = false;
+    // Whether it is a dedicated worker's script (StartWorkerScript()).
+    bool worker_script = false;
     std::optional<PageResponseStarted> response;
     uint64_t decoded_body_size = 0;
     // The window or worker that asked, whose timeline gets the entry while it
@@ -204,6 +208,10 @@ class PageRequests {
   static void AddResourceTiming(Timed& timed,
                                 base::TimeTicks response_end,
                                 const PageResponseEnded* ended);
+  // Whether a worker's script loaded, as Chrome's WorkerScriptFetcher hands
+  // the renderer only an ok response that came whole.
+  static bool WorkerScriptLoaded(const Timed& timed,
+                                 const PageResponseEnded& ended);
 
   const scoped_refptr<SessionSender> sender_;
   const base::RepeatingCallback<void(std::string)> refuse_;

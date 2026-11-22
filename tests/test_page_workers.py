@@ -303,6 +303,13 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b".map((e) => [e.name.replace(location.origin, ''), e.initiatorType])), 50));",
     ),
     "/timing-static.js": ("text/javascript", b""),
+    # A worker that starts one of its own and posts its own timeline's entries once the inner one has run.
+    "/timing-nested.js": (
+        "text/javascript",
+        b"const inner = new Worker('/echo.js'); inner.onmessage = () => setTimeout(() => postMessage("
+        b"performance.getEntriesByType('resource').map((e) => [e.name.replace(location.origin, ''), e.initiatorType])),"
+        b" 50); inner.postMessage('ping');",
+    ),
     "/timing-dynamic.js": ("text/javascript", b""),
 }
 
@@ -712,6 +719,53 @@ def test_a_module_workers_static_imports_are_in_its_creators_timeline(server: st
     })"""
 
     assert _evaluate(server, script) == [[["/timing-static.js", "script"]], [["/timing-dynamic.js", "script"]]]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_script_is_in_its_creators_timeline_as_in_chrome(server: str) -> None:
+    # As Chrome 157's WorkerMainScriptLoader adds it: of the initiator type other, named by the URL asked for, with none
+    # of the request's steps nor its redirects, and none for a script that is not ok or of a data: URL; a worker's own
+    # worker's script is in the worker's timeline.
+    script = """new Promise(async (resolve) => {
+        const run = (url, options) => new Promise((done) => {
+            const worker = new Worker(url, options);
+            worker.onmessage = (e) => done(e.data);
+            worker.onerror = () => done('error');
+        });
+        await run('/hello.js');
+        await run('/missing.js');
+        await run('data:text/javascript,postMessage(1)');
+        await run('/redirect-w.js', {type: 'module'});
+        const nested = await run('/timing-nested.js');
+        setTimeout(() => resolve([performance.getEntriesByType('resource').filter((e) => e.name.endsWith('.js'))
+            .map((e) => [e.name.replace(location.origin, ''), e.initiatorType, e.responseStatus, e.redirectStart,
+                [e.fetchStart, e.domainLookupStart, e.requestStart, e.responseStart].every((t) => t === e.startTime),
+                e.finalResponseHeadersStart, e.renderBlockingStatus]), nested]), 100);
+    })"""
+
+    assert _evaluate(server, script) == [
+        [
+            ["/hello.js", "other", 200, 0, True, 0, "non-blocking"],
+            ["/redirect-w.js", "other", 200, 0, True, 0, "non-blocking"],
+            ["/timing-nested.js", "other", 200, 0, True, 0, "non-blocking"],
+        ],
+        [["/echo.js", "other"]],
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_terminated_before_its_script_reached_it_has_no_entry(server: str) -> None:
+    # The creator stays busy until the Session has surely finished the script, then terminates the worker before it
+    # hears of the response: no entry, as in Chrome 157.
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/hello.js');
+        const until = performance.now() + 300;
+        while (performance.now() < until) {}
+        worker.terminate();
+        setTimeout(() => resolve(performance.getEntriesByType('resource').filter((e) => e.name.endsWith('.js')).length), 300);
+    })"""
+
+    assert _evaluate(server, script) == 0
 
 
 @pytest.mark.usefixtures("page_program")

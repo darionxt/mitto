@@ -96,10 +96,10 @@ uint64_t PageRequests::Start(PageRequest request,
   return number;
 }
 
-uint64_t PageRequests::StartUntimed(PageRequest request, Client& client) {
-  const uint64_t number =
-      Send(ExecutionContext::Current().ContextId(), request);
-  open_[number].client = &client;
+uint64_t PageRequests::StartWorkerScript(PageRequest request, Client& client) {
+  const uint64_t number = Start(std::move(request), client,
+                                /*render_blocking=*/false, u"other");
+  open_[number].timed->worker_script = true;
   return number;
 }
 
@@ -208,9 +208,12 @@ void PageRequests::Cancel(uint64_t number) {
     return;
   }
   // ResourceFetcher::HandleLoaderError() adds the entry of a request that the
-  // page let go, as of now.
+  // page let go, as of now, but for a worker's script, whose worker never
+  // loads it and so gets none, even if the Session has finished the response.
   if (found->second.timed) {
-    AddResourceTiming(*found->second.timed, base::TimeTicks::Now(), nullptr);
+    if (!found->second.timed->worker_script) {
+      AddResourceTiming(*found->second.timed, base::TimeTicks::Now(), nullptr);
+    }
     found->second.timed.reset();
   }
   // It stays open until the Session ends it, so that what the Session sent
@@ -272,6 +275,12 @@ void PageRequests::AddResourceTiming(Timed& timed,
     }
   }
   info.render_blocking_status = timed.render_blocking;
+  // The browser hands the renderer none of a worker script's steps.
+  if (timed.worker_script) {
+    info.has_timing = false;
+    info.timing = ResourceLoadTiming();
+    info.last_redirect_end_time = base::TimeTicks();
+  }
   // Only a dedicated worker fetches through outside settings, whose entries go
   // to its creator's timeline, through its Worker's proxy.
   if (timed.outside_settings && !execution_context->IsWindow()) {
@@ -284,6 +293,14 @@ void PageRequests::AddResourceTiming(Timed& timed,
   }
   execution_context->Performance()->AddResourceTiming(std::move(info),
                                                       timed.initiator_type);
+}
+
+// static
+bool PageRequests::WorkerScriptLoaded(const Timed& timed,
+                                      const PageResponseEnded& ended) {
+  // net::OK.
+  return ended.net_error == 0 && timed.response &&
+         timed.response->status >= 200 && timed.response->status < 300;
 }
 
 void PageRequests::TookBody(uint64_t number, size_t bytes) {
@@ -369,6 +386,12 @@ void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
   open->started = true;
   if (open->timed) {
     open->timed->response = response;
+    // WorkerMainScriptLoader starts once the browser hands the response over.
+    // Chrome's starts once the worker's thread has, which often puts a small
+    // script's end before its start: a Known Gap.
+    if (open->timed->worker_script) {
+      open->timed->start_time = base::TimeTicks::Now();
+    }
   }
   if (open->client) {
     open->client->OnResponseStarted(response);
@@ -429,7 +452,8 @@ void PageRequests::OnResponseEnded(const PageResponseEnded& ended) {
   // ResourceFetcher adds the entry before the resource's clients hear of the
   // end, so that a script sees its own. A request that the Session refused
   // before it started never loaded, as Blink fails such a fetch first.
-  if (timed && ended.completion_time != 0) {
+  if (timed && ended.completion_time != 0 &&
+      (!timed->worker_script || WorkerScriptLoaded(*timed, ended))) {
     AddResourceTiming(*timed, TicksOf(ended.completion_time), &ended);
   }
   if (client) {

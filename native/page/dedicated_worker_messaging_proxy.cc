@@ -210,8 +210,8 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
     return;
   }
   // The browser's WorkerScriptFetcher: destination worker, mode same-origin,
-  // the credentials of `new Worker()`'s options, with no entry in the
-  // creator's Performance Timeline.
+  // the credentials of `new Worker()`'s options, and the entry that
+  // WorkerMainScriptLoader adds to the creator's Performance Timeline.
   PageRequest request;
   request.kind = PageRequestKind::kWorker;
   request.url = url.spec();
@@ -225,7 +225,8 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
       request.credentials = PageCredentialsMode::kInclude;
       break;
   }
-  script_request_ = creator_.requests->StartUntimed(std::move(request), *this);
+  script_request_ =
+      creator_.requests->StartWorkerScript(std::move(request), *this);
   script_requested_ = true;
 }
 
