@@ -89,8 +89,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 
 class _Server(QuietServer):
-    request_queue_size = 128
-
     def __init__(self, address: tuple[str, int], handler: type[_Handler]) -> None:
         super().__init__(address, handler)
         self._lock = threading.Lock()
