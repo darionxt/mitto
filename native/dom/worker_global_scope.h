@@ -74,6 +74,8 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   // The worker's origin, its creator's, serialized.
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
+  // WindowOrWorkerGlobalScope::crossOriginIsolated().
+  bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
   // WorkerPerformance, made the first time, which counts from when the worker
   // started.
   mitto::Performance* Performance() override;

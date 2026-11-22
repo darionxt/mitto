@@ -24,20 +24,25 @@ using DidCreateScriptContext =
 // as Blink makes a window's context, calls `did_create`, installs what the
 // context decides, the interface objects that it exposes among it, as the
 // Page's features expose them, and gives the window a document built from
-// `markup`, about:blank's for none. The isolate must have its bindings::PerIsolateData, and the caller
-// a handle scope.
+// `markup`, about:blank's for none. The window is cross-origin isolated if
+// `cross_origin_isolated`, which decides what of the context its agent allows,
+// such as SharedArrayBuffer. The isolate must have its
+// bindings::PerIsolateData, and the caller a handle scope.
 v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
                                       std::u16string_view markup,
+                                      bool cross_origin_isolated,
                                       DidCreateScriptContext did_create);
 
 // Makes a context whose global object is a DedicatedWorkerGlobalScope named
 // `name`, made from its template as Blink's WorkerOrWorkletScriptController
 // makes a dedicated worker's context, calls `did_create`, and installs what
 // the context decides, the interface objects that it exposes among it. The
-// isolate must have the bindings::PerIsolateData of a worker, and the caller a
-// handle scope.
+// worker is cross-origin isolated if `cross_origin_isolated`. The isolate must
+// have the bindings::PerIsolateData of a worker, and the caller a handle
+// scope.
 v8::Local<v8::Context> NewWorkerContext(v8::Isolate* isolate,
                                         std::u16string name,
+                                        bool cross_origin_isolated,
                                         DidCreateScriptContext did_create);
 
 }  // namespace mitto

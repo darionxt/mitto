@@ -206,6 +206,27 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   void SetContextId(uint64_t id) { context_id_ = id; }
   uint64_t ContextId() const { return context_id_; }
 
+  // Blink's CrossOriginIsolatedCapability(): whether the context is
+  // cross-origin isolated, which WindowOrWorkerGlobalScope's
+  // crossOriginIsolated gives. A window's is its agent's, which the Session
+  // decides for each document as Chrome's browser decides its agent cluster;
+  // a dedicated worker's its creator's, but for a worker of a data: URL,
+  // which never is. The Page sets it once its global object has a context,
+  // before what the context decides is installed.
+  bool CrossOriginIsolatedCapability() const {
+    return cross_origin_isolated_capability_;
+  }
+  void SetCrossOriginIsolatedCapability(bool capability) {
+    cross_origin_isolated_capability_ = capability;
+  }
+  // ExecutionContext::SharedArrayBufferTransferAllowed(): whether the context
+  // has SharedArrayBuffer and may post one. Chrome allows it beside
+  // cross-origin isolation only through the reverse origin trial and the
+  // enterprise policy, which a Page has neither of.
+  bool SharedArrayBufferTransferAllowed() const {
+    return CrossOriginIsolatedCapability();
+  }
+
   // Where the console messages of the DOM go, such as a warning of Blink's.
   // Without one, nowhere.
   using ConsoleSink =
@@ -226,6 +247,7 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   PageStart start_;
   PageConnection connection_;
   uint64_t context_id_ = kNoDocument;
+  bool cross_origin_isolated_capability_ = false;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
   raw_ptr<WindowTasks> tasks_ = nullptr;

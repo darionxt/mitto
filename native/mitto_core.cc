@@ -310,7 +310,7 @@ class CallerClient final : public RequestClient {
 
   // RequestClient:
   // A caller's request has no CORS check: what it reads is the caller's own.
-  bool AllowsResponse(const RequestEvent& event) override { return true; }
+  int CheckResponse(const RequestEvent& event) override { return net::OK; }
   void OnResponseEvent(RequestEvent event) override {
     channel_->Push(std::move(event));
     ready_->Add(handle_, MITTO_READY_REQUEST);
@@ -477,10 +477,10 @@ class RequestJob final : public net::URLRequest::Delegate,
     Finish(net::ERR_ABORTED);
   }
 
-  void Detach(base::RepeatingCallback<bool(const RequestEvent&)>
-                  allows_response) override {
+  void Detach(base::RepeatingCallback<int(const RequestEvent&)> check_response)
+      override {
     owned_detached_client_ =
-        std::make_unique<DetachedClient>(*this, std::move(allows_response));
+        std::make_unique<DetachedClient>(*this, std::move(check_response));
     client_ = owned_detached_client_.get();
     ReadBody();
   }
@@ -603,8 +603,10 @@ class RequestJob final : public net::URLRequest::Delegate,
         return;
       }
     }
-    if (!client_->AllowsResponse(ResponseEvent(MITTO_EVENT_RESPONSE_STARTED))) {
-      Finish(net::ERR_FAILED);
+    if (const int error =
+            client_->CheckResponse(ResponseEvent(MITTO_EVENT_RESPONSE_STARTED));
+        error != net::OK) {
+      Finish(error);
       return;
     }
     PushResponseEvent(MITTO_EVENT_RESPONSE_STARTED);
@@ -861,8 +863,8 @@ class RequestJob final : public net::URLRequest::Delegate,
     RequestEvent redirect = ResponseEvent(MITTO_EVENT_REDIRECT_FOLLOWED);
     redirect.new_url = redirect_info.new_url.spec();
     redirect.new_method = redirect_info.new_method;
-    if (!client_->AllowsResponse(redirect)) {
-      Finish(net::ERR_FAILED);
+    if (const int error = client_->CheckResponse(redirect); error != net::OK) {
+      Finish(error);
       return;
     }
     // With where it goes, which a Page's timing compares with where it was.
@@ -975,14 +977,14 @@ class RequestJob final : public net::URLRequest::Delegate,
    public:
     DetachedClient(
         RequestJob& job,
-        base::RepeatingCallback<bool(const RequestEvent&)> allows_response)
+        base::RepeatingCallback<int(const RequestEvent&)> check_response)
         : job_(job),
-          allows_response_(std::move(allows_response)),
+          check_response_(std::move(check_response)),
           buffer_(base::MakeRefCounted<net::IOBufferWithSize>(kReadSize)) {}
 
     void OnResponseEvent(RequestEvent event) override {}
-    bool AllowsResponse(const RequestEvent& event) override {
-      return allows_response_.Run(event);
+    int CheckResponse(const RequestEvent& event) override {
+      return check_response_.Run(event);
     }
     net::IOBuffer* read_buffer() override { return buffer_.get(); }
     int read_size() const override { return kReadSize; }
@@ -997,7 +999,7 @@ class RequestJob final : public net::URLRequest::Delegate,
    private:
     static constexpr int kReadSize = 64 * 1024;
     const raw_ref<RequestJob> job_;
-    const base::RepeatingCallback<bool(const RequestEvent&)> allows_response_;
+    const base::RepeatingCallback<int(const RequestEvent&)> check_response_;
     const scoped_refptr<net::IOBufferWithSize> buffer_;
   };
 
