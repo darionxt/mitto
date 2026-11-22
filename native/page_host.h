@@ -503,6 +503,9 @@ class PageHost final : public PageChannel::Delegate {
     // worker's has to be compatible with, as DedicatedWorkerHost::CheckCOEP()
     // holds it.
     std::optional<CrossOriginEmbedderPolicy> creator_embedder_policy;
+    // The embedder policy of the document or worker that asks, which the
+    // Cross-Origin-Resource-Policy check of a request of mode no-cors reads.
+    CrossOriginEmbedderPolicy embedder_policy;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
