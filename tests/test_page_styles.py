@@ -340,6 +340,12 @@ def test_an_at_rule_whose_prelude_does_not_parse_ends_no_imports(
         "<style>@property --b { syntax: '\\66 oo'; inherits: false; initial-value: foo; }"
         " @import 'property-escaped.css';</style>"
     )
+    # An escaped semicolon is an ident too, which ends neither the string nor the rule.
+    server.route("/property-semicolon.css", b"p {}", _CSS)
+    styles.append(
+        "<style>@property --c { syntax: '\\\\;'; inherits: false; initial-value: \\; }"
+        " @import 'property-semicolon.css';</style>"
+    )
     url = server.page("/", "".join(styles))
 
     with _open_page(session, url):

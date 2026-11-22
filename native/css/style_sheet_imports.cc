@@ -465,13 +465,29 @@ bool IsFontFamilyNames(const Prelude& prelude) {
 }
 
 // The tokens of `text`, white space included, with the text of each block,
-// as a prelude holds them.
+// as a prelude holds them, but taking ; and { as tokens like any other, as
+// the tokenizer reads them, escaped ones in an ident included. A block end
+// with no start ends the stream early, and a token of ; then stands for the
+// rest, which no syntax or parameter list takes.
 Prelude TokensWithBlocks(std::u16string_view text) {
+  Prelude prelude;
   CssTokenStream stream(text);
-  Prelude prelude = ConsumePrelude(stream, text);
-  // A prelude ends at ; or {, which no syntax or parameter list holds, so a
-  // token of neither kind stands for the rest, which nothing reads.
-  if (text.find_first_of(u";{") != std::u16string_view::npos) {
+  while (!stream.AtEnd()) {
+    if (stream.Peek().block_type == CssBlockType::kBlockStart) {
+      prelude.tokens.push_back(stream.Peek());
+      const size_t index = prelude.tokens.size() - 1;
+      size_t start = 0;
+      {
+        const CssTokenStream::BlockGuard guard(stream);
+        start = stream.Offset();
+      }
+      prelude.block_contents[index] =
+          BlockContents(text, start, stream.Offset());
+      continue;
+    }
+    prelude.tokens.push_back(stream.Consume());
+  }
+  if (stream.Peek().type != CssTokenType::kEndOfFile) {
     CssToken rest;
     rest.type = CssTokenType::kSemicolon;
     prelude.tokens.push_back(std::move(rest));
