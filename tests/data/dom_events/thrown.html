@@ -19,17 +19,21 @@ setTimeout(() => { throw new DOMException('thrown with no name', ''); });
 setTimeout(() => { throw new Getters(); });
 setTimeout(() => { throw Object.create(DOMException.prototype); });
 setTimeout(() => { throw {toString() { return 'its own toString'; }}; });
-setTimeout(() => { requestAnimationFrame(() => { throw new DOMException('from a frame', 'TypeError'); }); }, 20);
-setTimeout(() => {
-  const script = document.createElement('script');
-  script.textContent = "throw new DOMException('from a classic script', 'TypeError');";
-  document.body.append(script);
-}, 100);
-setTimeout(() => {
-  const script = document.createElement('script');
-  script.type = 'module';
-  script.textContent = "throw new DOMException('from a module script', 'TypeError');";
-  document.body.append(script);
-}, 150);
-setTimeout(() => done(log), 400);
+// The rest one after another, so that a busy machine keeps their order: a frame, then a classic script, then a module
+// script, whose error ends the page's cases.
+window.addEventListener('error', () => {
+  if (window.moduleThrew) setTimeout(() => done(log), 0);
+});
+setTimeout(() => requestAnimationFrame(() => {
+  setTimeout(() => {
+    const classic = document.createElement('script');
+    classic.textContent = "throw new DOMException('from a classic script', 'TypeError');";
+    document.body.append(classic);
+    const module = document.createElement('script');
+    module.type = 'module';
+    module.textContent = "window.moduleThrew = true; throw new DOMException('from a module script', 'TypeError');";
+    document.body.append(module);
+  });
+  throw new DOMException('from a frame', 'TypeError');
+}), 20);
 </script><body>
