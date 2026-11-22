@@ -125,6 +125,8 @@ shared_library("mitto_core") {
     "cors_preflight.h",
     "cross_origin_policies.cc",
     "cross_origin_policies.h",
+    "cross_origin_resource_policy.cc",
+    "cross_origin_resource_policy.h",
     "directory_lock.h",
     "feature_list.cc",
     "feature_list.h",

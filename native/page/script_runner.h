@@ -42,7 +42,10 @@ class CacheStorageHost;
 class IndexedDbHost;
 class PageFrame;
 class PageRequests;
+class SessionCacheStorage;
 class SessionCookieJar;
+class SessionIndexedDb;
+class SessionStorageBuckets;
 class StorageBucketHost;
 
 // Fills `buffer` from the system's random source, which needs no file, for
@@ -136,6 +139,13 @@ class ScriptRunner final : public base::TaskObserver {
   uint64_t NextFrameId() { return ++last_frame_id_; }
   // How many frames the Page has, its top-level one among them.
   size_t FrameCount() const;
+  // Keeps a removed frame's Cache API, IndexedDB and Storage Buckets until the
+  // Page ends: what the frame's scripts made of them may still call them,
+  // though the Session hears nothing more of a document that has gone.
+  void KeepRemovedFrameStorage(
+      std::unique_ptr<SessionCacheStorage> cache_storage,
+      std::unique_ptr<SessionIndexedDb> indexed_db,
+      std::unique_ptr<SessionStorageBuckets> storage_buckets);
 
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,
@@ -207,6 +217,10 @@ class ScriptRunner final : public base::TaskObserver {
   // What window.chrome of each window that the Page has made reads. They live
   // as long as the Page, for a callback of a window that has gone.
   std::vector<std::unique_ptr<ChromeObjectData>> chrome_object_data_;
+  // Removed frames' storage, as KeepRemovedFrameStorage() keeps it.
+  std::vector<std::unique_ptr<SessionCacheStorage>> removed_cache_storage_;
+  std::vector<std::unique_ptr<SessionIndexedDb>> removed_indexed_db_;
+  std::vector<std::unique_ptr<SessionStorageBuckets>> removed_storage_buckets_;
   // How many tasks that report rejections wait to run.
   int reports_queued_ = 0;
   // Whether Start() made the top-level frame's first window.
