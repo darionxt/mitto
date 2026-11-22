@@ -474,6 +474,9 @@ class Document : public Node {
   // with the query in the document's encoding, which every URL that the
   // document resolves goes through. An invalid GURL if it does not resolve.
   GURL CompleteUrl(std::u16string_view url) const;
+  // The text that Blink's KURL keeps of a `url` that does not resolve, empty
+  // for one that does.
+  std::string UnresolvedUrlSpec(std::u16string_view url) const;
   // The document's URL, as no frame gives a document of a Page another.
   GURL FallbackBaseUrl() const { return GURL(url_); }
   // Blink's ValidBaseElementURL(): the URL that the first base element with

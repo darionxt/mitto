@@ -13,9 +13,11 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_exception.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_image_element.h"
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/resource_fetcher.h"
+#include "mitto/dom/svg_image_element.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "v8/include/cppgc/persistent.h"
@@ -30,6 +32,26 @@ namespace mitto {
 namespace {
 
 constexpr char16_t kCannotDecode[] = u"The source image cannot be decoded.";
+
+// ConfigureRequest() and DoUpdateFromElement(): the attributes of the request,
+// which Blink reads of any element.
+CrossOriginAttribute CrossOriginOf(const Element& element) {
+  const std::u16string* value = element.FindAttribute(u"crossorigin");
+  return CrossOriginAttributeFromValue(
+      value ? std::optional<std::u16string>(*value) : std::nullopt);
+}
+
+FetchReferrerPolicy ReferrerPolicyOf(const Element& element) {
+  const std::u16string* value = element.FindAttribute(u"referrerpolicy");
+  return value ? FetchReferrerPolicyFromStringWithLegacyKeywords(*value)
+               : FetchReferrerPolicy::kDefault;
+}
+
+FetchPriorityHint FetchPriorityOf(const Element& element) {
+  const std::u16string* value = element.FindAttribute(u"fetchpriority");
+  return value ? FetchPriorityHintFromAttribute(*value)
+               : FetchPriorityHint::kAuto;
+}
 
 // A microtask's closure, and the context it runs in.
 struct Microtask {
@@ -166,7 +188,11 @@ class ImageLoader::DecodeRequest final
   v8::TracedReference<v8::Promise::Resolver> resolver_;
 };
 
-ImageLoader::ImageLoader(HTMLImageElement& element) : element_(&element) {}
+ImageLoader::ImageLoader(HTMLImageElement& element)
+    : element_(&element), svg_image_(false) {}
+
+ImageLoader::ImageLoader(SVGImageElement& element)
+    : element_(&element), svg_image_(true) {}
 
 ImageLoader::~ImageLoader() = default;
 
@@ -180,6 +206,50 @@ void ImageLoader::Trace(cppgc::Visitor* visitor) const {
 
 bool ImageLoader::IsDocumentActive() const {
   return ActiveWindowOf(element_->GetDocument()) != nullptr;
+}
+
+bool ImageLoader::HasPendingActivity() const {
+  // HasPendingEvent() or a microtask.
+  return pending_task_ || pending_load_event_ || pending_error_event_ ||
+         !decode_requests_.empty() ||
+         (image_content_ && !image_complete_ &&
+          lazy_image_load_state_ != LazyImageLoadState::kDeferred);
+}
+
+std::optional<std::u16string> ImageLoader::ImageSourceURL() const {
+  if (svg_image_) {
+    return static_cast<const SVGImageElement&>(*element_).ImageSourceURL();
+  }
+  return static_cast<const HTMLImageElement&>(*element_).ImageSourceURL();
+}
+
+bool ImageLoader::HasLazyLoadingAttribute() const {
+  // LazyImageHelper defers an img alone.
+  return !svg_image_ && static_cast<const HTMLImageElement&>(*element_)
+                            .HasLazyLoadingAttribute();
+}
+
+void ImageLoader::DispatchLoadEvent() {
+  if (svg_image_) {
+    // SVGImageLoader::DispatchLoadEvent(): error for an image that failed,
+    // and SVG's load event otherwise.
+    if (image_content_->ErrorOccurred()) {
+      DispatchErrorEvent();
+      return;
+    }
+    static_cast<SVGImageElement&>(*element_)
+        .SendSVGLoadEventToSelfAndAncestorChainIfPossible();
+    return;
+  }
+  static_cast<HTMLImageElement&>(*element_).DispatchLoadEvent();
+}
+
+void ImageLoader::DispatchErrorEvent() {
+  if (svg_image_) {
+    static_cast<SVGImageElement&>(*element_).DispatchErrorEvent();
+    return;
+  }
+  static_cast<HTMLImageElement&>(*element_).DispatchErrorEvent();
 }
 
 GURL ImageLoader::ImageSourceToUrl(
@@ -207,7 +277,7 @@ bool ImageLoader::ShouldLoadImmediately(const GURL& url) const {
   }
   // The list of available images' tuple matching: an image fetched with
   // credentials only for its own origin takes a crossorigin of anonymous.
-  const CrossOriginAttribute cross_origin = element_->GetCrossOriginAttribute();
+  const CrossOriginAttribute cross_origin = CrossOriginOf(*element_);
   if (cross_origin != CrossOriginAttribute::kNotSet &&
       !document.GetOrigin().IsSameOriginWith(url)) {
     return false;
@@ -240,7 +310,7 @@ bool ImageLoader::ImageIsPotentiallyAvailable() const {
   const bool has_pending_activity =
       (image_content_ && !image_complete_) || pending_load_event_ ||
       pending_error_event_ || !decode_requests_.empty() || pending_task_;
-  const std::optional<std::u16string> source = element_->ImageSourceURL();
+  const std::optional<std::u16string> source = ImageSourceURL();
   const bool image_still_loading = !image_has_loaded && has_pending_activity &&
                                    !pending_error_event_ && source &&
                                    !source->empty();
@@ -265,11 +335,7 @@ void ImageLoader::UpdateKeepAlive() {
   // of a document that is no window's active one with a context, as the old
   // document of a navigation is.
   Window* const window = ActiveWindowOf(element_->GetDocument());
-  const bool pending =
-      window && (pending_task_ || pending_load_event_ || pending_error_event_ ||
-                 !decode_requests_.empty() ||
-                 (image_content_ && !image_complete_ &&
-                  lazy_image_load_state_ != LazyImageLoadState::kDeferred));
+  const bool pending = window && HasPendingActivity();
   if (!pending) {
     keep_alive_.Clear();
     return;
@@ -297,7 +363,7 @@ void ImageLoader::UpdateFromElement(UpdateFromElementBehavior behavior) {
   if (!IsDocumentActive()) {
     return;
   }
-  const std::optional<std::u16string> source = element_->ImageSourceURL();
+  const std::optional<std::u16string> source = ImageSourceURL();
   suppress_error_events_ = behavior == kUpdateSizeChanged;
   if (behavior == kUpdateIgnorePreviousError) {
     failed_load_url_.clear();
@@ -374,13 +440,12 @@ void ImageLoader::DoUpdateFromElement(UpdateFromElementBehavior behavior,
     ClearImage();
     return;
   }
-  const std::optional<std::u16string> source = element_->ImageSourceURL();
+  const std::optional<std::u16string> source = ImageSourceURL();
   const GURL url = ImageSourceToUrl(source);
   Resource* new_image_content = nullptr;
   if (url.is_valid() && !url.is_empty() && behavior != kUpdateForcedReload &&
       lazy_image_load_state_ != LazyImageLoadState::kFullImage &&
-      element_->HasLazyLoadingAttribute() &&
-      !IsLoadedInDocument(document, url)) {
+      HasLazyLoadingAttribute() && !IsLoadedInDocument(document, url)) {
     // LazyImageHelper::ShouldDeferImageLoad(): a lazy image waits, as Blink
     // defers its fetch, unless the document has it already. It holds no load
     // event back meanwhile.
@@ -405,7 +470,7 @@ void ImageLoader::DoUpdateFromElement(UpdateFromElementBehavior behavior,
     FetchParameters params;
     params.url = url;
     params.type = ResourceType::kImage;
-    switch (element_->GetCrossOriginAttribute()) {
+    switch (CrossOriginOf(*element_)) {
       case CrossOriginAttribute::kNotSet:
         break;
       case CrossOriginAttribute::kAnonymous:
@@ -417,8 +482,9 @@ void ImageLoader::DoUpdateFromElement(UpdateFromElementBehavior behavior,
         params.credentials = FetchCredentialsMode::kInclude;
         break;
     }
-    params.referrer_policy = element_->ReferrerPolicyForFetch();
-    params.priority_hint = element_->GetFetchPriorityHint();
+    params.referrer_policy = ReferrerPolicyOf(*element_);
+    params.initiator_name = element_->LocalName();
+    params.priority_hint = FetchPriorityOf(*element_);
     // A once-deferred lazy image does not hold the load event back, as
     // FetchParameters::SetLazyImageNonBlocking() lets it go.
     params.load_blocking =
@@ -429,6 +495,16 @@ void ImageLoader::DoUpdateFromElement(UpdateFromElementBehavior behavior,
     // A src that is no URL, as one of only spaces, fires error; none does
     // not.
     if (source) {
+      // One that does not resolve, such as //[, goes to the fetcher as the
+      // text that Blink's KURL keeps of it, which blocks it as an access
+      // check, so it is the URL that failed, and currentSrc gives the source.
+      const std::u16string_view stripped = StripHTMLSpaces(*source);
+      if (IsDocumentActive() && !stripped.empty()) {
+        const std::string unresolved = document.UnresolvedUrlSpec(stripped);
+        if (!unresolved.empty()) {
+          failed_load_url_ = base::UTF8ToUTF16(unresolved);
+        }
+      }
       QueuePendingErrorEvent();
     }
   }
@@ -588,9 +664,9 @@ void ImageLoader::DispatchPendingEvent(uint64_t event, bool is_load) {
     if (!image_content_) {
       return;
     }
-    element_->DispatchLoadEvent();
+    DispatchLoadEvent();
   } else {
-    element_->DispatchErrorEvent();
+    DispatchErrorEvent();
   }
   // The document's load event is checked at once.
   if (delay) {

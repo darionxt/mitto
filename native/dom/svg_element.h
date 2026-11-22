@@ -55,6 +55,17 @@ class SVGElement : public Element {
   SVGSVGElement* OwnerSVGElement() const;
   SVGElement* ViewportElement() const;
 
+  // Blink's SVG load event: once the element and the SVG elements it holds
+  // have their resources, load fires at it if it is structurally external or
+  // an svg and something listens, and SendSVGLoadEventToSelfAndAncestorChain-
+  // IfPossible() goes on to its SVG ancestors until the document's load event
+  // has finished, but never to an outermost svg, whose load is the
+  // document's. Whether it had its resources.
+  bool SendSVGLoadEventIfPossible();
+  void SendSVGLoadEventToSelfAndAncestorChainIfPossible();
+  // Whether the resources of the element and of its SVG children have come.
+  virtual bool HaveLoadedRequiredResources();
+
   // Writes back the value that a page set of an animated value, which the
   // value keeps rather than reading again.
   // A null value removes the attribute.
@@ -69,6 +80,13 @@ class SVGElement : public Element {
   InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
 
  protected:
+  // Blink's SvgAttributeChanged(): `name` changed, by the DOM, or by a page
+  // that set an animated value's baseVal, which writes it back.
+  virtual void SvgAttributeChanged(const QualifiedName& name) {}
+  // Whether the element names a resource of its own, as an image with an
+  // href does.
+  virtual bool IsStructurallyExternal() const;
+
   // Element's: the copy's event handler content attributes set handlers, as
   // Blink's CloneAttributesFrom() runs them through AttributeChanged().
   void DidCloneAttributes() override;

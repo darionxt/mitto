@@ -33,11 +33,15 @@ class EncodingCharsetConverter final : public url::CharsetConverter {
   const std::string encoding_;
 };
 
-}  // namespace
-
-GURL ResolveUrlWithEncoding(const GURL& base,
-                            std::u16string_view relative,
-                            std::string_view encoding) {
+// GURL::Resolve(), with the converter. An invalid base counts as none, as
+// Blink's null KURL does: only an absolute URL resolves, its query still in
+// the encoding. `spec` keeps what the canonicalizer wrote, whether or not it
+// resolves, as KURL::Init() keeps it.
+bool Resolve(const GURL& base,
+             std::u16string_view relative,
+             std::string_view encoding,
+             std::string& spec,
+             url::Parsed& parsed) {
   // UTF-8 needs no converter, and UTF-16 encodes as UTF-8, as Blink's
   // IsUnicodeEncoding() has it.
   std::unique_ptr<EncodingCharsetConverter> converter;
@@ -45,22 +49,39 @@ GURL ResolveUrlWithEncoding(const GURL& base,
       ClosestByteBasedEquivalent(encoding) != kUtf8EncodingName) {
     converter = std::make_unique<EncodingCharsetConverter>(encoding);
   }
-  // GURL::Resolve(), with the converter. An invalid base counts as none, as
-  // Blink's null KURL does: only an absolute URL resolves, its query still in
-  // the encoding.
   const std::string_view base_spec =
       base.is_valid() ? std::string_view(base.spec()) : std::string_view();
   const url::Parsed base_parsed =
       base.is_valid() ? base.parsed_for_possibly_invalid_spec() : url::Parsed();
-  std::string spec;
   url::StdStringCanonOutput output(&spec);
+  const bool resolved = url::ResolveRelative(base_spec, base_parsed, relative,
+                                             converter.get(), &output, &parsed);
+  output.Complete();
+  return resolved;
+}
+
+}  // namespace
+
+GURL ResolveUrlWithEncoding(const GURL& base,
+                            std::u16string_view relative,
+                            std::string_view encoding) {
+  std::string spec;
   url::Parsed parsed;
-  if (!url::ResolveRelative(base_spec, base_parsed, relative, converter.get(),
-                            &output, &parsed)) {
+  if (!Resolve(base, relative, encoding, spec, parsed)) {
     return GURL();
   }
-  output.Complete();
   return GURL(std::move(spec), parsed, /*is_valid=*/true);
+}
+
+std::string UnresolvedUrlSpec(const GURL& base,
+                              std::u16string_view relative,
+                              std::string_view encoding) {
+  std::string spec;
+  url::Parsed parsed;
+  if (Resolve(base, relative, encoding, spec, parsed)) {
+    return std::string();
+  }
+  return spec;
 }
 
 }  // namespace mitto

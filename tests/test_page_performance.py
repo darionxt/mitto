@@ -24,6 +24,7 @@ import mitto
 from mitto import _native
 from mitto._page import Page
 from tests.local_server import QuietServer
+from tests.page_server import png
 
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
 _TIMEOUT_SECONDS = 60
@@ -396,7 +397,9 @@ _NAVIGATION_CASE = """
 
 def _navigation_page(page: _Origin, other: _Origin) -> str:
     page.routes["/"] = _html(
-        f"<!doctype html><title>n</title><script src=/a.js></script><script async src={other.url('/x.js')}></script>"
+        # An icon of a data: URL, which asks for nothing, so that no icon's entry comes after the document's load.
+        f"<!doctype html><title>n</title><link rel=icon href='data:,'><script src=/a.js></script>"
+        f"<script async src={other.url('/x.js')}></script>"
         "<p>Hello",
         ("Server-Timing", 'db;dur=53.2;desc="Database", cache;desc=hit, total;dur=123'),
     )
@@ -679,7 +682,8 @@ def test_a_full_resource_buffer_fires_its_event_and_keeps_what_the_handler_makes
     origins: tuple[_Origin, _Origin],
 ) -> None:
     page, _ = origins
-    page.routes["/"] = _html("<p>buffer")
+    # An icon of a data: URL, which asks for nothing, so that no icon's entry comes after the document's load.
+    page.routes["/"] = _html("<link rel=icon href='data:,'><p>buffer")
     for name in ("/one", "/two", "/three"):
         page.routes[name] = lambda: (200, [("Content-Type", "text/plain")], b"x")
     with mitto.Session() as session, _open_page(session, page.url("/")) as opened:
@@ -708,9 +712,62 @@ def test_a_full_resource_buffer_fires_its_event_and_keeps_what_the_handler_makes
 
 
 @pytest.mark.usefixtures("page_program")
+def test_each_entry_names_what_asked_for_it_as_chrome_s_loaders_do(origins: tuple[_Origin, _Origin]) -> None:
+    page, _ = origins
+    image = lambda: (200, [("Content-Type", "image/png")], png(2, 2))  # noqa: E731
+    for name in ("/a.png", "/b.png", "/c.png", "/d.png", "/p.png", "/in.png", "/v.png", "/favicon.ico"):
+        page.routes[name] = image
+    page.routes["/s.css"] = lambda: (200, [("Content-Type", "text/css")], b'@import url("/imp.css"); p {color: red}')
+    for name in ("/imp.css", "/si.css", "/ds.css", "/pf.txt", "/x.txt"):
+        page.routes[name] = lambda: (200, [("Content-Type", "text/css")], b"p {color: blue}")
+    page.routes["/"] = _html(
+        "<!doctype html><link rel=stylesheet href=/s.css><link rel=preload as=image href=/p.png>"
+        "<link rel=prefetch href=/pf.txt><style>@import url('/si.css');</style><img src=/a.png>"
+        "<svg><image href=/b.png /></svg><input type=image src=/in.png><video poster=/v.png></video>"
+    )
+    with mitto.Session() as session, _open_page(session, page.url("/")) as opened:
+        result = opened.evaluate(
+            """(async () => {
+              const make = (tag, attributes, namespace) => {
+                const element = namespace ? document.createElementNS(namespace, tag) : document.createElement(tag);
+                for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+                return element;
+              };
+              document.body.append(make('img', {src: '/c.png'}));
+              make('image', {href: '/d.png'}, 'http://www.w3.org/2000/svg');
+              document.head.append(make('link', {rel: 'stylesheet', href: '/ds.css'}));
+              await fetch('/x.txt');
+              const entries = () => performance.getEntriesByType('resource');
+              // The icon's comes once the document has loaded, and its own and the others' fetches have ended.
+              for (let i = 0; i < 100 && entries().length < 14; ++i) await new Promise((r) => setTimeout(r, 50));
+              return entries().map((e) => [new URL(e.name).pathname, e.initiatorType]);
+            })()"""
+        )
+
+    # What Chrome 157 gave: the element's local name for an image, "link" for a link's loads, "css" for an import,
+    # whether the preload scanner or the element asked, and "other" for the icon.
+    assert sorted(result) == [
+        ["/a.png", "img"],
+        ["/b.png", "image"],
+        ["/c.png", "img"],
+        ["/d.png", "image"],
+        ["/ds.css", "link"],
+        ["/favicon.ico", "other"],
+        ["/imp.css", "css"],
+        ["/in.png", "input"],
+        ["/p.png", "link"],
+        ["/pf.txt", "link"],
+        ["/s.css", "link"],
+        ["/si.css", "css"],
+        ["/v.png", "video"],
+        ["/x.txt", "fetch"],
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_response_from_the_cache_is_delivered_from_it(origins: tuple[_Origin, _Origin]) -> None:
     page, _ = origins
-    page.routes["/"] = _html("<p>cache")
+    page.routes["/"] = _html("<link rel=icon href='data:,'><p>cache")
     page.routes["/cached"] = lambda: (200, [("Content-Type", "text/plain"), ("Cache-Control", "max-age=600")], b"kept")
     with mitto.Session(cache="memory") as session, _open_page(session, page.url("/")) as opened:
         result = opened.evaluate(

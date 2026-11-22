@@ -2480,8 +2480,8 @@ mitto_bindings_interfaces = [
   {
     name = "SVGImageElement"
     file = "svg_image_element"
-    header = "svg_elements"
     implemented = [
+      "decode",
       "href",
       "x",
       "y",

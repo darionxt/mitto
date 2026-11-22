@@ -277,12 +277,9 @@ void PageFetcher::Fetch(FetchRequestData data,
     page_request.priority = ToPagePriority(*data.priority);
   }
   page_request.keepalive = data.keepalive;
-  // A request with no entry in the Performance Timeline, as the favicon's.
-  started.set_number(
-      data.resource_timing
-          ? requests_->Start(std::move(page_request), started,
-                             data.render_blocking)
-          : requests_->StartUntimed(std::move(page_request), started));
+  started.set_number(requests_->Start(std::move(page_request), started,
+                                      data.render_blocking,
+                                      std::move(data.initiator_type)));
   open_.emplace(started.number(), std::move(request));
 }
 

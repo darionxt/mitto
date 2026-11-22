@@ -63,7 +63,8 @@ uint64_t PageRequests::Start(PageRequestKind kind,
 
 uint64_t PageRequests::Start(PageRequest request,
                              Client& client,
-                             bool render_blocking) {
+                             bool render_blocking,
+                             std::u16string initiator_type) {
   // ResourceFetcher::RecordResourceTimingInfo(), when the page asks.
   Timed timed;
   timed.start_time = base::TimeTicks::Now();
@@ -71,12 +72,15 @@ uint64_t PageRequests::Start(PageRequest request,
                            request.mode == PageRequestMode::kCors;
   // A module's initiator type is "script" too, as ModuleScriptLoader sets it,
   // and so is that of a module of a worker's top-level graph.
-  timed.initiator_type = request.kind == PageRequestKind::kScript ||
-                                 request.kind == PageRequestKind::kModule ||
-                                 request.kind == PageRequestKind::kModuleJson ||
-                                 timed.outside_settings
-                             ? u"script"
-                             : u"fetch";
+  if (initiator_type.empty()) {
+    initiator_type = request.kind == PageRequestKind::kScript ||
+                             request.kind == PageRequestKind::kModule ||
+                             request.kind == PageRequestKind::kModuleJson ||
+                             timed.outside_settings
+                         ? u"script"
+                         : u"fetch";
+  }
+  timed.initiator_type = std::move(initiator_type);
   timed.url = base::UTF8ToUTF16(request.url);
   timed.render_blocking = render_blocking;
   ExecutionContext& context = ExecutionContext::Current();

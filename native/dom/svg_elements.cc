@@ -48,7 +48,6 @@
 #include "mitto/bindings/v8_svg_geometry_element.h"
 #include "mitto/bindings/v8_svg_gradient_element.h"
 #include "mitto/bindings/v8_svg_graphics_element.h"
-#include "mitto/bindings/v8_svg_image_element.h"
 #include "mitto/bindings/v8_svg_line_element.h"
 #include "mitto/bindings/v8_svg_linear_gradient_element.h"
 #include "mitto/bindings/v8_svg_marker_element.h"
@@ -1204,38 +1203,6 @@ SVGGElement::SVGGElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGGElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGGElement::kWrapperTypeInfo;
-}
-
-// static
-SVGImageElement* SVGImageElement::Create(Document& document) {
-  return bindings::MakeGarbageCollected<SVGImageElement>(document);
-}
-
-SVGImageElement::SVGImageElement(Document& document)
-    : SVGGraphicsElement(document, u"image") {}
-
-const bindings::WrapperTypeInfo* SVGImageElement::GetWrapperTypeInfo() const {
-  return &bindings::V8SVGImageElement::kWrapperTypeInfo;
-}
-
-SVGAnimatedLength* SVGImageElement::X() {
-  return AnimatedLength(u"x", SVGLengthMode::kWidth,
-                        SVGAnimatedLength::Initial::kUnitlessZero);
-}
-
-SVGAnimatedLength* SVGImageElement::Y() {
-  return AnimatedLength(u"y", SVGLengthMode::kHeight,
-                        SVGAnimatedLength::Initial::kUnitlessZero);
-}
-
-SVGAnimatedLength* SVGImageElement::Width() {
-  return AnimatedLength(u"width", SVGLengthMode::kWidth,
-                        SVGAnimatedLength::Initial::kUnitlessZero);
-}
-
-SVGAnimatedLength* SVGImageElement::Height() {
-  return AnimatedLength(u"height", SVGLengthMode::kHeight,
-                        SVGAnimatedLength::Initial::kUnitlessZero);
 }
 
 // static

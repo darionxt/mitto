@@ -619,21 +619,6 @@ class SVGGElement final : public SVGGraphicsElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 };
 
-class SVGImageElement final : public SVGGraphicsElement {
- public:
-  static SVGImageElement* Create(Document& document);
-
-  explicit SVGImageElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-
-  // The members of the interface.
-  SVGAnimatedLength* X();
-  SVGAnimatedLength* Y();
-  SVGAnimatedLength* Width();
-  SVGAnimatedLength* Height();
-};
-
 class SVGLineElement final : public SVGGeometryElement {
  public:
   static SVGLineElement* Create(Document& document);
