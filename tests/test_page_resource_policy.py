@@ -14,6 +14,7 @@ import pytest
 
 import mitto
 from mitto import _native
+from mitto._native import PrivateSettings
 from mitto._page import Page
 from tests.page_server import PNG, TIMEOUT_SECONDS, RecordingServer, Route, png
 
@@ -193,3 +194,19 @@ def test_a_worker_holds_its_requests_to_its_own_embedder_policy(
         )
 
     assert outcome == _FAILED
+
+
+def test_same_site_holds_between_hosts_of_no_registrable_domain(page_program: None, other: RecordingServer) -> None:
+    # Chrome 157 compares the registrable domains of the two origins, which a single-label host such as localhost has
+    # none of, so such hosts count as one site.
+    other.page("/page", _BLANK)
+    port = other.origin.rsplit(":", 1)[1]
+    url = f"http://localhost:{port}/page"
+
+    with (
+        mitto.Session(_settings=PrivateSettings(host_resolver_rules="MAP intranet 127.0.0.1")) as session,
+        _open_page(session, url) as page,
+    ):
+        outcomes = [_fetch(page, f"http://intranet:{port}/{policy}") for policy in ("same-site", "same-origin")]
+
+    assert outcomes == ["opaque", _FAILED]
