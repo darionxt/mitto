@@ -406,6 +406,26 @@ _CASES["module_takes_resources"] = Case(
     }
 )
 
+# A module whose fetch failed while the document loads, which an image holds back, imported again. The failed resource
+# left the document's resources, as Blink's memory cache drops it, so Chrome fetches it again.
+_CASES["failed_again"] = Case(
+    {
+        "/": _page(
+            "<img src=/failed/held.gif>"
+            "<script type=module src=/failed/main.js></script>"
+            "<script>addEventListener('load', () => { log('load ' + document.readyState); finish(logged); });</script>"
+        ),
+        "/failed/main.js": _js(
+            "const outcome = (p) => p.then(() => 'loaded', (e) => e.name);"
+            "log('first ' + await outcome(import('./missing.js')) + ' ' + document.readyState);"
+            "log('again ' + await outcome(import('./missing.js')) + ' ' + document.readyState);"
+            "mark('imported');"
+        ),
+        "/failed/missing.js": Route("not found", "text/plain", 404),
+        "/failed/held.gif": Route("GIF89a", "image/gif", hold="imported"),
+    }
+)
+
 # What Chrome 157 logged for each case.
 _CHROME: dict[str, list[str]] = {
     "data_urls": [
@@ -450,6 +470,7 @@ _CHROME: dict[str, list[str]] = {
         "inline error",
         "load complete null",
     ],
+    "failed_again": ["first TypeError interactive", "again TypeError interactive", "load complete"],
     "fragments": [
         "/fragments/root.js",
         "/fragments/root.js",
@@ -640,6 +661,16 @@ def test_modules_whose_urls_differ_in_fragments_take_one_fetch_while_the_documen
         requested = [path for path in server.requests if path.startswith("/fragments/")]
         assert requested.count("/fragments/root.js") == 1
         assert requested.count("/fragments/late.js") == 2
+
+
+def test_a_module_whose_fetch_failed_is_fetched_again_while_the_document_loads(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, logged = _run(session, server, "failed_again")
+    with page:
+        assert logged == _CHROME["failed_again"]
+        # As Chrome 157 sent it: once for each import, though the document still loads.
+        assert server.requests.count("/failed/missing.js") == 2
 
 
 def test_a_module_takes_a_preload_and_a_classic_script_of_its_modes_while_the_document_loads(

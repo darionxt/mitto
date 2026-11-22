@@ -336,8 +336,16 @@ bool ResourceFetcher::CanUse(const Resource& existing,
       existing.Credentials() != params.credentials) {
     return false;
   }
+  // A load that failed, by a network error or by an error status of a type
+  // that does not ignore it, left Blink's memory cache, as
+  // Resource::FinishAsError() removes it, so only a request that matches it
+  // as a preload takes it.
+  if (existing.LoadFailed() && !existing.IsUnusedPreload()) {
+    return false;
+  }
   if (params.type != ResourceType::kRaw) {
-    // During the initial load, one request for a URL, even one that failed.
+    // During the initial load, one request for a URL, even for an image that
+    // did not decode, as one of an error status does not.
     const Document* const document = document_.Get();
     if (document && !document->LoadEventFinished()) {
       return true;
