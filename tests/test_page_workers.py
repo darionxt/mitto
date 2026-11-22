@@ -295,6 +295,15 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
     "/graph-b.js": ("text/javascript", b"(self.loaded ||= []).push('b');"),
     "/graph-c.js": ("text/javascript", b"(self.loaded ||= []).push('c');"),
     "/graph-d.js": ("text/javascript", b"(self.loaded ||= []).push('d');"),
+    # A module worker that imports a module statically and one with import(), and posts its own timeline's entries.
+    "/timing-root.js": (
+        "text/javascript",
+        b"import './timing-static.js';"
+        b"import('./timing-dynamic.js').then(() => setTimeout(() => postMessage(performance.getEntriesByType('resource')"
+        b".map((e) => [e.name.replace(location.origin, ''), e.initiatorType])), 50));",
+    ),
+    "/timing-static.js": ("text/javascript", b""),
+    "/timing-dynamic.js": ("text/javascript", b""),
 }
 
 # The path and body of each POST that reached the server, in order.
@@ -657,6 +666,23 @@ def test_a_module_worker_of_a_data_url_imports_through_its_creator(server: str) 
     lines = seen["/graph-d.js"]
     assert (lines["origin"], lines["sec-fetch-site"], lines["sec-fetch-dest"]) == ("null", "cross-site", "script")
     assert "cookie" not in lines
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_module_workers_static_imports_are_in_its_creators_timeline(server: str) -> None:
+    # As Chrome 157 times them: what its top-level graph imports through its creator's settings in the creator's
+    # timeline, and an import() in its own, each of the initiator type script.
+    script = """new Promise((resolve) => {
+        const ours = (entries) => entries.filter(([name]) => name === '/timing-static.js' || name === '/timing-dynamic.js');
+        const worker = new Worker('/timing-root.js', {type: 'module'});
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => setTimeout(() => resolve([
+            ours(performance.getEntriesByType('resource').map((e) => [e.name.replace(location.origin, ''), e.initiatorType])),
+            ours(e.data),
+        ]), 100);
+    })"""
+
+    assert _evaluate(server, script) == [[["/timing-static.js", "script"]], [["/timing-dynamic.js", "script"]]]
 
 
 @pytest.mark.usefixtures("page_program")
