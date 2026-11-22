@@ -394,7 +394,7 @@ def server() -> Iterator[str]:
 
 def _evaluate(origin: str, script: str) -> Any:
     with mitto.Session() as session, session._open_page(f"{origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-        return page.evaluate(script)
+        return page.evaluate(script, timeout=_TIMEOUT_SECONDS)
 
 
 @pytest.mark.usefixtures("page_program")
