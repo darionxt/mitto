@@ -56,6 +56,10 @@ struct FrameLoadRequest {
   // navigate() with history "push", which keeps a new entry where a
   // navigation would otherwise replace the current one.
   bool force_history_push = false;
+  // The window whose document starts it, as a frame's element's starts the
+  // frame's, or null for the navigated window's own.
+  // On the stack only, as the garbage collector scans it.
+  RAW_PTR_EXCLUSION Window* origin_window = nullptr;
 };
 
 // LocalFrame::Navigate(): drops a navigation past the rate limit, makes a

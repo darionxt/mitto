@@ -10,6 +10,7 @@
 
 #include "mitto/dom/fetcher.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace mitto {
 
@@ -27,6 +28,15 @@ struct NavigationRequest {
   bool replace = false;
   // The referrer policy of the document that starts it.
   FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+  // The document that starts it, its initiator, by its ID in the Page, and
+  // its origin and URL, which an about:blank that it commits takes, as its
+  // origin and its referrer.
+  uint64_t initiator = 0;
+  url::Origin initiator_origin;
+  GURL initiator_url;
+  // The initiator's base URL, which an about:blank that it commits takes as
+  // its fallback base URL.
+  GURL initiator_base_url;
 };
 
 class NavigationClient {

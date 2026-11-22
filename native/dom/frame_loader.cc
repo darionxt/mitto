@@ -317,7 +317,13 @@ void StartNavigation(Window& window,
   navigation.url = url;
   navigation.reload = type == FrameLoadType::kReload;
   navigation.replace = type == FrameLoadType::kReplaceCurrentItem;
-  navigation.referrer_policy = document.GetReferrerPolicy();
+  const Window& origin_window =
+      request.origin_window ? *request.origin_window : window;
+  navigation.referrer_policy = origin_window.GetDocument().GetReferrerPolicy();
+  navigation.initiator = origin_window.DocumentId();
+  navigation.initiator_origin = origin_window.GetSecurityOrigin();
+  navigation.initiator_url = GURL(origin_window.GetDocument().UrlForBinding());
+  navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
   client->BeginNavigation(navigation);
 }
 

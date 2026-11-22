@@ -32,6 +32,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/frame.h"
@@ -160,18 +161,25 @@ class PageFrame final : public NavigationClient, public Frame {
   // Makes a window's context, with what Chrome's renderer adds to it, whose
   // time origin is `time_origin` and whose document's origin is `origin`,
   // which decides whether it is a secure context and its security token, in
-  // a cross-origin isolated agent if `cross_origin_isolated`.
-  v8::Local<v8::Context> NewContext(base::TimeTicks time_origin,
-                                    const url::Origin& origin,
-                                    bool cross_origin_isolated = false);
+  // a cross-origin isolated agent if `cross_origin_isolated`. A frame that had
+  // a context passes its WindowProxy, the old context's global proxy, which
+  // the old context has let go, so that the new context takes it, as
+  // LocalWindowProxy reinitializes on the same global proxy.
+  v8::Local<v8::Context> NewContext(
+      base::TimeTicks time_origin,
+      const url::Origin& origin,
+      bool cross_origin_isolated = false,
+      v8::Local<v8::Object> global_proxy = v8::Local<v8::Object>());
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells
-  // the Session of as made of `source`, the response of `navigation` for one
-  // of a navigation.
+  // the Session of as made of what `committed` says.
   void AttachWindow(const PageConnection& connection,
-                    PageDocumentSource source,
-                    uint64_t navigation);
+                    const PageDocumentCommitted& committed);
+  // Tells the Session of the frame's new document, as `committed` says what it
+  // is made of, and returns its ID, before anything that it sends. What the
+  // document before asked of the Session's storage goes with it.
+  uint64_t SendDocumentCommitted(PageDocumentCommitted committed);
   // What goes with the current window's context: its timers, idle callbacks,
   // animation frames, fetches, tasks and workers, and the inspector's and
   // window.chrome's hold on it.
@@ -189,6 +197,34 @@ class PageFrame final : public NavigationClient, public Frame {
   // event and its element's fire then. Chrome keeps the document's token, so
   // the Session knows it by the initial document's ID.
   void CommitAboutBlankSynchronously(const GURL& url);
+  // A navigation of the frame that commits without the network: to a srcdoc
+  // or an about:blank.
+  struct LocalNavigation {
+    LocalNavigation();
+    LocalNavigation(LocalNavigation&&);
+    LocalNavigation& operator=(LocalNavigation&&);
+    ~LocalNavigation();
+
+    // Its number among the frame's, which the newest takes.
+    uint64_t number = 0;
+    GURL url;
+    // Its source, kSrcdoc or kAboutBlank, and an about:blank's initiator.
+    PageDocumentCommitted committed;
+    // Its document's origin and referrer: the parent document's for a
+    // srcdoc, and the initiator's for an about:blank.
+    url::Origin origin;
+    std::u16string referrer;
+    // Its document's fallback base URL: the parent document's base URL for a
+    // srcdoc, and the initiator's for an about:blank.
+    GURL fallback_base_url;
+    // A srcdoc's markup.
+    std::u16string body;
+  };
+  // Commits `navigation`, unless another has taken its place: in the same
+  // window for a document of the initial about:blank's origin, as Blink's
+  // DocumentLoader::CommitNavigation() reuses it, and otherwise in a new
+  // context that the frame's WindowProxy takes.
+  void CommitWithoutNetwork(LocalNavigation navigation);
 
   const raw_ref<ScriptRunner> runner_;
   const uint64_t id_;
@@ -208,6 +244,13 @@ class PageFrame final : public NavigationClient, public Frame {
   bool detaching_ = false;
   // What the parser of a synchronously committed about:blank reads: nothing.
   std::unique_ptr<DocumentParser::Client> empty_body_;
+  // What the parser of a document that the frame committed without the
+  // network reads.
+  std::unique_ptr<DocumentParser::Client> local_body_;
+  // The number of the last navigation of the frame that commits without the
+  // network, and that of the one that waits to commit, or 0.
+  uint64_t last_local_navigation_ = 0;
+  uint64_t pending_local_navigation_ = 0;
   // What the current window runs in its context, which goes with it.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;
@@ -228,6 +271,7 @@ class PageFrame final : public NavigationClient, public Frame {
   NavigationRequest provisional_request_;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
+  base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };
 
 }  // namespace mitto

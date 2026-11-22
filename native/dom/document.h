@@ -478,7 +478,17 @@ class Document : public Node {
   // for one that does.
   std::string UnresolvedUrlSpec(std::u16string_view url) const;
   // The document's URL, as no frame gives a document of a Page another.
-  GURL FallbackBaseUrl() const { return GURL(url_); }
+  // Blink's Document::FallbackBaseURL(): the URL, or for a srcdoc or an
+  // about:blank of a frame the base URL that its parent or its initiator had
+  // when it committed.
+  GURL FallbackBaseUrl() const {
+    return fallback_base_url_.is_valid() ? fallback_base_url_ : GURL(url_);
+  }
+  void SetFallbackBaseUrl(const GURL& url) {
+    fallback_base_url_ = url;
+    ProcessBaseElement();
+    UpdateBaseUrl();
+  }
   // Blink's ValidBaseElementURL(): the URL that the first base element with
   // an href gives, if it is valid.
   GURL ValidBaseElementUrl() const {
@@ -778,6 +788,7 @@ class Document : public Node {
   const bool is_html_;
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
+  GURL fallback_base_url_;
   std::u16string content_type_;
   std::optional<std::u16string> xml_encoding_;
   std::optional<std::u16string> xml_version_;
