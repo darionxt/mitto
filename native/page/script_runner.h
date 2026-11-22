@@ -113,6 +113,7 @@ class ScriptRunner final : public base::TaskObserver {
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(PageResponseEnded ended);
   void OnRequestBodyCredit(PageCredit credit);
+  void OnIsolation(PageIsolation isolation);
 
   // What a document's loading uses, on the main thread.
   //
@@ -127,7 +128,8 @@ class ScriptRunner final : public base::TaskObserver {
   // promise of the old context fail, as DevTools' do when a page navigates,
   // and the old window's timers and fetches stop. The new window's
   // performance.timeOrigin is `navigation_start`, and its
-  // navigator.connection gives `connection`. With `xml_content_type`, the
+  // navigator.connection gives `connection`, and its agent is cross-origin
+  // isolated if `cross_origin_isolated`. With `xml_content_type`, the
   // document is an XMLDocument of that MIME type, as Blink's DocumentInit
   // makes one for an XML response, and otherwise an HTMLDocument.
   Document& CommitDocument(
@@ -135,6 +137,7 @@ class ScriptRunner final : public base::TaskObserver {
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
+      bool cross_origin_isolated,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
   // How the current window's document loads, which its document's loading
   // fills in, and performance.timing and window.chrome read.
@@ -164,7 +167,8 @@ class ScriptRunner final : public base::TaskObserver {
   void ReportRejections(std::vector<PageReporter::Rejection> rejections);
   // Makes a window's context, whose time origin is `time_origin`, and what
   // Chrome's renderer adds to it.
-  v8::Local<v8::Context> NewContext(base::TimeTicks time_origin);
+  v8::Local<v8::Context> NewContext(base::TimeTicks time_origin,
+                                    bool cross_origin_isolated);
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells

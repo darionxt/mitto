@@ -51,6 +51,9 @@ class PageRequests {
     // For a request whose body streams: the Session has given credit for
     // more of it.
     virtual void OnRequestBodyCredit() {}
+    // For a navigation: whether the document of its response is cross-origin
+    // isolated, which the Session says just before the response starts.
+    virtual void OnIsolation(PageCrossOriginIsolation isolation) {}
 
    protected:
     virtual ~Client() = default;
@@ -142,6 +145,7 @@ class PageRequests {
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(const PageResponseEnded& ended);
   void OnRequestBodyCredit(const PageCredit& credit);
+  void OnIsolation(const PageIsolation& isolation);
 
  private:
   // What the entry of a request of the Page's is made of: ResourceFetcher's
@@ -191,6 +195,10 @@ class PageRequests {
     uint64_t body_sent = 0;
     // For a request of the Page's, not the navigation.
     std::optional<Timed> timed;
+    // A navigation, the Session's or a document's, and whether the Session
+    // has said whether its document is cross-origin isolated.
+    bool navigation = false;
+    bool isolation_said = false;
   };
 
   // Returns the request that the Session names, or null after refusing what

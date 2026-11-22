@@ -237,11 +237,12 @@ void DedicatedWorkerThread::Scope::Start() {
       send));
 
   const v8::HandleScope handle_scope(isolate_);
-  const v8::Local<v8::Context> context = NewWorkerContext(
-      isolate_, params_.name, [this](v8::Local<v8::Context> context) {
-        InitializePageContext(context);
-        reporter_->ContextCreated(context);
-      });
+  const v8::Local<v8::Context> context =
+      NewWorkerContext(isolate_, params_.name, params_.cross_origin_isolated,
+                       [this](v8::Local<v8::Context> context) {
+                         InitializePageContext(context);
+                         reporter_->ContextCreated(context);
+                       });
   context_.Reset(isolate_, context);
   const v8::Context::Scope context_scope(context);
   scope_ = bindings::V8DedicatedWorkerGlobalScope::ToWrappable(

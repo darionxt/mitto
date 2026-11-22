@@ -184,7 +184,8 @@ std::optional<std::string> ScriptRunner::Start(
   bindings::PerIsolateData::From(isolate_)->set_secure_context(
       IsOriginPotentiallyTrustworthy(url::Origin()));
   const v8::Local<v8::Context> context =
-      NewContext(bindings::PerIsolateData::From(isolate_)->time_origin());
+      NewContext(bindings::PerIsolateData::From(isolate_)->time_origin(),
+                 /*cross_origin_isolated=*/false);
   context_.Reset(isolate_, context);
   AttachWindow(context, start_.connection, PageDocumentSource::kInitialEmpty,
                kNavigationRequest);
@@ -194,12 +195,13 @@ std::optional<std::string> ScriptRunner::Start(
   return std::nullopt;
 }
 
-v8::Local<v8::Context> ScriptRunner::NewContext(base::TimeTicks time_origin) {
+v8::Local<v8::Context> ScriptRunner::NewContext(base::TimeTicks time_origin,
+                                                bool cross_origin_isolated) {
   chrome_object_data_.push_back(
       std::make_unique<ChromeObjectData>(time_origin));
   ChromeObjectData& chrome_object_data = *chrome_object_data_.back();
   return NewPageContext(
-      isolate_, u"",
+      isolate_, u"", cross_origin_isolated,
       [this, &chrome_object_data](v8::Local<v8::Context> context) {
         // As LocalWindowProxy::Initialize(): V8Initializer's settings of the
         // context, then the inspector, then the embedder.
@@ -406,6 +408,11 @@ void ScriptRunner::OnRequestBodyCredit(PageCredit credit) {
                          base::Unretained(requests_.get()), credit));
 }
 
+void ScriptRunner::OnIsolation(PageIsolation isolation) {
+  RunTask(base::BindOnce(&PageRequests::OnIsolation,
+                         base::Unretained(requests_.get()), isolation));
+}
+
 void ScriptRunner::RunTask(base::OnceClosure task) {
   // Start() failed, and the Page is about to end.
   if (context_.IsEmpty()) {
@@ -428,6 +435,7 @@ Document& ScriptRunner::CommitDocument(
     const GURL& url,
     base::TimeTicks navigation_start,
     const PageConnection& connection,
+    bool cross_origin_isolated,
     const std::optional<std::u16string>& xml_content_type) {
   const v8::HandleScope handle_scope(isolate_);
   for (const uint64_t call : waiting_calls_) {
@@ -465,7 +473,8 @@ Document& ScriptRunner::CommitDocument(
   // Chrome's site isolation locks a renderer to the site of a document at an
   // HTTP or HTTPS URL.
   MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
-  const v8::Local<v8::Context> context = NewContext(time_origin);
+  const v8::Local<v8::Context> context =
+      NewContext(time_origin, cross_origin_isolated);
   context_.Reset(isolate_, context);
   AttachWindow(context, connection, PageDocumentSource::kNavigationResponse,
                navigation);

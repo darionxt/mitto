@@ -416,13 +416,14 @@ bool RunScript(v8::Isolate* isolate,
   CommandLineInspector inspector(isolate);
   const v8::Local<v8::Context> context =
       worker ? mitto::NewWorkerContext(
-                   isolate, std::u16string(),
+                   isolate, std::u16string(), /*cross_origin_isolated=*/false,
                    [&inspector](v8::Local<v8::Context> context) {
                      mitto::InitializePageContext(context);
                      inspector.ContextCreated(context);
                    })
              : mitto::NewPageContext(
                    isolate, base::UTF8ToUTF16(html),
+                   /*cross_origin_isolated=*/false,
                    [&inspector, &chrome_data](v8::Local<v8::Context> context) {
                      mitto::InitializePageContext(context);
                      inspector.ContextCreated(context);

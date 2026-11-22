@@ -24,6 +24,7 @@ namespace mitto {
 
 v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
                                       std::u16string_view markup,
+                                      bool cross_origin_isolated,
                                       DidCreateScriptContext did_create) {
   bindings::PerIsolateData* const data =
       bindings::PerIsolateData::From(isolate);
@@ -41,10 +42,15 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
   const v8::Context::Scope context_scope(context);
   Window* const window = Window::Create();
   window->AssociateWithContext(isolate, context);
+  window->SetCrossOriginIsolatedCapability(cross_origin_isolated);
   // LocalWindowProxy::Initialize(): the inspector and the embedder hear of the
   // context before its conditional features go in.
   did_create(context);
   bindings::InstallInterfaceObjects(context);
+  // LocalWindowProxy::InstallConditionalFeatures(): then V8 extends the
+  // context with what its embedder allows it, SharedArrayBuffer for a
+  // cross-origin isolated window.
+  isolate->InstallConditionalFeatures(context);
   // The document of about:blank is what the parser makes of no markup, as
   // the window's document, whose parser has the scripting flag.
   Document* const document = Document::CreateHTML();
@@ -56,6 +62,7 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
 // Upstream: third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.cc
 v8::Local<v8::Context> NewWorkerContext(v8::Isolate* isolate,
                                         std::u16string name,
+                                        bool cross_origin_isolated,
                                         DidCreateScriptContext did_create) {
   bindings::PerIsolateData* const data =
       bindings::PerIsolateData::From(isolate);
@@ -76,11 +83,13 @@ v8::Local<v8::Context> NewWorkerContext(v8::Isolate* isolate,
   DedicatedWorkerGlobalScope* const scope =
       DedicatedWorkerGlobalScope::Create(std::move(name));
   scope->AssociateWithContext(isolate, context);
+  scope->SetCrossOriginIsolatedCapability(cross_origin_isolated);
   // Initialize() names the context to the debugger before
   // PrepareForEvaluation() makes the interface object of the global, which
-  // installs what the context decides.
+  // installs what the context decides, and then has V8 extend the context.
   did_create(context);
   bindings::InstallWorkerInterfaceObjects(context);
+  isolate->InstallConditionalFeatures(context);
   return context;
 }
 

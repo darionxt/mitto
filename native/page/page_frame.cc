@@ -105,6 +105,7 @@ Document& PageFrame::CommitNavigation(
     const GURL& url,
     base::TimeTicks navigation_start,
     const PageConnection& connection,
+    bool cross_origin_isolated,
     const std::optional<std::u16string>& xml_content_type) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
   Document& old_document = Window::Current().GetDocument();
@@ -137,7 +138,8 @@ Document& PageFrame::CommitNavigation(
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
   Document& document = runner_->CommitDocument(
-      current_->number(), url, navigation_start, connection, xml_content_type);
+      current_->number(), url, navigation_start, connection,
+      cross_origin_isolated, xml_content_type);
   // The old document's unload times go to a new one of its origin, as
   // Blink's UnloadEventTimingInfo carries them.
   DocumentLoadTiming& timing = runner_->document_load_timing();

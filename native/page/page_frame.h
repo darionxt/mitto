@@ -61,12 +61,14 @@ class PageFrame final : public NavigationClient {
   // The response of `loader`'s navigation has come: the frame's document
   // stops loading and unloads, and a new context's document at `url` takes
   // its place, which this returns: an XMLDocument of `xml_content_type`
-  // where one is given. `loader` becomes the document's.
+  // where one is given, in a cross-origin isolated agent if
+  // `cross_origin_isolated`. `loader` becomes the document's.
   Document& CommitNavigation(
       DocumentLoader& loader,
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
+      bool cross_origin_isolated,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
   // `loader`'s navigation ended with no response, and the frame keeps its
   // document. `loader` goes.
