@@ -251,11 +251,16 @@ WindowTasks* Document::GetTasks() const {
   if (window_) {
     return window_->GetTasks();
   }
+  // A document of no window takes the tasks of the window whose script runs,
+  // as Blink's Document::GetTaskRunner() takes its execution context's, and
+  // none in a context that is no window's, as the XML fuzz target's is.
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   if (!isolate || !isolate->InContext()) {
     return nullptr;
   }
-  return Window::Current().GetTasks();
+  Window* const window = bindings::V8Window::ToWrappable(
+      isolate, isolate->GetCurrentContext()->Global());
+  return window ? window->GetTasks() : nullptr;
 }
 
 url::Origin Document::GetOrigin() const {
