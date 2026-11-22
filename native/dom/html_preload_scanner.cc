@@ -109,7 +109,8 @@ std::optional<PreloadRequest> CreatePreloadRequestIfNeeded(
     const GURL& base_url,
     ResourceType type,
     FetchReferrerPolicy referrer_policy,
-    PreloadRequest::RequestType request_type) {
+    PreloadRequest::RequestType request_type,
+    std::u16string_view initiator_name) {
   if (resource_url.empty() || resource_url.front() == '#' ||
       (base::StartsWith(resource_url, u"data:",
                         base::CompareCase::INSENSITIVE_ASCII) &&
@@ -122,6 +123,7 @@ std::optional<PreloadRequest> CreatePreloadRequestIfNeeded(
   request.resource_type = type;
   request.referrer_policy = referrer_policy;
   request.request_type = request_type;
+  request.initiator_name = std::u16string(initiator_name);
   return request;
 }
 
@@ -234,6 +236,7 @@ void PreloadRequest::Start(Document& document) const {
     MaybeDisallowFetchForDocWrittenScript(url, lazy, document);
   }
   params.render_blocking = render_blocking;
+  params.initiator_name = initiator_name;
   document.Fetcher().RequestResource(params);
 }
 
@@ -419,7 +422,7 @@ void CssPreloadScanner::EmitRule() {
       if (std::optional<PreloadRequest> request = CreatePreloadRequestIfNeeded(
               ParseCssStringOrUrl(rule_value_), *predicted_base_element_url_,
               ResourceType::kCSSStyleSheet, referrer_policy_,
-              PreloadRequest::RequestType::kPreload)) {
+              PreloadRequest::RequestType::kPreload, u"css")) {
         // Blocking unless the style element's media does not match, or it is
         // in the body.
         request->render_blocking = media_matches_ && !in_body_;
@@ -545,7 +548,9 @@ class TokenPreloadScanner::StartTagScanner {
             ? referrer_policy_
             : document_referrer_policy;
     std::optional<PreloadRequest> request = CreatePreloadRequestIfNeeded(
-        url_to_load_, predicted_base_url, *type, referrer_policy, request_type);
+        url_to_load_, predicted_base_url, *type, referrer_policy, request_type,
+        is_svg_image_ ? std::u16string_view(u"image")
+                      : std::u16string_view(tag_));
     if (!request) {
       return std::nullopt;
     }

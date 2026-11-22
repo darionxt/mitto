@@ -171,10 +171,11 @@ struct FetchRequestData {
   // Whether it blocks rendering, which its entry of the Performance Timeline
   // says.
   bool render_blocking = false;
-  // Whether the window's Performance Timeline gets an entry of it, as of a
-  // request of Blink's ResourceFetcher. The icon that the browser has the
-  // renderer's image downloader fetch, through a loader of its own, gets none.
-  bool resource_timing = true;
+  // The initiator type of its entry in the window's Performance Timeline,
+  // which each request gets, as Blink's FetchInitiatorInfo names
+  // what asks: an element's local name, "link", "css" or "other". Empty for
+  // the kind's own, "script" for a script and "fetch" for anything else.
+  std::u16string initiator_type;
 };
 
 // A response, after any redirects.

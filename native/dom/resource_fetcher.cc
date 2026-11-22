@@ -452,6 +452,7 @@ void ResourceFetcher::StartLoad(Resource& resource,
   }
   request.referrer = params.referrer;
   request.render_blocking = params.render_blocking;
+  request.initiator_type = params.initiator_name;
   // A fetch of a type that blocks the load event holds it back, unless it is
   // a link preload or nothing lets it go.
   if (IsLoadEventBlockingResourceType(params.type) && params.load_blocking &&
