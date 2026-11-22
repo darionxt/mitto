@@ -171,10 +171,17 @@ namespace {
 // send a JavaScript module's lines, Known Gaps; a classic script; an image;
 // a style sheet; a font; a favicon; a prefetch; or a fetch.
 PageRequestKind KindOf(const FetchRequestData& data) {
+  // What a module worker's top-level graph imports is of destination worker,
+  // which the Session sends from the worker's creator.
   if (data.is_module) {
-    return data.destination == FetchDestination::kJson
-               ? PageRequestKind::kModuleJson
-               : PageRequestKind::kModule;
+    switch (data.destination) {
+      case FetchDestination::kJson:
+        return PageRequestKind::kModuleJson;
+      case FetchDestination::kWorker:
+        return PageRequestKind::kWorker;
+      default:
+        return PageRequestKind::kModule;
+    }
   }
   switch (data.destination) {
     case FetchDestination::kEmpty:

@@ -83,8 +83,9 @@ class PageRequests {
                  Client& client,
                  bool render_blocking = false);
   // The same for `request`, whose number this sets, with the entry's
-  // initiator type, or the kind's own if it is empty: "script" for a script
-  // or a module, and "fetch" for anything else.
+  // initiator type, or the kind's own if it is empty: "script" for a script,
+  // a module or a module of a worker's top-level graph, and "fetch" for
+  // anything else.
   uint64_t Start(PageRequest request,
                  Client& client,
                  bool render_blocking = false,
@@ -153,6 +154,10 @@ class PageRequests {
     std::u16string initiator_type;
     std::u16string url;
     bool render_blocking = false;
+    // Whether it is a module of a module worker's top-level graph, a request
+    // of Kind worker in mode cors, whose entry goes to the creator's
+    // timeline.
+    bool outside_settings = false;
     std::optional<PageResponseStarted> response;
     uint64_t decoded_body_size = 0;
     // The window or worker that asked, whose timeline gets the entry while it

@@ -14,6 +14,7 @@
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/message_port.h"
+#include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "mitto/dom/worker.h"
@@ -70,6 +71,13 @@ class ObjectProxy final : public DedicatedWorkerObjectProxy {
         FROM_HERE,
         base::BindOnce(&DedicatedWorkerMessagingProxy::DispatchErrorEvent,
                        proxy_, std::move(error)));
+  }
+  void AddOutsideResourceTiming(ResourceTimingInfo info,
+                                std::u16string initiator_type) override {
+    internal_loading_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&DedicatedWorkerMessagingProxy::AddResourceTiming,
+                       proxy_, std::move(info), std::move(initiator_type)));
   }
 
   // DedicatedWorkerObjectProxy:
@@ -371,6 +379,15 @@ void DedicatedWorkerMessagingProxy::DispatchErrorEvent(ErrorMessageInfo error) {
         }
       },
       base::Unretained(this), std::move(error)));
+}
+
+void DedicatedWorkerMessagingProxy::AddResourceTiming(
+    ResourceTimingInfo info,
+    std::u16string initiator_type) {
+  ExecutionContext* const context = context_.Get();
+  RunInContext(context, [&] {
+    context->Performance()->AddResourceTiming(std::move(info), initiator_type);
+  });
 }
 
 void DedicatedWorkerMessagingProxy::DidEvaluateScript() {

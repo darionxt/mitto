@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 27
+_PROTOCOL_VERSION = 28
 
 
 def _script_request(number: int, url: str) -> str:
@@ -392,10 +392,16 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             id="priority-out-of-range",
         ),
         pytest.param(
-            "worker-in-cors-mode",
+            "worker-in-no-cors-mode",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/w.js', kind=9, fixed=(3, 0, 0, 0, 0))})",
+            "the library refused a message from the Page: a worker's script in a mode other than same-origin or cors",
+            id="worker-in-no-cors-mode",
+        ),
+        pytest.param(
+            "worker-module-of-a-document",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/w.js', kind=9, fixed=(4, 0, 0, 0, 0))})",
-            "the library refused a message from the Page: a worker's script in a mode other than same-origin",
-            id="worker-in-cors-mode",
+            "the library refused a message from the Page: a module of a worker's graph that no worker asks for",
+            id="worker-module-of-a-document",
         ),
         pytest.param(
             "no-cors-put",
