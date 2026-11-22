@@ -1006,6 +1006,22 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
             ]
+        elif kinds == {TypeKind.INTERFACE}:
+            # Two interfaces that have classes, as URL's createObjectURL() takes a Blob or a MediaSource: an object of
+            # the first chooses the first, one of the second the second, and anything else, null among it, fails
+            # overload resolution, as bind_gen's dispatcher tests them.
+            first_type, second_type = (self.types.reduce(overload.arguments[index].idl_type) for overload in overloads)
+            if any(t.nullable or not self.types.has_class(t.name) for t in (first_type, second_type)):
+                return None
+            self.types.used_interfaces |= {first_type.name, second_type.name}
+            test = f"V8{first_type.name}::ToWrappable(isolate, info[{index}])"
+            after = [
+                f"if (!V8{second_type.name}::ToWrappable(isolate, info[{index}])) {{",
+                '  exception_state.ThrowTypeError("Overload resolution failed.");',
+                "  return;",
+                "}",
+            ]
+            return before, test, after, first, second
         else:
             return None
         if self.types.reduce(first.arguments[index].idl_type).kind is chosen_kind:

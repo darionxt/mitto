@@ -721,9 +721,11 @@ def test_an_enforce_range_integer_and_an_item_of_a_sequence_convert_as_blinks_do
     # An item has NativeValue()'s message, as AbortSignal.any([{}]) throws in Chrome.
     items = "\n".join(types.from_v8(signals, "info[0]", "list", Site(fail="return;", argument_index=0), "a"))
     assert 'ExceptionMessages::FailedToConvertJSValue("AbortSignal")' in items
-    # [Clamp] converts the integers of 32 bits or fewer only, so a 64-bit one with it is refused.
-    with pytest.raises(UnhandledError, match=r"does not handle an argument of type unsigned long long"):
-        types.argument_type(dataclasses.replace(milliseconds, extended_attributes=_extended("Clamp")), "a")
+    # [Clamp] on a 64-bit integer, as Blob.slice()'s arguments have it, rounds and clamps as Blink's ToInt64Slow() does.
+    start = IdlType(TypeKind.INTEGER, "long long", extended_attributes=_extended("Clamp"))
+    assert types.argument_type(start, "a") == "int64_t"
+    clamped = "\n".join(types.from_v8(start, "info[0]", "start", Site(fail="return;", argument_index=0), "a"))
+    assert "if (!FromV8ClampedInteger(isolate, info[0], &start)) {" in clamped
 
 
 def test_the_cpp_types_of_what_text_encoder_and_text_decoder_take_and_give() -> None:
@@ -1243,6 +1245,54 @@ def test_overloads_of_a_sequence_and_a_dictionary_choose_neither_for_a_primitive
     assert "if (info[1]->IsArray() || IsIterableObject(isolate, info[1], &iterator_threw)) {" in body
     assert "if (!info[1]->IsNullOrUndefined() && !info[1]->IsObject()) {" in body
     assert body.index("IsIterableObject") < body.index("Overload resolution failed.") < body.index("Options arg2")
+
+
+def test_overloads_of_two_interfaces_choose_by_the_object_and_fail_for_anything_else() -> None:
+    # URL's createObjectURL(Blob blob) and createObjectURL(MediaSource source), both of which have classes.
+    string = IdlType(TypeKind.STRING, "DOMString")
+    overloads = tuple(
+        Operation(
+            "make",
+            (Argument("source", IdlType(TypeKind.INTERFACE, name), False, False, None),),
+            string,
+            False,
+            ExtendedAttributes(),
+            ALWAYS,
+        )
+        for name in ("Blob", "Source")
+    )
+    thing = _interface(operation_groups=(OperationGroup("make", overloads, False, 1, ExtendedAttributes(), ALWAYS),))
+    blob = _interface(name="Blob", tag=3, max_subclass_tag=3)
+    source = _interface(name="Source", tag=4, max_subclass_tag=4)
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Blob", "Source", "Thing", "Window"),
+        exposed=tuple(
+            ExposedConstruct(name, "interface", name, ALWAYS) for name in ("Blob", "Source", "Thing", "Window")
+        ),
+    )
+    definitions = Definitions(
+        {"Thing": thing, "Blob": blob, "Source": source, "Window": window}, {}, {}, {}, frozenset()
+    )
+    files = write_bindings(
+        definitions,
+        [],
+        [
+            ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("make",)),
+            ImplementedInterface("Blob", "mitto/dom/blob.h"),
+            ImplementedInterface("Source", "mitto/dom/source.h"),
+            ImplementedInterface("Window", "mitto/dom/window.h"),
+        ],
+    )
+
+    body = files["v8_thing.cc"][files["v8_thing.cc"].index("void MakeOperationCallback") :]
+    # bind_gen's dispatcher: a Blob takes the first, a Source the second, and anything else, null among it, fails.
+    assert "if (V8Blob::ToWrappable(isolate, info[0])) {" in body
+    assert "if (!V8Source::ToWrappable(isolate, info[0])) {" in body
+    assert body.index("V8Blob::ToWrappable") < body.index("Overload resolution failed.") < body.index("mitto::Source*")
 
 
 def test_overloads_with_optional_arguments_choose_by_count_then_by_type() -> None:
