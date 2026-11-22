@@ -41,6 +41,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -200,17 +201,27 @@ std::optional<std::string> ToUtf8(v8::Isolate* isolate,
 }
 
 // Writes what a timer, a microtask or a listener threw, which nothing caught,
-// as a console shows it, once the window's error listeners have had it.
+// as a console shows it, once the window's error listeners have had it, whose
+// error event says `text`.
 void PrintUncaught(v8::Local<v8::Message> message,
-                   v8::Local<v8::Value> exception) {
+                   v8::Local<v8::Value> exception,
+                   std::u16string text) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   mitto::ReportUncaughtError(
-      isolate, message, exception, [isolate](v8::Local<v8::Value> uncaught) {
-        const v8::TryCatch try_catch(isolate);
-        const std::optional<std::string> text =
-            ToUtf8(isolate, isolate->GetCurrentContext(), uncaught);
-        WriteLine(stderr, "Uncaught " + text.value_or("exception"));
+      isolate, message, exception, std::move(text),
+      [isolate](v8::Local<v8::Value> uncaught,
+                const std::u16string& uncaught_text) {
+        WriteLine(stderr, base::UTF16ToUTF8(mitto::MessageForConsole(
+                              isolate, uncaught, uncaught_text)));
       });
+}
+
+// V8's message listener, which has had the message say what it reports.
+void OnMessage(v8::Local<v8::Message> message, v8::Local<v8::Value> exception) {
+  std::u16string text;
+  std::ignore = mitto::bindings::FromV8String(v8::Isolate::GetCurrent(),
+                                              message->Get(), &text);
+  PrintUncaught(message, exception, std::move(text));
 }
 
 // The command line's client of V8's inspector, which a Page's console has as
@@ -428,13 +439,14 @@ bool RunScript(v8::Isolate* isolate,
     mitto::Window::Current().SetDocumentLoadTiming(
         chrome_data.load_timing.Get());
   }
-  isolate->AddMessageListenerWithErrorLevel(&PrintUncaught,
+  isolate->AddMessageListenerWithErrorLevel(&OnMessage,
                                             v8::Isolate::kMessageError);
   mitto::bindings::PerIsolateData::From(isolate)->SetExceptionReporter(
-      base::BindRepeating(
-          [](v8::Local<v8::Value> exception, v8::Local<v8::Message> message) {
-            PrintUncaught(message, exception);
-          }));
+      base::BindRepeating([](v8::Local<v8::Value> exception,
+                             v8::Local<v8::Message> message,
+                             std::u16string text) {
+        PrintUncaught(message, exception, std::move(text));
+      }));
 
   v8::Global<v8::Value> result;
   v8::Global<v8::Value> exception;

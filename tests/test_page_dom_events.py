@@ -166,6 +166,34 @@ def test_uncaught_errors_and_rejections_reach_the_windows_listeners_and_then_the
     ]
 
 
+def test_what_is_thrown_that_is_not_an_error_reaches_the_window_and_the_session_as_in_chrome(
+    session: mitto.Session, server: _DataServer
+) -> None:
+    # A DOMException and other objects that are not errors, thrown by a timer, a frame, a classic and a module script
+    # and given to reportError(): the error event says what V8 makes of each, with an object's toString() run once,
+    # and the Session what Chrome's console says, a DOMException's name and message. Recorded in headless Chrome
+    # 157.0.8103.79 on macOS.
+    result, uncaught = _run(session, server, "thrown")
+
+    assert result == _chrome("thrown")
+    assert uncaught == [
+        "Uncaught TypeError: reported",
+        "Uncaught [object Object]",
+        "Uncaught ",
+        "Uncaught : reported with no name",
+        "Uncaught TypeError: from a timer",
+        "Uncaught SyntaxError: Failed to execute 'querySelector' on 'Document': '!' is not a valid selector.",
+        "Uncaught Error",
+        "Uncaught : thrown with no name",
+        "Uncaught Named: by getters",
+        "Uncaught exception",
+        "Uncaught its own toString",
+        "Uncaught TypeError: from a frame",
+        "Uncaught TypeError: from a classic script",
+        "Uncaught TypeError: from a module script",
+    ]
+
+
 def test_mutation_observers_get_chromes_records_in_their_microtask(session: mitto.Session, server: _DataServer) -> None:
     # childList, attributes and characterData records, old values, subtrees, a node that leaves the observed tree,
     # takeRecords(), disconnect(), the order of delivery among microtasks, and observe()'s errors.

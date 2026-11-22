@@ -423,6 +423,35 @@ def test_an_uncaught_error_reaches_the_worker_and_then_the_window(server: str) -
 
 
 @pytest.mark.usefixtures("page_program")
+@pytest.mark.parametrize(
+    ("worker_type", "where", "message"),
+    [
+        ("classic", "top", "Uncaught TypeError: thrown"),
+        ("classic", "timer", "Uncaught TypeError: thrown"),
+        ("module", "timer", "Uncaught TypeError: thrown"),
+        # What a module's evaluation throws gets no more than V8's message reads of it, as in Chrome.
+        ("module", "top", "Uncaught "),
+    ],
+)
+def test_a_domexception_that_a_worker_leaves_uncaught_says_its_name_and_message(
+    server: str, worker_type: str, where: str, message: str
+) -> None:
+    # As Chrome 157 gives it to the worker's onerror and then to its Worker.
+    throw = "throw new DOMException('thrown', 'TypeError');"
+    body = throw if where == "top" else f"setTimeout(() => {{ {throw} }});"
+    script = f"""new Promise((resolve) => {{
+        const seen = [];
+        const src = "self.onerror = (m) => {{ postMessage('self: ' + m); }};" + {body!r};
+        const worker = new Worker('data:text/javascript,' + encodeURIComponent(src), {{type: '{worker_type}'}});
+        const add = (line) => {{ seen.push(line); if (seen.length === 2) resolve(seen.sort()); }};
+        worker.onmessage = (e) => add(e.data);
+        worker.onerror = (e) => {{ e.preventDefault(); add('Worker: ' + e.message); }};
+    }})"""
+
+    assert _evaluate(server, script) == [f"Worker: {message}", f"self: {message}"]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_an_error_that_the_worker_cancels_stays_there(server: str) -> None:
     script = """new Promise((resolve) => {
         const worker = new Worker('/caught.js');

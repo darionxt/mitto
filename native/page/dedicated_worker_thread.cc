@@ -141,9 +141,11 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   void QueueRejectionReport();
   void ReportRejections(std::vector<PageReporter::Rejection> rejections);
   // An error that no listener of the global scope canceled goes to the
-  // Worker, as WorkerGlobalScope::ExceptionThrown() reports it.
+  // Worker, as WorkerGlobalScope::ExceptionThrown() reports it, with what its
+  // ErrorEvent said.
   void ReportUncaught(v8::Local<v8::Message> message,
-                      v8::Local<v8::Value> exception);
+                      v8::Local<v8::Value> exception,
+                      const std::u16string& text);
   void OnResponse(FrameFromSession frame);
 
   const raw_ref<DedicatedWorkerThread> thread_;
@@ -701,14 +703,14 @@ void DedicatedWorkerThread::Scope::ReportRejections(
 
 void DedicatedWorkerThread::Scope::ReportUncaught(
     v8::Local<v8::Message> message,
-    v8::Local<v8::Value> exception) {
+    v8::Local<v8::Value> exception,
+    const std::u16string& text) {
   if (!scope_ || message.IsEmpty()) {
     return;
   }
   ErrorMessageInfo info = DescribeErrorMessage(isolate_, *scope_, message);
-  params_.object_proxy->ReportException(std::move(info.message),
-                                        std::move(info.filename), info.line,
-                                        info.column);
+  params_.object_proxy->ReportException(text, std::move(info.filename),
+                                        info.line, info.column);
 }
 
 DedicatedWorkerThread::DedicatedWorkerThread(Params params)

@@ -3,10 +3,13 @@
 #include <stdint.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/bindings/v8_dom_exception.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/dom_exception.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/execution_context.h"
@@ -51,16 +54,17 @@ std::u16string ToU16String(v8::Isolate* isolate, v8::Local<v8::Value> value) {
   return text;
 }
 
-// The ErrorEvent of V8's message, as Blink's MessageHandlerInMainThread()
-// makes it.
+// The ErrorEvent of V8's message, which says `text`, as Blink's
+// MessageHandlerInMainThread() makes it.
 ErrorEvent* ErrorEventOf(v8::Isolate* isolate,
                          ExecutionContext& execution_context,
                          v8::Local<v8::Message> message,
-                         v8::Local<v8::Value> exception) {
-  ErrorMessageInfo info =
+                         v8::Local<v8::Value> exception,
+                         const std::u16string& text) {
+  const ErrorMessageInfo info =
       DescribeErrorMessage(isolate, execution_context, message);
-  return ErrorEvent::CreateForScriptError(info.message, info.filename,
-                                          info.line, info.column, exception);
+  return ErrorEvent::CreateForScriptError(text, info.filename, info.line,
+                                          info.column, exception);
 }
 
 }  // namespace
@@ -96,10 +100,11 @@ ErrorMessageInfo DescribeErrorMessage(v8::Isolate* isolate,
 void ReportUncaughtError(v8::Isolate* isolate,
                          v8::Local<v8::Message> message,
                          v8::Local<v8::Value> exception,
+                         std::u16string text,
                          ReportToConsole to_console) {
   ExecutionContext* const context = CurrentContext(isolate);
   if (!context) {
-    to_console(exception);
+    to_console(exception, text);
     return;
   }
   ExecutionContext::ErrorEventState& state = context->GetErrorEventState();
@@ -107,7 +112,8 @@ void ReportUncaughtError(v8::Isolate* isolate,
     return;
   }
   if (state.in_dispatch_error_event) {
-    state.pending_exceptions.emplace_back(isolate, exception);
+    state.pending_exceptions.emplace_back(
+        v8::Global<v8::Value>(isolate, exception), std::move(text));
     return;
   }
   bool canceled = false;
@@ -117,7 +123,7 @@ void ReportUncaughtError(v8::Isolate* isolate,
     // of its error.
     const cppgc::Persistent<ErrorEvent> event(
         message->IsSharedCrossOrigin()
-            ? ErrorEventOf(isolate, *context, message, exception)
+            ? ErrorEventOf(isolate, *context, message, exception, text)
             : ErrorEvent::CreateSanitized());
     event->SetTrusted(true);
     state.in_dispatch_error_event = true;
@@ -127,15 +133,26 @@ void ReportUncaughtError(v8::Isolate* isolate,
   }
   state.draining_pending_exceptions = true;
   if (!canceled) {
-    to_console(exception);
+    to_console(exception, text);
   }
-  std::vector<v8::Global<v8::Value>> pending;
+  std::vector<ExecutionContext::PendingException> pending;
   pending.swap(state.pending_exceptions);
-  for (const v8::Global<v8::Value>& pending_exception : pending) {
+  for (const ExecutionContext::PendingException& pending_exception : pending) {
     const v8::HandleScope handle_scope(isolate);
-    to_console(pending_exception.Get(isolate));
+    to_console(pending_exception.exception.Get(isolate),
+               pending_exception.text);
   }
   state.draining_pending_exceptions = false;
+}
+
+std::u16string MessageForConsole(v8::Isolate* isolate,
+                                 v8::Local<v8::Value> exception,
+                                 const std::u16string& text) {
+  const DOMException* const dom_exception =
+      bindings::V8DOMException::ToWrappable(isolate, exception);
+  const std::u16string for_console =
+      dom_exception ? dom_exception->ToStringForConsole() : std::u16string();
+  return for_console.empty() ? text : u"Uncaught " + for_console;
 }
 
 bool RejectionFiresEvents(v8::Isolate* isolate, v8::Local<v8::Value> reason) {

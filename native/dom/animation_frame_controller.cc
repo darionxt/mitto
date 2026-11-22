@@ -252,8 +252,10 @@ void AnimationFrameController::ExecuteFrameCallbacks(
                                                       : high_res_now_ms);
     std::ignore = frame_callback.callback.Get(isolate_)->Call(
         context, v8::Undefined(isolate_), 1, &argument);
+    // As InvokeAndReportException() reports it, from a verbose TryCatch.
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
-      bindings::ReportException(isolate_, try_catch.Exception());
+      bindings::ReportException(isolate_, try_catch.Exception(),
+                                try_catch.Message());
     }
     // The callback may have ended the window's context, and this with it.
     if (!self) {
