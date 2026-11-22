@@ -40,6 +40,9 @@ _WORKERS = {
     "/add.js": b"onmessage = (e) => { const a = new Int32Array(e.data); Atomics.add(a, 0, 5); postMessage('added'); };",
     "/notify.js": b"onmessage = (e) => { const a = new Int32Array(e.data); Atomics.store(a, 0, 1); Atomics.notify(a, 0); };",
     "/nested.js": b"const inner = new Worker('/report.js'); inner.onmessage = (e) => postMessage(e.data);",
+    "/broadcast.js": b"const channel = new BroadcastChannel('b');"
+    b"channel.onmessage = (e) => postMessage(['message', Object.prototype.toString.call(e.data)]);"
+    b"channel.onmessageerror = () => postMessage(['messageerror']); postMessage('ready');",
 }
 
 
@@ -233,3 +236,71 @@ def test_a_shared_array_buffer_is_still_refused_where_the_page_is_not_isolated(
         "DataCloneError",
         "Failed to execute 'postMessage' on 'Window': SharedArrayBuffer transfer requires self.crossOriginIsolated.",
     ]
+
+
+def test_a_worker_of_a_data_url_shares_the_memory_that_its_creator_posts_it(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", _BLANK, _ISOLATING)
+    # A worker of a data: URL is not isolated, but it is of its creator's agent cluster, so Chrome hands it the buffer,
+    # directly and through a port.
+    script = """Promise.all([false, true].map((through_port) => new Promise((resolve) => {
+        const memory = new SharedArrayBuffer(4);
+        const worker = new Worker('data:text/javascript,' + encodeURIComponent(`
+            const take = (e) => {
+                new Int32Array(e.data)[0] = 5;
+                postMessage([Object.prototype.toString.call(e.data), crossOriginIsolated]);
+            };
+            onmessage = (e) => {
+                if (e.ports.length) {
+                    e.ports[0].onmessage = take;
+                    postMessage('ready');
+                } else {
+                    take(e);
+                }
+            };`));
+        const channel = new MessageChannel();
+        worker.onmessage = (e) => {
+            if (e.data === 'ready') {
+                channel.port1.postMessage(memory);
+            } else {
+                resolve([...e.data, new Int32Array(memory)[0]]);
+            }
+        };
+        if (through_port) {
+            worker.postMessage(null, [channel.port2]);
+        } else {
+            worker.postMessage(memory);
+        }
+    })))"""
+
+    assert _evaluate(session, url, script) == [["[object SharedArrayBuffer]", False, 5]] * 2
+
+
+def test_a_shared_array_buffer_that_a_broadcast_channel_carries_arrives_as_null(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", _BLANK, _ISOLATING)
+    # Chrome's channels carry a message through the browser, which takes no shared memory along.
+    script = """Promise.all([
+        new Promise((resolve) => {
+            const sender = new BroadcastChannel('a');
+            const receiver = new BroadcastChannel('a');
+            receiver.onmessage = (e) => resolve(['message', Object.prototype.toString.call(e.data)]);
+            receiver.onmessageerror = () => resolve(['messageerror']);
+            sender.postMessage(new SharedArrayBuffer(4));
+        }),
+        new Promise((resolve) => {
+            const worker = new Worker('/broadcast.js');
+            const sender = new BroadcastChannel('b');
+            worker.onmessage = (e) => {
+                if (e.data === 'ready') {
+                    sender.postMessage(new SharedArrayBuffer(4));
+                } else {
+                    resolve(e.data);
+                }
+            };
+        }),
+    ])"""
+
+    assert _evaluate(session, url, script) == [["message", "[object Null]"]] * 2
