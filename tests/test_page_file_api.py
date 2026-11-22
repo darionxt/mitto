@@ -306,6 +306,15 @@ FILE_API = {
         " f.lastModified, await f.text()].join()",
         "value: m,5,zz",
     ),
+    "a blob through a BroadcastChannel of the same Page": (
+        "const a = new BroadcastChannel('blobs'); const b = new BroadcastChannel('blobs');"
+        " const got = new Promise((resolve) => { b.onmessage = (e) => resolve(e.data); });"
+        " a.postMessage({ blob: new Blob(['hello'], { type: 'text/x' }), file: new File(['ab'], 'f.txt', {"
+        " lastModified: 7 }) }); const d = await got; a.close(); b.close();"
+        " return [d.blob.size, d.blob.type, await d.blob.text(), d.file.name, d.file.lastModified, await"
+        " d.file.text()].join()",
+        "value: 5,text/x,hello,f.txt,7,ab",
+    ),
     "createObjectURL()": (
         "const u = URL.createObjectURL(new Blob(['x'])); const rest = u.slice(('blob:' + self.origin + '/').length);"
         " return [u.startsWith('blob:' + self.origin + '/'),"
