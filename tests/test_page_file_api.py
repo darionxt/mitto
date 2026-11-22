@@ -239,6 +239,14 @@ FILE_API = {
         "value: InvalidStateError / Failed to execute 'readAsText' on 'FileReader': The object is already busy reading"
         " Blobs. / 1",
     ),
+    "a second readAsText() that throws still sets the encoding": (
+        # As Blink's readAsText() keeps the encoding before ReadInternal() checks the state, which Chrome 157 shows:
+        # the read under way decodes with the encoding of the call that threw.
+        "const r = new FileReader(); r.readAsText(new Blob([new Uint8Array([0xE9])]), 'windows-1252'); let thrown = '';"
+        " try { r.readAsText(new Blob(['x'])); } catch (e) { thrown = e.name; }"
+        " await new Promise((res) => { r.onloadend = res; }); return [thrown, JSON.stringify(r.result)].join(' / ')",
+        'value: InvalidStateError / "\ufffd"',
+    ),
     "abort()": (
         "const reader = new FileReader(); for (const type of ['loadstart', 'load', 'abort', 'error', 'loadend'])"
         " reader.addEventListener(type, (e) => log.push(type + ' ' + e.loaded + '/' + e.total));"
