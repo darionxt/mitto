@@ -777,9 +777,12 @@ std::optional<std::string> CheckRequestModes(const PageRequest& request) {
         return "a navigation with a mode or credentials mode of its own";
       }
       return std::nullopt;
+    // A worker's script goes in mode same-origin, and what a module worker's
+    // top-level graph imports, of the same destination, in mode cors.
     case PageRequestKind::kWorker:
-      if (!is_default_mode && mode != PageRequestMode::kSameOrigin) {
-        return "a worker's script in a mode other than same-origin";
+      if (!is_default_mode && mode != PageRequestMode::kSameOrigin &&
+          mode != PageRequestMode::kCors) {
+        return "a worker's script in a mode other than same-origin or cors";
       }
       return std::nullopt;
     case PageRequestKind::kFetch:

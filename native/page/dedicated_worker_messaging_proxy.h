@@ -29,6 +29,7 @@
 #include "base/memory/weak_ptr.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/dom/dedicated_worker_messaging.h"
+#include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/page/dedicated_worker_thread.h"
@@ -93,6 +94,10 @@ class DedicatedWorkerMessagingProxy final : public WorkerMessagingProxy,
   void DispatchMessage(SerializedScriptValue message,
                        std::vector<MessagePortChannel> ports);
   void DispatchErrorEvent(ErrorMessageInfo error);
+  // An entry of the creator's Performance Timeline for a resource of the
+  // worker's top-level module graph, while the creator's context remains.
+  void AddResourceTiming(ResourceTimingInfo info,
+                         std::u16string initiator_type);
   void DidEvaluateScript();
   void DidFailToFetchScript();
   void TerminateFromWorker();

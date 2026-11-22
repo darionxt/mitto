@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/fetcher.h"
 #include "url/gurl.h"
 
@@ -108,6 +109,11 @@ class WorkerObjectProxy {
                                std::u16string filename,
                                uint32_t line,
                                uint32_t column) = 0;
+  // A resource of the worker's top-level module graph, which Blink fetches
+  // through the worker's outside settings, and so times in its creator's
+  // Performance Timeline, as the outside ResourceTimingNotifier has it.
+  virtual void AddOutsideResourceTiming(ResourceTimingInfo info,
+                                        std::u16string initiator_type) = 0;
 };
 
 }  // namespace mitto

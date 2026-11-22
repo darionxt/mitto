@@ -16,6 +16,8 @@
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/thread_annotations.h"
+#include "mitto/dom/dedicated_worker_global_scope.h"
+#include "mitto/dom/dedicated_worker_messaging.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
@@ -66,11 +68,15 @@ uint64_t PageRequests::Start(PageRequest request,
   // ResourceFetcher::RecordResourceTimingInfo(), when the page asks.
   Timed timed;
   timed.start_time = base::TimeTicks::Now();
-  // A module's initiator type is "script" too, as ModuleScriptLoader sets it.
+  timed.outside_settings = request.kind == PageRequestKind::kWorker &&
+                           request.mode == PageRequestMode::kCors;
+  // A module's initiator type is "script" too, as ModuleScriptLoader sets it,
+  // and so is that of a module of a worker's top-level graph.
   if (initiator_type.empty()) {
     initiator_type = request.kind == PageRequestKind::kScript ||
                              request.kind == PageRequestKind::kModule ||
-                             request.kind == PageRequestKind::kModuleJson
+                             request.kind == PageRequestKind::kModuleJson ||
+                             timed.outside_settings
                          ? u"script"
                          : u"fetch";
   }
@@ -266,6 +272,16 @@ void PageRequests::AddResourceTiming(Timed& timed,
     }
   }
   info.render_blocking_status = timed.render_blocking;
+  // Only a dedicated worker fetches through outside settings, whose entries go
+  // to its creator's timeline, through its Worker's proxy.
+  if (timed.outside_settings && !execution_context->IsWindow()) {
+    if (WorkerObjectProxy* const proxy =
+            static_cast<DedicatedWorkerGlobalScope*>(execution_context)
+                ->GetObjectProxy()) {
+      proxy->AddOutsideResourceTiming(std::move(info), timed.initiator_type);
+    }
+    return;
+  }
   execution_context->Performance()->AddResourceTiming(std::move(info),
                                                       timed.initiator_type);
 }
