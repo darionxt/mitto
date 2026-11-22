@@ -14,6 +14,7 @@
 #include "mitto/sec_header_helpers.h"
 #include "net/base/is_potentially_trustworthy.h"
 #include "net/base/isolation_info.h"
+#include "net/base/load_flags.h"
 #include "net/base/schemeful_site.h"
 #include "net/cookies/site_for_cookies.h"
 #include "net/http/http_response_headers.h"
@@ -646,10 +647,21 @@ void FetchRules::WillFollowRedirect(net::URLRequest& request,
 
 void FetchRules::SetRequestCredentials(net::URLRequest& request,
                                        const GURL& url) const {
+  // WebPoliciesAllowCredentials(): a client whose embedder policy is
+  // "credentialless" sends and keeps none on a request of mode no-cors to
+  // another origin, and takes nothing from the cache for it, whose entries
+  // do not tell one with credentials from one without.
+  const bool policies_allow_credentials =
+      !params_.credentialless_client || params_.mode != RequestMode::kNoCors ||
+      (initiator_ && initiator_->IsSameOriginWith(url));
   if (params_.credentials_mode == CredentialsMode::kOmit ||
-      (params_.credentials_mode == CredentialsMode::kSameOrigin &&
-       initiator_ && !initiator_->IsSameOriginWith(url))) {
+      (params_.credentials_mode == CredentialsMode::kSameOrigin && initiator_ &&
+       !initiator_->IsSameOriginWith(url)) ||
+      !policies_allow_credentials) {
     request.set_disallow_credentials();
+  }
+  if (!policies_allow_credentials) {
+    request.SetLoadFlags(request.load_flags() | net::LOAD_BYPASS_CACHE);
   }
 }
 

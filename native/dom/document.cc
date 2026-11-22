@@ -1967,6 +1967,10 @@ void Document::Open() {
   // script-created parser loads the document anew.
   RemoveAllEventListenersRecursively();
   ImplicitOpen(nullptr);
+  // Calling document.open() counts as committing the first real document
+  // load, so a frame's document that a script opens holds back its parent's
+  // load until its own.
+  initial_empty_ = false;
 }
 
 void Document::Close(bindings::ExceptionState& exception_state) {

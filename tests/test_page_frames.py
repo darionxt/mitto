@@ -26,6 +26,7 @@ from tests.local_server import QuietServer
 
 _TIMEOUT_SECONDS = 60
 _PAGE = b"<!doctype html><title>t</title><body><p id=x>top</p>"
+_FRAMED_PAGE = b"<!doctype html><title>t</title><body><iframe src=/framed-child></iframe>"
 _TESTS = Path(__file__).parent
 _CASES = (_TESTS / "frames_cases.js").read_text()
 _AS_CHROME = json.loads((_TESTS / "data" / "frames_cases.json").read_text())
@@ -65,7 +66,8 @@ def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], 
 
     /from-... gives the request's Referer, or "none"; /echo the headers in _ECHOED that came, in a script element of id h;
     /204 nothing; /redirect a redirect to /child?redirected; /drop no response at all, as status 0; /timing a document
-    whose script puts what it reads of performance.timing into parent.timingAtParse; /slow, after 300 ms, and /child... and /dir/... a document
+    whose script puts what it reads of performance.timing into parent.timingAtParse; /framed a page whose markup holds
+    an iframe of /framed-child; /slow, after 300 ms, and /child... and /dir/... a document
     whose paragraph of id c holds its path; /nested a document with a frame of /slow?inner, whose load and its own go
     into top.order; anything else the top-level page.
     """
@@ -80,6 +82,8 @@ def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], 
         return 204, {}, b""
     if path == "/drop":
         return 0, {}, b""
+    if path == "/framed":
+        return 200, html_type, _FRAMED_PAGE
     if path == "/timing":
         return 200, html_type, _TIMING_PAGE
     if path == "/redirect":
@@ -173,6 +177,39 @@ def test_frames_that_navigate_through_the_session_are_chrome_s(page_url: str) ->
     assert set(record) == set(as_chrome)
     for section, expected in as_chrome.items():
         assert record[section] == expected, section
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_whose_markup_holds_a_frame_of_another_url_loads(page_url: str) -> None:
+    # A frame's initial about:blank holds back no load, as Blink's FrameLoader::Init() suppresses its finish: the
+    # parent's load waits only for a frame's navigation that waits, or for a document of the frame that loads.
+    with mitto.Session() as session, session._open_page(page_url + "framed", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate("[document.readyState, frames.length]") == ["complete", 1]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_indexeddb_open_of_a_frame_that_goes_lets_its_connection_go(page_url: str) -> None:
+    # Each frame asks for a database and goes before the open gives its connection, which the library then closes from
+    # a task of its own, not inside the upgrade that it runs: the Session goes on, and the top-level document still
+    # opens a database.
+    script = """
+      (async () => {
+        for (let i = 0; i < 20; i++) {
+          const element = document.createElement('iframe');
+          document.body.appendChild(element);
+          element.contentWindow.indexedDB.open('gone-' + i);
+          element.remove();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return await new Promise((resolve) => {
+          const request = indexedDB.open('after');
+          request.onsuccess = () => resolve(request.result.name);
+          request.onerror = () => resolve('error');
+        });
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == "after"
 
 
 @pytest.mark.usefixtures("page_program")
