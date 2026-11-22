@@ -4,6 +4,8 @@ of tests, Chrome's results and the list of differences. They need no native libr
 import dataclasses
 import json
 import shutil
+import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -26,6 +28,7 @@ from tools.wpt.differences import (
 from tools.wpt.files import CHROME_FILE, DIFFERENCES_FILE, TESTS_FILE, WPT_ROOT
 from tools.wpt.needs import TESTDRIVER, needs_of
 from tools.wpt.owners import NO_OWNER, keep_owners, move, owner_of
+from tools.wpt.pages import run_in_pages
 from tools.wpt.parts import DIRECTORIES, PARTS, directory_of, part_of
 from tools.wpt.reporter.collect import result_key
 from tools.wpt.results import (
@@ -749,3 +752,30 @@ def test_counts_put_later_milestones_and_what_is_left_out_apart_from_the_tickets
         "| out | 1 | 1 | 1 |",
         "| All | 6 | 6 | 8 |",
     ]
+
+
+def test_the_pages_that_run_at_once_each_keep_an_http_cache_that_their_tests_share_in_turn() -> None:
+    # Each Chrome of the recording keeps its profile's cache across its tests: the runner gives each test one of `jobs`
+    # cache directories, which no other test has while it runs.
+    lock = threading.Lock()
+    in_use: set[Path] = set()
+    seen: list[Path] = []
+
+    def runner(server: WptServer, test: str, seconds: float, cache: Path | None) -> RunResult:
+        assert cache is not None
+        assert cache.is_dir()
+        with lock:
+            assert cache not in in_use
+            in_use.add(cache)
+            seen.append(cache)
+        time.sleep(0.01)
+        with lock:
+            in_use.remove(cache)
+        return RunResult(test, "OK")
+
+    tests = [(f"a/{number}.html", 10.0) for number in range(12)]
+    results = list(run_in_pages(WptServer(Path("results")), tests, 3, runner=runner))
+
+    assert sorted(result.test for result in results) == sorted(test for test, _ in tests)
+    assert len(set(seen)) == 3
+    assert not any(cache.exists() for cache in seen)
