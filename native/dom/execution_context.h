@@ -102,6 +102,17 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   virtual Modulator* GetModulator() = 0;
 
   // ExecutionContext's state of its error events (error_reporting.h).
+  // An error that the error listeners threw, with the text of V8's message
+  // of it.
+  struct PendingException {
+    PendingException(v8::Global<v8::Value> exception, std::u16string text);
+    PendingException(PendingException&&);
+    PendingException& operator=(PendingException&&);
+    ~PendingException();
+
+    v8::Global<v8::Value> exception;
+    std::u16string text;
+  };
   struct ErrorEventState {
     ErrorEventState();
     ~ErrorEventState();
@@ -112,7 +123,7 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
     // Whether those queued errors go to the console, which drops any error
     // thrown meanwhile.
     bool draining_pending_exceptions = false;
-    std::vector<v8::Global<v8::Value>> pending_exceptions;
+    std::vector<PendingException> pending_exceptions;
   };
   ErrorEventState& GetErrorEventState() { return error_event_state_; }
 

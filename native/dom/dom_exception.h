@@ -37,6 +37,12 @@ class DOMException : public bindings::ScriptWrappable {
   std::u16string Name() const { return name_; }
   std::u16string Message() const { return message_; }
 
+  // What the console says of it: its name and message, as "TypeError: x", or
+  // nothing for one with no message, as Chrome 157's console has it.
+  std::u16string ToStringForConsole() const {
+    return message_.empty() ? std::u16string() : name_ + u": " + message_;
+  }
+
  private:
   std::u16string message_;
   const std::u16string name_;

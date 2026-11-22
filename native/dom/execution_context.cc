@@ -80,6 +80,16 @@ ExecutionContext* ExecutionContext::From(v8::Isolate* isolate,
 ExecutionContext::ExecutionContext() = default;
 ExecutionContext::~ExecutionContext() = default;
 
+ExecutionContext::PendingException::PendingException(
+    v8::Global<v8::Value> exception,
+    std::u16string text)
+    : exception(std::move(exception)), text(std::move(text)) {}
+ExecutionContext::PendingException::PendingException(PendingException&&) =
+    default;
+ExecutionContext::PendingException&
+ExecutionContext::PendingException::operator=(PendingException&&) = default;
+ExecutionContext::PendingException::~PendingException() = default;
+
 ExecutionContext::ErrorEventState::ErrorEventState() = default;
 ExecutionContext::ErrorEventState::~ErrorEventState() = default;
 

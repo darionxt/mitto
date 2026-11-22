@@ -5,6 +5,8 @@
 #include <stdio.h>
 
 #include <cmath>
+#include <string>
+#include <tuple>
 #include <utility>
 
 #include "base/compiler_specific.h"
@@ -684,31 +686,70 @@ bool FromV8Promise(v8::Isolate* isolate,
   return true;
 }
 
+namespace {
+
+// What `message` says.
+std::u16string MessageText(v8::Isolate* isolate,
+                           v8::Local<v8::Message> message) {
+  std::u16string text;
+  std::ignore = FromV8String(isolate, message->Get(), &text);
+  return text;
+}
+
+void Report(v8::Isolate* isolate,
+            v8::Local<v8::Value> exception,
+            v8::Local<v8::Message> message,
+            std::u16string text) {
+  const PerIsolateData::ExceptionReporter& reporter =
+      PerIsolateData::From(isolate)->exception_reporter();
+  if (reporter) {
+    reporter.Run(exception, message, std::move(text));
+    return;
+  }
+  const v8::TryCatch try_catch(isolate);
+  v8::Local<v8::String> string;
+  std::string description = "exception";
+  if (exception->ToString(isolate->GetCurrentContext()).ToLocal(&string)) {
+    const v8::String::Utf8Value utf8(isolate, string);
+    // SAFETY: Utf8Value holds length() bytes at *utf8.
+    description.assign(UNSAFE_BUFFERS(std::string_view(*utf8, utf8.length())));
+  }
+  fprintf(stderr, "Uncaught %s\n", description.c_str());
+}
+
+}  // namespace
+
 void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception) {
-  ReportException(isolate, exception, v8::Local<v8::Message>());
+  const v8::Local<v8::Message> message =
+      v8::Exception::CreateMessage(isolate, exception);
+  Report(isolate, exception, message, MessageText(isolate, message));
 }
 
 void ReportException(v8::Isolate* isolate,
                      v8::Local<v8::Value> exception,
                      v8::Local<v8::Message> message) {
-  const PerIsolateData::ExceptionReporter& reporter =
-      PerIsolateData::From(isolate)->exception_reporter();
-  if (reporter) {
-    if (message.IsEmpty()) {
-      message = v8::Exception::CreateMessage(isolate, exception);
-    }
-    reporter.Run(exception, message);
+  if (message.IsEmpty()) {
+    ReportException(isolate, exception);
     return;
   }
-  const v8::TryCatch try_catch(isolate);
-  v8::Local<v8::String> text;
-  std::string description = "exception";
-  if (exception->ToString(isolate->GetCurrentContext()).ToLocal(&text)) {
-    const v8::String::Utf8Value utf8(isolate, text);
-    // SAFETY: Utf8Value holds length() bytes at *utf8.
-    description.assign(UNSAFE_BUFFERS(std::string_view(*utf8, utf8.length())));
+  // MessageHandler::ReportMessage(): V8's message says "Uncaught %" of the
+  // exception, which for an object that is not an error, nor a proxy, is what
+  // its toString() gives, under a TryCatch of its own.
+  // Upstream: v8/src/execution/messages.cc
+  if (!exception->IsObject() || exception->IsProxy() ||
+      exception->IsNativeError()) {
+    Report(isolate, exception, message, MessageText(isolate, message));
+    return;
   }
-  fprintf(stderr, "Uncaught %s\n", description.c_str());
+  std::u16string text;
+  {
+    v8::TryCatch try_catch(isolate);
+    try_catch.SetCaptureMessage(false);
+    if (!FromV8String(isolate, exception, &text)) {
+      text = u"exception";
+    }
+  }
+  Report(isolate, exception, message, u"Uncaught " + text);
 }
 
 }  // namespace mitto::bindings
