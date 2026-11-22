@@ -873,6 +873,7 @@ class PageHost::Request final : public RequestClient {
 
   uint64_t number() const { return number_; }
   bool is_navigation() const { return checks().is_navigation; }
+  bool is_top_level_navigation() const { return checks().top_level; }
   // The URL the request started at.
   const GURL& first_url() const { return first_url_; }
   // A navigation whose response the Page makes no document of, such as a
@@ -1353,7 +1354,8 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
     navigation_options.fetch->initiator = std::nullopt;
     StartRequest(kNavigationRequest, kNoDocument, url::Origin(), *options_.url,
                  navigation.headers, std::move(navigation_options),
-                 std::nullopt, nullptr, FetchChecks{.is_navigation = true});
+                 std::nullopt, nullptr,
+                 FetchChecks{.is_navigation = true, .top_level = true});
   }
   return true;
 }
@@ -1432,8 +1434,13 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   }
   const uint64_t settings_id = outside_settings ? context.parent : context_id;
   const url::Origin& document_origin = contexts_.at(settings_id).origin;
-  const bool is_navigation = asked.kind == PageRequestKind::kNavigation;
-  if (is_navigation) {
+  // A frame's navigation is a navigation too, as Chrome's browser makes a
+  // NavigationRequest of it, but the caller hears only of the top-level
+  // frame's.
+  const bool top_level = asked.kind == PageRequestKind::kNavigation;
+  const bool is_navigation =
+      top_level || asked.kind == PageRequestKind::kIframe;
+  if (top_level) {
     PageEvent started;
     started.type = MITTO_PAGE_EVENT_NAVIGATION_STARTED;
     started.url = asked.url;
@@ -1508,7 +1515,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     ended.number = asked.number;
     ended.net_error = net_error;
     channel_->Send(EncodeResponseEnded(ended));
-    if (is_navigation) {
+    if (top_level) {
       PushNavigated(asked.url, 0, net_error);
     }
     return;
@@ -1597,6 +1604,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
           .credentials = options_credentials == CredentialsMode::kInclude,
           .keepalive = asked.keepalive,
           .is_navigation = is_navigation,
+          .top_level = top_level,
           .creator_embedder_policy = std::move(creator_embedder_policy)});
 }
 
@@ -1620,11 +1628,14 @@ void PageHost::OnCancel(uint64_t number) {
   // A navigation that the Page let go before its response, as when another
   // takes its place, has ended, and so has one whose response is held back
   // while it is sniffed, as one that the Page let go after its response came.
-  if (found->second->is_navigation() && !found->second->started()) {
-    PushNavigated(found->second->first_url().possibly_invalid_spec(), 0,
-                  net::ERR_ABORTED);
-  } else if (const RequestEvent* const held = found->second->held_response()) {
-    PushNavigated(held->url, 0, net::ERR_ABORTED);
+  if (found->second->is_top_level_navigation()) {
+    if (!found->second->started()) {
+      PushNavigated(found->second->first_url().possibly_invalid_spec(), 0,
+                    net::ERR_ABORTED);
+    } else if (const RequestEvent* const held =
+                   found->second->held_response()) {
+      PushNavigated(held->url, 0, net::ERR_ABORTED);
+    }
   }
   // The Request abandons its job as it goes.
   requests_.erase(found);
@@ -1721,7 +1732,10 @@ void PageHost::DropNavigation(Request& request, const RequestEvent& event) {
   // is no document, and the Page keeps its document. A download goes on
   // without it.
   request.set_keeps_document();
-  PushNavigated(event.url, event.status, net::ERR_ABORTED);
+  if (request.is_top_level_navigation()) {
+    PushNavigated(event.url, event.status, net::ERR_ABORTED);
+  }
+  frame_navigation_responses_.erase(request.number());
   // The Page's frame lets its navigation go.
   if (channel_) {
     PageResponseEnded ended;
@@ -1752,9 +1766,9 @@ void PageHost::FinishSniffing(Request& request) {
 }
 
 void PageHost::StartResponse(Request& request, const RequestEvent& event) {
-  // What Chrome's browser makes of a navigation's COOP and COEP.
+  // What Chrome's browser makes of a top-level navigation's COOP and COEP.
   std::optional<TopLevelDocumentPolicies> policies;
-  if (request.is_navigation()) {
+  if (request.is_top_level_navigation()) {
     const GURL url(event.url);
     const PolicyHeaders headers = PolicyHeadersOf(event.headers);
     policies = TopLevelDocumentPoliciesOf(url, headers);
@@ -1886,9 +1900,12 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
   if (request.keeps_document()) {
     // The Page heard that it ended when its response started.
   } else if (request.is_navigation() && !request.started()) {
-    // The Page keeps its document, and its frame lets the navigation go.
-    PushNavigated(request.first_url().possibly_invalid_spec(), 0,
-                  net_error == net::OK ? net::ERR_FAILED : net_error);
+    // The Page's frame lets the navigation go: the top-level frame keeps its
+    // document, and another commits Chrome's error page.
+    if (request.is_top_level_navigation()) {
+      PushNavigated(request.first_url().possibly_invalid_spec(), 0,
+                    net_error == net::OK ? net::ERR_FAILED : net_error);
+    }
     if (channel_) {
       PageResponseEnded ended;
       ended.number = number;
@@ -2776,14 +2793,17 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
       context.origin = url::Origin::Create(context.url);
       break;
     case PageDocumentSource::kAboutBlank:
-    case PageDocumentSource::kSrcdoc: {
+    case PageDocumentSource::kSrcdoc:
+    case PageDocumentSource::kErrorPage: {
       // A document that a frame commits without the network takes the place
       // of the frame's document, under the same parent, as Chrome's browser
-      // commits it in that frame. srcdoc is only a frame's.
+      // commits it in that frame. srcdoc and an error page are only a
+      // frame's: the top-level frame keeps its document when its navigation
+      // fails.
       const auto replaces = contexts_.find(committed.replaces);
       if (replaces == contexts_.end() || replaces->second.is_worker ||
           replaces->second.parent != committed.parent ||
-          (top_level && committed.source == PageDocumentSource::kSrcdoc)) {
+          (top_level && committed.source != PageDocumentSource::kAboutBlank)) {
         Refuse(
             "a document that does not take the place of its frame's document");
         return;
@@ -2801,9 +2821,13 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         }
         context.origin = initiator->second.origin;
         context.url = GURL(url::kAboutBlankURL);
-      } else {
+      } else if (committed.source == PageDocumentSource::kSrcdoc) {
         context.origin = contexts_.at(committed.parent).origin;
         context.url = GURL(url::kAboutSrcdocURL);
+      } else {
+        // NavigationRequest::GetOriginToCommit(): an error page's origin is
+        // opaque.
+        context.url = GURL(kErrorPageUrl);
       }
       replaced = committed.replaces;
       break;

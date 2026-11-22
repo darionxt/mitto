@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 30;
+inline constexpr uint32_t kPageProtocolVersion = 31;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -731,13 +731,19 @@ enum class PageDocumentSource : uint8_t {
   // A frame's srcdoc document, about:srcdoc, of its parent's origin, whose
   // requests' referrer is its parent's.
   kSrcdoc = 3,
+  // Chrome's error page, chrome-error://chromewebdata/, of an opaque origin,
+  // which a frame commits once its navigation fails without a response.
+  kErrorPage = 4,
 };
+
+// The URL of Chrome's error page, kUnreachableWebDataURL.
+inline constexpr char kErrorPageUrl[] = "chrome-error://chromewebdata/";
 
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
 // source, a byte, the parent, a 64-bit number, then for a navigation's response
 // the navigation's number, for an about:blank the initiator and the document
-// that it replaces, and for a srcdoc document the document that it replaces,
-// each a 64-bit number.
+// that it replaces, and for a srcdoc document or an error page the document
+// that it replaces, each a 64-bit number.
 struct PageDocumentCommitted {
   uint64_t document = kNoDocument;
   PageDocumentSource source = PageDocumentSource::kInitialEmpty;
@@ -748,8 +754,8 @@ struct PageDocumentCommitted {
   uint64_t navigation = kNavigationRequest;
   // For kAboutBlank: the document that started its navigation.
   uint64_t initiator = kNoDocument;
-  // For kAboutBlank and kSrcdoc: the frame's document that it takes the
-  // place of.
+  // For kAboutBlank, kSrcdoc and kErrorPage: the frame's document that it
+  // takes the place of.
   uint64_t replaces = kNoDocument;
 };
 

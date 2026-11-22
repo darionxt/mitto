@@ -186,15 +186,17 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           const mitto::PageDocumentCommitted& committed = frame->committed;
           CHECK_NE(committed.document, mitto::kNoDocument);
           CHECK_NE(committed.document, committed.parent);
-          // A navigation's response and a srcdoc name one more ID, the
-          // number of the navigation or the document that a srcdoc replaces,
-          // and an about:blank two, its initiator and what it replaces.
+          // A navigation's response, a srcdoc and an error page name one more
+          // ID, the number of the navigation or the document that a srcdoc or
+          // an error page replaces, and an about:blank two, its initiator and
+          // what it replaces.
           switch (committed.source) {
             case mitto::PageDocumentSource::kInitialEmpty:
               CHECK_EQ(payload.size(), 17u);
               break;
             case mitto::PageDocumentSource::kNavigationResponse:
             case mitto::PageDocumentSource::kSrcdoc:
+            case mitto::PageDocumentSource::kErrorPage:
               CHECK_EQ(payload.size(), 25u);
               break;
             case mitto::PageDocumentSource::kAboutBlank:

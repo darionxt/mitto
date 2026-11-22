@@ -499,6 +499,9 @@ class PageHost final : public PageChannel::Delegate {
     // A navigation, whose response the Page makes a document of, unless it
     // is a 204, a 205 or a download.
     bool is_navigation = false;
+    // A navigation of the top-level frame, which the caller hears of, and
+    // whose COOP and COEP make the Page's agent cluster.
+    bool top_level = false;
     // A dedicated worker's script: its creator's embedder policy, which the
     // worker's has to be compatible with, as DedicatedWorkerHost::CheckCOEP()
     // holds it.

@@ -1137,6 +1137,7 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
       break;
     case static_cast<uint8_t>(PageDocumentSource::kNavigationResponse):
     case static_cast<uint8_t>(PageDocumentSource::kSrcdoc):
+    case static_cast<uint8_t>(PageDocumentSource::kErrorPage):
       named = 1;
       break;
     case static_cast<uint8_t>(PageDocumentSource::kAboutBlank):
@@ -1167,6 +1168,7 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
       committed.replaces = DecodeUint64(payload.substr(25, 8));
       break;
     case PageDocumentSource::kSrcdoc:
+    case PageDocumentSource::kErrorPage:
       committed.replaces = DecodeUint64(payload.substr(17, 8));
       break;
   }
@@ -2137,6 +2139,7 @@ std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
       payload += EncodeUint64(committed.replaces);
       break;
     case PageDocumentSource::kSrcdoc:
+    case PageDocumentSource::kErrorPage:
       payload += EncodeUint64(committed.replaces);
       break;
   }
