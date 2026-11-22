@@ -275,6 +275,80 @@ BODIES = {
 }
 
 
+# Request's and Response's members beyond their bodies, each with what Chrome 157.0.8103.79 gave for it.
+MEMBERS = {
+    "a Request's members": (
+        "const r = new Request('https://example.test/'); const k = new Request('https://example.test/', { method: 'POST',"
+        " body: 'x', mode: 'same-origin', credentials: 'include', referrer: '', referrerPolicy: 'Origin', keepalive: true });"
+        " return [r, k].map((q) => [JSON.stringify(q.destination), q.referrer, JSON.stringify(q.referrerPolicy), q.mode,"
+        " q.credentials, q.cache, q.redirect, JSON.stringify(q.integrity), q.keepalive, q.isHistoryNavigation,"
+        " q.isReloadNavigation].join()).join(' / ')",
+        "threw: TypeError: Failed to construct 'Request': Failed to read the 'referrerPolicy' property from 'RequestInit': The provided value 'Origin' is not a valid enum value of type ReferrerPolicy.",
+    ),
+    "a Request made from another keeps its members": (
+        "const k = new Request('https://example.test/', { mode: 'no-cors', credentials: 'omit', referrerPolicy:"
+        " 'unsafe-url', keepalive: true }); const r = new Request(k); const m = new Request(k, { method: 'GET' });"
+        " return [r.mode, r.credentials, r.referrerPolicy, r.keepalive, m.mode, m.referrer, m.referrerPolicy].join()",
+        "value: no-cors,omit,unsafe-url,true,no-cors,about:client,",
+    ),
+    "Request's clone()": (
+        "const r = new Request('https://example.test/', { method: 'POST', body: 'abc', headers: { 'X-A': '1' },"
+        " referrerPolicy: 'origin' }); const c = r.clone();"
+        " return [c.url, c.method, c.headers.get('x-a'), c.referrerPolicy, c.signal !== r.signal, c.headers !== r.headers,"
+        " await r.text(), await c.text(), new Request('https://example.test/').clone().body].join()",
+        "value: https://example.test/,POST,1,origin,true,true,abc,abc,",
+    ),
+    "clone() of a used or locked body": (
+        "const used = new Request('https://example.test/', { method: 'POST', body: 'x' }); await used.text();"
+        " const locked = new Response('y'); locked.body.getReader();"
+        " return [() => used.clone(), () => locked.clone(), () => new Response(null).clone().body].map((t) => {"
+        " try { return String(t()); } catch (e) { return e.name + ': ' + e.message; } }).join(' / ')",
+        "value: TypeError: Failed to execute 'clone' on 'Request': Request body is already used / TypeError: Failed to execute 'clone' on 'Response': Response body is already used / null",
+    ),
+    "a clone's signal follows the original's": (
+        "const ac = new AbortController(); const r = new Request('https://example.test/', { signal: ac.signal });"
+        " const c = r.clone(); const before = c.signal.aborted; ac.abort('why');"
+        " return [before, c.signal.aborted, c.signal.reason].join()",
+        "value: false,true,why",
+    ),
+    "Response's clone()": (
+        "const r = new Response('hello', { status: 201, statusText: 'Made', headers: { 'x-b': '2' } }); const c = r.clone();"
+        " return [c.status, c.statusText, c.headers.get('x-b'), c.type, c.url === '', c.headers !== r.headers,"
+        " await c.text(), r.bodyUsed, await r.text()].join()",
+        "value: 201,Made,2,default,true,true,hello,false,hello",
+    ),
+    "clones of each kind of body": (
+        "const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('st')); c.close(); } });"
+        " const bytes = new ReadableStream({ type: 'bytes', start(c) { c.enqueue(new Uint8Array([98, 121])); c.close(); } });"
+        " const out = []; for (const body of [stream, bytes, new Blob(['bl']), new Uint8Array([97, 98]), 'tx',"
+        " new URLSearchParams('a=1')]) { const r = new Response(body); const c = r.clone();"
+        " out.push(await c.text() + '|' + await r.text()); } return out.join()",
+        "value: st|st,by|by,bl|bl,ab|ab,tx|tx,a=1|a=1",
+    ),
+    "when a clone's first read settles": (
+        "for (const [name, body] of [['text', 'ab'], ['blob', new Blob(['ab'])]]) { const c = new Response(body).clone();"
+        " const reader = c.body.getReader(); setTimeout(() => log.push(name + ' timeout'), 0);"
+        " const { value } = await reader.read(); log.push(name + ' read ' + value.length); await tick(); }"
+        " return log.join()",
+        "value: text timeout,text read 2,blob timeout,blob read 2",
+    ),
+    "Response.error()": (
+        "const e = Response.error(); let threw = ''; try { e.headers.set('a', 'b'); } catch (x) { threw = x.name; }"
+        " return [e.type, e.status, JSON.stringify(e.statusText), e.ok, e.body, JSON.stringify(e.url), [...e.headers].length,"
+        " threw, e.redirected, Response.error() !== e, e.clone().type].join()",
+        'value: error,0,"",false,,"",0,TypeError,false,true,error',
+    ),
+    "Response.redirect()": (
+        "const r = Response.redirect('https://example.test/x?y#z', 307); const d = Response.redirect('https://Example.test');"
+        " const errors = [() => Response.redirect('https://example.test/', 200), () => Response.redirect('http://[', 302),"
+        " () => Response.redirect()].map((t) => { try { t(); return 'ok'; } catch (e) { return e.name + ': ' + e.message; } });"
+        " return [r.status, r.headers.get('location'), r.type, r.body, JSON.stringify(r.statusText), r.redirected,"
+        " d.status, d.headers.get('location'), ...errors].join(' / ')",
+        "value: 307 / https://example.test/x?y#z / default /  / \"\" / false / 302 / https://example.test/ / RangeError: Failed to execute 'redirect' on 'Response': Invalid status code / TypeError: Failed to execute 'redirect' on 'Response': Failed to parse URL from http://[ / TypeError: Failed to execute 'redirect' on 'Response': 1 argument required, but only 0 present.",
+    ),
+}
+
+
 @pytest.fixture(scope="module")
 def program() -> Path:
     value = os.environ.get(_PROGRAM_ENV_VAR)
@@ -303,4 +377,9 @@ def _evaluate(program: Path, script: str) -> str:
 
 @pytest.mark.parametrize(("script", "chrome"), BODIES.values(), ids=BODIES.keys())
 def test_form_bodies_and_iterators_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, script) == chrome
+
+
+@pytest.mark.parametrize(("script", "chrome"), MEMBERS.values(), ids=MEMBERS.keys())
+def test_request_and_response_members_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script) == chrome

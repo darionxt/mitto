@@ -68,6 +68,13 @@ class BodyStreamBuffer final : public UnderlyingByteSourceBase,
   // "Create a proxy": a new body that reads this one, whose stream is then
   // locked and disturbed.
   BodyStreamBuffer* CreateProxy(bindings::ExceptionState& exception_state);
+  // Splits the body into two that each give all of it, as clone() does,
+  // leaving this one locked: a stream's own tee for a body made from a
+  // ReadableStream, and BytesConsumerTee() for any other. Throws, and leaves
+  // both null, for a stream in a state that cannot be known.
+  void Tee(BodyStreamBuffer** branch1,
+           BodyStreamBuffer** branch2,
+           bindings::ExceptionState& exception_state);
 
   // UnderlyingByteSourceBase:
   v8::Local<v8::Promise> Pull(

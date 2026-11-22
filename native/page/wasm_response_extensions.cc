@@ -50,7 +50,8 @@ void AbortWithTypeError(v8::Isolate* isolate,
 // FetchDataLoaderForWasmStreaming, once the whole body has come: V8 gets it
 // and compiles, or the compilation is aborted as when the body fails.
 void OnBody(std::shared_ptr<v8::WasmStreaming> streaming,
-            std::optional<std::string> body) {
+            std::optional<std::string> body,
+            bool aborted) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
   if (!body) {

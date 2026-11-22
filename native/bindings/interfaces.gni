@@ -1929,6 +1929,19 @@ mitto_bindings_interfaces = [
       "blob",
       "bytes",
       "formData",
+      "destination",
+      "referrer",
+      "referrerPolicy",
+      "mode",
+      "credentials",
+      "cache",
+      "redirect",
+      "integrity",
+      "keepalive",
+      "targetAddressSpace",
+      "isHistoryNavigation",
+      "isReloadNavigation",
+      "clone",
     ]
   },
   {
@@ -1951,6 +1964,9 @@ mitto_bindings_interfaces = [
       "blob",
       "bytes",
       "formData",
+      "error",
+      "redirect",
+      "clone",
     ]
   },
   {

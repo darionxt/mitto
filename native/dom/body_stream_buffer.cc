@@ -15,11 +15,13 @@
 #include "mitto/bindings/script_promise.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/bytes_consumer_tee.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/readable_byte_stream_controller.h"
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/readable_stream_byob_request.h"
 #include "mitto/dom/readable_stream_bytes_consumer.h"
+#include "mitto/dom/readable_stream_controller.h"
 #include "mitto/dom/stream_chunks.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -457,6 +459,53 @@ void BodyStreamBuffer::EndLoading() {
   }
   keep_alive_.Clear();
   loader_ = nullptr;
+}
+
+void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
+                           BodyStreamBuffer** branch2,
+                           bindings::ExceptionState& exception_state) {
+  DCHECK(!IsStreamLocked());
+  DCHECK(!IsStreamDisturbed());
+  *branch1 = nullptr;
+  *branch2 = nullptr;
+  if (made_from_readable_stream_) {
+    if (stream_broken_) {
+      // What state the stream is in is not known, so this throws rather
+      // than making it worse.
+      exception_state.ThrowDOMException(
+          "InvalidStateError", "Unsafe to tee stream in unknown state");
+      return;
+    }
+    ReadableStream* stream1 = nullptr;
+    ReadableStream* stream2 = nullptr;
+    // A stream that a page made may have a default controller.
+    if (stream_->GetController()->IsByteStreamController()) {
+      stream_->ByteStreamTee(isolate_, &stream1, &stream2, exception_state);
+    } else {
+      DCHECK(stream_->GetController()->IsDefaultController());
+      stream_->Tee(isolate_, &stream1, &stream2, /*clone_for_branch2=*/true,
+                   exception_state);
+    }
+    if (exception_state.HadException()) {
+      stream_broken_ = true;
+      return;
+    }
+    *branch1 =
+        bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate_, stream1);
+    *branch2 =
+        bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate_, stream2);
+    return;
+  }
+  BytesConsumer* const handle = ReleaseHandle(exception_state);
+  if (exception_state.HadException()) {
+    stream_broken_ = true;
+    return;
+  }
+  BytesConsumer* dest1 = nullptr;
+  BytesConsumer* dest2 = nullptr;
+  BytesConsumerTee(&ExecutionContext::Current(), handle, &dest1, &dest2);
+  *branch1 = Create(isolate_, dest1, signal_.Get());
+  *branch2 = Create(isolate_, dest2, signal_.Get());
 }
 
 BodyStreamBuffer* BodyStreamBuffer::CreateProxy(

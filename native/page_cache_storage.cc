@@ -104,6 +104,11 @@ bool IsPutValid(const PageCacheOperation& operation) {
   if (!opaque && response.status == 206) {
     return false;
   }
+  // Blink checks Vary in the lines that a script sees, which an opaque
+  // response has none of, though it sends those that it filters.
+  if (opaque) {
+    return true;
+  }
   for (const auto& [name, value] : response.headers) {
     if (base::EqualsCaseInsensitiveASCII(name, "vary")) {
       for (std::string_view field :

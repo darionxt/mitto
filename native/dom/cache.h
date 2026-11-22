@@ -122,9 +122,11 @@ class Cache final : public bindings::ScriptWrappable {
                   size_t index,
                   Response* response,
                   bool require_ok);
+  // `body` is null for a body that failed, or that its signal aborted.
   void CompletedResponse(uint64_t barrier,
                          size_t index,
-                         std::optional<std::string> body);
+                         std::optional<std::string> body,
+                         bool aborted = false);
   // Rejects the barrier's promise with `exception` and stops it.
   void FailBarrier(uint64_t barrier, v8::Local<v8::Value> exception);
   // PutImpl() and BarrierCallbackForPutComplete: one batch of the entries.
