@@ -383,8 +383,9 @@ void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
   open->started = true;
   if (open->timed) {
     open->timed->response = response;
-    // WorkerMainScriptLoader starts once the browser hands the response over,
-    // so a small script may end before its entry starts.
+    // WorkerMainScriptLoader starts once the browser hands the response over.
+    // Chrome's starts once the worker's thread has, which often puts a small
+    // script's end before its start: a Known Gap.
     if (open->timed->worker_script) {
       open->timed->start_time = base::TimeTicks::Now();
     }
