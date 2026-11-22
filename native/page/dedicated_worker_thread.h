@@ -92,6 +92,9 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     bool strict_mime_type = false;
     // Whether its creator is a secure context.
     bool secure_context = true;
+    // Whether it is cross-origin isolated: its creator's capability, but for
+    // a worker of a data: URL, as DedicatedWorkerGlobalScope has it.
+    bool cross_origin_isolated = false;
     // Whether it begins frames for requestAnimationFrame(), as a worker that
     // a window starts does, from the frame's compositor.
     bool begin_frames = false;

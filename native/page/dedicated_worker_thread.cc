@@ -239,6 +239,7 @@ void DedicatedWorkerThread::Scope::Start() {
   // A worker's performance timeline starts when its thread does.
   init.time_origin = base::TimeTicks::Now();
   init.secure_context = params_.secure_context;
+  init.cross_origin_isolated = params_.cross_origin_isolated;
   const v8::Local<v8::Context> context = NewWorkerContext(
       isolate_, init, params_.name, [this](v8::Local<v8::Context> context) {
         InitializePageContext(context);

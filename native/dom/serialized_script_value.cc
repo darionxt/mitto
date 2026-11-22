@@ -134,13 +134,15 @@ class Serializer final : public v8::ValueSerializer::Delegate {
   ~Serializer() override = default;
 
   // V8ScriptValueSerializer::Serialize(): the bytes, the transferred
-  // ArrayBuffers' contents and the WebAssembly modules, or false after
-  // throwing.
-  bool Serialize(v8::Local<v8::Value> value,
-                 std::vector<uint8_t>& data,
-                 std::vector<std::shared_ptr<v8::BackingStore>>& array_buffers,
-                 std::vector<v8::CompiledWasmModule>& wasm_modules,
-                 std::vector<MessagePortChannel>& stream_channels) {
+  // ArrayBuffers' contents, the SharedArrayBuffers' and the WebAssembly
+  // modules, or false after throwing.
+  bool Serialize(
+      v8::Local<v8::Value> value,
+      std::vector<uint8_t>& data,
+      std::vector<std::shared_ptr<v8::BackingStore>>& array_buffers,
+      std::vector<std::shared_ptr<v8::BackingStore>>& shared_array_buffers,
+      std::vector<v8::CompiledWasmModule>& wasm_modules,
+      std::vector<MessagePortChannel>& stream_channels) {
     // PrepareTransfer().
     if (transferables_) {
       for (size_t i = 0; i < transferables_->array_buffers.size(); ++i) {
@@ -198,14 +200,25 @@ class Serializer final : public v8::ValueSerializer::Delegate {
         return false;
       }
     }
-    // A Page is never cross-origin isolated, so the SharedArrayBuffers that
-    // the value holds are refused once the rest is done, as Blink's
-    // CheckSharedArrayBufferTransferAllowedAndReport() refuses them.
-    if (has_shared_array_buffer_) {
-      mitto::ThrowDataCloneError(
-          isolate_,
-          "SharedArrayBuffer transfer requires self.crossOriginIsolated.");
-      return false;
+    // The SharedArrayBuffers that the value holds go only from a context
+    // that may post them, which
+    // CheckSharedArrayBufferTransferAllowedAndReport() checks once the rest is
+    // done, and then share their memory with the copy:
+    // CloneSharedArrayBuffers().
+    if (!shared_array_buffers_.empty()) {
+      const ExecutionContext* const execution_context =
+          ExecutionContext::From(isolate_, context);
+      if (!execution_context ||
+          !execution_context->SharedArrayBufferTransferAllowed()) {
+        mitto::ThrowDataCloneError(
+            isolate_,
+            "SharedArrayBuffer transfer requires self.crossOriginIsolated.");
+        return false;
+      }
+      for (const v8::Global<v8::SharedArrayBuffer>& buffer :
+           shared_array_buffers_) {
+        shared_array_buffers.push_back(buffer.Get(isolate_)->GetBackingStore());
+      }
     }
     // The trailer, which names the interfaces that the value needs.
     std::vector<uint8_t> trailer;
@@ -289,9 +302,22 @@ class Serializer final : public v8::ValueSerializer::Delegate {
           isolate, "A SharedArrayBuffer can not be serialized for storage.");
       return v8::Nothing<uint32_t>();
     }
-    // Refused once the value is written, as Blink checks the transfer then.
-    has_shared_array_buffer_ = true;
-    return v8::Just<uint32_t>(0);
+    // Its index among the value's SharedArrayBuffers, which the copy reads
+    // its memory by, the same for each place that holds it. The transfer is
+    // checked once the value is written, as Blink checks it then.
+    const auto found = std::ranges::find_if(
+        shared_array_buffers_,
+        [&shared_array_buffer](
+            const v8::Global<v8::SharedArrayBuffer>& buffer) {
+          return buffer == shared_array_buffer;
+        });
+    if (found != shared_array_buffers_.end()) {
+      return v8::Just(
+          base::checked_cast<uint32_t>(found - shared_array_buffers_.begin()));
+    }
+    shared_array_buffers_.emplace_back(isolate, shared_array_buffer);
+    return v8::Just(
+        base::checked_cast<uint32_t>(shared_array_buffers_.size() - 1));
   }
 
   v8::Maybe<uint32_t> GetWasmModuleTransferId(
@@ -590,7 +616,10 @@ class Serializer final : public v8::ValueSerializer::Delegate {
   const bool for_storage_;
   std::vector<uint8_t> required_interfaces_;
   std::vector<v8::CompiledWasmModule> wasm_modules_;
-  bool has_shared_array_buffer_ = false;
+  // The value's SharedArrayBuffers, each once, in the order the serializer
+  // met them. V8 hands each over in a handle scope of its own, which ends
+  // before the value is written.
+  std::vector<v8::Global<v8::SharedArrayBuffer>> shared_array_buffers_;
   bool thrown_ = false;
 };
 
@@ -679,12 +708,15 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
   Deserializer(v8::Isolate* isolate,
                const std::vector<uint8_t>& data,
                const std::vector<MessagePort*>& ports,
+               const std::vector<std::shared_ptr<v8::BackingStore>>&
+                   shared_array_buffers,
                const std::vector<v8::CompiledWasmModule>& wasm_modules,
                std::vector<MessagePortChannel>* stream_channels)
       : isolate_(isolate),
         deserializer_(isolate, data.data(), data.size(), this),
         data_(data),
         ports_(ports),
+        shared_array_buffers_(shared_array_buffers),
         wasm_modules_(wasm_modules),
         stream_channels_(stream_channels) {}
   ~Deserializer() override = default;
@@ -750,10 +782,17 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
     return {};
   }
 
-  // The Runtime writes no SharedArrayBuffer, so one makes the value null.
+  // A SharedArrayBuffer on the memory of the original's, as Blink's
+  // DOMSharedArrayBuffer::Create() makes it. One that stayed in its agent
+  // cluster, as one that a value from another process held did, makes the
+  // value null, where Blink throws "Unable to deserialize
+  // SharedArrayBuffer.", which no page sees either.
   v8::MaybeLocal<v8::SharedArrayBuffer> GetSharedArrayBufferFromId(
       v8::Isolate* isolate,
       uint32_t id) override {
+    if (id < shared_array_buffers_->size()) {
+      return v8::SharedArrayBuffer::New(isolate, (*shared_array_buffers_)[id]);
+    }
     return {};
   }
 
@@ -956,6 +995,8 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
   v8::ValueDeserializer deserializer_;
   const raw_ref<const std::vector<uint8_t>> data_;
   const raw_ref<const std::vector<MessagePort*>> ports_;
+  const raw_ref<const std::vector<std::shared_ptr<v8::BackingStore>>>
+      shared_array_buffers_;
   const raw_ref<const std::vector<v8::CompiledWasmModule>> wasm_modules_;
   // The other ends of the ports of the streams that the value transferred,
   // which reading takes, or null for none.
@@ -1092,7 +1133,8 @@ std::optional<SerializedScriptValue> SerializedScriptValue::SerializeWith(
   std::vector<v8::CompiledWasmModule> wasm_modules;
   std::vector<MessagePortChannel> stream_channels;
   if (!serializer.Serialize(value, serialized.data_, serialized.array_buffers_,
-                            wasm_modules, stream_channels)) {
+                            serialized.shared_array_buffers_, wasm_modules,
+                            stream_channels)) {
     return std::nullopt;
   }
   if (!stream_channels.empty()) {
@@ -1132,7 +1174,7 @@ v8::Local<v8::Value> SerializedScriptValue::Deserialize(
   // What fails to read gives null, and throws nothing at the page.
   v8::TryCatch try_catch(isolate);
   static const base::NoDestructor<std::vector<v8::CompiledWasmModule>> kNone;
-  Deserializer deserializer(isolate, data_, ports,
+  Deserializer deserializer(isolate, data_, ports, shared_array_buffers_,
                             wasm_modules_ ? *wasm_modules_ : *kNone,
                             streams_ ? &streams_->channels : nullptr);
   v8::Local<v8::Value> value;

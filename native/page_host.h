@@ -25,6 +25,7 @@
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
 #include "base/unguessable_token.h"
+#include "mitto/cross_origin_policies.h"
 #include "mitto/network_quality.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_launcher.h"
@@ -339,6 +340,11 @@ class PageHost final : public PageChannel::Delegate {
     // context that started a worker; kNoDocument for the top-level document.
     uint64_t parent = kNoDocument;
     bool is_worker = false;
+    // Its embedder policy, as the policy container that Chrome's browser
+    // keeps for it holds it: a document's from its navigation's response, a
+    // worker's from its script's, and a frame's initial about:blank's and a
+    // blob: or data: worker's from its parent or creator.
+    CrossOriginEmbedderPolicy coep;
     // The final URLs of the context's requests that have finished, which a
     // request of the context may name as its referrer, as a module names the
     // module that imports it, or a style sheet the sheet that imports it, in
@@ -493,6 +499,10 @@ class PageHost final : public PageChannel::Delegate {
     // A navigation, whose response the Page makes a document of, unless it
     // is a 204, a 205 or a download.
     bool is_navigation = false;
+    // A dedicated worker's script: its creator's embedder policy, which the
+    // worker's has to be compatible with, as DedicatedWorkerHost::CheckCOEP()
+    // holds it.
+    std::optional<CrossOriginEmbedderPolicy> creator_embedder_policy;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
@@ -613,13 +623,19 @@ class PageHost final : public PageChannel::Delegate {
   struct WorkerScript {
     uint64_t creator = kNoDocument;
     GURL url;
+    // The embedder policy that the response gives the worker.
+    CrossOriginEmbedderPolicy coep;
   };
   std::map<uint64_t, WorkerScript> worker_scripts_;
   // The navigations whose responses the Page has and has not made a document
-  // of yet, by number: the final URL and the status.
+  // of yet, by number: the final URL, the status, the embedder policy that
+  // it gives the document, and how many of its responses had a COOP that
+  // Chrome's browser ignored, saying so on the document's console.
   struct NavigationResponse {
     GURL url;
     int32_t status = 0;
+    CrossOriginEmbedderPolicy coep;
+    int coop_ignored = 0;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
   // The documents whose CookieStores listen, by ID: what tells each of each
