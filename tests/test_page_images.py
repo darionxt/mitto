@@ -244,6 +244,93 @@ def test_an_svg_image_has_the_natural_size_its_root_gives_and_decode_settles(
     assert refused == "EncodingError: The source image cannot be decoded."
 
 
+# An SVG image element made by script, with its href set in one way or another, and what decode() gives of it.
+_SVG_IMAGES = """
+(() => {
+  const image = attributes => {
+    const element = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    for (const [name, value] of Object.entries(attributes)) {
+      if (name === 'xlink') {
+        element.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', value);
+      } else {
+        element.setAttribute(name, value);
+      }
+    }
+    return element;
+  };
+  const settle = promise => promise.then(value => `resolved ${value}`, error => `${error.name}: ${error.message}`);
+  const events = [];
+  const listened = image({href: 'listened.png'});
+  listened.addEventListener('load', () => events.push('load'));
+  const failed = image({href: 'none.txt'});
+  failed.addEventListener('error', () => events.push('error'));
+  image({}).href.baseVal = 'base-val.png';
+  return Promise.all([settle(image({href: 'href.png'}).decode()), settle(image({xlink: 'xlink.png'}).decode()),
+                      settle(image({href: 'none.txt'}).decode()), settle(image({}).decode())])
+    .then(decodes => new Promise(resolve => setTimeout(() => resolve({decodes, events}), 500)));
+})()
+"""
+
+
+def test_an_svg_image_loads_its_href_in_a_document_or_out_of_one(session: mitto.Session, server: _Server) -> None:
+    for name in ["markup", "inner", "listened", "href", "xlink", "base-val"]:
+        server.image(f"/{name}.png", _png(3, 2))
+    server.route("/none.txt", b"no image", "text/plain")
+    url = server.page(
+        "/",
+        "<script>window.order = []; addEventListener('load', () => order.push('window'));</script>"
+        "<svg><image href='markup.png' onload=\"order.push('image')\"/></svg>"
+        "<svg><svg onload=\"order.push('inner svg')\"><image href='inner.png'/></svg></svg>",
+    )
+
+    with _open_page(session, url) as page:
+        order = page.evaluate("order", timeout=_TIMEOUT_SECONDS)
+        settled = page.evaluate(_SVG_IMAGES, timeout=_TIMEOUT_SECONDS)
+
+    # SVG's load event fires at an image once it has loaded, and at an svg inside another that holds it, each in the
+    # order their images end, before the window's, which waits for them.
+    assert sorted(order[:-1]) == ["image", "inner svg"]
+    assert order[-1] == "window"
+    # Its href loads as soon as it is set, as an img's src does, by setAttribute() or through href.baseVal.
+    for name in ["listened", "href", "xlink", "base-val"]:
+        assert server.wait_for_path(f"/{name}.png")
+    # Each fires its own event, in the order their loads end.
+    assert sorted(settled["events"]) == ["error", "load"]
+    cannot_decode = "EncodingError: The source image cannot be decoded."
+    assert settled["decodes"] == ["resolved undefined", "resolved undefined", cannot_decode, cannot_decode]
+    # It goes as a caller's image request from the page goes.
+    session.get(server.url("/markup.png"), kind="image", initiator=url)
+    page_lines, caller_lines = server.headers_of("/markup.png")
+    assert page_lines == caller_lines
+
+
+def test_an_img_whose_url_does_not_resolve_gives_its_source_as_current_src(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.image("/red.png", _png(1, 1))
+    url = server.page(
+        "/",
+        "<img src='//['><img srcset='//['><img srcset='//[' src='red.png'><img srcset='//[, red.png'>",
+    )
+
+    with _open_page(session, url) as page:
+        images = page.evaluate(
+            "[...document.images].map(image => [image.currentSrc, image.complete])", timeout=_TIMEOUT_SECONDS
+        )
+        # The same source again fails again.
+        errors = page.evaluate(
+            "new Promise(resolve => { const image = new Image(); image.src = '//[';"
+            " setTimeout(() => { let errors = 0; image.onerror = () => errors++; image.src = '//[';"
+            " setTimeout(() => resolve(errors), 500); }, 100); })",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    # Blink's KURL keeps the text of a URL that does not resolve, which the fetcher blocks, so currentSrc gives it.
+    assert images == [["//[", True]] * 4
+    assert errors == 1
+    assert "/red.png" not in server.paths()
+
+
 def test_an_svg_image_in_utf_16_has_the_natural_size_its_root_gives(session: mitto.Session, server: _Server) -> None:
     root = "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='20'></svg>"
     declared = "<?xml version='1.0' encoding='UTF-16BE'?>" + root

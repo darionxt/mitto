@@ -1,11 +1,13 @@
-// An img element's loader, as Blink's ImageLoader runs the HTML Standard's
-// "update the image data": the URL it chose, a microtask before the fetch
-// unless the image is in the list of available images, the document's load
-// event held back meanwhile, load or error from a task once the fetch ends,
-// complete, and decode()'s promises.
+// The loader of an img's or an SVG image's image, as Blink's ImageLoader runs
+// the HTML Standard's "update the image data": the URL it chose, a microtask
+// before the fetch unless the image is in the list of available images, the
+// document's load event held back meanwhile, load or error from a task once
+// the fetch ends, complete, and decode()'s promises. An SVG image fires its
+// events as Blink's SVGImageLoader does.
 //
 // Upstream: third_party/blink/renderer/core/loader/image_loader.h
 // Upstream: third_party/blink/renderer/core/loader/image_loader.cc
+// Upstream: third_party/blink/renderer/core/svg/svg_image_loader.cc
 
 #ifndef MITTO_DOM_IMAGE_LOADER_H_
 #define MITTO_DOM_IMAGE_LOADER_H_
@@ -32,7 +34,9 @@ class ExceptionState;
 }  // namespace bindings
 
 class Document;
+class Element;
 class HTMLImageElement;
+class SVGImageElement;
 class Window;
 
 class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
@@ -52,6 +56,7 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   };
 
   explicit ImageLoader(HTMLImageElement& element);
+  explicit ImageLoader(SVGImageElement& element);
   ImageLoader(const ImageLoader&) = delete;
   ImageLoader& operator=(const ImageLoader&) = delete;
   ~ImageLoader();
@@ -69,6 +74,8 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   bool ImageComplete() const { return image_complete_; }
   Resource* GetContent() const { return image_content_.Get(); }
   bool HadError() const { return !failed_load_url_.empty(); }
+  // Whether an update, a load, a load or error event or a decode waits.
+  bool HasPendingActivity() const;
   // Whether the image is available or still loading, as the HTML Standard's
   // "potentially available" has it.
   bool ImageIsPotentiallyAvailable() const;
@@ -129,9 +136,16 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   // resolves it if it is still among the requests.
   void DecodeRequestFinished(uint64_t id);
   bool IsDocumentActive() const;
+  // What the element gives, as Blink asks it of Element and of
+  // HTMLImageElement: the URL srcset chose or src for an img, href for an
+  // SVG image, and the attributes of the request, which any element has.
+  std::optional<std::u16string> ImageSourceURL() const;
+  bool HasLazyLoadingAttribute() const;
+  void DispatchLoadEvent();
+  void DispatchErrorEvent();
   // LazyImageHelper::StartMonitoring(): a Page has no layout, so each lazy
   // image comes near the viewport at the next rendering opportunity, as the
-  // owner chose (#284).
+  // owner chose.
   void StartMonitoring();
   // HasPendingActivity(): the element stays while its image loads, while
   // its update microtask, a load or error event or a decode waits, as
@@ -142,8 +156,10 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   void ContextDestroyed();
   class ScopedKeepAliveUpdate;
 
-  cppgc::Member<HTMLImageElement> element_;
-  cppgc::Persistent<HTMLImageElement> keep_alive_;
+  cppgc::Member<Element> element_;
+  // Whether the element is an SVG image, and not an img.
+  const bool svg_image_;
+  cppgc::Persistent<Element> keep_alive_;
   // The window whose context going lets the element go.
   cppgc::WeakMember<Window> keep_alive_window_;
   cppgc::Member<Resource> image_content_;

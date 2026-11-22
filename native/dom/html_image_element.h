@@ -66,9 +66,6 @@ class HTMLImageElement final : public HTMLElement {
   // What ImageLoader reads: the URL srcset chose, or else src, null for
   // neither.
   std::optional<std::u16string> ImageSourceURL() const;
-  CrossOriginAttribute GetCrossOriginAttribute() const;
-  FetchReferrerPolicy ReferrerPolicyForFetch() const;
-  FetchPriorityHint GetFetchPriorityHint() const;
   void DispatchLoadEvent();
   void DispatchErrorEvent();
   bool HasLazyLoadingAttribute() const;
