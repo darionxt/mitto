@@ -1,10 +1,12 @@
 // The URL Standard's URL, as Blink's URL has it: a URL that parses as Blink's
 // KURL parses it, each part of it read and set as a link's are (UrlUtils), and
-// its URLSearchParams kept in step with its query. createObjectURL() and
-// revokeObjectURL(), of the File API, are Known Gaps.
+// its URLSearchParams kept in step with its query, and the File API's
+// createObjectURL() and revokeObjectURL() (public_url_manager.h).
 //
 // Upstream: third_party/blink/renderer/core/url/url.h
 // Upstream: third_party/blink/renderer/core/url/url.cc
+// Upstream: third_party/blink/renderer/core/fileapi/url_file_api.cc
+// Upstream: third_party/blink/renderer/modules/mediasource/url_media_source.cc
 
 #ifndef MITTO_DOM_URL_H_
 #define MITTO_DOM_URL_H_
@@ -24,6 +26,8 @@ namespace bindings {
 class ExceptionState;
 }  // namespace bindings
 
+class Blob;
+class MediaSource;
 class URLSearchParams;
 
 class URL final : public bindings::ScriptWrappable, public UrlUtils {
@@ -38,6 +42,13 @@ class URL final : public bindings::ScriptWrappable, public UrlUtils {
                     const std::optional<std::u16string>& base);
   static bool CanParse(const std::u16string& url,
                        const std::optional<std::u16string>& base);
+  // A new blob: URL for `blob`, or for `source`, which names nothing a Page
+  // loads, since playing media stays out; empty in a context that has gone.
+  static std::u16string CreateObjectURL(
+      Blob* blob,
+      bindings::ExceptionState& exception_state);
+  static std::u16string CreateObjectURL(MediaSource* source);
+  static void RevokeObjectURL(const std::u16string& url);
 
   explicit URL(const ResolvedURL& url);
   ~URL() override;

@@ -4,9 +4,14 @@
 
 #include "base/auto_reset.h"
 #include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_url.h"
+#include "mitto/dom/blob.h"
+#include "mitto/dom/execution_context.h"
+#include "mitto/dom/public_url_manager.h"
 #include "mitto/dom/url_search_params.h"
+#include "url/gurl.h"
 
 namespace mitto {
 
@@ -71,6 +76,24 @@ bool URL::CanParse(const std::u16string& url,
     }
   }
   return ResolvedURL(base_url, url).IsValid();
+}
+
+// static
+std::u16string URL::CreateObjectURL(Blob* blob,
+                                    bindings::ExceptionState& exception_state) {
+  return PublicUrlManager::RegisterUrl(ExecutionContext::Current(),
+                                       blob->GetBlobDataHandle());
+}
+
+// static
+std::u16string URL::CreateObjectURL(MediaSource* source) {
+  return PublicUrlManager::RegisterUrl(ExecutionContext::Current(), nullptr);
+}
+
+// static
+void URL::RevokeObjectURL(const std::u16string& url) {
+  PublicUrlManager::Revoke(ExecutionContext::Current(),
+                           GURL(base::UTF16ToUTF8(url)));
 }
 
 URL::URL(const ResolvedURL& url) : url_(url) {}

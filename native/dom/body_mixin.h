@@ -10,6 +10,8 @@
 #ifndef MITTO_DOM_BODY_MIXIN_H_
 #define MITTO_DOM_BODY_MIXIN_H_
 
+#include <string>
+
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-promise.h"
 
@@ -30,6 +32,8 @@ class BodyMixin {
   // The members of the interface mixin.
   bool BodyUsed() const { return IsBodyUsed(); }
   v8::Local<v8::Promise> ArrayBuffer(bindings::ExceptionState& exception_state);
+  v8::Local<v8::Promise> Blob(bindings::ExceptionState& exception_state);
+  v8::Local<v8::Promise> Bytes(bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Json(bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Text(bindings::ExceptionState& exception_state);
   ReadableStream* TextStream(bindings::ExceptionState& exception_state);
@@ -46,10 +50,16 @@ class BodyMixin {
 
   // Its body, or null for a null body.
   virtual BodyStreamBuffer* BodyBuffer() const = 0;
+  // The type of a Blob that blob() makes: its Content-Type line, in lowercase,
+  // or empty without one, as Blink's FetchHeaderList::ExtractMIMEType()
+  // gives it.
+  virtual std::string MimeType() const = 0;
 
  private:
   enum class ReadAs {
     kArrayBuffer,
+    kBlob,
+    kBytes,
     kJson,
     kText,
   };

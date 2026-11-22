@@ -6,6 +6,7 @@
 #include "base/compiler_specific.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_response.h"
 #include "mitto/dom/body_stream_buffer.h"
@@ -184,6 +185,10 @@ Response* Response::CreateFetched(ResponseType type,
 
 Response::Response() = default;
 Response::~Response() = default;
+
+std::string Response::MimeType() const {
+  return base::ToLowerASCII(headers_->GetValue("content-type").value_or(""));
+}
 
 BodyStreamBuffer* Response::BodyBuffer() const {
   return body_buffer_.Get();
