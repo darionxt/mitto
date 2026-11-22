@@ -404,6 +404,25 @@ def test_the_documents_scripts_do_not_run_until_a_page_loads_documents(program: 
     assert _evaluate(program, script, "<script>var ran = 1</script>") == "undefined,var ran = 1"
 
 
+def test_a_script_that_a_fragments_markup_leaves_unclosed_never_runs(program: Path) -> None:
+    # As in Chrome 157, whose results for web-platform-tests' domparsing/tentative/unclosed-script-already-started.html
+    # say so: createContextualFragment()'s scripts run once inserted, but the tree builder marks one that the markup
+    # leaves open as already started, so that neither inserting it, nor new text, nor a copy runs it.
+    script = """
+        window.ran = [];
+        const range = document.createRange();
+        range.selectNodeContents(document.body);
+        document.body.append(range.createContextualFragment("<script>ran.push('closed')</script>"));
+        document.body.append(range.createContextualFragment("<script id=u>ran.push('unclosed')"));
+        const unclosed = document.getElementById('u');
+        unclosed.append("ran.push('text')");
+        document.body.append(unclosed.cloneNode(true));
+        ran.join()
+    """
+
+    assert _evaluate(program, script, "<!DOCTYPE html><body>") == "closed"
+
+
 def test_a_detached_node_keeps_its_tree_through_garbage_collection(program: Path) -> None:
     # Only the innermost node's wrapper holds the tree, through V8's C++ heap, while scripts allocate enough to
     # collect.

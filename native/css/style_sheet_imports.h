@@ -5,6 +5,10 @@
 //
 // Upstream: third_party/blink/renderer/core/css/parser/css_parser_impl.cc
 // Upstream: third_party/blink/renderer/core/css/style_rule_import.cc
+// Upstream: third_party/blink/renderer/core/css/parser/css_supports_parser.cc
+// Upstream: third_party/blink/renderer/core/css/parser/container_query_parser.cc
+// Upstream: third_party/blink/renderer/core/css/css_syntax_string_parser.cc
+// Upstream: third_party/blink/renderer/core/css/properties/css_parsing_utils.cc
 
 #ifndef MITTO_CSS_STYLE_SHEET_IMPORTS_H_
 #define MITTO_CSS_STYLE_SHEET_IMPORTS_H_

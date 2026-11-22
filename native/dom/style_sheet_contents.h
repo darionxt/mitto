@@ -121,6 +121,12 @@ class StyleRuleImport final : public cppgc::GarbageCollected<StyleRuleImport>,
   void NotifyFinished(Resource& resource) override;
 
  private:
+  // ResourceForBlockedRequest(): a request that the fetcher cannot start, of
+  // a document of no window or of a URL that does not resolve, fails at once,
+  // as a style sheet that Blink blocks tells its client, its type taking a
+  // synchronous cache hit.
+  void FailBlockedRequest();
+
   cppgc::WeakMember<StyleSheetContents> parent_;
   const std::u16string href_;
   cppgc::Member<Resource> resource_;

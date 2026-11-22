@@ -289,6 +289,127 @@ def test_a_sheet_for_other_media_an_alternate_or_a_scripts_holds_no_script_back(
     assert asked_early
 
 
+# At-rules with a block, each before an import of its own: those whose prelude or, for @property, whose descriptors
+# Blink does not parse, which its parser drops, and those it makes rules of, which end the imports.
+_AT_RULES = {
+    "dropped": [
+        "@supports foo",
+        "@supports (a: b) and (c: d) or (e: f)",
+        "@container none (width > 1px)",
+        "@container foo bar",
+        "@layer a, b",
+        "@scope (> p)",
+        "@keyframes none",
+        "@font-face x",
+        "@page :nope",
+        "@counter-style decimal",
+        "@position-try a",
+        "@font-feature-values serif",
+        "@function --f",
+        "@function --f() returns ???",
+        "@function --f(--x: ;)",
+        "@property --a",
+    ],
+    "kept": [
+        "@media !!!",
+        "@supports not(a: b)",
+        "@container foo",
+        "@layer initial.a",
+        "@scope (p) to (q)",
+        '@keyframes "a"',
+        "@page a:left",
+        "@counter-style a",
+        "@font-feature-values a serif",
+        "@function --f(--a <length>) returns <length>",
+    ],
+}
+
+
+def test_an_at_rule_whose_prelude_does_not_parse_ends_no_imports(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    styles: list[str] = []
+    for kind, rules in _AT_RULES.items():
+        for i, rule in enumerate(rules):
+            server.route(f"/{kind}-{i}.css", b"p {}", _CSS)
+            styles.append(f"<style>{rule} {{}} @import '{kind}-{i}.css';</style>")
+    server.route("/property-kept.css", b"p {}", _CSS)
+    styles.append("<style>@property --a { syntax: '*'; inherits: false; } @import 'property-kept.css';</style>")
+    # A space ends the escape of an f, so that the syntax is the ident foo.
+    server.route("/property-escaped.css", b"p {}", _CSS)
+    styles.append(
+        "<style>@property --b { syntax: '\\66 oo'; inherits: false; initial-value: foo; }"
+        " @import 'property-escaped.css';</style>"
+    )
+    # An escaped semicolon is an ident too, which ends neither the string nor the rule.
+    server.route("/property-semicolon.css", b"p {}", _CSS)
+    styles.append(
+        "<style>@property --c { syntax: '\\\\;'; inherits: false; initial-value: \\; }"
+        " @import 'property-semicolon.css';</style>"
+    )
+    url = server.page("/", "".join(styles))
+
+    with _open_page(session, url):
+        pass
+
+    # What Chrome 157 fetched: the import after each rule that its parser dropped.
+    fetched = sorted(path for path in without_favicon(server.paths()) if path != "/")
+    assert fetched == sorted(f"/dropped-{i}.css" for i in range(len(_AT_RULES["dropped"])))
+
+
+# Style elements in documents that no window shows, and in the page's own, each with what it imports, and the events
+# they fire in turn.
+_UNSHOWN_STYLES = """
+new Promise(resolve => {
+  const events = [];
+  const style = (doc, name, text) => {
+    const element = doc.createElement('style');
+    element.onload = () => events.push(`${name} load`);
+    element.onerror = () => events.push(`${name} error`);
+    element.textContent = text;
+    return element;
+  };
+  const made = document.implementation.createHTMLDocument();
+  made.head.append(style(made, 'made relative', '@import url("/relative.css");'));
+  made.head.append(style(made, 'made plain', 'p {}'));
+  made.head.append(style(made, 'made data', '@import url("data:text/css,p{}");'));
+  const parsed = new DOMParser().parseFromString('<style>@import url("/parsed.css");</style><p>after</p>', 'text/html');
+  const imported = parsed.querySelector('style');
+  imported.onload = () => events.push('parsed load');
+  imported.onerror = () => events.push('parsed error');
+  document.head.append(style(document, 'page invalid', '@import url("http://[");'));
+  document.head.append(style(document, 'page itself', '@import url("");'));
+  setTimeout(() => resolve({events, parsed: parsed.body.textContent}), 500);
+})
+"""
+
+
+def test_a_style_element_of_a_document_with_no_window_fires_load_or_error(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", "<p>page</p>")
+
+    with _open_page(session, url) as page:
+        result = page.evaluate(_UNSHOWN_STYLES, timeout=TIMEOUT_SECONDS)
+
+    # What Chrome 157 gives. A document that no window shows fetches nothing: an import goes to its fetcher, which
+    # blocks it, so the sheet errs, but a relative URL against the base of about:blank resolves to nothing, which the
+    # check for a cycle takes as the inline sheet's own null URL, so that it imports nothing. The page's own sheet
+    # errs for a URL that does not resolve, and imports nothing for its own URL.
+    assert result == {
+        "events": [
+            "made relative load",
+            "made plain load",
+            "made data error",
+            "parsed error",
+            "page invalid error",
+            "page itself load",
+        ],
+        "parsed": "after",
+    }
+    assert without_favicon(server.paths()) == ["/"]
+
+
 def test_link_and_style_elements_fire_load_or_error_once_their_imports_end(
     session: mitto.Session, server: RecordingServer
 ) -> None:
