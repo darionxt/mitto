@@ -12,6 +12,7 @@
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/window_task.h"
+#include "mitto/dom/worker_global_scope.h"
 
 namespace mitto {
 
@@ -25,8 +26,9 @@ BroadcastChannel::BroadcastChannel(ExecutionContext* context,
                                    const std::u16string& name)
     : context_(context), name_(name) {
   // A channel of a context that has gone stays unconnected, and its
-  // postMessage() does nothing, as in a detached frame.
-  if (!context || !context->HasContext()) {
+  // postMessage() does nothing, as in a detached frame; so does one of a
+  // worker that has called close(), as Blink connects none there.
+  if (!context || !context->HasContext() || IsOfClosingWorker()) {
     return;
   }
   connection_ = BroadcastChannelService::Get().Connect(this, *context, name);
@@ -61,12 +63,24 @@ void BroadcastChannel::PostMessage(v8::Local<v8::Value> message,
     }
     return;
   }
+  // A worker that has called close() drops what its channels post, before
+  // anything is serialized, as Blink's postMessage() does, since the
+  // connection lasts until the worker goes.
+  if (IsOfClosingWorker()) {
+    return;
+  }
   std::optional<SerializedScriptValue> serialized =
       SerializedScriptValue::Serialize(exception_state.GetIsolate(), message);
   if (!serialized) {
     return;
   }
   BroadcastChannelService::Get().Post(connection_, *serialized);
+}
+
+bool BroadcastChannel::IsOfClosingWorker() const {
+  ExecutionContext* const context = context_.Get();
+  return context && !context->IsWindow() &&
+         static_cast<WorkerGlobalScope*>(context)->IsClosing();
 }
 
 void BroadcastChannel::Close() {

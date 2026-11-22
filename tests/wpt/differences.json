@@ -30698,8 +30698,6 @@
 {"test": "webmessaging/broadcastchannel/origin.window.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
 {"test": "webmessaging/broadcastchannel/sandbox.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
 {"test": "webmessaging/broadcastchannel/service-worker.https.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "out"},
-{"test": "webmessaging/broadcastchannel/workers.html", "subtest": "BroadcastChannel messages from closed worker to parent should be ignored (BC created after closing)", "chrome": "PASS", "mitto": "FAIL: assert_equals: BroadcastChannel message should only be received from the second worker expected \"done-worker done\" but got \"close-before-create-worker done\"", "owner": "#283"},
-{"test": "webmessaging/broadcastchannel/workers.html", "subtest": "BroadcastChannel messages from closed worker to parent should be ignored (BC created before closing)", "chrome": "PASS", "mitto": "FAIL: assert_equals: BroadcastChannel message should only be received from the second worker expected \"done-worker done\" but got \"close-after-create-worker done\"", "owner": "#283"},
 {"test": "webmessaging/broadcastchannel/workers.html", "subtest": "BroadcastChannel works in shared workers", "chrome": "PASS", "mitto": "FAIL: Failed to read the 'port' property from 'SharedWorker': Not implemented.", "owner": "out"},
 {"test": "webmessaging/event.data.sub.htm", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
 {"test": "webmessaging/event.origin.sub.htm", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
