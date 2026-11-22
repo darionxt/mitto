@@ -1,6 +1,7 @@
-// Runs a Page's scripts on V8, in one context, on the Page program's main
-// thread, and sends what each returns as JSON, with what they write to the
-// console and the errors that they leave uncaught.
+// Runs a Page's scripts on V8, on the Page program's main thread, and sends
+// what each returns as JSON, with what they write to the console and the
+// errors that they leave uncaught. It holds what is the isolate's, and the
+// Page's frames hold their windows' contexts (page_frame.h).
 
 #ifndef MITTO_PAGE_SCRIPT_RUNNER_H_
 #define MITTO_PAGE_SCRIPT_RUNNER_H_
@@ -19,12 +20,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/task/task_observer.h"
 #include "base/time/time.h"
-#include "mitto/dom/event_loop.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_reporter.h"
 #include "mitto/page/session_sender.h"
 #include "mitto/page_messages.h"
-#include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-function-callback.h"
@@ -39,19 +38,12 @@ class Isolate;
 
 namespace mitto {
 
-class DOMTimerCoordinator;
-class AnimationFrameController;
 class CacheStorageHost;
 class IndexedDbHost;
-class StorageBucketHost;
-class IdleTaskController;
-class Document;
-class PageFetcher;
-class PageWorkerStarter;
 class PageFrame;
 class PageRequests;
 class SessionCookieJar;
-class WindowTasks;
+class StorageBucketHost;
 
 // Fills `buffer` from the system's random source, which needs no file, for
 // V8's random numbers, as Chrome's renderers do.
@@ -79,24 +71,24 @@ class ScriptRunner final : public base::TaskObserver {
   ~ScriptRunner() override;
 
   // Sets the time zone and the locale that ICU, and so V8, report, so that
-  // neither is read from the machine, and makes the context, about:blank's,
-  // whose window reads the rest of `start`, as each later window does.
-  // Returns why not, if ICU does not know one of them. What the Page sends from
-  // then on goes through `sender`, and what the Page refuses of what the
-  // Session sends through `refuse`. Documents that the Session loads read and
-  // write their cookies through `cookie_jar`, which outlives this.
+  // neither is read from the machine, and makes the top-level frame, whose
+  // first window, about:blank's, reads the rest of `start`, as each later
+  // window does. Returns why not, if ICU does not know one of them. What the
+  // Page sends from then on goes through `sender`, and what the Page refuses of
+  // what the Session sends through `refuse`. Documents that the Session loads
+  // read and write their cookies through `cookie_jar`, which outlives this.
   std::optional<std::string> Start(
       const PageStart& start,
       scoped_refptr<SessionSender> sender,
       base::RepeatingCallback<void(std::string why)> refuse,
       SessionCookieJar& cookie_jar);
 
-  // Runs `script` in the current context, and sends its result as JSON, or why
-  // it has none. When the result is a promise, that waits until the promise
-  // settles, which another script may do, and later scripts run meanwhile.
+  // Runs `script` in the context of the top-level frame's window, and sends
+  // its result as JSON, or why it has none. When the result is a promise, that
+  // waits until the promise settles, which another script may do, and later
+  // scripts run meanwhile.
   void Evaluate(uint64_t call, std::string_view script);
 
-  // What the Session sends of the Page's requests, each as a task.
   // Where the documents that the Session loads over HTTP or HTTPS reach its
   // Cache API, which outlives this.
   void SetCacheStorageHost(CacheStorageHost& host) {
@@ -109,41 +101,38 @@ class ScriptRunner final : public base::TaskObserver {
     storage_bucket_host_ = &host;
   }
 
+  // What the Session sends of the Page's requests, each as a task, which
+  // runs in the context that made the request.
   void OnResponseStarted(PageResponseStarted response);
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(PageResponseEnded ended);
   void OnRequestBodyCredit(PageCredit credit);
   void OnIsolation(PageIsolation isolation);
 
-  // What a document's loading uses, on the main thread.
-  //
-  // Runs `task` in the current context. What Blink does after each task
-  // follows once the task that runs this ends.
-  void RunTask(base::OnceClosure task);
-  // Runs `task` as RunTask() does, from a later task of `type`.
-  void PostTask(TaskType type, base::OnceClosure task);
-  // Makes a new context, whose window has an empty document at `url`, the
-  // response of navigation `navigation`, in place of the current one, tells
-  // the Session of it, and returns the document. Calls that wait for a
-  // promise of the old context fail, as DevTools' do when a page navigates,
-  // and the old window's timers and fetches stop. The new window's
-  // performance.timeOrigin is `navigation_start`, and its
-  // navigator.connection gives `connection`, and its agent is cross-origin
-  // isolated if `cross_origin_isolated`. With `xml_content_type`, the
-  // document is an XMLDocument of that MIME type, as Blink's DocumentInit
-  // makes one for an XML response, and otherwise an HTMLDocument.
-  Document& CommitDocument(
-      uint64_t navigation,
-      const GURL& url,
-      base::TimeTicks navigation_start,
-      const PageConnection& connection,
-      bool cross_origin_isolated,
-      const std::optional<std::u16string>& xml_content_type = std::nullopt);
-  // How the current window's document loads, which its document's loading
-  // fills in, and performance.timing and window.chrome read.
-  DocumentLoadTiming& document_load_timing() {
-    return *chrome_object_data_.back()->load_timing;
+  // What the Page's frames use, on the main thread.
+  v8::Isolate* isolate() const { return isolate_; }
+  const PageStart& start() const { return start_; }
+  const scoped_refptr<SessionSender>& sender() const { return sender_; }
+  const SendFrame& send() const { return send_; }
+  const base::RepeatingCallback<void(std::string why)>& refuse() const {
+    return refuse_;
   }
+  PageReporter& reporter() { return *reporter_; }
+  PageRequests& requests() { return *requests_; }
+  SessionCookieJar& cookie_jar() { return *cookie_jar_; }
+  CacheStorageHost* cache_storage_host() const { return cache_storage_host_; }
+  IndexedDbHost* indexed_db_host() const { return indexed_db_host_; }
+  StorageBucketHost* storage_bucket_host() const {
+    return storage_bucket_host_;
+  }
+  // What window.chrome of a new window reads, whose loading starts at
+  // `navigation_start`, which lives as long as the Page, for a callback of a
+  // window that has gone.
+  ChromeObjectData& NewChromeObjectData(base::TimeTicks navigation_start);
+  // The top-level frame's window loses its context: the calls that wait for
+  // a promise of it fail, as DevTools' do when a page navigates.
+  void TopLevelContextGoes();
+
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,
                        bool was_blocked_or_low_priority) override;
@@ -165,19 +154,10 @@ class ScriptRunner final : public base::TaskObserver {
   void QueueRejectionReport();
   // Reports those of `rejections` that still have no handler.
   void ReportRejections(std::vector<PageReporter::Rejection> rejections);
-  // Makes a window's context, whose time origin is `time_origin`, and what
-  // Chrome's renderer adds to it.
-  v8::Local<v8::Context> NewContext(base::TimeTicks time_origin,
-                                    bool cross_origin_isolated);
-  // Gives the current context's window its timers, what its fetch() goes
-  // through, and what it reads of the browser and the machine, with
-  // `connection` for its document, and the ID of its document, which it tells
-  // the Session of as made of `source`, the response of `navigation` for one
-  // of a navigation.
-  void AttachWindow(v8::Local<v8::Context> context,
-                    const PageConnection& connection,
-                    PageDocumentSource source,
-                    uint64_t navigation);
+  // Runs `task` with a handle scope, in no context: what it runs enters the
+  // context it belongs to. What Blink does after each task follows once the
+  // task that runs this ends.
+  void RunTask(base::OnceClosure task);
 
   // Returns `value`, the result of `call`, as JSON, or why it cannot be.
   PageEvaluated ResultOf(uint64_t call,
@@ -218,22 +198,15 @@ class ScriptRunner final : public base::TaskObserver {
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   std::unique_ptr<PageRequests> requests_;
-  // The Page's frame, which loads its documents.
+  // The Page's top-level frame, which loads its documents.
   std::unique_ptr<PageFrame> frame_;
-  // The current window's timers and what its fetch() goes through.
-  std::unique_ptr<DOMTimerCoordinator> timers_;
-  std::unique_ptr<IdleTaskController> idle_tasks_;
-  std::unique_ptr<AnimationFrameController> animation_frames_;
-  std::unique_ptr<PageFetcher> fetcher_;
-  std::unique_ptr<WindowTasks> window_tasks_;
-  std::unique_ptr<PageWorkerStarter> worker_starter_;
-  // What window.chrome of each window that the Page has made reads, the
-  // current one's last. They live as long as the Page, for a callback of a
-  // window that has gone.
+  // What window.chrome of each window that the Page has made reads. They live
+  // as long as the Page, for a callback of a window that has gone.
   std::vector<std::unique_ptr<ChromeObjectData>> chrome_object_data_;
   // How many tasks that report rejections wait to run.
   int reports_queued_ = 0;
-  v8::Global<v8::Context> context_;
+  // Whether Start() made the top-level frame's first window.
+  bool started_ = false;
 };
 
 }  // namespace mitto

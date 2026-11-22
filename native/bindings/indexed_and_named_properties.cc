@@ -7,6 +7,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/interface_table.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
@@ -81,6 +82,7 @@ v8::Intercepted NamedGetter(v8::Local<v8::Name> name,
   // a non-masking interceptor only for a name that neither the object nor its
   // prototypes have.
   v8::Isolate* const isolate = info.GetIsolate();
+  const ReceiverRealmScope receiver_realm(isolate, info.Holder());
   const v8::Local<v8::Value> value = PropertiesOf(info).named_getter(
       isolate, info.Holder(), StringOf(isolate, name));
   if (value.IsEmpty()) {
@@ -239,6 +241,7 @@ v8::Intercepted IndexedGetter(uint32_t index,
   if (index >= properties.length(isolate, info.Holder())) {
     return v8::Intercepted::kNo;
   }
+  const ReceiverRealmScope receiver_realm(isolate, info.Holder());
   info.GetReturnValue().Set(
       properties.indexed_getter(isolate, info.Holder(), index));
   return v8::Intercepted::kYes;
@@ -366,6 +369,7 @@ v8::Intercepted NamedPropertiesObjectGetter(
   if (!info.Holder()->GetCreationContext(isolate).ToLocal(&context)) {
     return v8::Intercepted::kNo;
   }
+  const ReceiverRealmScope receiver_realm(isolate, context->Global());
   const v8::Local<v8::Value> value = NamedPropertiesObjectOf(info).named_getter(
       isolate, context->Global(), StringOf(isolate, name));
   if (value.IsEmpty()) {

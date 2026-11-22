@@ -10,6 +10,7 @@
 #include "mitto/bindings/idl_member_installer.h"
 #include "mitto/bindings/interface_table.h"
 #include "mitto/bindings/known_gap.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "v8/include/v8-external.h"
 #include "v8/include/v8-isolate.h"
@@ -49,12 +50,14 @@ const RuntimeFeatureSet* PerIsolateData::FeaturesOf(v8::Isolate* isolate) {
 }
 
 PerIsolateData::PerIsolateData(v8::Isolate* isolate, RuntimeFeatureSet features)
-    : isolate_(isolate),
-      features_(std::move(features)),
-      time_origin_(base::TimeTicks::Now()) {}
+    : isolate_(isolate), features_(std::move(features)) {}
 
 PerIsolateData::~PerIsolateData() {
   isolate_->SetData(kDataSlot, nullptr);
+}
+
+bool PerIsolateData::secure_context() const {
+  return IsSecureContext(isolate_->GetCurrentContext());
 }
 
 v8::Local<v8::FunctionTemplate> PerIsolateData::InterfaceTemplate(

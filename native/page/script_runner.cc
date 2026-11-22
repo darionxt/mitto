@@ -18,24 +18,9 @@
 #include "base/task/current_thread.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
-#include "mitto/dom/animation_frame_controller.h"
-#include "mitto/dom/cache_storage_host.h"
-#include "mitto/dom/document.h"
-#include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
-#include "mitto/dom/idle_task_controller.h"
-#include "mitto/dom/indexed_db_host.h"
-#include "mitto/dom/memory_info.h"
-#include "mitto/dom/page_interfaces.h"
-#include "mitto/dom/storage_bucket_host.h"
-#include "mitto/dom/window.h"
-#include "mitto/dom/xml_document.h"
-#include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
-#include "mitto/page/dedicated_worker_messaging_proxy.h"
-#include "mitto/page/page_fetcher.h"
 #include "mitto/page/page_frame.h"
-#include "mitto/page/page_isolate.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cookie_jar.h"
 #include "third_party/icu/source/common/unicode/locid.h"
@@ -43,6 +28,7 @@
 #include "third_party/icu/source/common/unicode/unistr.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
+#include "url/gurl.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-container.h"
@@ -121,7 +107,7 @@ bool IsOriginPotentiallyTrustworthy(const url::Origin& origin) {
 ScriptRunner::ScriptRunner(v8::Isolate* isolate) : isolate_(isolate) {}
 
 ScriptRunner::~ScriptRunner() {
-  if (!context_.IsEmpty()) {
+  if (started_) {
     base::CurrentThread::Get()->RemoveTaskObserver(this);
     isolate_->RemoveMicrotasksCompletedCallback(
         &ScriptRunner::OnMicrotasksCompleted, this);
@@ -140,7 +126,8 @@ std::optional<std::string> ScriptRunner::Start(
   cookie_jar_->SetSend(send_);
   refuse_ = refuse;
   requests_ = std::make_unique<PageRequests>(sender_, std::move(refuse));
-  frame_ = std::make_unique<PageFrame>(*this, *requests_, send_, cookie_jar);
+  // The top-level frame is the Page's first.
+  frame_ = std::make_unique<PageFrame>(*this, /*id=*/1);
   frame_->ExpectOpeningNavigation();
   // As Blink sets the time zone that its browser process reads.
   // Upstream: third_party/blink/renderer/core/timezone/timezone_controller.cc
@@ -179,102 +166,26 @@ std::optional<std::string> ScriptRunner::Start(
           send_));
 
   const v8::HandleScope handle_scope(isolate_);
-  // The first document is a tab's about:blank, whose origin is opaque, so its
-  // context is no secure context, as in Chrome.
-  bindings::PerIsolateData::From(isolate_)->set_secure_context(
-      IsOriginPotentiallyTrustworthy(url::Origin()));
-  const v8::Local<v8::Context> context =
-      NewContext(bindings::PerIsolateData::From(isolate_)->time_origin(),
-                 /*cross_origin_isolated=*/false);
-  context_.Reset(isolate_, context);
-  AttachWindow(context, start_.connection, PageDocumentSource::kInitialEmpty,
-               kNavigationRequest);
+  frame_->Start(start_.connection);
+  started_ = true;
   base::CurrentThread::Get()->AddTaskObserver(this);
   isolate_->AddMicrotasksCompletedCallback(&ScriptRunner::OnMicrotasksCompleted,
                                            this);
   return std::nullopt;
 }
 
-v8::Local<v8::Context> ScriptRunner::NewContext(base::TimeTicks time_origin,
-                                                bool cross_origin_isolated) {
+ChromeObjectData& ScriptRunner::NewChromeObjectData(
+    base::TimeTicks navigation_start) {
   chrome_object_data_.push_back(
-      std::make_unique<ChromeObjectData>(time_origin));
-  ChromeObjectData& chrome_object_data = *chrome_object_data_.back();
-  return NewPageContext(
-      isolate_, u"", cross_origin_isolated,
-      [this, &chrome_object_data](v8::Local<v8::Context> context) {
-        // As LocalWindowProxy::Initialize(): V8Initializer's settings of the
-        // context, then the inspector, then the embedder.
-        InitializePageContext(context);
-        reporter_->ContextCreated(context);
-        InstallChromeObject(context, chrome_object_data);
-      });
+      std::make_unique<ChromeObjectData>(navigation_start));
+  return *chrome_object_data_.back();
 }
 
-void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
-                                const PageConnection& connection,
-                                PageDocumentSource source,
-                                uint64_t navigation) {
-  const v8::Context::Scope context_scope(context);
-  // The Session hears of the document before anything that it sends.
-  PageDocumentCommitted committed;
-  committed.source = source;
-  committed.navigation = navigation;
-  // Documents and workers share the IDs, which the Session holds in order.
-  // The Page makes no frame yet, so each document is a top-level one.
-  sender_->SendTopLevelDocument([&committed](uint64_t id) {
-    committed.document = id;
-    return EncodeDocumentCommitted(committed);
-  });
-  // What the document before asked of the Session's storage goes with it.
-  if (cache_storage_host_) {
-    cache_storage_host_->DocumentCommitted(committed.document);
+void ScriptRunner::TopLevelContextGoes() {
+  for (const uint64_t call : waiting_calls_) {
+    settled_.push_back(FailureOf(call, std::string(kContextDestroyed)));
   }
-  if (storage_bucket_host_) {
-    storage_bucket_host_->DocumentCommitted(committed.document);
-  }
-  if (indexed_db_host_) {
-    indexed_db_host_->DocumentCommitted(committed.document);
-  }
-  timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
-  idle_tasks_ = std::make_unique<IdleTaskController>(isolate_, context);
-  animation_frames_ =
-      std::make_unique<AnimationFrameController>(isolate_, context);
-  fetcher_ = std::make_unique<PageFetcher>(*requests_);
-  window_tasks_ = std::make_unique<WindowTasks>(isolate_, context);
-  // The window's dedicated workers, whose errors that nothing canceled end
-  // up at the Session, as the window's own do.
-  DedicatedWorkerMessagingProxy::Creator creator(*requests_);
-  creator.sender = sender_;
-  creator.refuse = refuse_;
-  creator.report_uncaught = base::BindRepeating(
-      [](const SendFrame& send, const ErrorMessageInfo& error) {
-        send.Run(EncodeUncaughtError(base::UTF16ToUTF8(error.message)));
-      },
-      send_);
-  worker_starter_ = std::make_unique<PageWorkerStarter>(std::move(creator));
-  Window& window = Window::Current();
-  window.SetTimers(timers_.get());
-  window.SetIdleTasks(idle_tasks_.get());
-  window.SetAnimationFrames(animation_frames_.get());
-  window.SetFetcher(fetcher_.get());
-  window.SetNavigationClient(frame_.get());
-  window.SetTasks(window_tasks_.get());
-  window.SetWorkerStarter(worker_starter_.get());
-  if (source == PageDocumentSource::kInitialEmpty) {
-    window.GetDocument().SetInitialEmptyDocument();
-  }
-  window.SetStart(start_, connection);
-  window.SetDocumentId(committed.document);
-  window.SetDocumentLoadTiming(chrome_object_data_.back()->load_timing.Get());
-  window.SetConsoleSink(base::BindRepeating(
-      [](const SendFrame& send, ConsoleLevel level, std::string text) {
-        PageConsoleMessage message;
-        message.level = level;
-        message.text = std::move(text);
-        send.Run(EncodeConsole(message));
-      },
-      send_));
+  waiting_calls_.clear();
 }
 
 void ScriptRunner::WillProcessTask(const base::PendingTask& pending_task,
@@ -286,12 +197,12 @@ void ScriptRunner::DidProcessTask(const base::PendingTask& pending_task) {
 
 void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
   // Start() failed, and the Page is about to end.
-  if (context_.IsEmpty()) {
+  if (!started_) {
     send_.Run(EncodeEvaluated(FailureOf(call, "the Page did not start")));
     return;
   }
   const v8::HandleScope handle_scope(isolate_);
-  const v8::Local<v8::Context> context = context_.Get(isolate_);
+  const v8::Local<v8::Context> context = frame_->context();
   const v8::Context::Scope context_scope(context);
   std::optional<PageEvaluated> evaluated;
   v8::Local<v8::Value> result;
@@ -335,7 +246,7 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
 }
 
 void ScriptRunner::EndTask() {
-  if (context_.IsEmpty()) {
+  if (!started_) {
     return;
   }
   const v8::HandleScope handle_scope(isolate_);
@@ -360,7 +271,7 @@ void ScriptRunner::OnMicrotasksCompleted(v8::Isolate* isolate, void* data) {
 }
 
 void ScriptRunner::QueueRejectionReport() {
-  if (context_.IsEmpty()) {
+  if (!started_) {
     return;
   }
   // As Blink's RejectedPromises::ProcessQueue(): the promises rejected with no
@@ -383,8 +294,7 @@ void ScriptRunner::ReportRejections(
     std::vector<PageReporter::Rejection> rejections) {
   --reports_queued_;
   const v8::HandleScope handle_scope(isolate_);
-  reporter_->ReportUnhandledRejections(context_.Get(isolate_),
-                                       std::move(rejections));
+  reporter_->ReportUnhandledRejections(std::move(rejections));
 }
 
 void ScriptRunner::OnResponseStarted(PageResponseStarted response) {
@@ -415,85 +325,11 @@ void ScriptRunner::OnIsolation(PageIsolation isolation) {
 
 void ScriptRunner::RunTask(base::OnceClosure task) {
   // Start() failed, and the Page is about to end.
-  if (context_.IsEmpty()) {
+  if (!started_) {
     return;
   }
   const v8::HandleScope handle_scope(isolate_);
-  const v8::Context::Scope context_scope(context_.Get(isolate_));
   std::move(task).Run();
-}
-
-void ScriptRunner::PostTask(TaskType type, base::OnceClosure task) {
-  // The runner lives until the process ends.
-  EventLoop::Get()->TaskRunner(type)->PostTask(
-      FROM_HERE, base::BindOnce(&ScriptRunner::RunTask, base::Unretained(this),
-                                std::move(task)));
-}
-
-Document& ScriptRunner::CommitDocument(
-    uint64_t navigation,
-    const GURL& url,
-    base::TimeTicks navigation_start,
-    const PageConnection& connection,
-    bool cross_origin_isolated,
-    const std::optional<std::u16string>& xml_content_type) {
-  const v8::HandleScope handle_scope(isolate_);
-  for (const uint64_t call : waiting_calls_) {
-    settled_.push_back(FailureOf(call, std::string(kContextDestroyed)));
-  }
-  waiting_calls_.clear();
-  {
-    // The old window's timers and fetches stop with its context.
-    const v8::Context::Scope old_scope(context_.Get(isolate_));
-    Window::Current().SetTimers(nullptr);
-    Window::Current().SetIdleTasks(nullptr);
-    Window::Current().SetAnimationFrames(nullptr);
-    Window::Current().SetFetcher(nullptr);
-    Window::Current().SetNavigationClient(nullptr);
-    Window::Current().SetTasks(nullptr);
-  }
-  timers_.reset();
-  idle_tasks_.reset();
-  animation_frames_.reset();
-  fetcher_.reset();
-  window_tasks_.reset();
-  worker_starter_.reset();
-  reporter_->ContextDestroyed(context_.Get(isolate_));
-  chrome_object_data_.back()->detached = true;
-  // What the new document's DOMHighResTimeStamp counts from, as Blink takes
-  // it from the navigation's start.
-  const base::TimeTicks now = base::TimeTicks::Now();
-  const base::TimeTicks time_origin =
-      navigation_start.is_null() || navigation_start > now ? now
-                                                           : navigation_start;
-  bindings::PerIsolateData::From(isolate_)->set_time_origin(time_origin);
-  // A [SecureContext] member is installed when a context is made.
-  bindings::PerIsolateData::From(isolate_)->set_secure_context(
-      IsOriginPotentiallyTrustworthy(url::Origin::Create(url)));
-  // Chrome's site isolation locks a renderer to the site of a document at an
-  // HTTP or HTTPS URL.
-  MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
-  const v8::Local<v8::Context> context =
-      NewContext(time_origin, cross_origin_isolated);
-  context_.Reset(isolate_, context);
-  AttachWindow(context, connection, PageDocumentSource::kNavigationResponse,
-               navigation);
-  const v8::Context::Scope context_scope(context);
-  Document* const document =
-      xml_content_type
-          ? static_cast<Document*>(XMLDocument::Create(*xml_content_type))
-          : Document::CreateHTML();
-  document->SetUrl(base::UTF8ToUTF16(url.spec()));
-  // Only a document that the Session loaded over HTTP or HTTPS has cookies
-  // there; another's origin is opaque to them.
-  if (url.SchemeIsHTTPOrHTTPS()) {
-    document->SetCookieJar(cookie_jar_);
-    document->SetCacheStorageHost(cache_storage_host_);
-    document->SetIndexedDbHost(indexed_db_host_);
-    document->SetStorageBucketHost(storage_bucket_host_);
-  }
-  Window::Current().SetDocument(document);
-  return *document;
 }
 
 PageEvaluated ScriptRunner::ResultOf(uint64_t call,

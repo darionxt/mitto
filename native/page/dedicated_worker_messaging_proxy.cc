@@ -159,7 +159,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
         static_cast<Window&>(context).GetDocument().GetReferrerPolicy();
   }
   params_.strict_mime_type = !context.IsWindow();
-  params_.secure_context = data->secure_context();
+  params_.secure_context = context.IsSecureContext();
   // DedicatedWorkerGlobalScope: the creator's capability, which a worker of a
   // data: URL never has.
   params_.cross_origin_isolated = context.CrossOriginIsolatedCapability() &&

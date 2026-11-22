@@ -410,20 +410,21 @@ bool RunScript(v8::Isolate* isolate,
                bool worker,
                std::string_view source) {
   const v8::HandleScope handle_scope(isolate);
-  // Its about:blank's loading started when the context did.
-  mitto::ChromeObjectData chrome_data(
-      mitto::bindings::PerIsolateData::From(isolate)->time_origin());
+  // Its about:blank's loading started when the context did, and it is a
+  // secure context, as a file: page is.
+  mitto::ContextInit init;
+  init.time_origin = base::TimeTicks::Now();
+  mitto::ChromeObjectData chrome_data(init.time_origin);
   CommandLineInspector inspector(isolate);
   const v8::Local<v8::Context> context =
       worker ? mitto::NewWorkerContext(
-                   isolate, std::u16string(), /*cross_origin_isolated=*/false,
+                   isolate, init, std::u16string(),
                    [&inspector](v8::Local<v8::Context> context) {
                      mitto::InitializePageContext(context);
                      inspector.ContextCreated(context);
                    })
              : mitto::NewPageContext(
-                   isolate, base::UTF8ToUTF16(html),
-                   /*cross_origin_isolated=*/false,
+                   isolate, init, base::UTF8ToUTF16(html),
                    [&inspector, &chrome_data](v8::Local<v8::Context> context) {
                      mitto::InitializePageContext(context);
                      inspector.ContextCreated(context);
