@@ -65,7 +65,7 @@ def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], 
     html_type = {"Content-Type": "text/html"}
     if path.startswith("/from-"):
         return 200, {"Content-Type": "text/plain"}, (headers.get("referer") or "none").encode()
-    if path == "/echo":
+    if path.split("?")[0] == "/echo":
         echoed = {name: headers[name] for name in _ECHOED if name in headers}
         script = html.escape(json.dumps(echoed, sort_keys=True), quote=False)
         return 200, html_type, f'<!doctype html><script type=application/json id=h>{script}</script>'.encode()
