@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 29;
+inline constexpr uint32_t kPageProtocolVersion = 30;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -719,16 +719,25 @@ struct PageIsolation {
 
 // What a document that the Page has made is made of.
 enum class PageDocumentSource : uint8_t {
-  // The Page's first document, about:blank, whose origin is opaque.
+  // A frame's first document, about:blank: the Page's, whose origin is
+  // opaque, or a child frame's, of its parent's origin.
   kInitialEmpty = 0,
   // The response of a navigation, whose URL after its redirects is the
   // document's.
   kNavigationResponse = 1,
+  // An about:blank that a navigation of a frame commits, of the origin of the
+  // document that started it, its initiator.
+  kAboutBlank = 2,
+  // A frame's srcdoc document, about:srcdoc, of its parent's origin, whose
+  // requests' referrer is its parent's.
+  kSrcdoc = 3,
 };
 
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
-// source, a byte, the parent, a 64-bit number, and for a navigation's response
-// the navigation's number, a 64-bit number.
+// source, a byte, the parent, a 64-bit number, then for a navigation's response
+// the navigation's number, for an about:blank the initiator and the document
+// that it replaces, and for a srcdoc document the document that it replaces,
+// each a 64-bit number.
 struct PageDocumentCommitted {
   uint64_t document = kNoDocument;
   PageDocumentSource source = PageDocumentSource::kInitialEmpty;
@@ -737,6 +746,11 @@ struct PageDocumentCommitted {
   uint64_t parent = kNoDocument;
   // For kNavigationResponse.
   uint64_t navigation = kNavigationRequest;
+  // For kAboutBlank: the document that started its navigation.
+  uint64_t initiator = kNoDocument;
+  // For kAboutBlank and kSrcdoc: the frame's document that it takes the
+  // place of.
+  uint64_t replaces = kNoDocument;
 };
 
 // Where a dedicated worker's script comes from.

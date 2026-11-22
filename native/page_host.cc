@@ -2775,6 +2775,39 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
       }
       context.origin = url::Origin::Create(context.url);
       break;
+    case PageDocumentSource::kAboutBlank:
+    case PageDocumentSource::kSrcdoc: {
+      // A document that a frame commits without the network takes the place
+      // of the frame's document, under the same parent, as Chrome's browser
+      // commits it in that frame. srcdoc is only a frame's.
+      const auto replaces = contexts_.find(committed.replaces);
+      if (replaces == contexts_.end() || replaces->second.is_worker ||
+          replaces->second.parent != committed.parent ||
+          (top_level && committed.source == PageDocumentSource::kSrcdoc)) {
+        Refuse(
+            "a document that does not take the place of its frame's document");
+        return;
+      }
+      if (committed.source == PageDocumentSource::kAboutBlank) {
+        // RenderFrameHostImpl::SetOriginDependentStateOfNewFrame() and
+        // NavigationRequest::GetOriginToCommit(): about:blank takes the origin
+        // of the document that started its navigation.
+        const auto initiator = contexts_.find(committed.initiator);
+        if (initiator == contexts_.end() || initiator->second.is_worker) {
+          Refuse(
+              "an about:blank whose initiator is not one of the Page's "
+              "documents");
+          return;
+        }
+        context.origin = initiator->second.origin;
+        context.url = GURL(url::kAboutBlankURL);
+      } else {
+        context.origin = contexts_.at(committed.parent).origin;
+        context.url = GURL(url::kAboutSrcdocURL);
+      }
+      replaced = committed.replaces;
+      break;
+    }
   }
   last_context_id_ = committed.document;
   if (!top_level) {
@@ -2977,12 +3010,12 @@ void PageHost::FillContextFetch(uint64_t id,
                           ? context.url
                           : context.origin.GetURL();
   }
-  // Blink's OutgoingReferrer(): an about:blank document's is its parent's,
-  // and a worker's is its script's URL, of which a blob: or data: one gives
-  // none.
+  // Blink's OutgoingReferrer(): a srcdoc document's is its parent's, and a
+  // worker's is its script's URL, of which a blob: or data: one gives none,
+  // as about:blank gives none.
   const Context* source = &context;
   while (!source->is_worker && source->parent != kNoDocument &&
-         source->url.IsAboutBlank()) {
+         source->url.IsAboutSrcdoc()) {
     source = &contexts_.at(source->parent);
   }
   if (!source->url.SchemeIsHTTPOrHTTPS()) {
