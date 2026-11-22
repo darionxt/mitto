@@ -4,14 +4,17 @@ tests/frames_cases.js runs in a Page at an HTTP origin and gives what its iframe
 about:blank and the about:blank that a frame commits at once, the frame tree on the window, contentWindow and
 contentDocument, realms, writing into a frame's document, named and indexed access, and a frame that goes.
 tests/data/frames_cases.json holds what Chrome 157 gave for the same script on the same kind of page, headless Chrome for
-Testing on macOS (157.0.8103.79), with the page's origin as ORIGIN. The other tests check what a frame reports and what
-the Session hears of a frame's document.
+Testing on macOS (157.0.8103.79), with the page's origin as ORIGIN. tests/frames_srcdoc_cases.js and
+tests/frames_navigation_cases.js do the same for srcdoc and later about:blank documents, and for frames that navigate
+through the Session. The other tests check what a frame reports and what the Session hears of a frame's document.
 """
 
+import html
 import http.server
 import json
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +31,63 @@ _CASES = (_TESTS / "frames_cases.js").read_text()
 _AS_CHROME = json.loads((_TESTS / "data" / "frames_cases.json").read_text())
 _SRCDOC_CASES = (_TESTS / "frames_srcdoc_cases.js").read_text()
 _SRCDOC_AS_CHROME = json.loads((_TESTS / "data" / "frames_srcdoc_cases.json").read_text())
+_NAVIGATION_CASES = (_TESTS / "frames_navigation_cases.js").read_text()
+_NAVIGATION_AS_CHROME = json.loads((_TESTS / "data" / "frames_navigation_cases.json").read_text())
+# A frame's document whose script reads performance.timing while it parses.
+_TIMING_PAGE = b"""<!doctype html><script>
+const t = performance.timing;
+parent.timingAtParse = {
+  domLoading: t.domLoading >= t.navigationStart && t.domLoading > 0,
+  domInteractive: t.domInteractive,
+  domContentLoadedEventStart: t.domContentLoadedEventStart,
+  domComplete: t.domComplete,
+  loadEventStart: t.loadEventStart,
+  loadEventEnd: t.loadEventEnd,
+  fetchStart: t.fetchStart >= t.navigationStart,
+  responseEnd: t.responseEnd >= t.fetchStart,
+  entries: performance.getEntriesByType('navigation').length,
+};
+</script>"""
+# The request headers that /echo gives back, which a frame's navigation sends.
+_ECHOED = ("accept", "referer", "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site", "sec-fetch-user",
+           "upgrade-insecure-requests")
+
+
+def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], bytes]:
+    """The status, headers and body with which the frames' server answers a GET of `path`.
+
+    /from-... gives the request's Referer, or "none"; /echo the headers in _ECHOED that came, in a script element of id h;
+    /204 nothing; /redirect a redirect to /child?redirected; /drop no response at all, as status 0; /timing a document
+    whose script puts what it reads of performance.timing into parent.timingAtParse; /slow, after 300 ms, and /child... and /dir/... a document
+    whose paragraph of id c holds its path; /nested a document with a frame of /slow?inner, whose load and its own go
+    into top.order; anything else the top-level page.
+    """
+    html_type = {"Content-Type": "text/html"}
+    if path.startswith("/from-"):
+        return 200, {"Content-Type": "text/plain"}, (headers.get("referer") or "none").encode()
+    if path == "/echo":
+        echoed = {name: headers[name] for name in _ECHOED if name in headers}
+        script = html.escape(json.dumps(echoed, sort_keys=True), quote=False)
+        return 200, html_type, f'<!doctype html><script type=application/json id=h>{script}</script>'.encode()
+    if path == "/204":
+        return 204, {}, b""
+    if path == "/drop":
+        return 0, {}, b""
+    if path == "/timing":
+        return 200, html_type, _TIMING_PAGE
+    if path == "/redirect":
+        return 302, {"Location": "/child?redirected"}, b""
+    if path == "/nested":
+        body = (
+            "<!doctype html><body onload=\"top.order.push('nested ' + document.readyState)\">"
+            "<iframe src=/slow?inner onload=\"top.order.push('inner ' + this.contentDocument.readyState)\"></iframe>"
+        )
+        return 200, html_type, body.encode()
+    if path.startswith(("/slow", "/child", "/dir/")):
+        if path.startswith("/slow"):
+            time.sleep(0.3)
+        return 200, html_type, f"<!doctype html><title>child</title><p id=c>{html.escape(path)}</p>".encode()
+    return 200, html_type, _PAGE
 
 
 @pytest.fixture
@@ -41,20 +101,20 @@ def page_program(native_library: Any) -> None:
 
 @pytest.fixture
 def page_url() -> Iterator[str]:
-    """The URL of a page with a paragraph on 127.0.0.1, which is a secure context, where /from-... answers with its
-    request's Referer."""
+    """The URL of a page with a paragraph on 127.0.0.1, which is a secure context, on a server that answers as answer()
+    does."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
-            # A path that starts with /from- answers with the Referer that came, or "none".
-            if self.path.startswith("/from-"):
-                body, content_type = (self.headers.get("Referer") or "none").encode(), "text/plain"
-            else:
-                body, content_type = _PAGE, "text/html"
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
+            status, headers, body = answer(self.path, {name.lower(): value for name, value in self.headers.items()})
+            if not status:
+                self.close_connection = True
+                return
+            self.send_response(status)
+            for name, value in headers.items():
+                self.send_header(name, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -88,6 +148,20 @@ def test_srcdoc_and_about_blank_frames_are_chrome_s(page_url: str) -> None:
         record = page.evaluate(_SRCDOC_CASES)
     origin = page_url.rstrip("/")
     as_chrome = json.loads(json.dumps(_SRCDOC_AS_CHROME["record"]).replace("ORIGIN", origin))
+
+    assert set(record) == set(as_chrome)
+    for section, expected in as_chrome.items():
+        assert record[section] == expected, section
+
+
+@pytest.mark.usefixtures("page_program")
+def test_frames_that_navigate_through_the_session_are_chrome_s(page_url: str) -> None:
+    # tests/frames_navigation_cases.js against tests/data/frames_navigation_cases.json, as Chrome for Testing 157 gave
+    # it on a server that answers as answer() does.
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        record = page.evaluate(_NAVIGATION_CASES)
+    origin = page_url.rstrip("/")
+    as_chrome = json.loads(json.dumps(_NAVIGATION_AS_CHROME["record"]).replace("ORIGIN", origin))
 
     assert set(record) == set(as_chrome)
     for section, expected in as_chrome.items():
