@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/resource.h"
@@ -139,6 +140,7 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // ResourceLoader::Run(): the scheduler lets the fetch of `resource` start.
   void RunLoad(Resource& resource,
                FetchRequestData request,
+               std::optional<BlobUrlRegistry::Entry> blob,
                std::unique_ptr<ResourceLoader> loader);
   // The fetch of `resource` has ended, and lets the load event go if it held
   // it back.

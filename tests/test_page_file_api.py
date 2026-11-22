@@ -344,6 +344,101 @@ FILE_API = {
 }
 
 
+# How a Page fetches data: and blob: URLs, with no request on the wire: each script and what Chrome 157.0.8103.79 gave.
+LOCAL_SCHEMES_PRELUDE = """
+const log = [];
+const settle = (promise) => promise.then(
+    (v) => "fulfilled " + String(v), (e) => "rejected " + e.constructor.name + ": " + e.message);
+const show = async (r, url) => [r.status, JSON.stringify(r.statusText), r.type, url ? r.url === url : r.url, r.redirected,
+    ["content-type", "content-length", "content-range"].map((n) => n + "=" + r.headers.get(n)).join(" "),
+    JSON.stringify(await r.text())].join(" | ");
+const blobUrl = (parts, options) => URL.createObjectURL(new Blob(parts, options));
+"""
+
+LOCAL_SCHEMES = {
+    "a data: URL": (
+        "return show(await fetch('data:,hello%20world'))",
+        'value: 200 | "OK" | basic | data:,hello%20world | false | content-type=text/plain;charset=US-ASCII content-length=null content-range=null | "hello world"',
+    ),
+    "a data: URL of a type": (
+        "return show(await fetch('data:text/html;charset=utf-8;base64,aGk='))",
+        'value: 200 | "OK" | basic | data:text/html;charset=utf-8;base64,aGk= | false | content-type=text/html;charset=utf-8 content-length=null content-range=null | "hi"',
+    ),
+    "a data: URL of any method": (
+        "return [await show(await fetch('data:,x', { method: 'POST', body: 'y' })),"
+        " await show(await fetch('data:,xyz', { method: 'HEAD' }))].join(' // ')",
+        'value: 200 | "OK" | basic | data:,x | false | content-type=text/plain;charset=US-ASCII content-length=null content-range=null | "x" // 200 | "OK" | basic | data:,xyz | false | content-type=text/plain;charset=US-ASCII content-length=null content-range=null | ""',
+    ),
+    "a data: URL that does not parse": ("return settle(fetch('data:'))", "value: rejected TypeError: Failed to fetch"),
+    "a data: URL in any mode": (
+        "return [await settle(fetch('data:,a', { mode: 'same-origin' }).then((r) => r.type)),"
+        " await settle(fetch('data:,a', { mode: 'no-cors' }).then((r) => r.type))].join(' // ')",
+        "value: fulfilled basic // fulfilled basic",
+    ),
+    "a data: URL settles from a task of its own": (
+        "fetch('data:,a').then(() => log.push('fetch')); Promise.resolve().then(() => log.push('micro'));"
+        " setTimeout(() => log.push('t0'), 0); await new Promise((r) => setTimeout(r, 50)); return log.join()",
+        "value: micro,fetch,t0",
+    ),
+    "a data: URL ignores Range and its fragment": (
+        "return [await show(await fetch('data:,abcdef', { headers: { Range: 'bytes=1-2' } })),"
+        " await show(await fetch('data:,ab#frag'))].join(' // ')",
+        'value: 200 | "OK" | basic | data:,abcdef | false | content-type=text/plain;charset=US-ASCII content-length=null content-range=null | "abcdef" // 200 | "OK" | basic | data:,ab | false | content-type=text/plain;charset=US-ASCII content-length=null content-range=null | "ab"',
+    ),
+    "a blob: URL": (
+        "const u = blobUrl(['hello'], { type: 'Text/Plain;Charset=UTF-8' }); const n = blobUrl(['hi']);"
+        " return [await show(await fetch(u), u), await show(await fetch(n), n)].join(' // ')",
+        'value: 200 | "OK" | basic | true | false | content-type=text/plain;charset=utf-8 content-length=5 content-range=null | "hello" // 200 | "OK" | basic | true | false | content-type= content-length=2 content-range=null | "hi"',
+    ),
+    "a blob: URL takes GET only": (
+        "const u = blobUrl(['hi']); return [await settle(fetch(u, { method: 'POST' })),"
+        " await settle(fetch(u, { method: 'HEAD' }))].join(' // ')",
+        "value: rejected TypeError: Failed to fetch // rejected TypeError: Failed to fetch",
+    ),
+    "a revoked blob: URL": (
+        "const u = blobUrl(['hi']); URL.revokeObjectURL(u); const v = blobUrl(['hi']); const q = new Request(v);"
+        " URL.revokeObjectURL(v); const w = blobUrl(['hi']); const p = fetch(w); URL.revokeObjectURL(w);"
+        " return [await settle(fetch(u)), await settle(fetch(q).then((r) => r.text())),"
+        " await settle(p.then((r) => r.text())),"
+        " await settle(fetch('blob:' + self.origin + '/00000000-0000-4000-8000-000000000000'))].join(' // ')",
+        "value: rejected TypeError: Failed to fetch // fulfilled hi // fulfilled hi // rejected TypeError: Failed to fetch",
+    ),
+    "a blob: URL with a fragment": (
+        "const u = blobUrl(['hi']); const r = await fetch(u + '#x'); return [r.url === u, await r.text()].join()",
+        "value: true,hi",
+    ),
+    "a blob: URL with a Range": (
+        "const u = blobUrl(['abcdef'], { type: 'a/b' }); const out = [];"
+        " for (const range of ['bytes=1-2', 'bytes=4-', 'bytes=-2', 'bytes = 0 - 0']) {"
+        " out.push(await show(await fetch(u, { headers: { Range: range } }), u)); }"
+        " for (const range of ['bytes=9-10', 'bytes=1-2,3-4', 'bytes=3-1', 'items=1-2', 'bytes=-0']) {"
+        " out.push(await settle(fetch(u, { headers: { Range: range } }))); } return out.join(' // ')",
+        'value: 206 | "OK" | basic | true | false | content-type=a/b content-length=2 content-range=bytes 1-2/6 | "bc" // 206 | "OK" | basic | true | false | content-type=a/b content-length=2 content-range=bytes 4-5/6 | "ef" // 206 | "OK" | basic | true | false | content-type=a/b content-length=2 content-range=bytes 4-5/6 | "ef" // 206 | "OK" | basic | true | false | content-type=a/b content-length=1 content-range=bytes 0-0/6 | "a" // rejected TypeError: Failed to fetch // rejected TypeError: Failed to fetch // rejected TypeError: Failed to fetch // rejected TypeError: Failed to fetch // rejected TypeError: Failed to fetch',
+    ),
+    "a blob: URL in any mode": (
+        "const u = blobUrl(['hi']); return [await settle(fetch(u, { mode: 'same-origin' }).then((r) => r.type)),"
+        " await settle(fetch(u, { mode: 'no-cors' }).then((r) => r.type + ' ' + r.status)),"
+        " await settle(fetch(u, { credentials: 'include' }).then((r) => r.type))].join(' // ')",
+        "value: fulfilled basic // fulfilled basic 200 // fulfilled basic",
+    ),
+    "a blob: URL settles after the browser's hop": (
+        "const u = blobUrl(['hi']); fetch(u).then(() => log.push('fetch')); Promise.resolve().then(() => log.push('micro'));"
+        " setTimeout(() => log.push('t0'), 0); await new Promise((r) => setTimeout(r, 50)); return log.join()",
+        "value: micro,t0,fetch",
+    ),
+    "no resource timing entry": (
+        "await (await fetch(blobUrl(['hi']))).text(); await (await fetch('data:,a')).text();"
+        " await new Promise((r) => setTimeout(r, 50)); return performance.getEntriesByType('resource').length",
+        "value: 0",
+    ),
+    "a large blob: URL's body": (
+        "const u = blobUrl([new Uint8Array(5 * 1024 * 1024)]); const r = await fetch(u);"
+        " return [r.headers.get('content-length'), (await r.arrayBuffer()).byteLength].join()",
+        "value: 5242880,5242880",
+    ),
+}
+
+
 @pytest.fixture(scope="module")
 def program() -> Path:
     value = os.environ.get(_PROGRAM_ENV_VAR)
@@ -352,11 +447,11 @@ def program() -> Path:
     return Path(value)
 
 
-def _evaluate(program: Path, script: str) -> str:
+def _evaluate(program: Path, script: str, prelude: str = PRELUDE) -> str:
     # The outcome of the script as a string, or what it threw, as tests/test_page_streams.py writes it.
     wrapped = f"""(async () => {{
         try {{
-            const value = await (async () => {{ {PRELUDE} {script} }})();
+            const value = await (async () => {{ {prelude} {script} }})();
             return "value: " + (typeof value === "object" && value !== null
                 ? Object.prototype.toString.call(value) : String(value));
         }} catch (error) {{
@@ -373,3 +468,8 @@ def _evaluate(program: Path, script: str) -> str:
 @pytest.mark.parametrize(("script", "chrome"), FILE_API.values(), ids=FILE_API.keys())
 def test_the_file_api_does_what_chrome_does(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script) == chrome
+
+
+@pytest.mark.parametrize(("script", "chrome"), LOCAL_SCHEMES.values(), ids=LOCAL_SCHEMES.keys())
+def test_data_and_blob_urls_load_as_in_chrome(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, script, LOCAL_SCHEMES_PRELUDE) == chrome

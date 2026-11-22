@@ -8,8 +8,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/resource_load_scheduler.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
@@ -436,7 +438,7 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
 void ResourceFetcher::StartLoad(Resource& resource,
                                 const FetchParameters& params) {
   Fetcher* const fetcher = document_->DefaultView()->GetFetcher();
-  if (!fetcher) {
+  if (!fetcher && !params.url.SchemeIsBlob()) {
     // A window with no Session to fetch through.
     resource.Finish(kInvalidUrl);
     return;
@@ -488,19 +490,28 @@ void ResourceFetcher::StartLoad(Resource& resource,
         }
       },
       cppgc::WeakPersistent<ResourceFetcher>(this), id));
+  // A blob: URL names the blob that it names when the load is asked for, as
+  // Blink resolves it then.
+  std::optional<BlobUrlRegistry::Entry> blob;
+  if (params.url.SchemeIsBlob()) {
+    blob = BlobUrlRegistry::Get().ResolveEntry(params.url);
+  }
   scheduler_.Request(
       id,
       base::BindOnce(
           [](const cppgc::WeakPersistent<ResourceFetcher>& self,
              const cppgc::Persistent<Resource>& resource,
-             FetchRequestData request, std::unique_ptr<ResourceLoader> loader) {
+             FetchRequestData request,
+             std::optional<BlobUrlRegistry::Entry> blob,
+             std::unique_ptr<ResourceLoader> loader) {
             if (self) {
-              self->RunLoad(*resource, std::move(request), std::move(loader));
+              self->RunLoad(*resource, std::move(request), std::move(blob),
+                            std::move(loader));
             }
           },
           cppgc::WeakPersistent<ResourceFetcher>(this),
           cppgc::Persistent<Resource>(&resource), std::move(request),
-          std::move(loader)),
+          std::move(blob), std::move(loader)),
       params.url.SchemeIsHTTPOrHTTPS()
           ? ResourceLoadScheduler::ThrottleOption::kThrottleable
           : ResourceLoadScheduler::ThrottleOption::kCanNotBeStoppedOrThrottled,
@@ -509,9 +520,25 @@ void ResourceFetcher::StartLoad(Resource& resource,
 
 void ResourceFetcher::RunLoad(Resource& resource,
                               FetchRequestData request,
+                              std::optional<BlobUrlRegistry::Entry> blob,
                               std::unique_ptr<ResourceLoader> loader) {
   Document* const document = document_.Get();
   Window* const window = document ? document->DefaultView() : nullptr;
+  const GURL url(request.url);
+  if (window && window->HasContext() && url.SchemeIsBlob()) {
+    // The browser's BlobURLLoader answers it from the blob, with no request,
+    // and one of another origin fails, as the browser's partition check
+    // fails another storage key's.
+    LocalSchemeFetch::Answer answer =
+        blob && blob->origin.IsSameOriginWith(window->GetSecurityOrigin())
+            ? LocalSchemeFetch::AnswerBlobUrl(url, std::move(blob->blob), "GET",
+                                              std::nullopt)
+            : LocalSchemeFetch::AnswerRefusedBlobUrl();
+    resource.SetCancelLoad(
+        base::BindOnce(&ResourceLoader::Cancel, loader->GetWeakPtr()));
+    LocalSchemeFetch::Start(std::move(answer), std::move(loader), *window);
+    return;
+  }
   Fetcher* const fetcher = window ? window->GetFetcher() : nullptr;
   if (!fetcher) {
     // The window lost its Session while the fetch waited.

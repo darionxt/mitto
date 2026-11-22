@@ -9,10 +9,12 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetcher.h"
+#include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/resource.h"
 #include "mitto/dom/resource_fetcher.h"
@@ -217,6 +219,20 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
         /*net_error=*/0, /*status=*/200, request.url,
         base::StrCat({"Content-Type: ", response->content_type, "\n"}),
         /*opaque=*/false, std::move(response->body));
+    return;
+  }
+  // A worker's blob: URL is answered from the blob it names, of the worker's
+  // origin, as the browser's BlobURLLoader answers it, from later tasks.
+  if (request.url.SchemeIsBlob() && context && context->HasContext()) {
+    std::optional<BlobUrlRegistry::Entry> entry =
+        BlobUrlRegistry::Get().ResolveEntry(request.url);
+    LocalSchemeFetch::Answer answer =
+        entry && entry->origin.IsSameOriginWith(context->GetSecurityOrigin())
+            ? LocalSchemeFetch::AnswerBlobUrl(
+                  request.url, std::move(entry->blob), "GET", std::nullopt)
+            : LocalSchemeFetch::AnswerRefusedBlobUrl();
+    LocalSchemeFetch::Start(std::move(answer),
+                            std::make_unique<FetchClient>(*this), *context);
     return;
   }
   Fetcher* const fetcher = context ? context->GetFetcher() : nullptr;

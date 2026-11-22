@@ -24,6 +24,7 @@
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/preloaded_fetch.h"
 #include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/request.h"
@@ -258,6 +259,32 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   AbortSignal* const signal = request->Signal();
   if (signal->Aborted()) {
     std::ignore = resolver->Reject(context, signal->Reason());
+    return resolver->GetPromise();
+  }
+  // A data: or a blob: URL, which Chrome answers without its network service,
+  // as Blink's FetchManager::Loader::PerformSchemeFetch() fetches it.
+  const GURL& url = request->url();
+  if (url.SchemeIs(url::kDataScheme) || url.SchemeIs(url::kBlobScheme)) {
+    auto loader = std::make_unique<FetchLoader>(
+        isolate, context, resolver, /*credentials=*/false, signal,
+        /*upload_body=*/nullptr, /*upload_stream=*/nullptr);
+    LocalSchemeFetch::Answer answer;
+    if (url.SchemeIs(url::kDataScheme)) {
+      // A data: URL's content can always be read, whatever the mode.
+      answer = LocalSchemeFetch::AnswerDataUrl(url, request->Method());
+    } else if (!request->blob_url_origin()
+                    .value_or(url::Origin::Create(url))
+                    .IsSameOriginWith(GetSecurityOrigin())) {
+      // A blob: URL of another origin: a network error in mode same-origin
+      // or cors, and one that the browser's partition check gives in mode
+      // no-cors, since another origin's blob is of another storage key.
+      answer = LocalSchemeFetch::AnswerRefusedBlobUrl();
+    } else {
+      answer = LocalSchemeFetch::AnswerBlobUrl(
+          url, request->blob_url_handle(), request->Method(),
+          request->GetHeaders()->GetValue("range"));
+    }
+    LocalSchemeFetch::Start(std::move(answer), std::move(loader), *this);
     return resolver->GetPromise();
   }
   // The document's origin, or the worker's URL's.

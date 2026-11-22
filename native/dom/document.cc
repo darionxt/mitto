@@ -264,7 +264,17 @@ WindowTasks* Document::GetTasks() const {
 }
 
 url::Origin Document::GetOrigin() const {
-  return origin_ ? *origin_ : url::Origin::Create(GURL(url_));
+  if (origin_) {
+    return *origin_;
+  }
+  if (opaque_origin_ && opaque_origin_->first == url_) {
+    return opaque_origin_->second;
+  }
+  url::Origin origin = url::Origin::Create(GURL(url_));
+  if (origin.opaque()) {
+    opaque_origin_.emplace(url_, origin);
+  }
+  return origin;
 }
 
 // SecurityOrigin::Domain(): the host, which an opaque origin lacks.
