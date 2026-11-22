@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -117,7 +118,7 @@ PageReporter::~PageReporter() {
 }
 
 void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
-  context_.Reset(isolate_, context);
+  contexts_.emplace_back(isolate_, context);
   v8_inspector::V8ContextInfo info(context, kContextGroupId,
                                    v8_inspector::StringView());
   // A window's console has memory, as Blink's MainThreadDebugger says, and a
@@ -128,10 +129,23 @@ void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
 
 void PageReporter::ContextDestroyed(v8::Local<v8::Context> context) {
   inspector_->contextDestroyed(context);
+  std::erase_if(contexts_, [&context](const v8::Global<v8::Context>& live) {
+    return live == context;
+  });
   // A rejection in that context no longer has a console or a window to go
   // to.
-  rejections_.clear();
-  reported_rejections_.clear();
+  const auto of_context = [&context](const Rejection& rejection) {
+    return rejection.context == context;
+  };
+  std::erase_if(rejections_, of_context);
+  std::erase_if(reported_rejections_, of_context);
+}
+
+bool PageReporter::IsLive(v8::Local<v8::Context> context) const {
+  return std::ranges::any_of(contexts_,
+                             [&context](const v8::Global<v8::Context>& live) {
+                               return live == context;
+                             });
 }
 
 std::vector<PageReporter::Rejection> PageReporter::TakeUnhandledRejections() {
@@ -141,19 +155,22 @@ std::vector<PageReporter::Rejection> PageReporter::TakeUnhandledRejections() {
 }
 
 void PageReporter::ReportUnhandledRejections(
-    v8::Local<v8::Context> context,
     std::vector<Rejection> rejections) {
   const v8::HandleScope handle_scope(isolate_);
-  const v8::Context::Scope context_scope(context);
   // Blink's RejectedPromises::ProcessQueueNow(): forget the reported ones that
   // were collected, then report each that still has no handler.
   std::erase_if(reported_rejections_, [](const Rejection& rejection) {
     return rejection.promise.IsEmpty();
   });
   for (Rejection& rejection : rejections) {
-    if (rejection.promise.IsEmpty()) {
+    if (rejection.promise.IsEmpty() || rejection.context.IsEmpty()) {
       continue;
     }
+    const v8::Local<v8::Context> context = rejection.context.Get(isolate_);
+    if (!IsLive(context)) {
+      continue;
+    }
+    const v8::Context::Scope context_scope(context);
     const v8::Local<v8::Promise> promise = rejection.promise.Get(isolate_);
     // A handler added since then, also by the caller that evaluated it, takes
     // it.
@@ -211,12 +228,16 @@ void PageReporter::HandlerAdded(v8::Local<v8::Promise> promise) {
 void PageReporter::Revoke(Rejection rejection) {
   // A rejection of a context that has gone fires nothing, and neither does
   // one whose promise or reason was collected meanwhile.
-  if (context_.IsEmpty() || rejection.promise.IsEmpty() ||
+  if (rejection.context.IsEmpty() || rejection.promise.IsEmpty() ||
       rejection.reason.IsEmpty() || !rejection.fires_events) {
     return;
   }
   const v8::HandleScope handle_scope(isolate_);
-  const v8::Context::Scope context_scope(context_.Get(isolate_));
+  const v8::Local<v8::Context> context = rejection.context.Get(isolate_);
+  if (!IsLive(context)) {
+    return;
+  }
+  const v8::Context::Scope context_scope(context);
   DispatchRejectionHandled(isolate_, rejection.promise.Get(isolate_),
                            rejection.reason.Get(isolate_));
 }
@@ -227,10 +248,10 @@ void PageReporter::ReportException(v8::Local<v8::Value> exception,
   const v8::HandleScope handle_scope(isolate_);
   v8::Local<v8::Context> context = isolate_->GetCurrentContext();
   if (context.IsEmpty()) {
-    if (context_.IsEmpty()) {
+    if (contexts_.empty()) {
       return;
     }
-    context = context_.Get(isolate_);
+    context = contexts_.back().Get(isolate_);
   }
   const v8::Context::Scope context_scope(context);
   if (message.IsEmpty()) {
@@ -311,6 +332,12 @@ void PageReporter::OnPromiseReject(v8::PromiseRejectMessage message) {
   Rejection rejection;
   rejection.promise.Reset(isolate, message.GetPromise());
   rejection.reason.Reset(isolate, message.GetValue());
+  // Blink's PromiseRejectHandlerInMainThread() takes the current realm's
+  // ScriptState.
+  const v8::Local<v8::Context> current = isolate->GetCurrentContext();
+  if (!current.IsEmpty()) {
+    rejection.context.Reset(isolate, current);
+  }
   // Decided now, while the script that rejected it may still be on the stack.
   rejection.fires_events = RejectionFiresEvents(isolate, message.GetValue());
   g_reporter->rejections_.push_back(std::move(rejection));

@@ -23,6 +23,7 @@
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "mitto/cross_origin_resource_policy.h"
 #include "mitto/mime_types.h"
 #include "mitto/mitto.h"
 #include "mitto/page_cache_storage.h"
@@ -584,6 +585,18 @@ std::optional<std::string> HeaderValue(std::string_view lines,
   return value;
 }
 
+// The lines of a response that its cross-origin policies come from.
+PolicyHeaders PolicyHeadersOf(std::string_view lines) {
+  PolicyHeaders headers;
+  headers.coep = HeaderValue(lines, "Cross-Origin-Embedder-Policy");
+  headers.coep_report_only =
+      HeaderValue(lines, "Cross-Origin-Embedder-Policy-Report-Only");
+  headers.coop = HeaderValue(lines, "Cross-Origin-Opener-Policy");
+  headers.coop_report_only =
+      HeaderValue(lines, "Cross-Origin-Opener-Policy-Report-Only");
+  return headers;
+}
+
 // The MIME type of a response, lowercased, as net::HttpUtil::ParseContentType()
 // reads Content-Type, or "" for none.
 std::string MimeTypeOf(const RequestEvent& event) {
@@ -711,11 +724,13 @@ class KeepaliveShare {
 
 // The checks that a Page's request is held to on each of its responses,
 // redirects included, before the redirect is followed or any of the response
-// goes to the Page, as Chrome's network service holds them: the Fetch
-// Standard's CORS check, and mode same-origin's. A keepalive request takes
-// them along when it outlives its Page.
+// goes to the Page, as Chrome's network service and browser hold them: the
+// Fetch Standard's CORS check, mode same-origin's, Cross-Origin-Resource-
+// Policy, and a worker's embedder policy. A keepalive request takes them along
+// when it outlives its Page.
 // Upstream: services/network/cors/cors_url_loader.cc
 // Upstream: services/network/public/cpp/cors/cors.cc
+// Upstream: content/browser/worker_host/dedicated_worker_host.cc
 class PageHost::ResponseChecks {
  public:
   ResponseChecks(FetchChecks checks, url::Origin document_origin, GURL url)
@@ -730,8 +745,39 @@ class PageHost::ResponseChecks {
   // makes the response tainting cors.
   bool cors() const { return cors_; }
 
-  // Whether the response that `event` describes passes.
-  bool Allows(const RequestEvent& event) {
+  // Whether the response that `event` describes passes: net::OK, or the net
+  // error that ends the request.
+  int Check(const RequestEvent& event) {
+    if (!AllowsByCors(event)) {
+      return net::ERR_FAILED;
+    }
+    // URLLoader::OnReceivedRedirect() and OnResponseStarted(): each response
+    // of a request of mode no-cors is held to its
+    // Cross-Origin-Resource-Policy, with the embedder policy of the context
+    // that asked.
+    if (checks_.no_cors &&
+        IsBlockedByResourcePolicy(
+            GURL(event.url), document_origin_,
+            HeaderValue(event.headers, "Cross-Origin-Resource-Policy"),
+            event.included_credentials, checks_.embedder_policy)) {
+      return net::ERR_BLOCKED_BY_RESPONSE;
+    }
+    // DedicatedWorkerHost::DidStartScriptLoad(): a worker's script whose
+    // embedder policy is not compatible with its creator's fails, with
+    // kCoepFrameResourceNeedsCoepHeader.
+    if (event.type == MITTO_EVENT_RESPONSE_STARTED &&
+        checks_.creator_embedder_policy &&
+        !WorkerEmbedderPolicyAllowed(
+            *checks_.creator_embedder_policy,
+            EmbedderPolicyOf(PolicyHeadersOf(event.headers)))) {
+      return net::ERR_BLOCKED_BY_RESPONSE;
+    }
+    return net::OK;
+  }
+
+ private:
+  // The Fetch Standard's CORS check, and mode same-origin's.
+  bool AllowsByCors(const RequestEvent& event) {
     if (!checks_.cors && !checks_.same_origin) {
       return true;
     }
@@ -787,7 +833,6 @@ class PageHost::ResponseChecks {
     return allowed && (*allowed == "*" || *allowed == origin);
   }
 
- private:
   // Follows the request to its response at `url`, a redirect's or the last,
   // and works out its response tainting and its tainted origin as the Fetch
   // Standard does.
@@ -951,7 +996,15 @@ class PageHost::Request final : public RequestClient {
     cross_origin_redirect_ =
         cross_origin_redirect_ || !url::IsSameOriginWith(from, to);
     last_redirect_end_ = event.load_timing.receive_headers_end;
+    // CrossOriginOpenerPolicyStatus::SanitizeResponse() drops the COOP of
+    // each of a navigation's responses at a URL that is not potentially
+    // trustworthy, and says so on the console of the document it commits.
+    if (is_navigation() && IgnoresCoop(from, PolicyHeadersOf(event.headers))) {
+      ++coop_ignored_;
+    }
   }
+  // How many of the navigation's redirects had a COOP that was ignored.
+  int coop_ignored() const { return coop_ignored_; }
 
   void set_job(base::WeakPtr<RunningRequest> job) { job_ = std::move(job); }
   // Lets the job go on without this Request, if it is still running, held to
@@ -964,7 +1017,7 @@ class PageHost::Request final : public RequestClient {
     if (job_) {
       job_->Detach(base::BindRepeating(
           [](ResponseChecks* checks, const KeepaliveShare*,
-             const RequestEvent& event) { return checks->Allows(event); },
+             const RequestEvent& event) { return checks->Check(event); },
           base::Owned(std::make_unique<ResponseChecks>(response_checks_)),
           base::Owned(std::move(keepalive_share_))));
       if (body_channel_ && !end_written_) {
@@ -1038,8 +1091,8 @@ class PageHost::Request final : public RequestClient {
   }
 
   // RequestClient:
-  bool AllowsResponse(const RequestEvent& event) override {
-    return response_checks_.Allows(event);
+  int CheckResponse(const RequestEvent& event) override {
+    return response_checks_.Check(event);
   }
   void OnResponseEvent(RequestEvent event) override {
     CheckTimingAllowOrigin(event, document_origin());
@@ -1150,6 +1203,7 @@ class PageHost::Request final : public RequestClient {
   bool timing_tainted_ = false;
   uint32_t redirect_count_ = 0;
   bool cross_origin_redirect_ = false;
+  int coop_ignored_ = 0;
   base::TimeTicks last_redirect_end_;
   RequestTotals totals_;
   // A body that streams from the Page: its channel, what the Page sent that
@@ -1539,8 +1593,11 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   if (asked.kind == PageRequestKind::kIframe) {
     frame_navigation_responses_[asked.number] = {.parent = frame_parent,
                                                  .target = asked.target};
-  } else if (asked.kind == PageRequestKind::kWorker && !outside_settings) {
+  }
+  std::optional<CrossOriginEmbedderPolicy> creator_embedder_policy;
+  if (asked.kind == PageRequestKind::kWorker && !outside_settings) {
     worker_scripts_[asked.number] = {.creator = context_id};
+    creator_embedder_policy = context.coep;
   }
   StartRequest(
       asked.number, context_id, document_origin, std::move(url),
@@ -1552,7 +1609,9 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
           .no_cors = options_mode == RequestMode::kNoCors,
           .credentials = options_credentials == CredentialsMode::kInclude,
           .keepalive = asked.keepalive,
-          .is_navigation = is_navigation});
+          .is_navigation = is_navigation,
+          .creator_embedder_policy = std::move(creator_embedder_policy),
+          .embedder_policy = contexts_.at(settings_id).coep});
 }
 
 void PageHost::OnCancel(uint64_t number) {
@@ -1707,10 +1766,20 @@ void PageHost::FinishSniffing(Request& request) {
 }
 
 void PageHost::StartResponse(Request& request, const RequestEvent& event) {
+  // What Chrome's browser makes of a navigation's COOP and COEP.
+  std::optional<TopLevelDocumentPolicies> policies;
   if (request.is_navigation()) {
+    const GURL url(event.url);
+    const PolicyHeaders headers = PolicyHeadersOf(event.headers);
+    policies = TopLevelDocumentPoliciesOf(url, headers);
     // The document that the Page makes of it, which it tells the library of,
     // and the caller hears of then.
-    navigation_responses_[request.number()] = {GURL(event.url), event.status};
+    navigation_responses_[request.number()] = {
+        .url = url,
+        .status = event.status,
+        .coep = policies->coep,
+        .coop_ignored =
+            request.coop_ignored() + (IgnoresCoop(url, headers) ? 1 : 0)};
   }
   // Where a frame's document, or a worker, that the Page makes of it comes
   // from.
@@ -1721,6 +1790,16 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
   if (const auto script = worker_scripts_.find(request.number());
       script != worker_scripts_.end()) {
     script->second.url = GURL(event.url);
+    script->second.coep = EmbedderPolicyOf(PolicyHeadersOf(event.headers));
+  }
+  if (channel_ && policies) {
+    // The document's agent cluster, which Chrome's browser commits it with.
+    PageIsolation isolation;
+    isolation.navigation = request.number();
+    isolation.isolation = policies->cross_origin_isolated
+                              ? PageCrossOriginIsolation::kCoopAndCoep
+                              : PageCrossOriginIsolation::kNone;
+    channel_->Send(EncodeIsolation(isolation));
   }
   if (channel_) {
     PageResponseStarted response;
@@ -2655,6 +2734,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   Context context;
   context.parent = committed.parent;
   std::optional<int32_t> navigated_status;
+  // How many of its navigation's responses had a COOP that was ignored.
+  int coop_ignored = 0;
   // The frame's document that the new one replaces, if any.
   uint64_t replaced = kNoDocument;
   switch (committed.source) {
@@ -2667,8 +2748,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           return;
         }
       } else {
-        // A frame's first document, which has its parent's origin.
+        // A frame's first document, which has its parent's origin and
+        // embedder policy.
         context.origin = contexts_.at(committed.parent).origin;
+        context.coep = contexts_.at(committed.parent).coep;
       }
       context.url = GURL(url::kAboutBlankURL);
       break;
@@ -2682,7 +2765,9 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           return;
         }
         context.url = std::move(found->second.url);
+        context.coep = found->second.coep;
         navigated_status = found->second.status;
+        coop_ignored = found->second.coop_ignored;
         navigation_responses_.erase(found);
       } else {
         const auto found =
@@ -2740,6 +2825,15 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   // message of the old one, its load among them.
   if (navigated_status) {
     PushNavigated(url.spec(), *navigated_status, net::OK);
+  }
+  // NavigationRequest's deferred console messages, which go to the console of
+  // the document that it commits.
+  for (int i = 0; i < coop_ignored; ++i) {
+    PageEvent event;
+    event.type = MITTO_PAGE_EVENT_CONSOLE;
+    event.level = static_cast<int32_t>(ConsoleLevel::kError);
+    event.message = std::string(kCoopIgnoredOnUntrustworthyOrigin);
+    PushReport(std::move(event));
   }
 }
 
@@ -2925,6 +3019,8 @@ void PageHost::FillContextFetch(uint64_t id,
       tree.cross_site || fetch.opaque_initiator.has_value();
   fetch.cross_origin_ancestor = tree.cross_origin;
   fetch.from_worker = context.is_worker;
+  fetch.credentialless_client =
+      context.coep.value == CrossOriginEmbedderPolicyValue::kCredentialless;
 }
 
 GURL PageHost::TopDocumentUrl() const {
@@ -2990,6 +3086,7 @@ void PageHost::OnWorkerStarted(const PageWorkerStarted& started) {
       }
       worker.url = std::move(found->second.url);
       worker.origin = creator->origin;
+      worker.coep = std::move(found->second.coep);
       worker_scripts_.erase(found);
       break;
     }
@@ -3002,11 +3099,14 @@ void PageHost::OnWorkerStarted(const PageWorkerStarted& started) {
       }
       worker.url = url;
       worker.origin = creator->origin;
+      // A worker of a local scheme takes its creator's policies.
+      worker.coep = creator->coep;
       break;
     }
     case PageWorkerSource::kData:
       // A data: URL's worker has an opaque origin, and no URL that a request
-      // of its could start from.
+      // of its could start from. It takes its creator's policies.
+      worker.coep = creator->coep;
       break;
   }
   last_context_id_ = started.worker;
@@ -3232,6 +3332,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kIndexedDbCallback:
     case PageMessage::kStorageBucketsAnswer:
     case PageMessage::kRequestBodyCredit:
+    case PageMessage::kIsolation:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }

@@ -8,6 +8,7 @@
 #include "base/check_op.h"
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/stack_allocated.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
@@ -22,10 +23,45 @@
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/resource_timing.h"
+#include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
 
 namespace mitto {
+
+namespace {
+
+// Enters the context that a request of the Page's was made in, so that its
+// client hears of it there, as Blink's ResourceFetcher runs a resource's
+// clients in its ExecutionContext. A navigation has none: its loader enters
+// its frame's current window's context.
+class RequestContextScope final {
+  STACK_ALLOCATED();
+
+ public:
+  // `context` is the request's, or null for a navigation.
+  RequestContextScope(v8::Isolate* isolate,
+                      const v8::Global<v8::Context>* context) {
+    if (context && !context->IsEmpty()) {
+      context_ = context->Get(isolate);
+      context_->Enter();
+    }
+  }
+
+  RequestContextScope(const RequestContextScope&) = delete;
+  RequestContextScope& operator=(const RequestContextScope&) = delete;
+
+  ~RequestContextScope() {
+    if (!context_.IsEmpty()) {
+      context_->Exit();
+    }
+  }
+
+ private:
+  v8::Local<v8::Context> context_;
+};
+
+}  // namespace
 
 PageRequests::Timed::Timed() = default;
 PageRequests::Timed::Timed(Timed&&) = default;
@@ -106,6 +142,7 @@ uint64_t PageRequests::StartWorkerScript(PageRequest request, Client& client) {
 uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
   const uint64_t number = Send(Window::Current().DocumentId(), request);
   open_[number].client = &client;
+  open_[number].navigation = true;
   return number;
 }
 
@@ -362,6 +399,7 @@ PageRequests::Open* PageRequests::Find(uint64_t number,
     // The Session makes the navigation itself, at most once.
     navigation_seen_ = true;
     open_[kNavigationRequest].client = navigation_client_;
+    open_[kNavigationRequest].navigation = true;
   }
   const auto found = open_.find(number);
   if (found == open_.end()) {
@@ -371,6 +409,24 @@ PageRequests::Open* PageRequests::Find(uint64_t number,
     return nullptr;
   }
   return &found->second;
+}
+
+void PageRequests::OnIsolation(const PageIsolation& isolation) {
+  Open* const open = Find(isolation.navigation, "a cross-origin isolation");
+  if (!open) {
+    return;
+  }
+  if (!open->navigation || open->started || open->isolation_said) {
+    refuse_.Run(base::StrCat(
+        {"a cross-origin isolation of request ",
+         base::NumberToString(isolation.navigation),
+         ", which is not a navigation whose response has yet to start"}));
+    return;
+  }
+  open->isolation_said = true;
+  if (open->client) {
+    open->client->OnIsolation(isolation.isolation);
+  }
 }
 
 void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
@@ -394,6 +450,10 @@ void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
     }
   }
   if (open->client) {
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    const v8::HandleScope handle_scope(isolate);
+    const RequestContextScope context_scope(
+        isolate, open->timed ? &open->timed->context : nullptr);
     open->client->OnResponseStarted(response);
   }
 }
@@ -417,6 +477,10 @@ void PageRequests::OnResponseBody(PageResponseBody body) {
     open->timed->decoded_body_size += body.bytes.size();
   }
   open->untaken += body.bytes.size();
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::HandleScope handle_scope(isolate);
+  const RequestContextScope context_scope(
+      isolate, open->timed ? &open->timed->context : nullptr);
   // The client may take the bytes, and give credit, before this returns.
   open->client->OnResponseBody(std::move(body.bytes));
 }
@@ -437,6 +501,10 @@ void PageRequests::OnRequestBodyCredit(const PageCredit& credit) {
   }
   open->body_credited += credit.bytes;
   if (open->client && !open->body_ended) {
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    const v8::HandleScope handle_scope(isolate);
+    const RequestContextScope context_scope(
+        isolate, open->timed ? &open->timed->context : nullptr);
     open->client->OnRequestBodyCredit();
   }
 }
@@ -457,6 +525,10 @@ void PageRequests::OnResponseEnded(const PageResponseEnded& ended) {
     AddResourceTiming(*timed, TicksOf(ended.completion_time), &ended);
   }
   if (client) {
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    const v8::HandleScope handle_scope(isolate);
+    const RequestContextScope context_scope(isolate,
+                                            timed ? &timed->context : nullptr);
     client->OnResponseTotals(ended);
     client->OnResponseEnded(ended.net_error);
   }

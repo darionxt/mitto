@@ -202,7 +202,8 @@ bool IsKnown(uint32_t type) {
           type <= static_cast<uint32_t>(PageMessage::kRequestBodyCredit)) ||
          type == static_cast<uint32_t>(PageMessage::kNetworkHint) ||
          (type >= static_cast<uint32_t>(PageMessage::kStorageBuckets) &&
-          type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer));
+          type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer)) ||
+         type == static_cast<uint32_t>(PageMessage::kIsolation);
 }
 
 // The frame of a message that names `document`, which comes first.
@@ -1368,6 +1369,23 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
   return credit;
 }
 
+base::expected<PageIsolation, std::string> ReadIsolation(
+    std::string_view payload) {
+  if (payload.size() != 9) {
+    return base::unexpected(
+        WrongSize("cross-origin isolation", payload.size()));
+  }
+  PageIsolation isolation;
+  isolation.navigation = DecodeUint64(payload.substr(0, 8));
+  const uint8_t value = static_cast<uint8_t>(payload[8]);
+  if (value > static_cast<uint8_t>(PageCrossOriginIsolation::kCoopAndCoep)) {
+    return base::unexpected(base::StrCat(
+        {"an isolation of the unknown kind ", base::NumberToString(value)}));
+  }
+  isolation.isolation = static_cast<PageCrossOriginIsolation>(value);
+  return isolation;
+}
+
 base::expected<PageRequestBodyPart, std::string> ReadRequestBodyPart(
     std::string payload) {
   if (payload.size() <= 8 || payload.size() > 8 + kBodyWindow) {
@@ -1858,6 +1876,13 @@ std::string EncodeCredit(const PageCredit& credit) {
   return EncodeFrame(
       PageMessage::kCredit,
       base::StrCat({EncodeUint64(credit.number), EncodeUint32(credit.bytes)}));
+}
+
+std::string EncodeIsolation(const PageIsolation& isolation) {
+  const char value = static_cast<char>(isolation.isolation);
+  return EncodeFrame(PageMessage::kIsolation,
+                     base::StrCat({EncodeUint64(isolation.navigation),
+                                   std::string_view(&value, 1)}));
 }
 
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part) {
@@ -2591,6 +2616,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kIndexedDbCallback:
     case PageMessage::kStorageBucketsAnswer:
     case PageMessage::kRequestBodyCredit:
+    case PageMessage::kIsolation:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -2751,6 +2777,15 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
         return base::unexpected(std::move(credit).error());
       }
       frame.request_body_credit = *credit;
+      return frame;
+    }
+    case PageMessage::kIsolation: {
+      base::expected<PageIsolation, std::string> isolation =
+          ReadIsolation(payload);
+      if (!isolation.has_value()) {
+        return base::unexpected(std::move(isolation).error());
+      }
+      frame.isolation = *isolation;
       return frame;
     }
     case PageMessage::kStorageEntries: {
