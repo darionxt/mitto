@@ -57,7 +57,15 @@ void DocumentLoader::StopLoading() {
   }
   if (response_started_ && !body_ended_) {
     body_ended_ = true;
-    requests_->Cancel(number_);
+    if (!answered_by_page_) {
+      requests_->Cancel(number_);
+    }
+  }
+}
+
+void DocumentLoader::TookBody(size_t size) {
+  if (!answered_by_page_) {
+    requests_->TookBody(number_, size);
   }
 }
 
@@ -255,7 +263,7 @@ void DocumentLoader::OnResponseBody(std::string bytes) {
   body_bytes_ += bytes.size();
   if (!parser_) {
     // What comes once the parser has stopped for good goes unread.
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
     return;
   }
   waiting_body_.push_back(std::move(bytes));
@@ -300,7 +308,7 @@ bool DocumentLoader::FeedParser() {
     waiting_body_.pop_front();
     // The Session hears that the piece is taken before anything the parser,
     // or its preload scanner, asks for from it.
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
     if (!bytes.empty()) {
       parser_->AppendBytes(bytes);
     }
@@ -323,7 +331,7 @@ void DocumentLoader::ParserDetached() {
   parser_ = nullptr;
   // What waits of the body goes unread.
   for (const std::string& bytes : waiting_body_) {
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
   }
   waiting_body_.clear();
 }

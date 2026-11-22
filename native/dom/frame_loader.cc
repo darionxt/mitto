@@ -20,6 +20,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
@@ -255,8 +256,10 @@ void StartNavigation(Window& window,
     return;
   }
   // A top-level frame shows no data: URL that a page navigates it to, but one
-  // that would be a download.
-  if (url.SchemeIs(url::kDataScheme) &&
+  // that would be a download, as Chrome's browser blocks it for the main
+  // frame only.
+  const Frame* const frame = window.GetFrame();
+  if (url.SchemeIs(url::kDataScheme) && (!frame || !frame->Parent()) &&
       request.reason != ClientNavigationReason::kReload &&
       IsDataUrlMimeTypeSupported(url)) {
     window.AddConsoleMessage(

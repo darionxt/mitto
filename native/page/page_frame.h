@@ -226,6 +226,18 @@ class PageFrame final : public NavigationClient, public Frame {
   // Commits `navigation` from a later task, as Chrome's browser commits it,
   // unless a newer navigation of the frame takes its place first.
   void CommitWithoutNetworkSoon(LocalNavigation navigation);
+  // A child frame's navigation to a data: URL, which the Page answers itself
+  // from a later task, through a DocumentLoader as a response.
+  void BeginDataUrlNavigation(const NavigationRequest& request);
+  // Gives `loader`, if it is still there, the response of a data: URL.
+  void AnswerDataUrl(base::WeakPtr<DocumentLoader> loader,
+                     PageResponseStarted response,
+                     std::string body);
+  // Lets the navigation that waits for its response go, with its request.
+  void CancelProvisionalNavigation();
+  // Has the parent check whether all of its frames have loaded, once this
+  // frame no longer loads.
+  void LetParentCheckCompleted();
   // Commits `navigation`, unless another has taken its place: in the same
   // window for a document of the initial about:blank's origin, as Blink's
   // DocumentLoader::CommitNavigation() reuses it, and otherwise in a new
