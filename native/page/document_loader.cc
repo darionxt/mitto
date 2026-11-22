@@ -61,6 +61,10 @@ void DocumentLoader::StopLoading() {
   }
 }
 
+void DocumentLoader::OnIsolation(PageCrossOriginIsolation isolation) {
+  cross_origin_isolated_ = isolation != PageCrossOriginIsolation::kNone;
+}
+
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   const v8::Context::Scope context_scope(frame_->context());
   response_started_ = true;
@@ -89,7 +93,7 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   document_ = &frame_->CommitNavigation(
       *this, url_,
       base::TimeTicks() + base::Microseconds(response.navigation_start),
-      response.connection,
+      response.connection, cross_origin_isolated_,
       xml ? std::optional<std::u16string>(base::ASCIIToUTF16(mime_type))
           : std::nullopt);
   document_id_ = document_->DefaultView()->DocumentId();

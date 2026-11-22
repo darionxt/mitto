@@ -3,13 +3,14 @@
 // SerializedScriptValue holds. It is V8's own serializer, as Blink's is
 // beneath it, inside Blink's envelope, with the objects of the Runtime's that
 // Blink copies or transfers: transferred ArrayBuffers, MessagePorts and
-// streams, DOMRect, DOMRectReadOnly, DOMException and QuotaExceededError, and
-// WebAssembly modules. A transferred stream goes as Blink's does, over a
-// MessagePort of its own whose other end the value carries. An object of an
-// interface that Blink copies but the Runtime has no class for, such as
-// DOMPoint or Blob, comes back as an object of that interface with nothing
-// behind it, as a Known Gap's. Every other object that wraps a C++ object is
-// refused with Chrome's DataCloneError.
+// streams, DOMRect, DOMRectReadOnly, DOMException and QuotaExceededError,
+// WebAssembly modules, and SharedArrayBuffers from a context that may post
+// them, whose memory the copy shares. A transferred stream goes as Blink's
+// does, over a MessagePort of its own whose other end the value carries. An
+// object of an interface that Blink copies but the Runtime has no class for,
+// such as DOMPoint or Blob, comes back as an object of that interface with
+// nothing behind it, as a Known Gap's. Every other object that wraps a C++
+// object is refused with Chrome's DataCloneError.
 //
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/v8_script_value_serializer.cc
@@ -83,8 +84,8 @@ class SerializedScriptValue {
       v8::Local<v8::Value> value);
 
   // A value that came from another process: its bytes alone, as Chrome's
-  // CloneableMessage carries them, without the WebAssembly modules, which
-  // stay in their agent cluster.
+  // CloneableMessage carries them, without the WebAssembly modules and the
+  // SharedArrayBuffers, which stay in their agent cluster.
   static SerializedScriptValue FromWireData(std::vector<uint8_t> data);
 
   SerializedScriptValue(const SerializedScriptValue&);
@@ -106,9 +107,11 @@ class SerializedScriptValue {
   const std::vector<uint8_t>& wire_data() const { return data_; }
 
   // Whether the value holds what only its own agent cluster can read: a
-  // WebAssembly module, as SerializedScriptValue::IsLockedToAgentCluster()
-  // says. The Runtime refuses SharedArrayBuffers before.
-  bool IsLockedToAgentCluster() const { return !!wasm_modules_; }
+  // WebAssembly module or a SharedArrayBuffer, as
+  // SerializedScriptValue::IsLockedToAgentCluster() says.
+  bool IsLockedToAgentCluster() const {
+    return !!wasm_modules_ || !shared_array_buffers_.empty();
+  }
 
  private:
   SerializedScriptValue();
@@ -121,6 +124,9 @@ class SerializedScriptValue {
 
   std::vector<uint8_t> data_;
   std::vector<std::shared_ptr<v8::BackingStore>> array_buffers_;
+  // The memory of the SharedArrayBuffers that the value holds, which each
+  // copy shares, as Blink's shared_array_buffers_contents_.
+  std::vector<std::shared_ptr<v8::BackingStore>> shared_array_buffers_;
   // None if the value holds no module. CompiledWasmModule cannot be assigned,
   // so copies share the list.
   std::shared_ptr<const std::vector<v8::CompiledWasmModule>> wasm_modules_;

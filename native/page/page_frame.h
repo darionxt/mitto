@@ -119,12 +119,14 @@ class PageFrame final : public NavigationClient, public Frame {
   // The response of `loader`'s navigation has come: the frame's document
   // stops loading and unloads, and a new context's document at `url` takes
   // its place, which this returns: an XMLDocument of `xml_content_type`
-  // where one is given. `loader` becomes the document's.
+  // where one is given, in a cross-origin isolated agent if
+  // `cross_origin_isolated`. `loader` becomes the document's.
   Document& CommitNavigation(
       DocumentLoader& loader,
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
+      bool cross_origin_isolated,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
   // `loader`'s navigation ended with no response, and the frame keeps its
   // document. `loader` goes.
@@ -143,7 +145,8 @@ class PageFrame final : public NavigationClient, public Frame {
   // the Session of it, and returns the document. The old window's timers,
   // idle callbacks, animation frames, fetches, tasks and workers stop with
   // its context. The new window's performance.timeOrigin is
-  // `navigation_start`, and its navigator.connection gives `connection`. With
+  // `navigation_start`, and its navigator.connection gives `connection`, and
+  // its agent is cross-origin isolated if `cross_origin_isolated`. With
   // `xml_content_type`, the document is an XMLDocument of that MIME type, as
   // Blink's DocumentInit makes one for an XML response, and otherwise an
   // HTMLDocument.
@@ -152,12 +155,15 @@ class PageFrame final : public NavigationClient, public Frame {
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
+      bool cross_origin_isolated,
       const std::optional<std::u16string>& xml_content_type);
   // Makes a window's context, with what Chrome's renderer adds to it, whose
   // time origin is `time_origin` and whose document's origin is `origin`,
-  // which decides whether it is a secure context and its security token.
+  // which decides whether it is a secure context and its security token, in
+  // a cross-origin isolated agent if `cross_origin_isolated`.
   v8::Local<v8::Context> NewContext(base::TimeTicks time_origin,
-                                    const url::Origin& origin);
+                                    const url::Origin& origin,
+                                    bool cross_origin_isolated = false);
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells

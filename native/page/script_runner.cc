@@ -335,6 +335,11 @@ void ScriptRunner::OnRequestBodyCredit(PageCredit credit) {
                          base::Unretained(requests_.get()), credit));
 }
 
+void ScriptRunner::OnIsolation(PageIsolation isolation) {
+  RunTask(base::BindOnce(&PageRequests::OnIsolation,
+                         base::Unretained(requests_.get()), isolation));
+}
+
 void ScriptRunner::RunTask(base::OnceClosure task) {
   // Start() failed, and the Page is about to end.
   if (!started_) {

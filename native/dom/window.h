@@ -149,6 +149,8 @@ class Window final : public WindowProperties, public ExecutionContext {
                             bindings::ExceptionState& exception_state);
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
+  // WindowOrWorkerGlobalScope::crossOriginIsolated().
+  bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
   // Chrome keys agent clusters by origin by default.
   bool OriginAgentCluster() const { return true; }
   bool OffscreenBuffering() const { return true; }

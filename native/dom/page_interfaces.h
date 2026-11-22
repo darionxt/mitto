@@ -29,6 +29,9 @@ struct ContextInit {
   // Whether it is a secure context, which decides whether it gets the members
   // that [SecureContext] puts behind one.
   bool secure_context = true;
+  // Whether its agent is cross-origin isolated, which decides what of the
+  // context the agent allows, such as SharedArrayBuffer.
+  bool cross_origin_isolated = false;
 };
 
 // Makes a context whose global object is a Window, made from Window's template

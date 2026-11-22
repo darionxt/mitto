@@ -107,6 +107,7 @@ class ScriptRunner final : public base::TaskObserver {
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(PageResponseEnded ended);
   void OnRequestBodyCredit(PageCredit credit);
+  void OnIsolation(PageIsolation isolation);
 
   // What the Page's frames use, on the main thread.
   v8::Isolate* isolate() const { return isolate_; }

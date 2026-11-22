@@ -343,6 +343,7 @@ Document& PageFrame::CommitNavigation(
     const GURL& url,
     base::TimeTicks navigation_start,
     const PageConnection& connection,
+    bool cross_origin_isolated,
     const std::optional<std::u16string>& xml_content_type) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
   Document& old_document = Window::Current().GetDocument();
@@ -374,8 +375,9 @@ Document& PageFrame::CommitNavigation(
   const GURL old_url(old_document.UrlForBinding());
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
-  Document& document = CommitDocument(current_->number(), url, navigation_start,
-                                      connection, xml_content_type);
+  Document& document =
+      CommitDocument(current_->number(), url, navigation_start, connection,
+                     cross_origin_isolated, xml_content_type);
   // The old document's unload times go to a new one of its origin, as
   // Blink's UnloadEventTimingInfo carries them.
   DocumentLoadTiming& timing = document_load_timing();
@@ -405,6 +407,7 @@ Document& PageFrame::CommitDocument(
     const GURL& url,
     base::TimeTicks navigation_start,
     const PageConnection& connection,
+    bool cross_origin_isolated,
     const std::optional<std::u16string>& xml_content_type) {
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);
@@ -429,8 +432,8 @@ Document& PageFrame::CommitDocument(
   if (!parent_) {
     MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
   }
-  const v8::Local<v8::Context> context =
-      NewContext(time_origin, url::Origin::Create(url));
+  const v8::Local<v8::Context> context = NewContext(
+      time_origin, url::Origin::Create(url), cross_origin_isolated);
   context_.Reset(isolate, context);
   window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
   AttachWindow(connection, PageDocumentSource::kNavigationResponse, navigation);
@@ -453,7 +456,8 @@ Document& PageFrame::CommitDocument(
 }
 
 v8::Local<v8::Context> PageFrame::NewContext(base::TimeTicks time_origin,
-                                             const url::Origin& origin) {
+                                             const url::Origin& origin,
+                                             bool cross_origin_isolated) {
   v8::Isolate* const isolate = runner_->isolate();
   ChromeObjectData& chrome_object_data =
       runner_->NewChromeObjectData(time_origin);
@@ -462,6 +466,7 @@ v8::Local<v8::Context> PageFrame::NewContext(base::TimeTicks time_origin,
   init.time_origin = time_origin;
   // A [SecureContext] member is installed when a context is made.
   init.secure_context = IsOriginPotentiallyTrustworthy(origin);
+  init.cross_origin_isolated = cross_origin_isolated;
   PageReporter& reporter = runner_->reporter();
   const v8::Local<v8::Context> context = NewPageContext(
       isolate, init, u"",

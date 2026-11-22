@@ -142,6 +142,7 @@ uint64_t PageRequests::StartWorkerScript(PageRequest request, Client& client) {
 uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
   const uint64_t number = Send(Window::Current().DocumentId(), request);
   open_[number].client = &client;
+  open_[number].navigation = true;
   return number;
 }
 
@@ -398,6 +399,7 @@ PageRequests::Open* PageRequests::Find(uint64_t number,
     // The Session makes the navigation itself, at most once.
     navigation_seen_ = true;
     open_[kNavigationRequest].client = navigation_client_;
+    open_[kNavigationRequest].navigation = true;
   }
   const auto found = open_.find(number);
   if (found == open_.end()) {
@@ -407,6 +409,24 @@ PageRequests::Open* PageRequests::Find(uint64_t number,
     return nullptr;
   }
   return &found->second;
+}
+
+void PageRequests::OnIsolation(const PageIsolation& isolation) {
+  Open* const open = Find(isolation.navigation, "a cross-origin isolation");
+  if (!open) {
+    return;
+  }
+  if (!open->navigation || open->started || open->isolation_said) {
+    refuse_.Run(base::StrCat(
+        {"a cross-origin isolation of request ",
+         base::NumberToString(isolation.navigation),
+         ", which is not a navigation whose response has yet to start"}));
+    return;
+  }
+  open->isolation_said = true;
+  if (open->client) {
+    open->client->OnIsolation(isolation.isolation);
+  }
 }
 
 void PageRequests::OnResponseStarted(const PageResponseStarted& response) {

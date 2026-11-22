@@ -123,6 +123,8 @@ shared_library("mitto_core") {
     "cookie_json.h",
     "cors_preflight.cc",
     "cors_preflight.h",
+    "cross_origin_policies.cc",
+    "cross_origin_policies.h",
     "directory_lock.h",
     "feature_list.cc",
     "feature_list.h",
