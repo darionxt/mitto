@@ -22,7 +22,10 @@
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_frame.h"
 #include "mitto/page/page_requests.h"
+#include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "mitto/page/session_indexed_db.h"
+#include "mitto/page/session_storage_buckets.h"
 #include "third_party/icu/source/common/unicode/locid.h"
 #include "third_party/icu/source/common/unicode/stringpiece.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
@@ -179,6 +182,15 @@ ChromeObjectData& ScriptRunner::NewChromeObjectData(
   chrome_object_data_.push_back(
       std::make_unique<ChromeObjectData>(navigation_start));
   return *chrome_object_data_.back();
+}
+
+void ScriptRunner::KeepRemovedFrameStorage(
+    std::unique_ptr<SessionCacheStorage> cache_storage,
+    std::unique_ptr<SessionIndexedDb> indexed_db,
+    std::unique_ptr<SessionStorageBuckets> storage_buckets) {
+  removed_cache_storage_.push_back(std::move(cache_storage));
+  removed_indexed_db_.push_back(std::move(indexed_db));
+  removed_storage_buckets_.push_back(std::move(storage_buckets));
 }
 
 size_t ScriptRunner::FrameCount() const {
