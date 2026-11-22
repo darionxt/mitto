@@ -89,6 +89,11 @@ mitto_bindings_interfaces = [
     file = "before_unload_event"
   },
   {
+    name = "Blob"
+    file = "blob"
+    made_by_known_gaps = true
+  },
+  {
     name = "BroadcastChannel"
     file = "broadcast_channel"
 
@@ -543,6 +548,29 @@ mitto_bindings_interfaces = [
 
     # It returns an Observable, which has no class yet.
     missing = [ "when" ]
+  },
+  {
+    name = "File"
+    file = "file"
+    made_by_known_gaps = true
+  },
+  {
+    name = "FileReader"
+    file = "file_reader"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onloadstart",
+      "onprogress",
+      "onload",
+      "onabort",
+      "onerror",
+      "onloadend",
+    ]
+  },
+  {
+    name = "FileReaderSync"
+    file = "file_reader_sync"
   },
   {
     name = "FontFaceSet"
@@ -1823,6 +1851,10 @@ mitto_bindings_interfaces = [
     missing = [ "sheet" ]
   },
   {
+    name = "ProgressEvent"
+    file = "progress_event"
+  },
+  {
     name = "PromiseRejectionEvent"
     file = "promise_rejection_event"
   },
@@ -1888,6 +1920,8 @@ mitto_bindings_interfaces = [
       "json",
       "text",
       "textStream",
+      "blob",
+      "bytes",
     ]
   },
   {
@@ -1907,6 +1941,8 @@ mitto_bindings_interfaces = [
       "json",
       "text",
       "textStream",
+      "blob",
+      "bytes",
     ]
   },
   {
@@ -2971,13 +3007,6 @@ mitto_bindings_interfaces = [
   {
     name = "URL"
     file = "url"
-
-    # createObjectURL() and revokeObjectURL(), of the File API's blob URLs, are
-    # Known Gaps.
-    missing = [
-      "createObjectURL",
-      "revokeObjectURL",
-    ]
   },
   {
     name = "URLSearchParams"
