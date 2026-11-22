@@ -307,6 +307,7 @@ _AT_RULES = {
         "@font-feature-values serif",
         "@function --f",
         "@function --f() returns ???",
+        "@function --f(--x: ;)",
         "@property --a",
     ],
     "kept": [

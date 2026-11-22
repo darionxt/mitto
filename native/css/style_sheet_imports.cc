@@ -609,7 +609,7 @@ bool ConsumeFunctionType(const Prelude& prelude, size_t& i) {
 
 // ConsumeFunctionParameters(): none, or names of custom properties apart by
 // commas, each with a type and a default after a colon if it has them.
-// Whether the default fits the type needs the values of style.
+// Whether the default fits the type needs the values of style, a Known Gap.
 bool IsFunctionParameters(std::u16string_view text) {
   const Prelude parameters = TokensWithBlocks(text);
   const std::vector<CssToken>& tokens = parameters.tokens;
@@ -631,8 +631,18 @@ bool IsFunctionParameters(std::u16string_view text) {
       i = typed;
     }
     if (i < tokens.size() && tokens[i].type == CssTokenType::kColon) {
+      // ConsumeUnparsedDeclaration(), up to a comma: a ; ends it before the
+      // parameter does, and no ! may stand in it, as it takes no !important.
       ++i;
       while (i < tokens.size() && tokens[i].type != CssTokenType::kComma) {
+        const CssToken& token = tokens[i];
+        if (token.type == CssTokenType::kSemicolon ||
+            token.type == CssTokenType::kBadString ||
+            token.type == CssTokenType::kBadUrl ||
+            (token.type == CssTokenType::kDelimiter &&
+             token.delimiter == '!')) {
+          return false;
+        }
         ++i;
       }
     }
