@@ -35,6 +35,8 @@ enum class ResourceType {
   kFont,
   // What a preload as fetch asks for.
   kRaw,
+  // What a link with rel prefetch asks for.
+  kLinkPrefetch,
 };
 
 // Blink's ResourceStatus.
