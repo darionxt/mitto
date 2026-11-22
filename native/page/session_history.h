@@ -89,6 +89,9 @@ class SessionHistory final {
   // The index of the entry whose top-level frame entry has the Navigation
   // API key `key`, nearest the current one, as Chrome finds it.
   std::optional<size_t> IndexOfKey(const std::u16string& key) const;
+  // The index of the entry whose top-level frame entry is the item of
+  // sequence number `item_sequence_number`, if one still is.
+  std::optional<size_t> IndexOfItem(int64_t item_sequence_number) const;
 
   // The top-level frame committed a new document of `item`, the response of
   // the navigation that made document `record`: a new entry, in place of

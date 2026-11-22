@@ -87,6 +87,16 @@ std::optional<size_t> SessionHistory::IndexOfKey(
   return std::nullopt;
 }
 
+std::optional<size_t> SessionHistory::IndexOfItem(
+    int64_t item_sequence_number) const {
+  for (size_t i = 0; i < entries_.size(); ++i) {
+    if (entries_[i].root->item().item_sequence_number == item_sequence_number) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
 Navigation::EntryArrays SessionHistory::DidCommitNavigation(
     const HistoryItem& item,
     FrameLoadType type,
@@ -133,12 +143,9 @@ void SessionHistory::DidCommitSameDocumentNavigation(const HistoryItem& item,
           std::string(), item, record);
       return;
     case FrameLoadType::kBackForward:
-      for (size_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].root->item().item_sequence_number ==
-            item.item_sequence_number) {
-          current_ = i;
-          return;
-        }
+      if (const std::optional<size_t> index =
+              IndexOfItem(item.item_sequence_number)) {
+        current_ = *index;
       }
       return;
   }

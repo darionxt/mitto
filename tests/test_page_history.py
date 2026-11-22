@@ -182,6 +182,30 @@ def test_each_go_goes_from_where_the_one_before_it_went(session: mitto.Session, 
         )
 
 
+def test_a_traversal_goes_to_the_entry_it_asked_for_when_it_asked(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", "<title>Asked</title>")
+    script = """new Promise(resolve => {
+      location.hash = '#1';
+      location.hash = '#2';
+      const anchor = document.createElement('a');
+      anchor.href = '#3';
+      anchor.onclick = () => history.back();
+      const seen = [];
+      onpopstate = () => {
+        seen.push(location.hash);
+        if (seen.length == 2) resolve([seen, location.hash, history.length]);
+      };
+      anchor.click();
+    })"""
+
+    with _open_page(session, url) as page:
+        # back() asks for the entry before #2, and the link's navigation to #3, which commits before the traversal
+        # runs, does not change which.
+        assert page.evaluate(script) == [["#3", "#1"], "#1", 4]
+
+
 def test_go_with_no_offset_reloads(session: mitto.Session, server: RecordingServer) -> None:
     url = server.page("/", "<title>Reload</title>")
 

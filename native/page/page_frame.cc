@@ -86,6 +86,11 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
 void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
                                                 FrameLoadType type) {
   history_->DidCommitSameDocumentNavigation(item, type);
+  // A new entry discards the pending one, which a later go() no longer
+  // counts from, as Chrome's controller discards it.
+  if (type == FrameLoadType::kStandard) {
+    pending_traversal_index_.reset();
+  }
   NotifyNavigationApiOfDisposedEntries();
   const std::string& spec = item.url.spec();
   // A URL too long for a frame stays the Page's, which no Chrome would have.
@@ -120,34 +125,60 @@ HistoryCounts PageFrame::GetHistoryCounts() const {
 }
 
 void PageFrame::NavigateBackForward(int offset) {
-  // Behind the tasks that the document has queued, hashchange among them, as
-  // the browser's answer comes in Chrome.
-  runner_->PostTask(TaskType::kDOMManipulation,
-                    base::BindOnce(&PageFrame::GoToOffset,
-                                   weak_factory_.GetWeakPtr(), offset));
-}
-
-void PageFrame::NavigateToNavigationApiKey(const std::u16string& key) {
-  runner_->PostTask(
-      TaskType::kDOMManipulation,
-      base::BindOnce(&PageFrame::GoToKey, weak_factory_.GetWeakPtr(), key));
-}
-
-void PageFrame::GoToOffset(int offset) {
+  // GoToOffsetFromRenderer(): from the entry that a waiting traversal goes
+  // to, or the current one, and nowhere past the entries.
   const HistoryCounts counts = history_->Counts();
-  const int index = counts.index + offset;
-  // CanGoToOffset(): one past the entries goes nowhere.
+  const int index =
+      (pending_traversal_index_ ? static_cast<int>(*pending_traversal_index_)
+                                : counts.index) +
+      offset;
   if (index < 0 || index >= counts.length) {
     return;
   }
-  GoToIndex(static_cast<size_t>(index));
+  QueueTraversal(static_cast<size_t>(index), std::nullopt);
 }
 
-void PageFrame::GoToKey(const std::u16string& key) {
+void PageFrame::NavigateToNavigationApiKey(const std::u16string& key) {
   const std::optional<size_t> index = history_->IndexOfKey(key);
   if (!index) {
-    Window::Current().Navigation()->TraverseCancelled(
-        key, Navigation::TraverseCancelledReason::kNotFound);
+    runner_->PostTask(TaskType::kDOMManipulation,
+                      base::BindOnce(
+                          [](std::u16string key) {
+                            Window::Current().Navigation()->TraverseCancelled(
+                                key,
+                                Navigation::TraverseCancelledReason::kNotFound);
+                          },
+                          key));
+    return;
+  }
+  QueueTraversal(*index, key);
+}
+
+void PageFrame::QueueTraversal(size_t index,
+                               std::optional<std::u16string> key) {
+  pending_traversal_index_ = index;
+  ++waiting_traversals_;
+  // Behind the tasks that the document has queued, hashchange among them, as
+  // the browser's answer comes in Chrome.
+  runner_->PostTask(
+      TaskType::kDOMManipulation,
+      base::BindOnce(&PageFrame::GoToItem, weak_factory_.GetWeakPtr(),
+                     history_->RootAt(index).item().item_sequence_number,
+                     std::move(key)));
+}
+
+void PageFrame::GoToItem(int64_t item_sequence_number,
+                         std::optional<std::u16string> key) {
+  if (--waiting_traversals_ == 0) {
+    pending_traversal_index_.reset();
+  }
+  const std::optional<size_t> index =
+      history_->IndexOfItem(item_sequence_number);
+  if (!index) {
+    if (key) {
+      Window::Current().Navigation()->TraverseCancelled(
+          *key, Navigation::TraverseCancelledReason::kAbortedBeforeCommit);
+    }
     return;
   }
   GoToIndex(*index);
@@ -199,6 +230,7 @@ Document& PageFrame::CommitNavigation(
            : provisional_request_.replace ? FrameLoadType::kReplaceCurrentItem
                                           : FrameLoadType::kStandard;
   }
+  pending_traversal_index_.reset();
   const HistoryItem* const old_item = Window::Current().CurrentHistoryItem();
   const std::optional<HistoryItem> old_history_item =
       old_item ? std::optional<HistoryItem>(*old_item) : std::nullopt;

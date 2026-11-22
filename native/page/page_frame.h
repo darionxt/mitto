@@ -84,11 +84,16 @@ class PageFrame final : public NavigationClient {
   // Takes `loader` from where the frame holds it, as the opening navigation's
   // or the one that waits.
   std::unique_ptr<DocumentLoader> Take(DocumentLoader& loader);
-  // NavigationControllerImpl::GoToOffsetFromRenderer() and
-  // NavigateToNavigationApiKey(), from the task that the browser's would run
-  // in: the target is worked out from where the history is then.
-  void GoToOffset(int offset);
-  void GoToKey(const std::u16string& key);
+  // Has the history go to entry `index` from a later task, as Chrome's
+  // browser takes the renderer's message: the entry it is when asked, which
+  // a navigation that commits meanwhile does not change, and whose traversal
+  // a later go() counts from until the history moves.
+  void QueueTraversal(size_t index, std::optional<std::u16string> key);
+  // The task of a traversal to the entry of item `item_sequence_number`,
+  // which goes nowhere if a new entry has pruned it since, and cancels the
+  // traverseTo() of `key` then.
+  void GoToItem(int64_t item_sequence_number,
+                std::optional<std::u16string> key);
   // NotifyNavigationApiOfDisposedEntries(): the document hears of the
   // entries that the session history dropped.
   void NotifyNavigationApiOfDisposedEntries();
@@ -111,6 +116,10 @@ class PageFrame final : public NavigationClient {
   NavigationRequest provisional_request_;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
+  // The entry that the latest traversal asked for goes to, while one waits,
+  // as Chrome's pending entry, which the next go() counts from.
+  std::optional<size_t> pending_traversal_index_;
+  int waiting_traversals_ = 0;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };
 
