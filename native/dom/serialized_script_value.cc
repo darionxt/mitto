@@ -1227,9 +1227,11 @@ std::optional<SerializedScriptValue> SerializedScriptValue::SerializeWith(
 
 // static
 SerializedScriptValue SerializedScriptValue::FromWireData(
-    std::vector<uint8_t> data) {
+    std::vector<uint8_t> data,
+    BlobDataHandleMap blob_data_handles) {
   SerializedScriptValue serialized;
   serialized.data_ = std::move(data);
+  serialized.blob_data_handles_ = std::move(blob_data_handles);
   return serialized;
 }
 

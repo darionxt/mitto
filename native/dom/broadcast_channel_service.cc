@@ -124,13 +124,15 @@ void BroadcastChannelService::Post(uint64_t connection,
         FROM_HERE, base::BindOnce(
                        [](BroadcastChannelService* service, uint64_t recipient,
                           scoped_refptr<base::SingleThreadTaskRunner> runner,
-                          bool locked, std::vector<uint8_t> data) {
+                          bool locked, std::vector<uint8_t> data,
+                          BlobDataHandleMap blob_data_handles) {
                          service->Deliver(recipient, std::move(runner), locked,
                                           /*same_agent_cluster=*/true,
-                                          std::move(data));
+                                          std::move(data),
+                                          std::move(blob_data_handles));
                        },
                        base::Unretained(this), recipient, runner, locked,
-                       message.wire_data()));
+                       message.wire_data(), message.blob_data_handles()));
   }
 }
 
@@ -149,8 +151,9 @@ void BroadcastChannelService::OnSessionMessage(const std::string& origin,
     }
   }
   for (auto& [recipient, runner] : recipients) {
+    // Chrome's browser would hand over the blobs too: a Known Gap.
     Deliver(recipient, std::move(runner), locked, /*same_agent_cluster=*/false,
-            data);
+            data, BlobDataHandleMap());
   }
 }
 
@@ -159,12 +162,14 @@ void BroadcastChannelService::Deliver(
     scoped_refptr<base::SingleThreadTaskRunner> runner,
     bool locked,
     bool same_agent_cluster,
-    std::vector<uint8_t> data) {
+    std::vector<uint8_t> data,
+    BlobDataHandleMap blob_data_handles) {
   runner->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](BroadcastChannelService* service, uint64_t connection, bool locked,
-             bool same_agent_cluster, std::vector<uint8_t> data) {
+             bool same_agent_cluster, std::vector<uint8_t> data,
+             BlobDataHandleMap blob_data_handles) {
             cppgc::subtle::WeakCrossThreadPersistent<BroadcastChannel> handle;
             {
               const base::AutoLock lock(service->lock_);
@@ -184,11 +189,12 @@ void BroadcastChannelService::Deliver(
               return;
             }
             channel->DeliverInContext(
-                SerializedScriptValue::FromWireData(std::move(data)), locked,
-                same_agent_cluster);
+                SerializedScriptValue::FromWireData(
+                    std::move(data), std::move(blob_data_handles)),
+                locked, same_agent_cluster);
           },
           base::Unretained(this), connection, locked, same_agent_cluster,
-          std::move(data)));
+          std::move(data), std::move(blob_data_handles)));
 }
 
 }  // namespace mitto

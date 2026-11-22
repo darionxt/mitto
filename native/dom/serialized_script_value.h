@@ -92,11 +92,14 @@ class SerializedScriptValue {
       v8::Isolate* isolate,
       v8::Local<v8::Value> value);
 
-  // A value that came from another process: its bytes alone, as Chrome's
-  // CloneableMessage carries them, without the WebAssembly modules, which
-  // stay in their agent cluster, and without the blobs, which read as empty:
-  // a Known Gap, since Chrome's browser hands the other process the blobs.
-  static SerializedScriptValue FromWireData(std::vector<uint8_t> data);
+  // A value that went as its bytes, as Chrome's CloneableMessage carries
+  // them, without the WebAssembly modules, which stay in their agent cluster.
+  // One from a context of the same Page has `blob_data_handles`, the blobs it
+  // carries, as Chrome's browser hands them over. One from another process
+  // has none, so its blobs read as empty: a Known Gap.
+  static SerializedScriptValue FromWireData(
+      std::vector<uint8_t> data,
+      BlobDataHandleMap blob_data_handles = BlobDataHandleMap());
 
   SerializedScriptValue(const SerializedScriptValue&);
   SerializedScriptValue& operator=(const SerializedScriptValue&);
@@ -115,6 +118,10 @@ class SerializedScriptValue {
 
   // The bytes, which another process reads with FromWireData().
   const std::vector<uint8_t>& wire_data() const { return data_; }
+  // The blobs that the bytes name, by their UUIDs.
+  const BlobDataHandleMap& blob_data_handles() const {
+    return blob_data_handles_;
+  }
 
   // Whether the value holds what only its own agent cluster can read: a
   // WebAssembly module, as SerializedScriptValue::IsLockedToAgentCluster()
