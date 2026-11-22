@@ -136,6 +136,10 @@ class HTMLLinkElement final : public HTMLElement,
   void ModulePreloadIfNeeded();
   // LinkLoader::NotifyModuleLoadFinished(), from `client`.
   void ModulePreloadFinished(ModulePreloadClient& client, bool loaded);
+  // PreloadHelper::PrefetchIfNeeded(): what a link with rel prefetch asks
+  // for, as a request of the kind prefetch, at the lowest priority, which
+  // holds nothing back and fires load or error at the link.
+  Resource* PrefetchIfNeeded();
   // HTMLLinkElement::LinkLoaded() and LinkLoadingErrored().
   void DispatchLinkEvent(bool loaded);
 

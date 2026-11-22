@@ -169,7 +169,7 @@ namespace {
 // its destination, where a text module, whose Request Kind comes once Chrome
 // 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
 // send a JavaScript module's lines, Known Gaps; a classic script; an image;
-// a style sheet; a font; a favicon; or a fetch.
+// a style sheet; a font; a favicon; a prefetch; or a fetch.
 PageRequestKind KindOf(const FetchRequestData& data) {
   if (data.is_module) {
     return data.destination == FetchDestination::kJson
@@ -189,6 +189,8 @@ PageRequestKind KindOf(const FetchRequestData& data) {
       return PageRequestKind::kFont;
     case FetchDestination::kFavicon:
       return PageRequestKind::kFavicon;
+    case FetchDestination::kPrefetch:
+      return PageRequestKind::kPrefetch;
     case FetchDestination::kJson:
     case FetchDestination::kText:
     case FetchDestination::kWorker:

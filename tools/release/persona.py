@@ -171,6 +171,8 @@ _KINDS = {
     "favicon": _KindSource(credentials_mode="include", lines="favicon", hints="client_hints_image"),
     # What a module imports as JSON goes as a module does, with the Accept and Sec-Fetch-Dest of its destination.
     "module_json": _KindSource(credentials_mode="same-origin", lines="module_json", hints="client_hints_script"),
+    # What a link prefetches goes in mode no-cors with credentials, as an element's request does.
+    "prefetch": _KindSource(credentials_mode="include", lines="prefetch", hints="client_hints_script"),
 }
 
 KIND_CASES = {kind: source.own or kind for kind, source in _KINDS.items()}

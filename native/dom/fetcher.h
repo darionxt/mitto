@@ -33,6 +33,9 @@ enum class FetchDestination {
   // Not the Fetch Standard's: what the browser's favicon driver fetches, an
   // image of the Request Kind favicon.
   kFavicon,
+  // Not the Fetch Standard's: what a link with rel prefetch asks for, whose
+  // destination is empty, of the Request Kind prefetch.
+  kPrefetch,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.

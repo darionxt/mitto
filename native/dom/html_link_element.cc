@@ -67,6 +67,7 @@ bool IsSupportedType(ResourceType type, std::u16string_view mime_type) {
     case ResourceType::kFont:
       return IsSupportedFontMimeType(ascii);
     case ResourceType::kRaw:
+    case ResourceType::kLinkPrefetch:
       return true;
   }
 }
@@ -272,7 +273,11 @@ void HTMLLinkElement::Process(bool media_change) {
       return;
     }
     HintIfNeeded();
-    if (Resource* const resource = PreloadIfNeeded()) {
+    Resource* resource = PreloadIfNeeded();
+    if (!resource) {
+      resource = PrefetchIfNeeded();
+    }
+    if (resource) {
       pending_resource_ = resource;
       adding_client_ = true;
       resource->AddClient(this);
@@ -806,6 +811,46 @@ void HTMLLinkElement::ModulePreloadFinished(ModulePreloadClient& client,
   module_preload_ = nullptr;
   // Steps 14 and 15.
   DispatchLinkEvent(loaded);
+}
+
+Resource* HTMLLinkElement::PrefetchIfNeeded() {
+  const LinkRelAttribute rel(AttributeOrEmpty(*this, u"rel"));
+  if (!rel.is_link_prefetch || !ActiveWindowOf(GetDocument())) {
+    return nullptr;
+  }
+  Document& document = GetDocument();
+  const std::u16string_view href =
+      StripHTMLSpaces(AttributeOrEmpty(*this, u"href"));
+  const GURL url = href.empty() ? GURL() : document.CompleteUrl(href);
+  if (!url.is_valid()) {
+    return nullptr;
+  }
+  FetchParameters params;
+  params.url = url;
+  params.type = ResourceType::kLinkPrefetch;
+  // Without crossorigin, in mode no-cors with credentials.
+  const std::u16string* cross_origin = FindAttribute(u"crossorigin");
+  switch (CrossOriginAttributeFromValue(
+      cross_origin ? std::optional<std::u16string>(*cross_origin)
+                   : std::nullopt)) {
+    case CrossOriginAttribute::kNotSet:
+      break;
+    case CrossOriginAttribute::kAnonymous:
+      params.mode = FetchMode::kCors;
+      params.credentials = FetchCredentialsMode::kSameOrigin;
+      break;
+    case CrossOriginAttribute::kUseCredentials:
+      params.mode = FetchMode::kCors;
+      params.credentials = FetchCredentialsMode::kInclude;
+      break;
+  }
+  if (const std::u16string* policy = FindAttribute(u"referrerpolicy")) {
+    params.referrer_policy = FetchReferrerPolicyFromString(*policy);
+  }
+  if (const std::u16string* hint = FindAttribute(u"fetchpriority")) {
+    params.priority_hint = FetchPriorityHintFromAttribute(*hint);
+  }
+  return document.Fetcher().RequestResource(params);
 }
 
 void HTMLLinkElement::NotifyFinished(Resource& resource) {
