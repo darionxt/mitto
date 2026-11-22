@@ -70,9 +70,6 @@ def waiting_thread_only(kind_of_loop: str) -> None:
 class Server(QuietServer):
     """An HTTP/1.1 server whose paths answer in a way that tests can watch."""
 
-    # Several Sessions open their connections at once, and the default of 5 resets some of them, as it does for a Session.
-    request_queue_size = 128
-
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), Handler)
         self.received: list[tuple[str, str, bytes]] = []
