@@ -86,6 +86,9 @@ class FormData final : public bindings::ScriptWrappable {
                           HTMLElement* submitter,
                           bindings::ExceptionState& exception_state);
   static FormData* Create();
+  // The one a Known Gap gives, such as a FormDataEvent's: empty.
+  static bindings::ScriptWrappable* CreateForKnownGap(
+      const bindings::WrapperTypeInfo& info);
 
   FormData();
   ~FormData() override;

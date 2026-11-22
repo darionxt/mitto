@@ -115,6 +115,13 @@ FormData* FormData::Create() {
   return bindings::MakeGarbageCollected<FormData>();
 }
 
+// static
+bindings::ScriptWrappable* FormData::CreateForKnownGap(
+    const bindings::WrapperTypeInfo& info) {
+  return bindings::MakeForKnownGap<FormData>(
+      info, bindings::V8FormData::kWrapperTypeInfo);
+}
+
 FormData::FormData() = default;
 FormData::~FormData() = default;
 

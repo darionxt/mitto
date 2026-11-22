@@ -583,6 +583,7 @@ mitto_bindings_interfaces = [
   {
     name = "FormData"
     file = "form_data"
+    made_by_known_gaps = true
   },
   {
     name = "Geolocation"
