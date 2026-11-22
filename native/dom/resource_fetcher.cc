@@ -436,14 +436,22 @@ void ResourceFetcher::StartLoad(Resource& resource,
   FetchRequestData request;
   request.method = "GET";
   request.url = params.url.spec();
-  request.destination = DestinationOf(params.type);
-  // Its modes go only where they are not its kind's own.
-  const auto [kind_mode, kind_credentials] = KindModes(params.type);
-  if (params.mode != kind_mode) {
+  if (params.module_destination) {
+    // A module's request says its modes, as one always has.
+    request.destination = *params.module_destination;
+    request.is_module = true;
     request.mode = params.mode;
-  }
-  if (params.credentials != kind_credentials) {
     request.credentials = params.credentials;
+  } else {
+    request.destination = DestinationOf(params.type);
+    // Its modes go only where they are not its kind's own.
+    const auto [kind_mode, kind_credentials] = KindModes(params.type);
+    if (params.mode != kind_mode) {
+      request.mode = params.mode;
+    }
+    if (params.credentials != kind_credentials) {
+      request.credentials = params.credentials;
+    }
   }
   request.referrer_policy = resource.ReferrerPolicy();
   const FetchPriority priority = ComputeLoadPriority(params);
@@ -596,11 +604,13 @@ FetchPriority ResourceFetcher::ComputeLoadPriority(
   }
   if (params.type == ResourceType::kScript) {
     // A lazy classic script, async, deferred or inserted, is kLow, and a
-    // late one that the scanner found kMedium.
-    if (params.lazy) {
-      priority = FetchPriority::kLow;
-    } else if (late_document_from_preload_scanner) {
-      priority = FetchPriority::kMedium;
+    // late one that the scanner found kMedium. A module script keeps kHigh.
+    if (!params.module_destination) {
+      if (params.lazy) {
+        priority = FetchPriority::kLow;
+      } else if (late_document_from_preload_scanner) {
+        priority = FetchPriority::kMedium;
+      }
     }
   } else if (params.type == ResourceType::kCSSStyleSheet &&
              late_document_from_preload_scanner) {

@@ -1,8 +1,8 @@
-// A document's fetches for its elements, as Blink's ResourceFetcher makes
-// them: each request's priority, data: URLs answered in the Page as Blink
-// answers them in the renderer, and the document's resources, which a
-// request of the same URL reuses as Blink's rules allow, such as the HTML
-// Standard's list of available images.
+// A document's fetches for its elements and its module scripts, as Blink's
+// ResourceFetcher makes them: each request's priority, data: URLs answered in
+// the Page as Blink answers them in the renderer, and the document's
+// resources, which a request of the same URL reuses as Blink's rules allow,
+// such as the HTML Standard's list of available images.
 //
 // Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc
 // Upstream: third_party/blink/renderer/platform/loader/fetch/resource_request_utils.cc
@@ -51,8 +51,16 @@ struct FetchParameters {
   FetchCredentialsMode credentials = FetchCredentialsMode::kInclude;
   FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
   // kClientReferrer for the document's URL, or a URL of the document's
-  // origin, such as an importing style sheet's.
+  // origin, such as an importing style sheet's. A module's can also be
+  // kNoReferrer, or the URL of a response of another origin that the
+  // document has had, as the module that imports it.
   std::string referrer = kClientReferrer;
+  // Set for a module script's fetch, a script resource that
+  // FetchParameters::SetModuleScript() marks: the destination of its module
+  // type, which the Session sends as a module. ComputeLoadPriority() lowers
+  // only a classic script, so a module goes at a script's priority, whatever
+  // its scheduling.
+  std::optional<FetchDestination> module_destination;
   FetchPriorityHint priority_hint = FetchPriorityHint::kAuto;
   // FetchParameters::kLazyLoad, as an async script or a lazy image has.
   bool lazy = false;

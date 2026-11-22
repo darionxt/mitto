@@ -21,6 +21,7 @@ class ModuleMap::Entry final : public cppgc::GarbageCollected<Entry>,
   void Trace(cppgc::Visitor* visitor) const override {
     visitor->Trace(module_script_);
     visitor->Trace(map_);
+    visitor->Trace(loader_);
     clients_.Trace(visitor);
   }
 
@@ -39,11 +40,17 @@ class ModuleMap::Entry final : public cppgc::GarbageCollected<Entry>,
 
   ModuleScript* GetModuleScript() const { return module_script_.Get(); }
 
+  // Keeps the loader while it runs, as Blink's ModuleScriptLoaderRegistry
+  // does, since the resource that it waits for holds it weakly. Null for one
+  // that has finished.
+  void SetLoader(ModuleScriptLoader* loader) { loader_ = loader; }
+
   // ModuleScriptLoaderClient:
   void NotifyNewSingleModuleFinished(ModuleScript* module_script) override {
     CHECK(is_fetching_);
     module_script_ = module_script;
     is_fetching_ = false;
+    loader_ = nullptr;
     // Step 9 of fetch a single module script: a fetch that failed leaves no
     // entry. The clients still hear of it.
     if (!module_script_) {
@@ -68,6 +75,7 @@ class ModuleMap::Entry final : public cppgc::GarbageCollected<Entry>,
 
   cppgc::Member<ModuleScript> module_script_;
   cppgc::Member<ModuleMap> map_;
+  cppgc::Member<ModuleScriptLoader> loader_;
   const Key key_;
   bool is_fetching_ = true;
   HeapVector<SingleModuleClient> clients_;
@@ -100,7 +108,8 @@ void ModuleMap::FetchSingleModuleScript(const ModuleScriptFetchRequest& request,
     entry = bindings::MakeGarbageCollected<Entry>(*this, key);
     index_.emplace(std::move(key), entries_.size());
     entries_.push_back(entry);
-    ModuleScriptLoader::Fetch(request, level, *modulator_, *entry);
+    entry->SetLoader(
+        ModuleScriptLoader::Fetch(request, level, *modulator_, *entry));
   }
   // Step 3, and step 14: complete with the entry's module script.
   if (client) {

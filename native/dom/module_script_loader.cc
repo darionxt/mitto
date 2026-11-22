@@ -14,6 +14,8 @@
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/resource.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/worker_global_scope.h"
 #include "mitto/encoding/text_resource_decoder.h"
@@ -160,14 +162,16 @@ class ModuleScriptLoader::FetchClient final : public mitto::FetchClient {
 };
 
 // static
-void ModuleScriptLoader::Fetch(const ModuleScriptFetchRequest& request,
-                               ModuleGraphLevel level,
-                               Modulator& modulator,
-                               ModuleScriptLoaderClient& client) {
+ModuleScriptLoader* ModuleScriptLoader::Fetch(
+    const ModuleScriptFetchRequest& request,
+    ModuleGraphLevel level,
+    Modulator& modulator,
+    ModuleScriptLoaderClient& client) {
   ModuleScriptLoader* const loader =
       bindings::MakeGarbageCollected<ModuleScriptLoader>(
           modulator, request.options, client);
   loader->FetchInternal(request, level);
+  return loader->finished_ ? nullptr : loader;
 }
 
 ModuleScriptLoader::ModuleScriptLoader(Modulator& modulator,
@@ -186,9 +190,23 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
                                        ModuleGraphLevel level) {
   url_ = request.url;
   expected_module_type_ = request.expected_module_type;
-  // A data: URL is answered in the Page, with no request, as Blink's
-  // ResourceFetcher answers one from its static data, and one that does not
-  // parse fails as its loader would.
+  // The root of a module worker's graph is the response that its creator
+  // took, as WorkerModuleScriptFetcher hands it over.
+  if (request.main_script) {
+    const ModuleWorkerMainScript& main_script = *request.main_script;
+    NotifyFetchFinished(/*net_error=*/0, main_script.status, main_script.url,
+                        main_script.headers, /*opaque=*/false,
+                        main_script.body);
+    return;
+  }
+  ExecutionContext* const context = modulator_->GetExecutionContext();
+  if (context && context->IsWindow()) {
+    FetchThroughDocument(request, *static_cast<Window*>(context));
+    return;
+  }
+  // A worker's data: URL is answered in the Page, with no request, as
+  // Blink's ResourceFetcher answers one from its static data, and one that
+  // does not parse fails as its loader would.
   if (request.url.SchemeIs(url::kDataScheme)) {
     std::optional<DataUrlResponse> response = ParseDataUrl(request.url);
     if (!response) {
@@ -201,20 +219,8 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
         /*opaque=*/false, std::move(response->body));
     return;
   }
-  // The root of a module worker's graph is the response that its creator
-  // took, as WorkerModuleScriptFetcher hands it over.
-  if (request.main_script) {
-    const ModuleWorkerMainScript& main_script = *request.main_script;
-    NotifyFetchFinished(/*net_error=*/0, main_script.status, main_script.url,
-                        main_script.headers, /*opaque=*/false,
-                        main_script.body);
-    return;
-  }
-  ExecutionContext* const context = modulator_->GetExecutionContext();
   Fetcher* const fetcher = context ? context->GetFetcher() : nullptr;
   if (!fetcher) {
-    // A window with no Session to fetch through, as the Page program's
-    // given a script: a network error.
     Finish(nullptr);
     return;
   }
@@ -230,36 +236,18 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   data.mode = FetchMode::kCors;
   data.credentials = options_.credentials_mode;
   // A request whose policy is the empty string goes with that of its fetch
-  // client settings: the document's, or, for a module worker's top-level
-  // graph, which only has the destination worker, its creator's, as Blink
-  // fetches it through the outside settings. An import() graph in a worker
-  // would go with the policy of the worker's script's response, which a
-  // worker does not have: a Known Gap.
+  // client settings: for a module worker's top-level graph, which only has
+  // the destination worker, its creator's, as Blink fetches it through the
+  // outside settings. An import() graph in a worker would go with the policy
+  // of the worker's script's response, which a worker does not have: a Known
+  // Gap.
   data.referrer_policy = request.options.referrer_policy;
-  if (data.referrer_policy == FetchReferrerPolicy::kDefault) {
-    if (context->IsWindow()) {
-      data.referrer_policy =
-          static_cast<Window*>(context)->GetDocument().GetReferrerPolicy();
-    } else if (request.destination == FetchDestination::kWorker) {
-      data.referrer_policy =
-          static_cast<WorkerGlobalScope*>(context)->OutsideReferrerPolicy();
-    }
+  if (data.referrer_policy == FetchReferrerPolicy::kDefault &&
+      request.destination == FetchDestination::kWorker) {
+    data.referrer_policy =
+        static_cast<WorkerGlobalScope*>(context)->OutsideReferrerPolicy();
   }
-  // The referrer is the base URL of the script that imports it, which the
-  // Session takes from the document's origin, or as the final URL of a
-  // response that the document has had, such as a module's of another
-  // origin. One that is neither, as the base URL of an inline script beneath
-  // a base element of another origin, is the document's URL: a Known Gap.
-  if (request.referrer == kNoReferrer) {
-    data.referrer = kNoReferrer;
-  } else if (request.referrer != kClientReferrer) {
-    const GURL referrer(request.referrer);
-    if (referrer.is_valid() &&
-        (url::Origin::Create(referrer).IsSameOriginWith(GURL(context->Url())) ||
-         fetcher->HasFinishedResponse(referrer.spec()))) {
-      data.referrer = referrer.spec();
-    }
-  }
+  data.referrer = ReferrerOf(request, *context, *fetcher);
   // A module script's priority is its destination's whatever its scheduling,
   // which only its fetchpriority moves, as ResourceFetcher holds the lazy
   // load's low priority to classic scripts.
@@ -269,6 +257,79 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   data.render_blocking =
       options_.render_blocking == RenderBlockingBehavior::kBlocking;
   fetcher->Fetch(std::move(data), std::make_unique<FetchClient>(*this));
+}
+
+void ModuleScriptLoader::FetchThroughDocument(
+    const ModuleScriptFetchRequest& request,
+    Window& window) {
+  // DocumentModuleScriptFetcher::Fetch(): ScriptResource::Fetch() through
+  // the document's ResourceFetcher, which answers a data: URL from its
+  // static data. A module of a URL, its fragment aside, that the document
+  // has fetched while it loads, or that is on its way, takes that resource,
+  // whatever its module type, even a classic script's or a link preload's of
+  // the same modes and integrity, as Blink's DetermineRevalidationPolicy()
+  // uses it. Its response URL, the first request's, is the module script's.
+  FetchParameters params;
+  params.url = request.url;
+  params.type = ResourceType::kScript;
+  params.module_destination =
+      DestinationOf(request.expected_module_type, request.destination);
+  // Step 8 to 12: mode cors, with the credentials mode, the referrer policy,
+  // which the fetcher fills in with the document's where it is the empty
+  // string, and the integrity of the options.
+  params.mode = FetchMode::kCors;
+  params.credentials = options_.credentials_mode;
+  params.referrer_policy = request.options.referrer_policy;
+  params.integrity = options_.integrity_metadata;
+  params.priority_hint = options_.fetch_priority_hint;
+  params.render_blocking =
+      options_.render_blocking == RenderBlockingBehavior::kBlocking;
+  // TextResourceDecoderOptions::CreateUTF8Decode(), which decodes the
+  // resource for a classic script that takes it too.
+  params.charset = "UTF-8";
+  if (const Fetcher* const fetcher = window.GetFetcher()) {
+    params.referrer = ReferrerOf(request, window, *fetcher);
+  }
+  Resource* const resource =
+      window.GetDocument().Fetcher().RequestResource(params);
+  if (!resource) {
+    Finish(nullptr);
+    return;
+  }
+  // A resource that has ended tells the loader at once.
+  resource->AddClient(this);
+}
+
+std::string ModuleScriptLoader::ReferrerOf(
+    const ModuleScriptFetchRequest& request,
+    const ExecutionContext& context,
+    const Fetcher& fetcher) const {
+  // The referrer is the base URL of the script that imports it, which the
+  // Session takes from the document's origin, or as the final URL of a
+  // response that the document has had, such as a module's of another
+  // origin. One that is neither, as the base URL of an inline script beneath
+  // a base element of another origin, is the document's URL: a Known Gap.
+  if (request.referrer == kNoReferrer) {
+    return std::string(kNoReferrer);
+  }
+  if (request.referrer != kClientReferrer) {
+    const GURL referrer(request.referrer);
+    if (referrer.is_valid() &&
+        (url::Origin::Create(referrer).IsSameOriginWith(GURL(context.Url())) ||
+         fetcher.HasFinishedResponse(referrer.spec()))) {
+      return referrer.spec();
+    }
+  }
+  return std::string(kClientReferrer);
+}
+
+void ModuleScriptLoader::NotifyFinished(Resource& resource) {
+  if (finished_) {
+    return;
+  }
+  const FetchResponseHead& head = resource.Response();
+  NotifyFetchFinished(resource.NetError(), head.status, GURL(head.url),
+                      head.headers, head.opaque, resource.Body());
 }
 
 void ModuleScriptLoader::NotifyFetchFinished(int net_error,
