@@ -33,10 +33,12 @@ Navigation::ApiEntry ToApiEntry(const HistoryItem& item,
 
 FrameNavigationEntry::FrameNavigationEntry(std::string unique_name,
                                            HistoryItem item,
-                                           uint64_t record)
+                                           uint64_t record,
+                                           bool same_document_entry)
     : unique_name_(std::move(unique_name)),
       item_(std::move(item)),
-      record_(record) {}
+      record_(record),
+      same_document_entry_(same_document_entry) {}
 
 FrameNavigationEntry::~FrameNavigationEntry() = default;
 
@@ -50,7 +52,7 @@ SessionHistory::SessionHistory() {
   Entry initial;
   initial.root = base::MakeRefCounted<FrameNavigationEntry>(
       std::string(), HistoryItem::Create(GURL(url::kAboutBlankURL)),
-      /*record=*/0);
+      /*record=*/0, /*same_document_entry=*/false);
   initial.initial = true;
   entries_.push_back(std::move(initial));
 }
@@ -134,10 +136,23 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
     arrays.previous =
         ToApiEntry(old.root->item(), item.document_sequence_number);
   }
+  // A traversal goes to its entry, which keeps what it repeats, or, if a new
+  // entry pruned it meanwhile, makes it anew, as Chrome's controller does.
+  if (type == FrameLoadType::kBackForward) {
+    if (const std::optional<size_t> index =
+            IndexOfItem(item.item_sequence_number)) {
+      current_ = *index;
+      entries_[current_].root->set_item(item);
+      FillApiEntries(current_, origin, arrays);
+      return arrays;
+    }
+  }
   Entry entry;
-  entry.root =
-      base::MakeRefCounted<FrameNavigationEntry>(std::string(), item, record);
-  if (type == FrameLoadType::kStandard && !old.initial) {
+  entry.root = base::MakeRefCounted<FrameNavigationEntry>(
+      std::string(), item, record, /*same_document_entry=*/false);
+  if ((type == FrameLoadType::kStandard ||
+       type == FrameLoadType::kBackForward) &&
+      !old.initial) {
     PushEntry(std::move(entry));
   } else {
     // A replace, a reload, and the first navigation, which replaces the
@@ -149,22 +164,22 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
 }
 
 void SessionHistory::DidCommitSameDocumentNavigation(const HistoryItem& item,
-                                                     FrameLoadType type) {
+                                                     FrameLoadType type,
+                                                     uint64_t record) {
   // An entry within the document repeats the navigation that made the
-  // document.
-  const uint64_t record = CurrentRoot().record();
+  // document, with the document's origin as its Initiator.
   switch (type) {
     case FrameLoadType::kStandard: {
       Entry entry;
-      entry.root = base::MakeRefCounted<FrameNavigationEntry>(std::string(),
-                                                              item, record);
+      entry.root = base::MakeRefCounted<FrameNavigationEntry>(
+          std::string(), item, record, /*same_document_entry=*/true);
       PushEntry(std::move(entry));
       return;
     }
     case FrameLoadType::kReplaceCurrentItem:
     case FrameLoadType::kReload:
       entries_[current_].root = base::MakeRefCounted<FrameNavigationEntry>(
-          std::string(), item, record);
+          std::string(), item, record, /*same_document_entry=*/true);
       return;
     case FrameLoadType::kBackForward:
       if (const std::optional<size_t> index =
@@ -177,6 +192,16 @@ void SessionHistory::DidCommitSameDocumentNavigation(const HistoryItem& item,
 
 void SessionHistory::UpdateCurrentItem(const HistoryItem& item) {
   entries_[current_].root->set_item(item);
+}
+
+std::set<uint64_t> SessionHistory::RecordsHeld() const {
+  std::set<uint64_t> records;
+  for (const Entry& entry : entries_) {
+    if (entry.root->record() != 0) {
+      records.insert(entry.root->record());
+    }
+  }
+  return records;
 }
 
 std::vector<std::u16string> SessionHistory::TakeRemovedKeys() {

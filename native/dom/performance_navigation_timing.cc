@@ -55,6 +55,9 @@ bool PerformanceNavigationTiming::ExposesRedirectTiming() const {
 }
 
 std::u16string PerformanceNavigationTiming::Type() const {
+  if (timing_->is_back_forward) {
+    return u"back_forward";
+  }
   return timing_->is_reload ? u"reload" : u"navigate";
 }
 

@@ -78,9 +78,11 @@ class Navigation final : public EventTarget {
     bool history_api = false;
     scoped_refptr<const SharedSerializedScriptValue> state_object;
     FrameLoadType load_type = FrameLoadType::kStandard;
-    // The entry that a traversal goes to.
+    // The entry that a traversal goes to, and whether it is of another
+    // document, which a page can neither cancel nor intercept.
     // On the stack only.
     RAW_PTR_EXCLUSION const HistoryItem* destination_item = nullptr;
+    bool cross_document = false;
     // On the stack only, as the garbage collector scans it.
     RAW_PTR_EXCLUSION Element* source_element = nullptr;
   };

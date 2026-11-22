@@ -110,6 +110,12 @@ bool CanChangeToUrlForHistoryApi(const GURL& url,
   return !differ_in_path && !differ_in_query;
 }
 
+// How many documents' navigations the library keeps for traversals, and how
+// many same-document URLs of each: past these, the oldest go. The session
+// history holds 50 entries.
+constexpr size_t kMaxNavigationRecords = 100;
+constexpr size_t kMaxSameDocumentUrls = 50;
+
 constexpr std::string_view kVersionKey = "version";
 // What net::HttpConnectionInfoToString() and net::NextProtoToString() call a
 // protocol that is not known.
@@ -926,6 +932,11 @@ class PageHost::Request final : public RequestClient {
   // download manager reads it.
   bool keeps_document() const { return keeps_document_; }
   void set_keeps_document() { keeps_document_ = true; }
+  // What a navigation went as, which a traversal to its document repeats.
+  const FetchParams& navigation_fetch() const { return navigation_fetch_; }
+  void set_navigation_fetch(const FetchParams& fetch) {
+    navigation_fetch_ = fetch;
+  }
 
   // A navigation's response that Chrome's network service holds back while
   // it sniffs the MIME type from the start of the body, as URLLoader does.
@@ -1216,6 +1227,7 @@ class PageHost::Request final : public RequestClient {
   const raw_ref<PageHost> host_;
   const uint64_t number_;
   const GURL first_url_;
+  FetchParams navigation_fetch_;
   bool keeps_document_ = false;
   std::optional<Sniffing> sniffing_;
   ResponseChecks response_checks_;
@@ -1423,6 +1435,9 @@ void PageHost::StartRequest(uint64_t number,
     request->set_keepalive_share(std::make_unique<KeepaliveShare>(
         network_->keepalive_in_flight(), keepalive_in_flight_,
         KeepaliveBytes(url, headers)));
+  }
+  if (checks.is_navigation && options.fetch) {
+    request->set_navigation_fetch(*options.fetch);
   }
   Request& client = *request;
   requests_.emplace(number, std::move(request));
@@ -1812,7 +1827,9 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
         .status = event.status,
         .coep = policies->coep,
         .coop_ignored =
-            request.coop_ignored() + (IgnoresCoop(url, headers) ? 1 : 0)};
+            request.coop_ignored() + (IgnoresCoop(url, headers) ? 1 : 0),
+        .fetch = request.navigation_fetch(),
+        .referrer = event.referrer};
   }
   // Where a frame's document, or a worker, that the Page makes of it comes
   // from.
@@ -2747,6 +2764,12 @@ void PageHost::EndWithSession() {
   End(MITTO_PAGE_ERROR_SESSION_DESTROYED, "the Session was destroyed");
 }
 
+PageHost::NavigationRecord::NavigationRecord() = default;
+PageHost::NavigationRecord::NavigationRecord(NavigationRecord&&) = default;
+PageHost::NavigationRecord& PageHost::NavigationRecord::operator=(
+    NavigationRecord&&) = default;
+PageHost::NavigationRecord::~NavigationRecord() = default;
+
 void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   if (committed.document <= last_context_id_) {
     Refuse(base::StrCat({"a document numbered ",
@@ -2769,6 +2792,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   std::optional<int32_t> navigated_status;
   // How many of its navigation's responses had a COOP that was ignored.
   int coop_ignored = 0;
+  // What a traversal to the document repeats.
+  std::optional<NavigationRecord> record;
   // The frame's document that the new one replaces, if any.
   uint64_t replaced = kNoDocument;
   switch (committed.source) {
@@ -2797,6 +2822,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
                                ", which has no response"}));
           return;
         }
+        record.emplace();
+        record->fetch = std::move(found->second.fetch);
+        record->url = found->second.url;
+        record->referrer = std::move(found->second.referrer);
         context.url = std::move(found->second.url);
         context.coep = found->second.coep;
         navigated_status = found->second.status;
@@ -2842,6 +2871,14 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   worker_scripts_.clear();
   const GURL url = context.url;
   contexts_.emplace(committed.document, std::move(context));
+  // The records of the documents that the session history may go back to
+  // stay, until the Page releases them, the oldest first past a bound.
+  if (record) {
+    records_.insert_or_assign(committed.document, std::move(*record));
+    if (records_.size() > kMaxNavigationRecords) {
+      records_.erase(records_.begin());
+    }
+  }
   // The old document's Cache API goes with it, as its pipes go with its
   // context in Chrome: its puts that wait for a body fail, and what it held
   // is let go. The new document's numbers go on from its.
@@ -2897,6 +2934,15 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
     return;
   }
   document_url = new_url;
+  // A traversal may go back to an entry of this URL.
+  if (const auto record = records_.find(document); record != records_.end()) {
+    std::vector<GURL>& urls = record->second.same_document_urls;
+    std::erase(urls, new_url);
+    urls.push_back(new_url);
+    if (urls.size() > kMaxSameDocumentUrls) {
+      urls.erase(urls.begin());
+    }
+  }
   // The Page's URL is its top-level document's.
   if (context.parent != kNoDocument) {
     return;
@@ -2905,6 +2951,74 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
   changed.type = MITTO_PAGE_EVENT_URL_CHANGED;
   changed.url = new_url.spec();
   Push(std::move(changed));
+}
+
+void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
+                                  uint64_t document) {
+  if (traversal.number <= last_request_number_) {
+    Refuse(base::StrCat({"a traversal numbered ",
+                         base::NumberToString(traversal.number),
+                         ", after a request numbered ",
+                         base::NumberToString(last_request_number_)}));
+    return;
+  }
+  last_request_number_ = traversal.number;
+  if (requests_.size() >= kMaxPageRequests) {
+    Refuse(base::StrCat({"more than ", base::NumberToString(kMaxPageRequests),
+                         " requests at once"}));
+    return;
+  }
+  const Context& context = contexts_.at(document);
+  if (context.is_worker || context.parent != kNoDocument) {
+    Refuse("a traversal that the top-level document does not leave");
+    return;
+  }
+  const auto found = records_.find(traversal.record);
+  if (found == records_.end()) {
+    Refuse("a traversal to a document that the library has no record of");
+    return;
+  }
+  const NavigationRecord& record = found->second;
+  const GURL url(traversal.url);
+  if (traversal.same_document_entry
+          ? std::ranges::find(record.same_document_urls, url) ==
+                record.same_document_urls.end()
+          : url != record.url) {
+    Refuse("a traversal to a URL that the document's navigations never had");
+    return;
+  }
+  PageEvent started;
+  started.type = MITTO_PAGE_EVENT_NAVIGATION_STARTED;
+  started.url = traversal.url;
+  Push(std::move(started));
+  // NavigationControllerImpl::CreateNavigationRequestFromEntry(): the
+  // entry's own Initiator, referrer and user activation, whichever document
+  // asks. An entry that a navigation within the document made has the
+  // document's origin as its Initiator, and the document's Referer.
+  const PageRequestTemplate& navigation =
+      options_.requests.at(PageRequestKind::kNavigation);
+  RequestOptions options = navigation.options;
+  *options.fetch = record.fetch;
+  if (traversal.same_document_entry) {
+    options.fetch->initiator = record.url;
+    options.fetch->opaque_initiator.reset();
+    if (record.referrer.empty()) {
+      options.fetch->referrer_policy = net::ReferrerPolicy::NO_REFERRER;
+      options.fetch->referrer_source.reset();
+    } else {
+      options.fetch->referrer_source = GURL(record.referrer);
+    }
+  }
+  options.skip_cache_validation = true;
+  StartRequest(traversal.number, document, context.origin, url,
+               navigation.headers, std::move(options), std::nullopt, nullptr,
+               FetchChecks{.is_navigation = true});
+}
+
+void PageHost::OnRecordsReleased(const std::vector<uint64_t>& records) {
+  for (const uint64_t record : records) {
+    records_.erase(record);
+  }
 }
 
 void PageHost::PushNavigated(std::string url,
@@ -3324,6 +3438,12 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     case PageMessage::kSameDocumentNavigation:
       OnSameDocumentNavigation(frame->document, frame->same_document_url);
+      return;
+    case PageMessage::kTraversalRequest:
+      OnTraversalRequest(frame->traversal, frame->document);
+      return;
+    case PageMessage::kRecordsReleased:
+      OnRecordsReleased(frame->released_records);
       return;
     case PageMessage::kIndexedDb:
       OnIndexedDb(std::move(frame->indexed_db_call), frame->document,

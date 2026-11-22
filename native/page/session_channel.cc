@@ -384,6 +384,8 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kStorageUnbind:
       case PageMessage::kStoragePart:
       case PageMessage::kNetworkHint:
+      case PageMessage::kTraversalRequest:
+      case PageMessage::kRecordsReleased:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }

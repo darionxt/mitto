@@ -26,14 +26,26 @@ def server() -> Iterator[RecordingServer]:
         yield page_server
 
 
-@pytest.fixture
-def session(native_library: Any) -> Iterator[mitto.Session]:
-    """Return a Session through each API in turn, or skip if no Page program lies beside the library."""
+def _skip_without_page_program() -> None:
     library_path = _native.find_library()
     assert library_path is not None
     if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
         pytest.skip("no Page program beside the library")
+
+
+@pytest.fixture
+def session(native_library: Any) -> Iterator[mitto.Session]:
+    """Return a Session through each API in turn, or skip if no Page program lies beside the library."""
+    _skip_without_page_program()
     with mitto.Session() as session:
+        yield session
+
+
+@pytest.fixture
+def cached_session(native_library: Any) -> Iterator[mitto.Session]:
+    """Return a Session that keeps a cache in memory, as Chrome always has one, through each API in turn."""
+    _skip_without_page_program()
+    with mitto.Session(cache="memory") as session:
         yield session
 
 
@@ -839,3 +851,82 @@ def test_a_value_of_an_enumeration_that_it_lacks_warns_in_the_console(
                 level="warning", text="The provided value 'bogus' is not a valid enum value of type HighlightType."
             )
         ]
+
+
+_NO_STORE = [("Cache-Control", "no-store")]
+
+
+def test_a_traversal_to_another_document_repeats_its_navigation(
+    cached_session: mitto.Session, server: RecordingServer
+) -> None:
+    second = server.page("/second", "<title>Second</title>")
+    first = server.page("/first", "<title>First</title>", _NO_STORE)
+    entry = (
+        "[history.length, history.state, navigation.activation.navigationType, "
+        "performance.getEntriesByType('navigation')[0].type, document.referrer]"
+    )
+
+    with _open_page(cached_session, first) as page:
+        page.evaluate("history.replaceState({kept: 1}, ''); location.href = '/second'; 0")
+        assert _next(page).url == first
+        assert _next(page).url == second
+        # The traversal back goes through the Session, and the document takes the entry's state before its scripts
+        # run, with no popstate.
+        page.evaluate("history.back()")
+        assert _next(page) == PageNavigation(url=first, status=200)
+        assert page.evaluate(entry) == [2, {"kept": 1}, "traverse", "back_forward", ""]
+        # Forward again, to a document that the cache holds, which it takes without asking the server.
+        page.evaluate("history.forward()")
+        assert _next(page) == PageNavigation(url=second, status=200)
+        assert page.evaluate(entry) == [2, None, "traverse", "back_forward", first]
+    # A page of no-store goes to the server again, with the lines of the navigation that made its entry, the Page's
+    # first, which no page started, but for the Initiator, which replaceState() made the document's own, as
+    # Chrome's controller updates the entry. The other came from the cache.
+    opening, traversal = server.headers_of("/first")
+    assert ("Sec-Fetch-Site", "none") in opening
+    assert ("Sec-Fetch-Site", "same-origin") in traversal
+    assert [("Sec-Fetch-Site", "none") if name == "Sec-Fetch-Site" else (name, value) for name, value in traversal] == (
+        opening
+    )
+    assert ("Sec-Fetch-User", "?1") in traversal
+    assert "Referer" not in dict(traversal)
+    assert len(server.headers_of("/second")) == 1
+
+
+def test_a_traversal_repeats_the_initiator_and_referer_of_the_entrys_navigation(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    third = server.page("/third", "<title>Third</title>")
+    second = server.page("/second", "<title>Second</title>", _NO_STORE)
+    first = server.page("/first", "<title>First</title>")
+    cross_site_third = third.replace("127.0.0.1", "localhost")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/second'; 0")
+        assert _next(page).url == second
+        # A navigation within the second document makes an entry of its own.
+        page.evaluate("history.pushState(null, '', '?pushed'); 0")
+        assert _next(page).url == second + "?pushed"
+        page.evaluate(f"location.href = '{cross_site_third}'; 0")
+        assert _next(page).url == cross_site_third
+        page.evaluate("history.back()")
+        assert _next(page).url == second + "?pushed"
+        # The new document is of the entry's document, so its first entry is within it now, as in Chrome.
+        page.evaluate("history.back()")
+        assert _next(page) == PageNavigation(url=second, status=0, same_document=True)
+        page.evaluate(f"location.href = '{cross_site_third}'; 0")
+        assert _next(page).url == cross_site_third
+        page.evaluate("history.back()")
+        assert _next(page).url == second
+    # Whichever document goes back, the entry of the second document's navigation repeats it: the first document as
+    # its Initiator and Referer, and no Sec-Fetch-User. The entry that pushState() made has the second document's
+    # origin as its Initiator, and its Referer, as Chrome keeps them.
+    navigated, traversed = server.headers_of("/second")
+    (pushed,) = server.headers_of("/second?pushed")
+    assert ("Referer", first) in navigated
+    assert ("Sec-Fetch-Site", "same-origin") in navigated
+    assert "Sec-Fetch-User" not in dict(navigated)
+    assert ("Referer", first) in pushed
+    assert ("Sec-Fetch-Site", "same-origin") in pushed
+    assert "Sec-Fetch-User" not in dict(pushed)
+    assert traversed == navigated

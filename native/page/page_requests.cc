@@ -146,6 +146,20 @@ uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
   return number;
 }
 
+uint64_t PageRequests::StartTraversal(PageTraversalRequest traversal,
+                                      Client& client) {
+  const uint64_t context = Window::Current().DocumentId();
+  const uint64_t number = sender_->SendRequest(
+      context,
+      [&](uint64_t number) {
+        traversal.number = number;
+        return EncodeTraversalRequest(context, traversal);
+      },
+      route_);
+  open_[number].client = &client;
+  return number;
+}
+
 uint64_t PageRequests::Send(uint64_t context, PageRequest& request) {
   // Its response can come only once this thread is done with this task, so
   // it finds the request open.

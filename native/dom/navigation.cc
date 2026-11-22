@@ -736,12 +736,17 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
   }
   NavigateEvent::Fields fields;
   fields.navigation_type = navigation_type;
-  fields.destination =
-      NavigationDestination::Create(base::UTF8ToUTF16(params.url.spec()),
-                                    params.fragment || params.history_api,
-                                    destination_state, destination_entry);
-  fields.can_intercept = CanChangeToUrlForHistoryApi(
-      params.url, window_->GetDocument().GetOrigin(), document_url);
+  fields.destination = NavigationDestination::Create(
+      base::UTF8ToUTF16(params.url.spec()),
+      !params.cross_document && (params.fragment || params.history_api),
+      destination_state, destination_entry);
+  // A traversal to another document can neither be canceled nor
+  // intercepted.
+  fields.can_intercept =
+      !(traverse && params.cross_document) &&
+      CanChangeToUrlForHistoryApi(
+          params.url, window_->GetDocument().GetOrigin(), document_url);
+  fields.cancelable = !(traverse && params.cross_document);
   fields.hash_change = params.fragment && params.url != document_url &&
                        EqualIgnoringFragment(params.url, document_url);
   fields.source_element = params.source_element;
