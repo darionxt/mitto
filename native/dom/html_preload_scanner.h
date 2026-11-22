@@ -79,6 +79,9 @@ struct PreloadRequest {
   bool render_blocking = false;
   IntegrityMetadataSet integrity;
   bool from_insertion_scanner = false;
+  // Its initiator's name, as InitiatorFor() gives it: the element's tag,
+  // "image" for SVG's image, or "css" for an import.
+  std::u16string initiator_name;
 };
 
 // Blink's CSSPreloadScanner: the @import rules at the start of a style
