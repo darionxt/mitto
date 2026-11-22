@@ -261,9 +261,7 @@ def condition_test(condition: Condition, where: str) -> str | None:
             names = other.removeprefix("CrossOriginIsolatedOrRuntimeEnabled=").split(",")
             features_on = " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names)
             tests.append(f"(data->cross_origin_isolated() || {features_on})")
-        elif other in ("IsolatedContext", "InjectionMitigated") or other.startswith(
-            "ContextEnabled="
-        ):
+        elif other in ("IsolatedContext", "InjectionMitigated") or other.startswith("ContextEnabled="):
             return None
         else:
             raise UnhandledError(f"{where}: the C++ writer does not handle the condition {other}")
