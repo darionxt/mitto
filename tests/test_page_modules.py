@@ -368,6 +368,64 @@ _CASES["data_urls"] = Case(
     }
 )
 
+# Modules whose URLs differ only in their fragments. While the document loads, Chrome fetches root.js once for all three,
+# as its document's resources do, and each module takes the first response's URL. late.js answers only after the load
+# event, so its second import comes after it and fetches again, with its own URL.
+_CASES["fragments"] = Case(
+    {
+        "/": _page(
+            "<script type=module src=/fragments/main.js></script>"
+            "<script>addEventListener('load', () => { log('load'); mark('after-load'); });</script>"
+        ),
+        "/fragments/main.js": _js(
+            "import {m as a} from './root.js'; import {m as b} from './root.js#1';"
+            "import {m as c} from './root.js#2';"
+            "for (const m of [a, b, c]) log(path(m.url));"
+            "const d = await import('./late.js#x'); log(path(d.m.url));"
+            "const e = await import('./late.js'); log(path(e.m.url)); finish(logged);"
+        ),
+        "/fragments/root.js": _js("export const m = import.meta;"),
+        "/fragments/late.js": _js("export const m = import.meta;", hold="after-load"),
+    }
+)
+
+# A module that imports what the document has fetched while it loads: a link preload and a classic script of mode cors,
+# which it takes, and a classic script of mode no-cors, which it fetches again.
+_CASES["module_takes_resources"] = Case(
+    {
+        "/": _page(
+            "<link rel=preload as=script crossorigin href=/taken/preloaded.js>"
+            "<script crossorigin src=/taken/classic.js></script>"
+            "<script src=/taken/no-cors.js></script>"
+            "<script type=module src=/taken/main.js></script>" + _FINISH_AFTER_LOAD
+        ),
+        "/taken/preloaded.js": _js("log('preloaded ran');"),
+        "/taken/classic.js": _js("log('classic ran');"),
+        "/taken/no-cors.js": _js("log('no-cors ran');"),
+        "/taken/main.js": _js("import './preloaded.js'; import './classic.js'; import './no-cors.js'; log('main');"),
+    }
+)
+
+# A module whose fetch failed while the document loads, which an image holds back, imported again. The failed resource
+# left the document's resources, as Blink's memory cache drops it, so Chrome fetches it again.
+_CASES["failed_again"] = Case(
+    {
+        "/": _page(
+            "<img src=/failed/held.gif>"
+            "<script type=module src=/failed/main.js></script>"
+            "<script>addEventListener('load', () => { log('load ' + document.readyState); finish(logged); });</script>"
+        ),
+        "/failed/main.js": _js(
+            "const outcome = (p) => p.then(() => 'loaded', (e) => e.name);"
+            "log('first ' + await outcome(import('./missing.js')) + ' ' + document.readyState);"
+            "log('again ' + await outcome(import('./missing.js')) + ' ' + document.readyState);"
+            "mark('imported');"
+        ),
+        "/failed/missing.js": Route("not found", "text/plain", 404),
+        "/failed/held.gif": Route("GIF89a", "image/gif", hold="imported"),
+    }
+)
+
 # What Chrome 157 logged for each case.
 _CHROME: dict[str, list[str]] = {
     "data_urls": [
@@ -412,6 +470,15 @@ _CHROME: dict[str, list[str]] = {
         "inline error",
         "load complete null",
     ],
+    "failed_again": ["first TypeError interactive", "again TypeError interactive", "load complete"],
+    "fragments": [
+        "/fragments/root.js",
+        "/fragments/root.js",
+        "/fragments/root.js",
+        "load",
+        "/fragments/late.js#x",
+        "/fragments/late.js",
+    ],
     "graph": [
         "c",
         "a",
@@ -430,6 +497,15 @@ _CHROME: dict[str, list[str]] = {
         "load complete null",
     ],
     "module_document_policy": ["imported", "load complete null", "preloaded", "root"],
+    "module_takes_resources": [
+        "classic ran",
+        "no-cors ran",
+        "preloaded ran",
+        "classic ran",
+        "no-cors ran",
+        "main",
+        "load complete null",
+    ],
     "modulepreload": [
         "js load",
         "json load",
@@ -572,6 +648,43 @@ def test_a_module_preload_fetches_each_module_once_for_what_imports_it_later(
         # preload scanner, which a Page does not have, fetches a link in the markup whatever its as: a Known Gap.
         assert "/invalid-as.js" not in requested
         assert "/media.js" not in requested
+
+
+def test_modules_whose_urls_differ_in_fragments_take_one_fetch_while_the_document_loads(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, logged = _run(session, server, "fragments")
+    with page:
+        assert logged == _CHROME["fragments"]
+        # As Chrome 157 sent them: root.js once for its three imports, and late.js twice, once before the load event
+        # and once after it.
+        requested = [path for path in server.requests if path.startswith("/fragments/")]
+        assert requested.count("/fragments/root.js") == 1
+        assert requested.count("/fragments/late.js") == 2
+
+
+def test_a_module_whose_fetch_failed_is_fetched_again_while_the_document_loads(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, logged = _run(session, server, "failed_again")
+    with page:
+        assert logged == _CHROME["failed_again"]
+        # As Chrome 157 sent it: once for each import, though the document still loads.
+        assert server.requests.count("/failed/missing.js") == 2
+
+
+def test_a_module_takes_a_preload_and_a_classic_script_of_its_modes_while_the_document_loads(
+    session: mitto.Session, server: ScriptServer
+) -> None:
+    page, logged = _run(session, server, "module_takes_resources")
+    with page:
+        assert logged == _CHROME["module_takes_resources"]
+        # As Chrome 157 sent them: the preload and the classic script of mode cors once, and the classic script of mode
+        # no-cors once for itself and once for the module.
+        requested = [path for path in server.requests if path.startswith("/taken/")]
+        assert requested.count("/taken/preloaded.js") == 1
+        assert requested.count("/taken/classic.js") == 1
+        assert requested.count("/taken/no-cors.js") == 2
 
 
 def test_a_module_script_its_imports_and_a_module_preload_go_with_the_documents_referrer_policy(
