@@ -228,6 +228,8 @@ void StyleRuleImport::RequestStyleSheet() {
   }
   params.charset = parent->Charset();
   params.render_blocking = root->RenderBlocking();
+  // StyleRuleImport::RequestStyleSheet().
+  params.initiator_name = u"css";
   Resource* const resource = document->Fetcher().RequestResource(params);
   if (!resource) {
     // A document of no window, whose null fetch context Blink gives it.

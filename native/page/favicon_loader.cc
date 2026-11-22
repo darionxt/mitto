@@ -125,9 +125,9 @@ void FetchFrom(const cppgc::WeakPersistent<Window>& window,
   request.method = "GET";
   request.url = url.spec();
   request.destination = FetchDestination::kFavicon;
-  // ImageDownloader's loader, which adds no entry to the window's Performance
-  // Timeline.
-  request.resource_timing = false;
+  // ImageDownloader's loader, whose WebAssociatedURLLoader names it
+  // "internal", which the window's Performance Timeline gives as "other".
+  request.initiator_type = u"other";
   fetcher->Fetch(std::move(request), std::make_unique<FaviconClient>(
                                          window, std::move(candidates), index));
 }

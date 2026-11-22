@@ -71,7 +71,14 @@ class LocalHTTPServer(http.server.ThreadingHTTPServer):
     Call shutdown() before leaving its with statement, if a thread runs serve_forever(). That thread would otherwise go on
     polling the number of the closed socket. On Linux, a poll holds on to the socket that has that number by then, so a test
     that closes a listener to get a port that refuses connections finds it still taking them until the poll ends.
+
+    It queues as many connections as a page or a few Sessions open at once. A page's preload scanner asks for its scripts
+    and images together, over six connections to its origin and more to others, and on a busy macOS runner socketserver's
+    backlog of five resets the rest, where Linux drops their SYN and the client tries again. A reset connection fails its
+    request, which a script reports as an error.
     """
+
+    request_queue_size = 128
 
     def server_bind(self) -> None:
         socketserver.TCPServer.server_bind(self)
