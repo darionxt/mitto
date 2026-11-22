@@ -20,7 +20,7 @@ NavigationHistoryEntry* NavigationHistoryEntry::Create(
     std::u16string key,
     std::u16string id,
     std::u16string url,
-    uint64_t document_sequence,
+    int64_t document_sequence,
     std::optional<SerializedScriptValue> state) {
   return bindings::MakeGarbageCollected<NavigationHistoryEntry>(
       window, std::move(key), std::move(id), std::move(url), document_sequence,
@@ -45,7 +45,7 @@ NavigationHistoryEntry::NavigationHistoryEntry(
     std::u16string key,
     std::u16string id,
     std::u16string url,
-    uint64_t document_sequence,
+    int64_t document_sequence,
     std::optional<SerializedScriptValue> state)
     : window_(window),
       key_(std::move(key)),

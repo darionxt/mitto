@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,7 @@ namespace mitto {
 class AnimationFrameController;
 class BarProp;
 class CrashReportContext;
+struct HistoryItem;
 class CacheStorage;
 class CacheStorageHost;
 class IndexedDbHost;
@@ -218,6 +220,18 @@ class Window final : public WindowProperties, public ExecutionContext {
   // LocalWindowProxy::SetupWindowPrototypeChain() does.
   void AssociateWithContext(v8::Isolate* isolate,
                             v8::Local<v8::Context> context);
+  // The entry of the session history that the window's document is at, as
+  // Blink's DocumentLoader holds its HistoryItem: what history.state and
+  // scrollRestoration read. None for a window that no Page program loaded,
+  // such as the one of a Known Gap.
+  const HistoryItem* CurrentHistoryItem() const {
+    return current_history_item_.get();
+  }
+  HistoryItem* MutableCurrentHistoryItem() {
+    return current_history_item_.get();
+  }
+  void SetCurrentHistoryItem(const HistoryItem& item);
+
   // What a navigation of the window's frame to another document asks the
   // Session through. Without one, as in the Page program given a script or
   // once the context is gone, such a navigation does not start.
@@ -308,6 +322,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   cppgc::Member<mitto::Event> current_event_;
   raw_ptr<NavigationClient> navigation_client_ = nullptr;
+  std::unique_ptr<HistoryItem> current_history_item_;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
   raw_ptr<AnimationFrameController> animation_frames_ = nullptr;
 };

@@ -23,14 +23,15 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
-#include "mitto/dom/xml_document.h"
 #include "mitto/dom/window_tasks.h"
+#include "mitto/dom/xml_document.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/dedicated_worker_messaging_proxy.h"
 #include "mitto/page/page_fetcher.h"
@@ -38,6 +39,7 @@
 #include "mitto/page/page_isolate.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "mitto/page/session_history.h"
 #include "third_party/icu/source/common/unicode/locid.h"
 #include "third_party/icu/source/common/unicode/stringpiece.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
@@ -140,7 +142,9 @@ std::optional<std::string> ScriptRunner::Start(
   cookie_jar_->SetSend(send_);
   refuse_ = refuse;
   requests_ = std::make_unique<PageRequests>(sender_, std::move(refuse));
-  frame_ = std::make_unique<PageFrame>(*this, *requests_, send_, cookie_jar);
+  session_history_ = std::make_unique<SessionHistory>();
+  frame_ = std::make_unique<PageFrame>(*this, *requests_, send_, cookie_jar,
+                                       *session_history_);
   frame_->ExpectOpeningNavigation();
   // As Blink sets the time zone that its browser process reads.
   // Upstream: third_party/blink/renderer/core/timezone/timezone_controller.cc
@@ -170,6 +174,11 @@ std::optional<std::string> ScriptRunner::Start(
   bindings::PerIsolateData::From(isolate_)->SetExceptionReporter(
       base::BindRepeating(&PageReporter::ReportException,
                           base::Unretained(reporter_.get())));
+  bindings::PerIsolateData::From(isolate_)->SetConsoleWarningReporter(
+      base::BindRepeating([](std::string_view message) {
+        ExecutionContext::Current().AddConsoleMessage(ConsoleLevel::kWarning,
+                                                      std::string(message));
+      }));
   // The first time each document reaches a Known Gap, the Session hears of it.
   bindings::PerIsolateData::From(isolate_)->SetKnownGapReporter(
       base::BindRepeating(
@@ -261,6 +270,10 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   window.SetWorkerStarter(worker_starter_.get());
   if (source == PageDocumentSource::kInitialEmpty) {
     window.GetDocument().SetInitialEmptyDocument();
+    // The tab's initial entry, which the first navigation replaces.
+    if (session_history_) {
+      window.SetCurrentHistoryItem(session_history_->CurrentRoot().item());
+    }
   }
   window.SetStart(start_, connection);
   window.SetDocumentId(committed.document);

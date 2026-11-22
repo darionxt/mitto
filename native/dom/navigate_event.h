@@ -9,6 +9,7 @@
 #ifndef MITTO_DOM_NAVIGATE_EVENT_H_
 #define MITTO_DOM_NAVIGATE_EVENT_H_
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,6 +18,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/frame_loader.h"
+#include "mitto/dom/history_item.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/v8-function.h"
@@ -53,10 +55,14 @@ class NavigateEvent final : public Event {
     bool cancelable = true;
     std::optional<std::u16string> download_request;
     RAW_PTR_EXCLUSION Element* source_element = nullptr;
-    // Where it goes, and whether it is to a fragment, as Blink's dispatch
-    // params keep them.
+    // Where it goes, whether it is to a fragment, how it loads, the state
+    // that pushState() or replaceState() gave, and the entry that a
+    // traversal goes to, as Blink's dispatch params keep them.
     GURL url;
     bool fragment = false;
+    FrameLoadType load_type = FrameLoadType::kStandard;
+    std::shared_ptr<const SerializedScriptValue> state_object;
+    std::optional<HistoryItem> destination_item;
   };
 
   // A trusted navigate event of `window`, whose signal `controller` aborts.
@@ -146,6 +152,9 @@ class NavigateEvent final : public Event {
   cppgc::Member<Element> source_element_;
   const GURL url_;
   const bool fragment_;
+  const FrameLoadType load_type_;
+  const std::shared_ptr<const SerializedScriptValue> state_object_;
+  const std::optional<HistoryItem> destination_item_;
   v8::TracedReference<v8::Value> info_;
   cppgc::Member<AbortController> controller_;
   InterceptState intercept_state_ = InterceptState::kNone;

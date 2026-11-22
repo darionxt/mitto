@@ -34,7 +34,7 @@ class NavigationHistoryEntry final : public EventTarget {
       std::u16string key,
       std::u16string id,
       std::u16string url,
-      uint64_t document_sequence,
+      int64_t document_sequence,
       std::optional<SerializedScriptValue> state);
   // A new random key or ID, as Blink makes one for a HistoryItem.
   static std::u16string NewKey();
@@ -47,7 +47,7 @@ class NavigationHistoryEntry final : public EventTarget {
                          std::u16string key,
                          std::u16string id,
                          std::u16string url,
-                         uint64_t document_sequence,
+                         int64_t document_sequence,
                          std::optional<SerializedScriptValue> state);
   ~NavigationHistoryEntry() override;
 
@@ -67,7 +67,7 @@ class NavigationHistoryEntry final : public EventTarget {
   const std::u16string& key() const { return key_; }
   const std::u16string& id() const { return id_; }
   const std::u16string& url() const { return url_; }
-  uint64_t document_sequence() const { return document_sequence_; }
+  int64_t document_sequence() const { return document_sequence_; }
   const std::optional<SerializedScriptValue>& state() const { return state_; }
   void SetState(std::optional<SerializedScriptValue> state) {
     state_ = std::move(state);
@@ -81,7 +81,7 @@ class NavigationHistoryEntry final : public EventTarget {
   const std::u16string key_;
   const std::u16string id_;
   const std::u16string url_;
-  const uint64_t document_sequence_;
+  const int64_t document_sequence_;
   std::optional<SerializedScriptValue> state_;
 };
 

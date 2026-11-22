@@ -27,6 +27,7 @@
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/modulator.h"
 #include "mitto/dom/module_script.h"
@@ -230,6 +231,11 @@ void DedicatedWorkerThread::Scope::Start() {
       base::BindRepeating(&Scope::ReportUncaught, base::Unretained(this)));
   data_->SetExceptionReporter(base::BindRepeating(
       &PageReporter::ReportException, base::Unretained(reporter_.get())));
+  data_->SetConsoleWarningReporter(
+      base::BindRepeating([](std::string_view message) {
+        ExecutionContext::Current().AddConsoleMessage(ConsoleLevel::kWarning,
+                                                      std::string(message));
+      }));
   data_->SetKnownGapReporter(base::BindRepeating(
       [](const SendFrame& send, std::string_view name) {
         send.Run(EncodeKnownGap(name));

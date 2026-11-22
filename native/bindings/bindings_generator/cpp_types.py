@@ -547,6 +547,22 @@ class TypeMapper:
             return self.value_type(member, "a union")
         return member.name
 
+    def from_v8_enumeration_for_setter(
+        self, idl_type: IdlType, value: str, target: str, site: Site, where: str
+    ) -> list[str]:
+        """The statements of an attribute's setter that convert `value` to one of the strings of the enumeration of
+        `idl_type`, as bind_gen's do: a string that is none of them adds Blink's warning to the console, and the setter
+        does nothing."""
+        values = ", ".join(f'u"{item}"' for item in self.enumeration_values(idl_type, where))
+        table = self._name("kEnumerationValues")
+        return [
+            f"static constexpr std::u16string_view {table}[] = {{{values}}};",
+            f"std::u16string {target};",
+            f'if (!FromV8EnumerationForSetter(isolate, {value}, {table}, "{idl_type.name}", &{target})) {{',
+            f"  {site.fail}",
+            "}",
+        ]
+
     def from_v8(self, idl_type: IdlType, value: str, target: str, site: Site, where: str) -> list[str]:
         """The statements that convert `value` to a new variable `target`, and leave with site.fail if that throws."""
         idl_type = self.reduce(idl_type)

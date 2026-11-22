@@ -49,6 +49,7 @@ class Document;
 class PageFetcher;
 class PageWorkerStarter;
 class PageFrame;
+class SessionHistory;
 class PageRequests;
 class SessionCookieJar;
 class WindowTasks;
@@ -215,6 +216,8 @@ class ScriptRunner final : public base::TaskObserver {
   raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   std::unique_ptr<PageRequests> requests_;
   // The Page's frame, which loads its documents.
+  // The tab's session history, which outlives its documents.
+  std::unique_ptr<SessionHistory> session_history_;
   std::unique_ptr<PageFrame> frame_;
   // The current window's timers and what its fetch() goes through.
   std::unique_ptr<DOMTimerCoordinator> timers_;

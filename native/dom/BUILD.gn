@@ -198,6 +198,8 @@ source_set("dom") {
     "hash_change_event.h",
     "history.cc",
     "history.h",
+    "history_item.cc",
+    "history_item.h",
     "html_all_collection.cc",
     "html_all_collection.h",
     "html_anchor_element.cc",

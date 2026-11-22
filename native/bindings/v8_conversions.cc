@@ -432,6 +432,28 @@ bool FromV8Enumeration(v8::Isolate* isolate,
 }
 
 // Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+bool FromV8EnumerationForSetter(v8::Isolate* isolate,
+                                v8::Local<v8::Value> value,
+                                base::span<const std::u16string_view> values,
+                                std::string_view type_name,
+                                std::u16string* result) {
+  std::u16string string;
+  if (!FromV8String(isolate, value, &string)) {
+    return false;
+  }
+  for (const std::u16string_view item : values) {
+    if (item == string) {
+      *result = std::move(string);
+      return true;
+    }
+  }
+  PerIsolateData::From(isolate)->ReportConsoleWarning(
+      base::StrCat({"The provided value '", base::UTF16ToUTF8(string),
+                    "' is not a valid enum value of type ", type_name, "."}));
+  return false;
+}
+
+// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 bool IsIterableObject(v8::Isolate* isolate,
                       v8::Local<v8::Value> value,
                       bool* threw) {

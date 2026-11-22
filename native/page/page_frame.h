@@ -20,6 +20,7 @@
 #include <string>
 
 #include "base/memory/raw_ref.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/page/page_reporter.h"
@@ -33,13 +34,15 @@ class DocumentLoader;
 class PageRequests;
 class ScriptRunner;
 class SessionCookieJar;
+class SessionHistory;
 
 class PageFrame final : public NavigationClient {
  public:
   PageFrame(ScriptRunner& runner,
             PageRequests& requests,
             SendFrame send,
-            SessionCookieJar& cookie_jar);
+            SessionCookieJar& cookie_jar,
+            SessionHistory& history);
 
   PageFrame(const PageFrame&) = delete;
   PageFrame& operator=(const PageFrame&) = delete;
@@ -52,7 +55,12 @@ class PageFrame final : public NavigationClient {
 
   // NavigationClient:
   void BeginNavigation(const NavigationRequest& request) override;
-  void DidNavigateWithinDocument(const GURL& url) override;
+  void DidCommitSameDocumentNavigation(const HistoryItem& item,
+                                       FrameLoadType type) override;
+  void DidUpdateCurrentHistoryItem(const HistoryItem& item) override;
+  HistoryCounts GetHistoryCounts() const override;
+  void NavigateBackForward(int offset) override;
+  void NavigateToNavigationApiKey(const std::u16string& key) override;
   bool HasProvisionalNavigation() const override;
   void StopAllLoaders() override;
 
@@ -76,11 +84,23 @@ class PageFrame final : public NavigationClient {
   // Takes `loader` from where the frame holds it, as the opening navigation's
   // or the one that waits.
   std::unique_ptr<DocumentLoader> Take(DocumentLoader& loader);
+  // NavigationControllerImpl::GoToOffsetFromRenderer() and
+  // NavigateToNavigationApiKey(), from the task that the browser's would run
+  // in: the target is worked out from where the history is then.
+  void GoToOffset(int offset);
+  void GoToKey(const std::u16string& key);
+  // NotifyNavigationApiOfDisposedEntries(): the document hears of the
+  // entries that the session history dropped.
+  void NotifyNavigationApiOfDisposedEntries();
+  // NavigateToExistingPendingEntry() for the top-level frame: a traversal to
+  // entry `index`, within the document if it is of the document's.
+  void GoToIndex(size_t index);
 
   const raw_ref<ScriptRunner> runner_;
   const raw_ref<PageRequests> requests_;
   const SendFrame send_;
   const raw_ref<SessionCookieJar> cookie_jar_;
+  const raw_ref<SessionHistory> history_;
   // The loader of the frame's document, none for about:blank.
   std::unique_ptr<DocumentLoader> current_;
   // The navigation that the Session makes when the Page opens, until it ends.
@@ -91,6 +111,7 @@ class PageFrame final : public NavigationClient {
   NavigationRequest provisional_request_;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
+  base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };
 
 }  // namespace mitto

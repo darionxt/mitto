@@ -31,6 +31,7 @@
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/history.h"
+#include "mitto/dom/history_item.h"
 #include "mitto/dom/idb_factory.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
@@ -238,9 +239,13 @@ mitto::Location* Window::Location() {
   return location_.Get();
 }
 
+void Window::SetCurrentHistoryItem(const HistoryItem& item) {
+  current_history_item_ = std::make_unique<HistoryItem>(item);
+}
+
 mitto::History* Window::History() {
   if (!history_) {
-    history_ = History::Create();
+    history_ = History::Create(this);
   }
   return history_.Get();
 }
@@ -302,8 +307,7 @@ mitto::CookieStore* Window::CookieStore() {
   return cookie_store_.Get();
 }
 
-mitto::CacheStorage* Window::Caches(
-    bindings::ExceptionState& exception_state) {
+mitto::CacheStorage* Window::Caches(bindings::ExceptionState& exception_state) {
   // GlobalCacheStorage::CanCreateCacheStorage(): a document whose origin is
   // opaque, as one that the Session did not load over HTTP or HTTPS has, may
   // not.
