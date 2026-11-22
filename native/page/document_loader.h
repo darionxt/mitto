@@ -32,24 +32,20 @@ namespace mitto {
 class Document;
 class DocumentLoadTiming;
 class PageFrame;
-class ScriptRunner;
 class TextResourceDecoder;
 
 class DocumentLoader final : public PageRequests::Client,
                              public DocumentParser::Client {
  public:
   // Loads the response of navigation `number` into a document of `frame`.
-  DocumentLoader(ScriptRunner& runner,
-                 PageRequests& requests,
+  // What the Session sends of it runs in the frame's current window's context.
+  DocumentLoader(PageRequests& requests,
                  SendFrame send,
                  PageFrame& frame,
                  uint64_t number);
   // The same for a navigation that the frame starts, whose number comes once
   // it has started: SetNumber().
-  DocumentLoader(ScriptRunner& runner,
-                 PageRequests& requests,
-                 SendFrame send,
-                 PageFrame& frame);
+  DocumentLoader(PageRequests& requests, SendFrame send, PageFrame& frame);
 
   DocumentLoader(const DocumentLoader&) = delete;
   DocumentLoader& operator=(const DocumentLoader&) = delete;
@@ -81,7 +77,6 @@ class DocumentLoader final : public PageRequests::Client,
   // Tells the Session that the window's load event has been dispatched.
   void DidDispatchLoadEvent();
 
-  const raw_ref<ScriptRunner> runner_;
   const raw_ref<PageRequests> requests_;
   const SendFrame send_;
   const raw_ref<PageFrame> frame_;

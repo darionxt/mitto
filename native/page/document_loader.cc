@@ -23,27 +23,22 @@
 #include "mitto/page/favicon_loader.h"
 #include "mitto/page/page_frame.h"
 #include "mitto/page/resource_timing.h"
-#include "mitto/page/script_runner.h"
 
 namespace mitto {
 
-
-DocumentLoader::DocumentLoader(ScriptRunner& runner,
-                               PageRequests& requests,
+DocumentLoader::DocumentLoader(PageRequests& requests,
                                SendFrame send,
                                PageFrame& frame,
                                uint64_t number)
-    : runner_(runner),
-      requests_(requests),
+    : requests_(requests),
       send_(std::move(send)),
       frame_(frame),
       number_(number) {}
 
-DocumentLoader::DocumentLoader(ScriptRunner& runner,
-                               PageRequests& requests,
+DocumentLoader::DocumentLoader(PageRequests& requests,
                                SendFrame send,
                                PageFrame& frame)
-    : DocumentLoader(runner, requests, std::move(send), frame, 0) {}
+    : DocumentLoader(requests, std::move(send), frame, 0) {}
 
 DocumentLoader::~DocumentLoader() {
   // The parser holds this as its client, so it stops for good first.
@@ -67,6 +62,7 @@ void DocumentLoader::StopLoading() {
 }
 
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
+  const v8::Context::Scope context_scope(frame_->context());
   response_started_ = true;
   // The document of the response takes the place of the frame's, in a
   // context of its own, once the old one has unloaded, as Blink makes a new
@@ -104,7 +100,7 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // timings and response, for the window's Performance Timeline and
   // window.chrome. A restart for Critical-CH is a redirect to where the
   // navigation started, after which the fetch starts again.
-  timing_ = &runner_->document_load_timing();
+  timing_ = &frame_->document_load_timing();
   DocumentLoadTiming& timing = *timing_;
   timing.has_response = true;
   timing.redirect_count = static_cast<uint16_t>(
@@ -251,6 +247,7 @@ void DocumentLoader::AppendDecoded(std::u16string text) {
 }
 
 void DocumentLoader::OnResponseBody(std::string bytes) {
+  const v8::Context::Scope context_scope(frame_->context());
   body_bytes_ += bytes.size();
   if (!parser_) {
     // What comes once the parser has stopped for good goes unread.
@@ -262,6 +259,7 @@ void DocumentLoader::OnResponseBody(std::string bytes) {
 }
 
 void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
+  const v8::Context::Scope context_scope(frame_->context());
   // WindowPerformance::OnBodyLoadFinished() and FinishedLoading(): the body's
   // sizes, which the navigation's entry shows, and when it ended.
   if (!timing_) {
@@ -276,6 +274,7 @@ void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
 }
 
 void DocumentLoader::OnResponseEnded(int net_error) {
+  const v8::Context::Scope context_scope(frame_->context());
   if (!response_started_) {
     // No document: a 204, a download, a failure, or another navigation that
     // took its place. The frame keeps its document and lets this go.

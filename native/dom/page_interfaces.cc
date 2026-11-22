@@ -4,6 +4,7 @@
 
 #include "base/check.h"
 #include "mitto/bindings/interface_objects.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_dedicated_worker_global_scope.h"
 #include "mitto/bindings/v8_window.h"
@@ -23,6 +24,7 @@
 namespace mitto {
 
 v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
+                                      const ContextInit& init,
                                       std::u16string_view markup,
                                       DidCreateScriptContext did_create) {
   bindings::PerIsolateData* const data =
@@ -41,6 +43,9 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
   const v8::Context::Scope context_scope(context);
   Window* const window = Window::Create();
   window->AssociateWithContext(isolate, context);
+  window->SetTimeOrigin(init.time_origin);
+  window->SetSecureContext(init.secure_context);
+  bindings::SetSecureContext(context, init.secure_context);
   // LocalWindowProxy::Initialize(): the inspector and the embedder hear of the
   // context before its conditional features go in.
   did_create(context);
@@ -55,6 +60,7 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
 
 // Upstream: third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.cc
 v8::Local<v8::Context> NewWorkerContext(v8::Isolate* isolate,
+                                        const ContextInit& init,
                                         std::u16string name,
                                         DidCreateScriptContext did_create) {
   bindings::PerIsolateData* const data =
@@ -76,6 +82,9 @@ v8::Local<v8::Context> NewWorkerContext(v8::Isolate* isolate,
   DedicatedWorkerGlobalScope* const scope =
       DedicatedWorkerGlobalScope::Create(std::move(name));
   scope->AssociateWithContext(isolate, context);
+  scope->SetTimeOrigin(init.time_origin);
+  scope->SetSecureContext(init.secure_context);
+  bindings::SetSecureContext(context, init.secure_context);
   // Initialize() names the context to the debugger before
   // PrepareForEvaluation() makes the interface object of the global, which
   // installs what the context decides.
