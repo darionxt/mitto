@@ -5,9 +5,9 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
-#include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
 #include "mitto/dom/document.h"
@@ -34,6 +34,7 @@
 #include "mitto/page/session_sender.h"
 #include "url/origin.h"
 #include "v8/include/v8-isolate.h"
+#include "v8/include/v8-primitive.h"
 
 namespace mitto {
 namespace {
@@ -261,9 +262,15 @@ v8::Local<v8::Context> PageFrame::NewContext(base::TimeTicks time_origin,
   // access asks its CanAccess(), which lets one of the same origin through and
   // tells the browser: a Page has no browser to tell, and nothing yet that
   // asks across origins (#286), so it shares its origin's token.
+  // V8 compares tokens as objects, so the token is an internalized string,
+  // the same object for the same text, as Blink's V8AtomicString is.
   if (!origin.opaque()) {
+    const std::string token = origin.Serialize();
     context->SetSecurityToken(
-        bindings::ToV8StringFromUtf8(isolate, origin.Serialize()));
+        v8::String::NewFromUtf8(isolate, token.data(),
+                                v8::NewStringType::kInternalized,
+                                base::checked_cast<int>(token.size()))
+            .ToLocalChecked());
   }
   return context;
 }
