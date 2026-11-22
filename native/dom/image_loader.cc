@@ -483,6 +483,7 @@ void ImageLoader::DoUpdateFromElement(UpdateFromElementBehavior behavior,
         break;
     }
     params.referrer_policy = ReferrerPolicyOf(*element_);
+    params.initiator_name = element_->LocalName();
     params.priority_hint = FetchPriorityOf(*element_);
     // A once-deferred lazy image does not hold the load event back, as
     // FetchParameters::SetLazyImageNonBlocking() lets it go.

@@ -423,6 +423,8 @@ bool HTMLLinkElement::LoadStylesheetIfNeeded() {
     params.charset = document.Encoding();
   }
   loading_ = true;
+  // LinkLoader: the element's local name.
+  params.initiator_name = u"link";
   Resource* const resource = document.Fetcher().RequestResource(params);
   if (!resource) {
     // A fetch that never starts fails at once.
@@ -690,6 +692,7 @@ Resource* HTMLLinkElement::PreloadIfNeeded() {
   }
   params.charset = document.Encoding();
   params.is_link_preload = true;
+  params.initiator_name = u"link";
   return document.Fetcher().RequestResource(params);
 }
 
@@ -850,6 +853,7 @@ Resource* HTMLLinkElement::PrefetchIfNeeded() {
   if (const std::u16string* hint = FindAttribute(u"fetchpriority")) {
     params.priority_hint = FetchPriorityHintFromAttribute(*hint);
   }
+  params.initiator_name = u"link";
   return document.Fetcher().RequestResource(params);
 }
 

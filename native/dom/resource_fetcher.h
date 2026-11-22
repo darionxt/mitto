@@ -73,6 +73,10 @@ struct FetchParameters {
   // The encoding that decodes its text unless its response or a byte order
   // mark names another, as FetchParameters::SetCharset() gives a resource.
   std::string charset;
+  // ResourceLoaderOptions::initiator_info's name, which its entry of the
+  // Performance Timeline gives as its initiator type: the local name of the
+  // element that asks, "link" for a link's load, or "css" for an import.
+  std::u16string initiator_name;
 };
 
 // PreloadHelper::GetResourceTypeFromAsAttribute(), of what a Page fetches,

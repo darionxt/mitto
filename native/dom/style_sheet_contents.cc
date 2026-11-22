@@ -203,6 +203,8 @@ void StyleRuleImport::RequestStyleSheet() {
   }
   params.charset = parent->Charset();
   params.render_blocking = root->RenderBlocking();
+  // StyleRuleImport::RequestStyleSheet().
+  params.initiator_name = u"css";
   Resource* const resource = document->Fetcher().RequestResource(params);
   if (!resource) {
     return;

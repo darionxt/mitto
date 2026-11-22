@@ -82,10 +82,13 @@ class PageRequests {
                  std::string url,
                  Client& client,
                  bool render_blocking = false);
-  // The same for `request`, whose number this sets.
+  // The same for `request`, whose number this sets, with the entry's
+  // initiator type, or the kind's own if it is empty: "script" for a script
+  // or a module, and "fetch" for anything else.
   uint64_t Start(PageRequest request,
                  Client& client,
-                 bool render_blocking = false);
+                 bool render_blocking = false,
+                 std::u16string initiator_type = std::u16string());
 
   // The same, but with no entry in the Performance Timeline, as for a
   // worker's script, which Chrome's browser fetches.
