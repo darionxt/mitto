@@ -282,27 +282,6 @@ std::vector<size_t> Parts(const Prelude& prelude) {
   return parts;
 }
 
-// The tokens of `text`, but white space.
-std::vector<CssToken> TokensOf(std::u16string_view text) {
-  std::vector<CssToken> tokens;
-  CssTokenStream stream(text);
-  while (!stream.AtEnd()) {
-    if (stream.Peek().block_type == CssBlockType::kBlockStart) {
-      tokens.push_back(stream.Peek());
-      const CssTokenStream::BlockGuard guard(stream);
-      continue;
-    }
-    if (stream.Peek().block_type == CssBlockType::kBlockEnd) {
-      break;
-    }
-    CssToken token = stream.Consume();
-    if (!IsWhitespace(token)) {
-      tokens.push_back(std::move(token));
-    }
-  }
-  return tokens;
-}
-
 // <supports-in-parens> and the container query's <query-in-parens>: a block
 // of ( or a function, which Blink takes, as <general-enclosed> at least,
 // whatever it holds.
@@ -485,46 +464,35 @@ bool IsFontFamilyNames(const Prelude& prelude) {
   }
 }
 
-// ConsumeFunctionRule(): a function of parameters that each start with a
-// dashed ident, apart by commas, and then nothing, or returns and a type.
-bool IsFunctionPrelude(const Prelude& prelude) {
-  const std::vector<size_t> parts = Parts(prelude);
-  if (parts.empty() ||
-      prelude.tokens[parts[0]].type != CssTokenType::kFunction) {
-    return false;
+// The tokens of `text`, white space included, with the text of each block,
+// as a prelude holds them.
+Prelude TokensWithBlocks(std::u16string_view text) {
+  CssTokenStream stream(text);
+  Prelude prelude = ConsumePrelude(stream, text);
+  // A prelude ends at ; or {, which no syntax or parameter list holds, so a
+  // token of neither kind stands for the rest, which nothing reads.
+  if (text.find_first_of(u";{") != std::u16string_view::npos) {
+    CssToken rest;
+    rest.type = CssTokenType::kSemicolon;
+    prelude.tokens.push_back(std::move(rest));
   }
-  const auto contents = prelude.block_contents.find(parts[0]);
-  if (contents != prelude.block_contents.end()) {
-    const std::vector<CssToken> parameters = TokensOf(contents->second);
-    bool want_name = true;
-    for (const CssToken& token : parameters) {
-      if (want_name) {
-        if (!IsDashedIdent(token)) {
-          return false;
-        }
-        want_name = false;
-      } else if (token.type == CssTokenType::kComma) {
-        want_name = true;
-      }
-    }
-    if (want_name && !parameters.empty()) {
-      return false;
-    }
-  }
-  return parts.size() == 1 ||
-         (parts.size() > 2 &&
-          IsIdentNamed(prelude.tokens[parts[1]], u"returns"));
+  return prelude;
 }
 
-// CSSSyntaxStringParser: * or components apart by |, each a type in angle
-// brackets or an ident that no keyword is, with + or # after it, but for a
-// transform list.
-bool IsSyntaxString(std::u16string_view syntax) {
-  const std::u16string trimmed(
-      base::TrimString(syntax, u" \t\n\f\r", base::TRIM_ALL));
-  if (trimmed == u"*") {
-    return true;
+void SkipWhitespace(const Prelude& prelude, size_t& i) {
+  while (i < prelude.tokens.size() && IsWhitespace(prelude.tokens[i])) {
+    ++i;
   }
+}
+
+bool IsDelimiter(const Prelude& prelude, size_t i, char32_t delimiter) {
+  return i < prelude.tokens.size() &&
+         prelude.tokens[i].type == CssTokenType::kDelimiter &&
+         prelude.tokens[i].delimiter == delimiter;
+}
+
+// ConsumeTypeName().
+bool IsSyntaxTypeName(std::u16string_view name) {
   static constexpr std::array<std::u16string_view, 15> kTypes = {
       u"angle",
       u"color",
@@ -541,35 +509,164 @@ bool IsSyntaxString(std::u16string_view syntax) {
       u"url",
       u"transform-function",
       u"transform-list"};
-  for (const std::u16string_view piece : base::SplitStringPiece(
-           trimmed, u"|", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
-    std::u16string_view component = piece;
-    if (component.empty()) {
+  return std::find(kTypes.begin(), kTypes.end(), name) != kTypes.end();
+}
+
+// ConsumeSyntaxComponent(): a type in angle brackets, or an ident that no
+// keyword is, then + or #, but not after <transform-list>, and white space.
+bool ConsumeSyntaxComponent(const Prelude& prelude, size_t& i) {
+  const std::vector<CssToken>& tokens = prelude.tokens;
+  size_t j = i;
+  bool transform_list = false;
+  if (IsDelimiter(prelude, j, '<')) {
+    ++j;
+    if (j >= tokens.size() || tokens[j].type != CssTokenType::kIdent ||
+        !IsSyntaxTypeName(tokens[j].value)) {
       return false;
     }
-    bool multiplied = false;
-    if (component.back() == '+' || component.back() == '#') {
-      component.remove_suffix(1);
-      multiplied = true;
+    transform_list = tokens[j].value == u"transform-list";
+    ++j;
+    if (!IsDelimiter(prelude, j, '>')) {
+      return false;
     }
-    if (component.size() > 2 && component.front() == '<' &&
-        component.back() == '>') {
-      const std::u16string_view type =
-          component.substr(1, component.size() - 2);
-      if (std::find(kTypes.begin(), kTypes.end(), type) == kTypes.end() ||
-          (multiplied && type == u"transform-list")) {
-        return false;
+    ++j;
+  } else if (j < tokens.size() && tokens[j].type == CssTokenType::kIdent &&
+             !IsCssWideKeywordOrDefault(tokens[j])) {
+    ++j;
+  } else {
+    return false;
+  }
+  const bool repeated =
+      IsDelimiter(prelude, j, '#') || IsDelimiter(prelude, j, '+');
+  if (repeated) {
+    ++j;
+  }
+  SkipWhitespace(prelude, j);
+  if (transform_list && repeated) {
+    return false;
+  }
+  i = j;
+  return true;
+}
+
+// CSSSyntaxDefinition::Consume(): *, or components apart by |.
+bool ConsumeSyntax(const Prelude& prelude, size_t& i) {
+  if (IsDelimiter(prelude, i, '*')) {
+    ++i;
+    SkipWhitespace(prelude, i);
+    return true;
+  }
+  size_t j = i;
+  while (true) {
+    if (!ConsumeSyntaxComponent(prelude, j)) {
+      return false;
+    }
+    if (!IsDelimiter(prelude, j, '|')) {
+      break;
+    }
+    ++j;
+    SkipWhitespace(prelude, j);
+  }
+  i = j;
+  return true;
+}
+
+// ConsumeFunctionType(): type() holding a whole syntax, or a lone component.
+bool ConsumeFunctionType(const Prelude& prelude, size_t& i) {
+  if (i < prelude.tokens.size() &&
+      prelude.tokens[i].type == CssTokenType::kFunction &&
+      base::EqualsCaseInsensitiveASCII(prelude.tokens[i].value, u"type")) {
+    const auto contents = prelude.block_contents.find(i);
+    if (contents != prelude.block_contents.end()) {
+      const Prelude inner = TokensWithBlocks(contents->second);
+      size_t k = 0;
+      SkipWhitespace(inner, k);
+      if (ConsumeSyntax(inner, k) && k == inner.tokens.size()) {
+        ++i;
+        SkipWhitespace(prelude, i);
+        return true;
       }
-      continue;
     }
-    const std::vector<CssToken> tokens = TokensOf(component);
-    if (tokens.size() != 1 || tokens[0].type != CssTokenType::kIdent ||
-        IsCssWideKeywordOrDefault(tokens[0]) ||
-        component.find_first_of(u" \t\n\f\r") != std::u16string_view::npos) {
+  }
+  return ConsumeSyntaxComponent(prelude, i);
+}
+
+// ConsumeFunctionParameters(): none, or names of custom properties apart by
+// commas, each with a type and a default after a colon if it has them.
+// Whether the default fits the type needs the values of style.
+bool IsFunctionParameters(std::u16string_view text) {
+  const Prelude parameters = TokensWithBlocks(text);
+  const std::vector<CssToken>& tokens = parameters.tokens;
+  size_t i = 0;
+  bool first = true;
+  while (true) {
+    SkipWhitespace(parameters, i);
+    if (first && i == tokens.size()) {
+      return true;
+    }
+    if (i >= tokens.size() || tokens[i].type != CssTokenType::kIdent ||
+        tokens[i].value.size() < 3 ||
+        !base::StartsWith(tokens[i].value, u"--")) {
+      return false;
+    }
+    ++i;
+    SkipWhitespace(parameters, i);
+    if (size_t typed = i; ConsumeFunctionType(parameters, typed)) {
+      i = typed;
+    }
+    if (i < tokens.size() && tokens[i].type == CssTokenType::kColon) {
+      ++i;
+      while (i < tokens.size() && tokens[i].type != CssTokenType::kComma) {
+        ++i;
+      }
+    }
+    if (i == tokens.size()) {
+      return true;
+    }
+    if (tokens[i].type != CssTokenType::kComma) {
+      return false;
+    }
+    ++i;
+    first = false;
+  }
+}
+
+// ConsumeFunctionRule(): a function token, its parameters, then nothing, or
+// returns and a type, then nothing.
+bool IsFunctionPrelude(const Prelude& prelude) {
+  size_t i = 0;
+  SkipWhitespace(prelude, i);
+  if (i >= prelude.tokens.size() ||
+      prelude.tokens[i].type != CssTokenType::kFunction) {
+    return false;
+  }
+  const auto contents = prelude.block_contents.find(i);
+  if (!IsFunctionParameters(contents != prelude.block_contents.end()
+                                ? contents->second
+                                : std::u16string_view())) {
+    return false;
+  }
+  ++i;
+  SkipWhitespace(prelude, i);
+  if (i < prelude.tokens.size() &&
+      IsIdentNamed(prelude.tokens[i], u"returns")) {
+    ++i;
+    SkipWhitespace(prelude, i);
+    if (!ConsumeFunctionType(prelude, i)) {
       return false;
     }
   }
-  return true;
+  SkipWhitespace(prelude, i);
+  return i == prelude.tokens.size();
+}
+
+// CSSSyntaxStringParser: a syntax, as type() holds one, read with the
+// tokenizer's escapes.
+bool IsSyntaxString(std::u16string_view syntax) {
+  const Prelude tokens = TokensWithBlocks(syntax);
+  size_t i = 0;
+  SkipWhitespace(tokens, i);
+  return ConsumeSyntax(tokens, i) && i == tokens.tokens.size();
 }
 
 // ConsumePropertyRule(): a dashed ident, and a block whose syntax and

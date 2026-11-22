@@ -306,6 +306,7 @@ _AT_RULES = {
         "@position-try a",
         "@font-feature-values serif",
         "@function --f",
+        "@function --f() returns ???",
         "@property --a",
     ],
     "kept": [
@@ -333,6 +334,12 @@ def test_an_at_rule_whose_prelude_does_not_parse_ends_no_imports(
             styles.append(f"<style>{rule} {{}} @import '{kind}-{i}.css';</style>")
     server.route("/property-kept.css", b"p {}", _CSS)
     styles.append("<style>@property --a { syntax: '*'; inherits: false; } @import 'property-kept.css';</style>")
+    # A space ends the escape of an f, so that the syntax is the ident foo.
+    server.route("/property-escaped.css", b"p {}", _CSS)
+    styles.append(
+        "<style>@property --b { syntax: '\\66 oo'; inherits: false; initial-value: foo; }"
+        " @import 'property-escaped.css';</style>"
+    )
     url = server.page("/", "".join(styles))
 
     with _open_page(session, url):
