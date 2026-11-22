@@ -203,6 +203,8 @@ source_set("bindings") {
     "interface_table.h",
     "known_gap.cc",
     "known_gap.h",
+    "per_context_data.cc",
+    "per_context_data.h",
     "per_isolate_data.cc",
     "per_isolate_data.h",
     "runtime_feature_set.cc",

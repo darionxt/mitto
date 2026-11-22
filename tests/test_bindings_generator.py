@@ -1369,6 +1369,28 @@ def test_a_class_stringifier_gives_its_attributes_getter() -> None:
     assert '"toString", kInterfaceName, ToStringOperationCallback, 0' in source
 
 
+def test_a_call_with_a_receiver_makes_the_wrappers_it_returns_in_the_receivers_realm() -> None:
+    # bind_gen converts a return value with the receiver's ScriptState::ForRelevantRealm(), and a static member's,
+    # which has no receiver, with the current realm's.
+    thing = IdlType(TypeKind.INTERFACE, "Thing")
+    interface = _interface(
+        attributes=(
+            Attribute("next", thing, True, False, ExtendedAttributes(), ALWAYS),
+            Attribute("first", thing, True, True, ExtendedAttributes(), ALWAYS),
+        )
+    )
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    getter = source[source.index("void NextAttributeGetCallback") :]
+    getter = getter[: getter.index("\n}")]
+    scope = "const ReceiverRealmScope receiver_realm(isolate, info.This());"
+    assert getter.index("if (!impl) {") < getter.index(scope) < getter.index("impl->Next()")
+    static_getter = source[source.index("void FirstAttributeGetCallback") :]
+    assert "ReceiverRealmScope" not in static_getter[: static_getter.index("\n}")]
+    assert '#include "mitto/bindings/per_context_data.h"' in source
+
+
 def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None:
     # Element's [PutForwards=value] classList: bind_gen's make_steps_of_put_forwards().
     list_type = IdlType(TypeKind.INTERFACE, "Thing")

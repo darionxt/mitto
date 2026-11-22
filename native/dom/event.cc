@@ -6,6 +6,7 @@
 #include "mitto/bindings/v8_event.h"
 #include "mitto/dom/event_path.h"
 #include "mitto/dom/event_target.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
@@ -118,8 +119,7 @@ double Event::TimeStamp() const {
   // origin, through the performance timeline's clamp, so that it falls
   // between two calls of performance.now() around its making.
   return Performance::MonotonicTimeToDOMHighResTimeStamp(
-      bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->time_origin(),
-      created_);
+      ExecutionContext::Current().TimeOrigin(), created_);
 }
 
 void Event::InitEvent(const std::u16string& type,

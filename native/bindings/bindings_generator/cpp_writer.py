@@ -200,6 +200,11 @@ def _check_written(where: str, extended: ExtendedAttributes) -> None:
             raise UnhandledError(f"{where}: the C++ writer does not handle the extended attribute [{key}]")
 
 
+# A call with a receiver makes the wrappers it returns in the receiver's relevant realm, as bind_gen converts a return
+# value with the receiver's ScriptState (per_context_data.h).
+_RECEIVER_REALM = ["const ReceiverRealmScope receiver_realm(isolate, info.This());"]
+
+
 def condition_test(condition: Condition, where: str) -> str | None:
     """The C++ test of whether a Page installs a construct, or None if it never does.
 
@@ -462,6 +467,7 @@ class _InterfaceWriter:
             "if (!impl) {",
             "  return;",
             "}",
+            *_RECEIVER_REALM,
         ]
 
     def _lenient_receiver(self) -> list[str]:
@@ -471,6 +477,7 @@ class _InterfaceWriter:
             "if (!impl) {",
             "  return;",
             "}",
+            *_RECEIVER_REALM,
         ]
 
     def _promise_receiver(self) -> list[str]:
@@ -483,6 +490,7 @@ class _InterfaceWriter:
             '  ThrowTypeError(isolate, "Illegal invocation");',
             "  return;",
             "}",
+            *_RECEIVER_REALM,
         ]
 
     @staticmethod
@@ -1943,6 +1951,7 @@ class _InterfaceWriter:
             "mitto/bindings/indexed_and_named_properties.h",
             "mitto/bindings/interface_table.h",
             "mitto/bindings/known_gap.h",
+            "mitto/bindings/per_context_data.h",
             "mitto/bindings/per_isolate_data.h",
             "mitto/bindings/runtime_feature_set.h",
             "mitto/bindings/runtime_features.h",

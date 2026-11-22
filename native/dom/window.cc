@@ -220,8 +220,7 @@ std::u16string Window::Origin() const {
 }
 
 bool Window::IsSecureContextForBindings() const {
-  return bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-      ->secure_context();
+  return IsSecureContext();
 }
 
 CrashReportContext* Window::CrashReport() {
@@ -373,10 +372,7 @@ StorageBucketHost* Window::GetStorageBucketHost() const {
 
 mitto::Performance* Window::Performance() {
   if (!performance_) {
-    performance_ = Performance::Create(
-        bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-            ->time_origin(),
-        &GetDocumentLoadTiming());
+    performance_ = Performance::Create(TimeOrigin(), &GetDocumentLoadTiming());
   }
   return performance_.Get();
 }
@@ -387,9 +383,8 @@ void Window::SetDocumentLoadTiming(DocumentLoadTiming* timing) {
 
 DocumentLoadTiming& Window::GetDocumentLoadTiming() {
   if (!document_load_timing_) {
-    document_load_timing_ = bindings::MakeGarbageCollected<DocumentLoadTiming>(
-        bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-            ->time_origin());
+    document_load_timing_ =
+        bindings::MakeGarbageCollected<DocumentLoadTiming>(TimeOrigin());
   }
   return *document_load_timing_;
 }

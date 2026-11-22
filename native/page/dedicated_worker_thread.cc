@@ -222,8 +222,6 @@ void DedicatedWorkerThread::Scope::Start() {
   isolate_->Enter();
   data_ = bindings::PerIsolateData::Create(isolate_, params_.features);
   data_->set_worker();
-  data_->set_secure_context(params_.secure_context);
-  data_->set_time_origin(base::TimeTicks::Now());
   const SendFrame send =
       base::BindRepeating(&SessionSender::Send, params_.sender);
   reporter_ = std::make_unique<PageReporter>(isolate_, send);
@@ -239,8 +237,13 @@ void DedicatedWorkerThread::Scope::Start() {
       send));
 
   const v8::HandleScope handle_scope(isolate_);
+  ContextInit init;
+  // A worker's performance timeline starts when its thread does.
+  init.time_origin = base::TimeTicks::Now();
+  init.secure_context = params_.secure_context;
+  init.cross_origin_isolated = params_.cross_origin_isolated;
   const v8::Local<v8::Context> context = NewWorkerContext(
-      isolate_, params_.name, [this](v8::Local<v8::Context> context) {
+      isolate_, init, params_.name, [this](v8::Local<v8::Context> context) {
         InitializePageContext(context);
         reporter_->ContextCreated(context);
       });
@@ -258,7 +261,7 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetTasks(tasks_.get());
   if (params_.begin_frames) {
     animation_frames_ = std::make_unique<AnimationFrameController>(
-        isolate_, context, data_->time_origin());
+        isolate_, context, init.time_origin);
     scope_->SetAnimationFrames(animation_frames_.get());
   }
   // The worker's requests are its own, and their responses come to this
@@ -719,8 +722,7 @@ void DedicatedWorkerThread::Scope::ReportRejections(
     return;
   }
   const v8::HandleScope handle_scope(isolate_);
-  reporter_->ReportUnhandledRejections(context_.Get(isolate_),
-                                       std::move(rejections));
+  reporter_->ReportUnhandledRejections(std::move(rejections));
 }
 
 void DedicatedWorkerThread::Scope::ReportUncaught(

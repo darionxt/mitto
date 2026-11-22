@@ -24,7 +24,8 @@ namespace mitto::bindings {
 namespace {
 
 // The context's embedder data that holds the objects it made for constructs.
-// Index 0 is Chrome's debugger's (v8-context.h).
+// Index 0 is Chrome's debugger's (v8-context.h), and 2 whether the context is
+// a secure context (per_context_data.cc).
 constexpr int kContextObjectsIndex = 1;
 
 // A member's function, as IDLMemberInstaller's CreateFunctionTemplate() makes

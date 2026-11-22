@@ -66,6 +66,10 @@ struct RequestEvent {
   // The Referer that the last hop sent, which //net keeps through each
   // redirect, so that a page's navigation gives it to its document.
   std::string referrer;
+  // Whether the hop sent credentials, as URLRequest::allow_credentials()
+  // says, which network::URLResponseHead's request_include_credentials gives
+  // the network service's Cross-Origin-Resource-Policy check.
+  bool included_credentials = false;
 };
 
 // Carries one request's events and body from the network thread to whichever
