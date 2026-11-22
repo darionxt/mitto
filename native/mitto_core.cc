@@ -832,6 +832,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.critical_ch_restart = critical_ch_restart_;
     event.restarted_for_critical_ch = restarted_for_critical_ch_;
     event.referrer = request_->referrer();
+    event.included_credentials = request_->allow_credentials();
     return event;
   }
 
