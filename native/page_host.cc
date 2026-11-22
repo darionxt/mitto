@@ -1498,10 +1498,12 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     net_error = net::ERR_UNKNOWN_URL_SCHEME;
   } else if (!request_template) {
     net_error = net::ERR_NOT_IMPLEMENTED;
-  } else if (document_origin.opaque() && !context.is_worker) {
-    // A document that the Session did not load, such as about:blank, has no
-    // Initiator that a request can name. A worker of a data: URL, whose
-    // origin is opaque, asks as that origin.
+  } else if (document_origin.opaque() && !context.is_worker &&
+             context.parent == kNoDocument) {
+    // The Page's first document, about:blank, which the Session did not load,
+    // has no Initiator that a request can name. A frame's document of an
+    // opaque origin, such as a data: URL's or Chrome's error page, asks as
+    // that origin, as a worker of a data: URL does.
     net_error = net::ERR_ACCESS_DENIED;
   } else if (asked.mode == PageRequestMode::kSameOrigin &&
              !document_origin.IsSameOriginWith(url)) {
@@ -2794,16 +2796,20 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
       break;
     case PageDocumentSource::kAboutBlank:
     case PageDocumentSource::kSrcdoc:
-    case PageDocumentSource::kErrorPage: {
+    case PageDocumentSource::kErrorPage:
+    case PageDocumentSource::kDataUrl:
+    case PageDocumentSource::kBlob: {
       // A document that a frame commits without the network takes the place
       // of the frame's document, under the same parent, as Chrome's browser
-      // commits it in that frame. srcdoc and an error page are only a
-      // frame's: the top-level frame keeps its document when its navigation
-      // fails.
+      // commits it in that frame. srcdoc, an error page and a data: URL's
+      // document are only a frame's: the top-level frame keeps its document
+      // when its navigation fails, and Chrome shows it no data: URL that a
+      // page navigates it to.
       const auto replaces = contexts_.find(committed.replaces);
       if (replaces == contexts_.end() || replaces->second.is_worker ||
           replaces->second.parent != committed.parent ||
-          (top_level && committed.source != PageDocumentSource::kAboutBlank)) {
+          (top_level && committed.source != PageDocumentSource::kAboutBlank &&
+           committed.source != PageDocumentSource::kBlob)) {
         Refuse(
             "a document that does not take the place of its frame's document");
         return;
@@ -2821,13 +2827,33 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         }
         context.origin = initiator->second.origin;
         context.url = GURL(url::kAboutBlankURL);
+      } else if (committed.source == PageDocumentSource::kBlob) {
+        // A document of a blob: URL has the URL's origin, which the document
+        // that started its navigation has to have, as a page names only a
+        // blob: URL of its own origin, as for a worker's.
+        const auto initiator = contexts_.find(committed.initiator);
+        const GURL url(committed.url);
+        if (initiator == contexts_.end() || initiator->second.is_worker ||
+            !url.is_valid() || !url.SchemeIsBlob() ||
+            !initiator->second.origin.IsSameOriginWith(
+                url::Origin::Create(url))) {
+          Refuse("a blob: document whose URL is not of its initiator's origin");
+          return;
+        }
+        context.origin = initiator->second.origin;
+        context.coep = initiator->second.coep;
+        context.url = url;
       } else if (committed.source == PageDocumentSource::kSrcdoc) {
         context.origin = contexts_.at(committed.parent).origin;
         context.url = GURL(url::kAboutSrcdocURL);
-      } else {
+      } else if (committed.source == PageDocumentSource::kErrorPage) {
         // NavigationRequest::GetOriginToCommit(): an error page's origin is
         // opaque.
         context.url = GURL(kErrorPageUrl);
+      } else {
+        // So is a data: URL's, whose URL the library has no need of: its
+        // requests send no Referer and no cookies.
+        context.url = GURL(base::StrCat({url::kDataScheme, ":"}));
       }
       replaced = committed.replaces;
       break;

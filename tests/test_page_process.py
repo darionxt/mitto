@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 31
+_PROTOCOL_VERSION = 32
 
 
 def _script_request(number: int, url: str) -> str:
@@ -454,6 +454,20 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             "the library refused a message from the Page: a document that does not take the place of its frame's"
             " document",
             id="top-level-error-page",
+        ),
+        pytest.param(
+            "top-level-data-url",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 5, 0, 1))",
+            "the library refused a message from the Page: a document that does not take the place of its frame's"
+            " document",
+            id="top-level-data-url",
+        ),
+        pytest.param(
+            "blob-of-another-origin",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))"
+            f"\nsend(70, struct.pack('<QBQQQ', 3, 6, 1, 2, 2) + b'blob:http://a.test/x')",
+            "the library refused a message from the Page: a blob: document whose URL is not of its initiator's origin",
+            id="blob-of-another-origin",
         ),
         pytest.param(
             "about-blank-of-no-initiator",
