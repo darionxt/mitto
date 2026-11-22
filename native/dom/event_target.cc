@@ -528,6 +528,16 @@ bool EventTarget::HasEventListeners(std::u16string_view type) const {
   return false;
 }
 
+bool EventTarget::HasCapturingEventListeners(std::u16string_view type) const {
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    if (entry->type() == type && entry->capture()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void EventTarget::RemoveAllEventListeners() {
   // A dispatch that runs skips them from now on.
   while (EventListenerEntry* const entry = first_listener_.Get()) {

@@ -608,6 +608,8 @@ source_set("dom") {
     "svg_elements.h",
     "svg_geometry.cc",
     "svg_geometry.h",
+    "svg_image_element.cc",
+    "svg_image_element.h",
     "svg_length.cc",
     "svg_length.h",
     "svg_lists.cc",

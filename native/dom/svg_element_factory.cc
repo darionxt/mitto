@@ -6,6 +6,7 @@
 
 #include "mitto/dom/svg_element.h"
 #include "mitto/dom/svg_elements.h"
+#include "mitto/dom/svg_image_element.h"
 
 // Upstream: third_party/blink/renderer/core/svg/svg_tag_names.json5
 

@@ -1407,6 +1407,10 @@ GURL Document::CompleteUrl(std::u16string_view url) const {
   return ResolveUrlWithEncoding(base_url_, url, encoding_);
 }
 
+std::string Document::UnresolvedUrlSpec(std::u16string_view url) const {
+  return ::mitto::UnresolvedUrlSpec(base_url_, url, encoding_);
+}
+
 void Document::ProcessBaseElement() {
   // The first href of a base element of the HTML namespace, in tree order.
   const std::u16string* href = nullptr;

@@ -203,24 +203,6 @@ std::optional<std::u16string> HTMLImageElement::ImageSourceURL() const {
   return std::nullopt;
 }
 
-CrossOriginAttribute HTMLImageElement::GetCrossOriginAttribute() const {
-  const std::u16string* value = FindAttribute(u"crossorigin");
-  return CrossOriginAttributeFromValue(
-      value ? std::optional<std::u16string>(*value) : std::nullopt);
-}
-
-FetchReferrerPolicy HTMLImageElement::ReferrerPolicyForFetch() const {
-  const std::u16string* value = FindAttribute(u"referrerpolicy");
-  return value ? FetchReferrerPolicyFromStringWithLegacyKeywords(*value)
-               : FetchReferrerPolicy::kDefault;
-}
-
-FetchPriorityHint HTMLImageElement::GetFetchPriorityHint() const {
-  const std::u16string* value = FindAttribute(u"fetchpriority");
-  return value ? FetchPriorityHintFromAttribute(*value)
-               : FetchPriorityHint::kAuto;
-}
-
 void HTMLImageElement::DispatchLoadEvent() {
   FireSimpleEvent(*this, u"load");
 }

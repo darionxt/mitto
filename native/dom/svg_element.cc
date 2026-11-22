@@ -1,8 +1,11 @@
 #include "mitto/dom/svg_element.h"
 
 #include "base/auto_reset.h"
+#include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_svg_element.h"
+#include "mitto/dom/document.h"
+#include "mitto/dom/event.h"
 #include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/svg_elements.h"
@@ -61,7 +64,66 @@ bool IsOutermostSVGSVGElement(const SVGElement& element) {
          !IsSVGElement(parent);
 }
 
+// HasLoadListener(): a listener of load at the element, or one that captures
+// it at an ancestor.
+bool HasLoadListener(const Element& element) {
+  if (element.HasEventListeners(u"load")) {
+    return true;
+  }
+  for (const Element* ancestor = element.ParentElement(); ancestor;
+       ancestor = ancestor->ParentElement()) {
+    if (ancestor->HasCapturingEventListeners(u"load")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
+
+bool SVGElement::IsStructurallyExternal() const {
+  return false;
+}
+
+bool SVGElement::HaveLoadedRequiredResources() {
+  for (Node* child = FirstChild(); child; child = child->NextSibling()) {
+    if (IsSVGElement(child) &&
+        !static_cast<SVGElement*>(child)->HaveLoadedRequiredResources()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool SVGElement::SendSVGLoadEventIfPossible() {
+  if (!HaveLoadedRequiredResources()) {
+    return false;
+  }
+  if ((IsStructurallyExternal() || LocalName() == u"svg") &&
+      HasLoadListener(*this)) {
+    bindings::EventInit init;
+    Event* const event = Event::Create(u"load", init);
+    event->SetTrusted(true);
+    DispatchEvent(event);
+  }
+  return true;
+}
+
+void SVGElement::SendSVGLoadEventToSelfAndAncestorChainIfPossible() {
+  if (IsOutermostSVGSVGElement(*this)) {
+    return;
+  }
+  // The parent from before the event, which may change the tree. A Page has
+  // no use element's shadow tree to walk out of.
+  Element* const parent = ParentElement();
+  if (!SendSVGLoadEventIfPossible() || GetDocument().LoadEventFinished()) {
+    return;
+  }
+  if (IsSVGElement(parent)) {
+    static_cast<SVGElement*>(parent)
+        ->SendSVGLoadEventToSelfAndAncestorChainIfPossible();
+  }
+}
 
 SVGSVGElement* SVGElement::OwnerSVGElement() const {
   if (IsOutermostSVGSVGElement(*this)) {
@@ -200,12 +262,16 @@ SVGAnimatedLengthList* SVGElement::AnimatedLengthList(
 void SVGElement::SynchronizeAnimatedAttribute(
     const QualifiedName& name,
     const std::optional<std::u16string>& value) {
-  const base::AutoReset<bool> synchronizing(&synchronizing_, true);
-  if (value) {
-    SetSynchronizedLazyAttribute(name, *value);
-  } else {
-    RemoveSynchronizedLazyAttribute(name);
+  {
+    const base::AutoReset<bool> synchronizing(&synchronizing_, true);
+    if (value) {
+      SetSynchronizedLazyAttribute(name, *value);
+    } else {
+      RemoveSynchronizedLazyAttribute(name);
+    }
   }
+  // SVGElement::BaseValueChanged().
+  SvgAttributeChanged(name);
 }
 
 void SVGElement::DidCloneAttributes() {
@@ -239,6 +305,7 @@ void SVGElement::AttributeChanged(const QualifiedName& name,
       animated_values_[i]->AttributeChanged();
     }
   }
+  SvgAttributeChanged(name);
 }
 
 SVGAnimatedPropertyBase* SVGElement::FindAnimated(std::u16string_view attribute,
