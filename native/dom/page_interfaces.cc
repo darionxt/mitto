@@ -47,6 +47,7 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
   window->SetSecureContext(init.secure_context);
   bindings::SetSecureContext(context, init.secure_context);
   window->SetCrossOriginIsolatedCapability(init.cross_origin_isolated);
+  bindings::SetCrossOriginIsolated(context, init.cross_origin_isolated);
   // LocalWindowProxy::Initialize(): the inspector and the embedder hear of the
   // context before its conditional features go in.
   did_create(context);
@@ -91,6 +92,7 @@ v8::Local<v8::Context> NewWorkerContext(v8::Isolate* isolate,
   scope->SetSecureContext(init.secure_context);
   bindings::SetSecureContext(context, init.secure_context);
   scope->SetCrossOriginIsolatedCapability(init.cross_origin_isolated);
+  bindings::SetCrossOriginIsolated(context, init.cross_origin_isolated);
   // Initialize() names the context to the debugger before
   // PrepareForEvaluation() makes the interface object of the global, which
   // installs what the context decides, and then has V8 extend the context.

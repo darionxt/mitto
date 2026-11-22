@@ -5,8 +5,12 @@
 
 namespace mitto {
 
-IdleDeadline::IdleDeadline(base::TimeTicks deadline, bool did_timeout)
-    : deadline_(deadline), did_timeout_(did_timeout) {}
+IdleDeadline::IdleDeadline(base::TimeTicks deadline,
+                           bool did_timeout,
+                           bool cross_origin_isolated_capability)
+    : deadline_(deadline),
+      cross_origin_isolated_capability_(cross_origin_isolated_capability),
+      did_timeout_(did_timeout) {}
 
 IdleDeadline::~IdleDeadline() = default;
 
@@ -20,7 +24,8 @@ double IdleDeadline::TimeRemaining() const {
   if (time_remaining.is_negative()) {
     return 0;
   }
-  return Performance::ClampTimeResolution(time_remaining);
+  return Performance::ClampTimeResolution(time_remaining,
+                                          cross_origin_isolated_capability_);
 }
 
 }  // namespace mitto

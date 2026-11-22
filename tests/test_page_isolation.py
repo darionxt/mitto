@@ -304,3 +304,65 @@ def test_a_shared_array_buffer_that_a_broadcast_channel_carries_arrives_as_null(
     ])"""
 
     assert _evaluate(session, url, script) == [["message", "[object Null]"]] * 2
+
+
+# What a page reads of its clocks, by rule rather than by value: whether every reading is a whole number of steps of 5
+# microseconds, up to a double's rounding, and whether some reading is not one of 100.
+_CLOCKS = """(async () => {
+    const whole = (ms, step) => Math.abs(ms / step - Math.round(ms / step)) < 1e-3;
+    const now = [];
+    const end = performance.now() + 30;
+    while (performance.now() < end) {
+        now.push(performance.now());
+    }
+    const temporal = [];
+    for (let i = 0; i < 2000; i++) {
+        temporal.push(Temporal.Now.instant().epochNanoseconds);
+    }
+    const events = Array.from({length: 200}, () => new Event('x').timeStamp);
+    const frame = await new Promise((resolve) => requestAnimationFrame(resolve));
+    const idle = await new Promise((resolve) => requestIdleCallback((deadline) => resolve(deadline.timeRemaining())));
+    return [
+        now.every((t) => whole(t, 0.005)),
+        now.some((t) => !whole(t, 0.1)),
+        temporal.every((t) => t % 5000n === 0n),
+        temporal.some((t) => t % 100000n !== 0n),
+        events.every((t) => whole(t, 0.005)),
+        [frame, idle, performance.timeOrigin].every((t) => whole(t, 0.005)),
+        typeof performance.measureUserAgentSpecificMemory,
+    ];
+})()"""
+
+
+def test_an_isolated_window_reads_clocks_of_5_microseconds(session: mitto.Session, server: RecordingServer) -> None:
+    url = server.page("/", _BLANK, _ISOLATING)
+
+    assert _evaluate(session, url, _CLOCKS) == [True, True, True, True, True, True, "function"]
+
+
+def test_a_window_that_is_not_isolated_reads_clocks_of_100_microseconds(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", _BLANK)
+
+    assert _evaluate(session, url, _CLOCKS) == [True, False, True, False, True, True, "undefined"]
+
+
+def test_an_isolated_worker_reads_clocks_of_5_microseconds(session: mitto.Session, server: RecordingServer) -> None:
+    url = server.page("/", _BLANK, _ISOLATING)
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/clock.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+    server.route(
+        "/clock.js",
+        b"const whole = (ms, step) => Math.abs(ms / step - Math.round(ms / step)) < 1e-3; const now = [];"
+        b"const end = performance.now() + 30; while (performance.now() < end) { now.push(performance.now()); }"
+        b"postMessage([now.every((t) => whole(t, 0.005)), now.some((t) => !whole(t, 0.1)),"
+        b" typeof performance.measureUserAgentSpecificMemory]);",
+        _JS,
+        [_COEP],
+    )
+
+    # measureUserAgentSpecificMemory() is exposed on a window, a service worker and a shared worker alone.
+    assert _evaluate(session, url, script) == [True, True, "undefined"]

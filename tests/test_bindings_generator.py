@@ -649,12 +649,17 @@ def test_a_nullable_reflected_attribute_reads_its_keywords() -> None:
             "((data->is_window() && (features.IsEnabled(RuntimeFeature::kF))) || !data->is_window())",
         ),
         (Condition(other=("ContextEnabled=X",)), None),
-        (Condition(other=("CrossOriginIsolated",)), None),
+        (Condition(other=("CrossOriginIsolated",)), "data->cross_origin_isolated()"),
+        (
+            Condition(other=("CrossOriginIsolatedOrRuntimeEnabled=F,G",)),
+            "(data->cross_origin_isolated() || features.IsEnabled(RuntimeFeature::kF) || "
+            "features.IsEnabled(RuntimeFeature::kG))",
+        ),
     ],
 )
 def test_a_page_installs_what_its_conditions_allow(condition: Condition, test: str | None) -> None:
     # A Page is a secure top-level window with no origin trials and nothing a context enables, and so are its dedicated
-    # workers, each of whose isolates has only workers' contexts.
+    # workers, each of whose isolates has only workers' contexts. Each context is cross-origin isolated or not.
     assert condition_test(condition, "Thing.x") == test
 
 

@@ -118,8 +118,9 @@ double Event::TimeStamp() const {
   // Blink's Event::timeStamp(): the time it was made, from the window's time
   // origin, through the performance timeline's clamp, so that it falls
   // between two calls of performance.now() around its making.
+  const ExecutionContext& context = ExecutionContext::Current();
   return Performance::MonotonicTimeToDOMHighResTimeStamp(
-      ExecutionContext::Current().TimeOrigin(), created_);
+      context.TimeOrigin(), created_, context.CrossOriginIsolatedCapability());
 }
 
 void Event::InitEvent(const std::u16string& type,

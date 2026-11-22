@@ -255,10 +255,13 @@ def condition_test(condition: Condition, where: str) -> str | None:
                     "!data->is_window()" if worker_test == "true" else f"(!data->is_window() && {worker_test})"
                 )
             tests.append(parts[0] if len(parts) == 1 else "(" + " || ".join(parts) + ")")
+        elif other == "CrossOriginIsolated":
+            tests.append("data->cross_origin_isolated()")
         elif other.startswith("CrossOriginIsolatedOrRuntimeEnabled="):
             names = other.removeprefix("CrossOriginIsolatedOrRuntimeEnabled=").split(",")
-            tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
-        elif other in ("CrossOriginIsolated", "IsolatedContext", "InjectionMitigated") or other.startswith(
+            features_on = " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names)
+            tests.append(f"(data->cross_origin_isolated() || {features_on})")
+        elif other in ("IsolatedContext", "InjectionMitigated") or other.startswith(
             "ContextEnabled="
         ):
             return None
