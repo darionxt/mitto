@@ -23,6 +23,7 @@ from tests.local_server import QuietServer
 
 _TIMEOUT_SECONDS = 60
 _PAGE = b"<!doctype html><title>t</title><body><p id=x>top</p>"
+_FRAMED_PAGE = b"<!doctype html><title>t</title><body><iframe src=/framed-child></iframe>"
 _TESTS = Path(__file__).parent
 _CASES = (_TESTS / "frames_cases.js").read_text()
 _AS_CHROME = json.loads((_TESTS / "data" / "frames_cases.json").read_text())
@@ -42,7 +43,7 @@ def page_program(native_library: Any) -> None:
 @pytest.fixture
 def page_url() -> Iterator[str]:
     """The URL of a page with a paragraph on 127.0.0.1, which is a secure context, where /from-... answers with its
-    request's Referer."""
+    request's Referer and /framed is a page whose markup holds an iframe of another URL."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -52,7 +53,7 @@ def page_url() -> Iterator[str]:
             if self.path.startswith("/from-"):
                 body, content_type = (self.headers.get("Referer") or "none").encode(), "text/plain"
             else:
-                body, content_type = _PAGE, "text/html"
+                body, content_type = (_FRAMED_PAGE if self.path == "/framed" else _PAGE), "text/html"
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -92,6 +93,39 @@ def test_srcdoc_and_about_blank_frames_are_chrome_s(page_url: str) -> None:
     assert set(record) == set(as_chrome)
     for section, expected in as_chrome.items():
         assert record[section] == expected, section
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_whose_markup_holds_a_frame_of_another_url_loads(page_url: str) -> None:
+    # A frame's initial about:blank holds back no load, as Blink's FrameLoader::Init() suppresses its finish: the
+    # parent's load waits only for a frame's navigation that waits, or for a document of the frame that loads.
+    with mitto.Session() as session, session._open_page(page_url + "framed", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate("[document.readyState, frames.length]") == ["complete", 1]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_indexeddb_open_of_a_frame_that_goes_lets_its_connection_go(page_url: str) -> None:
+    # Each frame asks for a database and goes before the open gives its connection, which the library then closes from
+    # a task of its own, not inside the upgrade that it runs: the Session goes on, and the top-level document still
+    # opens a database.
+    script = """
+      (async () => {
+        for (let i = 0; i < 20; i++) {
+          const element = document.createElement('iframe');
+          document.body.appendChild(element);
+          element.contentWindow.indexedDB.open('gone-' + i);
+          element.remove();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return await new Promise((resolve) => {
+          const request = indexedDB.open('after');
+          request.onsuccess = () => resolve(request.result.name);
+          request.onerror = () => resolve('error');
+        });
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == "after"
 
 
 @pytest.mark.usefixtures("page_program")

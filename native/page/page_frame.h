@@ -48,6 +48,7 @@
 namespace mitto {
 
 class AnimationFrameController;
+class CacheStorageHost;
 struct ChromeObjectData;
 class DOMTimerCoordinator;
 class Document;
@@ -56,8 +57,13 @@ class DocumentLoader;
 class IdleTaskController;
 class PageFetcher;
 class HTMLFrameOwnerElement;
+class IndexedDbHost;
 class PageWorkerStarter;
 class ScriptRunner;
+class SessionCacheStorage;
+class SessionIndexedDb;
+class SessionStorageBuckets;
+class StorageBucketHost;
 class Window;
 class WindowTasks;
 
@@ -184,6 +190,13 @@ class PageFrame final : public NavigationClient, public Frame {
   // animation frames, fetches, tasks and workers, and the inspector's and
   // window.chrome's hold on it.
   void DetachWindow();
+  // The frame's Cache API, IndexedDB and Storage Buckets: its own for a child
+  // frame, the runner's for the top-level frame.
+  CacheStorageHost* cache_storage_host() const;
+  IndexedDbHost* indexed_db_host() const;
+  StorageBucketHost* storage_bucket_host() const;
+  // Gives `document`, of an HTTP or HTTPS origin, the frame's storage.
+  void GiveStorage(Document& document) const;
   // The frame's children go, each as Detach() has it, when the frame's
   // document goes and its elements with it. The Session forgets them with the
   // document, so it hears of none of them going.
@@ -258,6 +271,12 @@ class PageFrame final : public NavigationClient, public Frame {
   std::unique_ptr<PageFetcher> fetcher_;
   std::unique_ptr<WindowTasks> window_tasks_;
   std::unique_ptr<PageWorkerStarter> worker_starter_;
+  // A child frame's own Cache API, IndexedDB and Storage Buckets, which ask
+  // the Session as the frame's current document, as each of Blink's frames
+  // has remotes of its own. The top-level frame's are the runner's.
+  std::unique_ptr<SessionCacheStorage> own_cache_storage_;
+  std::unique_ptr<SessionIndexedDb> own_indexed_db_;
+  std::unique_ptr<SessionStorageBuckets> own_storage_buckets_;
   // What window.chrome of the current window reads, which the runner keeps
   // as long as the Page, for a callback of a window that has gone.
   raw_ptr<ChromeObjectData> chrome_object_data_ = nullptr;

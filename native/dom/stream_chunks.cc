@@ -53,8 +53,8 @@ bool BytesOfBufferSource(v8::Isolate* isolate,
   return false;
 }
 
-v8::Local<v8::Uint8Array> NewUint8Array(v8::Isolate* isolate,
-                                        base::span<const uint8_t> bytes) {
+v8::Local<v8::ArrayBuffer> NewArrayBuffer(v8::Isolate* isolate,
+                                          base::span<const uint8_t> bytes) {
   const v8::Local<v8::ArrayBuffer> buffer =
       v8::ArrayBuffer::New(isolate, bytes.size());
   if (!bytes.empty()) {
@@ -63,7 +63,12 @@ v8::Local<v8::Uint8Array> NewUint8Array(v8::Isolate* isolate,
         base::span(static_cast<uint8_t*>(buffer->Data()), bytes.size()))
         .copy_from(bytes);
   }
-  return v8::Uint8Array::New(buffer, 0, bytes.size());
+  return buffer;
+}
+
+v8::Local<v8::Uint8Array> NewUint8Array(v8::Isolate* isolate,
+                                        base::span<const uint8_t> bytes) {
+  return v8::Uint8Array::New(NewArrayBuffer(isolate, bytes), 0, bytes.size());
 }
 
 }  // namespace mitto

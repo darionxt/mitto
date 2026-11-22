@@ -34,8 +34,11 @@
 #include "mitto/page/page_isolate.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/script_runner.h"
+#include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "mitto/page/session_indexed_db.h"
 #include "mitto/page/session_sender.h"
+#include "mitto/page/session_storage_buckets.h"
 #include "url/origin.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
@@ -133,6 +136,20 @@ void PageFrame::Start(const PageConnection& connection) {
   context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   if (parent_) {
+    // The frame's own storage, which asks as each of its documents in turn.
+    EventLoop* const event_loop = EventLoop::Get();
+    own_cache_storage_ = std::make_unique<SessionCacheStorage>();
+    own_cache_storage_->SetSender(
+        runner_->sender(), event_loop->TaskRunner(TaskType::kMiscPlatformAPI),
+        runner_->refuse());
+    own_indexed_db_ = std::make_unique<SessionIndexedDb>();
+    own_indexed_db_->SetSender(
+        runner_->sender(), event_loop->TaskRunner(TaskType::kDatabaseAccess),
+        runner_->refuse());
+    own_storage_buckets_ = std::make_unique<SessionStorageBuckets>();
+    own_storage_buckets_->SetSender(
+        runner_->sender(), event_loop->TaskRunner(TaskType::kMiscPlatformAPI),
+        runner_->refuse());
     const v8::Context::Scope context_scope(context());
     Document& document = window_->GetDocument();
     document.SetOrigin(origin);
@@ -141,9 +158,7 @@ void PageFrame::Start(const PageConnection& connection) {
     // HTTPS origin.
     if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
       document.SetCookieJar(&runner_->cookie_jar());
-      document.SetCacheStorageHost(runner_->cache_storage_host());
-      document.SetIndexedDbHost(runner_->indexed_db_host());
-      document.SetStorageBucketHost(runner_->storage_bucket_host());
+      GiveStorage(document);
     }
   }
   AttachWindow(connection, PageDocumentCommitted());
@@ -182,10 +197,17 @@ void PageFrame::SetName(std::u16string name) {
 }
 
 bool PageFrame::IsLoading() const {
-  // Frame::IsLoading(): while a navigation waits or the document loads.
-  return provisional_ || pending_local_navigation_ != 0 ||
-         (window_ && window_->HasDocument() &&
-          !window_->GetDocument().LoadEventFinished());
+  // Frame::IsLoading(): while a navigation waits or the document loads. A
+  // frame's initial about:blank, whose load event never fires, holds nothing
+  // back, as Blink's FrameLoader::Init() suppresses its finish.
+  if (provisional_ || pending_local_navigation_ != 0) {
+    return true;
+  }
+  if (!window_ || !window_->HasDocument()) {
+    return false;
+  }
+  const Document& document = window_->GetDocument();
+  return !document.IsInitialEmptyDocument() && !document.LoadEventFinished();
 }
 
 Frame* PageFrame::CreateChildFrame(HTMLFrameOwnerElement& owner,
@@ -280,9 +302,7 @@ void PageFrame::CommitWithoutNetwork(LocalNavigation navigation) {
   document->SetFallbackBaseUrl(navigation.fallback_base_url);
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
-    document->SetCacheStorageHost(runner_->cache_storage_host());
-    document->SetIndexedDbHost(runner_->indexed_db_host());
-    document->SetStorageBucketHost(runner_->storage_bucket_host());
+    GiveStorage(*document);
   }
   // The body, the srcdoc or nothing, goes to the parser as a response's would.
   local_body_ =
@@ -315,13 +335,36 @@ void PageFrame::Detach() {
   if (window_) {
     DetachWindow();
   }
-  // The Session forgets the frame's document and everything under it.
+  // The Session forgets the frame's document and everything under it, so it
+  // hears nothing more of the frame's storage, which outlives the frame for
+  // what its scripts made of it.
   runner_->sender()->SendContextGone(document);
+  runner_->KeepRemovedFrameStorage(std::move(own_cache_storage_),
+                                   std::move(own_indexed_db_),
+                                   std::move(own_storage_buckets_));
   if (HTMLFrameOwnerElement* const owner = owner_.Get()) {
     owner->ClearContentFrame();
   }
   // This goes now.
   parent_->RemoveChild(*this);
+}
+
+CacheStorageHost* PageFrame::cache_storage_host() const {
+  return parent_ ? own_cache_storage_.get() : runner_->cache_storage_host();
+}
+
+IndexedDbHost* PageFrame::indexed_db_host() const {
+  return parent_ ? own_indexed_db_.get() : runner_->indexed_db_host();
+}
+
+StorageBucketHost* PageFrame::storage_bucket_host() const {
+  return parent_ ? own_storage_buckets_.get() : runner_->storage_bucket_host();
+}
+
+void PageFrame::GiveStorage(Document& document) const {
+  document.SetCacheStorageHost(cache_storage_host());
+  document.SetIndexedDbHost(indexed_db_host());
+  document.SetStorageBucketHost(storage_bucket_host());
 }
 
 void PageFrame::DetachChildren() {
@@ -368,9 +411,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetOrigin(origin);
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
-    document->SetCacheStorageHost(runner_->cache_storage_host());
-    document->SetIndexedDbHost(runner_->indexed_db_host());
-    document->SetStorageBucketHost(runner_->storage_bucket_host());
+    GiveStorage(*document);
   }
   document->SetLoadTiming(&document_load_timing());
   // The referrer is the full URL of the document that started it, its
@@ -611,9 +652,7 @@ Document& PageFrame::CommitDocument(
   // there; another's origin is opaque to them.
   if (url.SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
-    document->SetCacheStorageHost(runner_->cache_storage_host());
-    document->SetIndexedDbHost(runner_->indexed_db_host());
-    document->SetStorageBucketHost(runner_->storage_bucket_host());
+    GiveStorage(*document);
   }
   Window::Current().SetDocument(document);
   return *document;
@@ -682,14 +721,15 @@ uint64_t PageFrame::SendDocumentCommitted(PageDocumentCommitted committed) {
       runner_->sender()->SendContext(committed.parent, encode);
     }
   }
-  // What the document before asked of the Session's storage goes with it.
-  if (CacheStorageHost* const host = runner_->cache_storage_host()) {
+  // What the frame's document before asked of the Session's storage goes
+  // with it.
+  if (CacheStorageHost* const host = cache_storage_host()) {
     host->DocumentCommitted(committed.document);
   }
-  if (StorageBucketHost* const host = runner_->storage_bucket_host()) {
+  if (StorageBucketHost* const host = storage_bucket_host()) {
     host->DocumentCommitted(committed.document);
   }
-  if (IndexedDbHost* const host = runner_->indexed_db_host()) {
+  if (IndexedDbHost* const host = indexed_db_host()) {
     host->DocumentCommitted(committed.document);
   }
   return committed.document;

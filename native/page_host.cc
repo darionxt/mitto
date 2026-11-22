@@ -23,6 +23,7 @@
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "mitto/cross_origin_resource_policy.h"
 #include "mitto/mime_types.h"
 #include "mitto/mitto.h"
 #include "mitto/page_cache_storage.h"
@@ -724,8 +725,9 @@ class KeepaliveShare {
 // The checks that a Page's request is held to on each of its responses,
 // redirects included, before the redirect is followed or any of the response
 // goes to the Page, as Chrome's network service and browser hold them: the
-// Fetch Standard's CORS check, mode same-origin's, and a worker's embedder
-// policy. A keepalive request takes them along when it outlives its Page.
+// Fetch Standard's CORS check, mode same-origin's, Cross-Origin-Resource-
+// Policy, and a worker's embedder policy. A keepalive request takes them along
+// when it outlives its Page.
 // Upstream: services/network/cors/cors_url_loader.cc
 // Upstream: services/network/public/cpp/cors/cors.cc
 // Upstream: content/browser/worker_host/dedicated_worker_host.cc
@@ -748,6 +750,17 @@ class PageHost::ResponseChecks {
   int Check(const RequestEvent& event) {
     if (!AllowsByCors(event)) {
       return net::ERR_FAILED;
+    }
+    // URLLoader::OnReceivedRedirect() and OnResponseStarted(): each response
+    // of a request of mode no-cors is held to its
+    // Cross-Origin-Resource-Policy, with the embedder policy of the context
+    // that asked.
+    if (checks_.no_cors &&
+        IsBlockedByResourcePolicy(
+            GURL(event.url), document_origin_,
+            HeaderValue(event.headers, "Cross-Origin-Resource-Policy"),
+            event.included_credentials, checks_.embedder_policy)) {
+      return net::ERR_BLOCKED_BY_RESPONSE;
     }
     // DedicatedWorkerHost::DidStartScriptLoad(): a worker's script whose
     // embedder policy is not compatible with its creator's fails, with
@@ -1597,7 +1610,8 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
           .credentials = options_credentials == CredentialsMode::kInclude,
           .keepalive = asked.keepalive,
           .is_navigation = is_navigation,
-          .creator_embedder_policy = std::move(creator_embedder_policy)});
+          .creator_embedder_policy = std::move(creator_embedder_policy),
+          .embedder_policy = contexts_.at(settings_id).coep});
 }
 
 void PageHost::OnCancel(uint64_t number) {
@@ -3038,6 +3052,8 @@ void PageHost::FillContextFetch(uint64_t id,
       tree.cross_site || fetch.opaque_initiator.has_value();
   fetch.cross_origin_ancestor = tree.cross_origin;
   fetch.from_worker = context.is_worker;
+  fetch.credentialless_client =
+      context.coep.value == CrossOriginEmbedderPolicyValue::kCredentialless;
 }
 
 GURL PageHost::TopDocumentUrl() const {

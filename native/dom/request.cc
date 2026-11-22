@@ -11,10 +11,13 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
+#include "mitto/bindings/v8_blob.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_request.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/blob.h"
+#include "mitto/dom/blob_bytes_consumer.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/bytes_consumer.h"
 #include "mitto/dom/document.h"
@@ -90,6 +93,16 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
                               v8::Local<v8::Value> value,
                               std::optional<std::string>* content_type,
                               bindings::ExceptionState& exception_state) {
+  if (Blob* const blob = bindings::V8Blob::ToWrappable(isolate, value)) {
+    if (!blob->GetBlobDataHandle()->GetType().empty()) {
+      *content_type = blob->GetBlobDataHandle()->GetType();
+    }
+    return BodyStreamBuffer::Create(
+        isolate,
+        bindings::MakeGarbageCollected<BlobBytesConsumer>(
+            &ExecutionContext::Current(), blob->GetBlobDataHandle()),
+        /*signal=*/nullptr);
+  }
   std::string bytes;
   if (value->IsArrayBuffer()) {
     const std::shared_ptr<v8::BackingStore> store =
@@ -378,6 +391,10 @@ Request* Request::CreateFromStored(
 
 Request::Request() = default;
 Request::~Request() = default;
+
+std::string Request::MimeType() const {
+  return base::ToLowerASCII(headers_->GetValue("content-type").value_or(""));
+}
 
 BodyStreamBuffer* Request::BodyBuffer() const {
   return body_buffer_.Get();
