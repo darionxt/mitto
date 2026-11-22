@@ -49,8 +49,15 @@ parent.timingAtParse = {
 };
 </script>"""
 # The request headers that /echo gives back, which a frame's navigation sends.
-_ECHOED = ("accept", "referer", "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site", "sec-fetch-user",
-           "upgrade-insecure-requests")
+_ECHOED = (
+    "accept",
+    "referer",
+    "sec-fetch-dest",
+    "sec-fetch-mode",
+    "sec-fetch-site",
+    "sec-fetch-user",
+    "upgrade-insecure-requests",
+)
 
 
 def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], bytes]:
@@ -68,7 +75,7 @@ def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], 
     if path == "/echo":
         echoed = {name: headers[name] for name in _ECHOED if name in headers}
         script = html.escape(json.dumps(echoed, sort_keys=True), quote=False)
-        return 200, html_type, f'<!doctype html><script type=application/json id=h>{script}</script>'.encode()
+        return 200, html_type, f"<!doctype html><script type=application/json id=h>{script}</script>".encode()
     if path == "/204":
         return 204, {}, b""
     if path == "/drop":
