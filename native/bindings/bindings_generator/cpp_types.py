@@ -497,6 +497,7 @@ class TypeMapper:
             TypeKind.BOOLEAN,
             TypeKind.DICTIONARY,
             TypeKind.FLOATING_POINT,
+            TypeKind.INTEGER,
             TypeKind.STRING,
             TypeKind.INTERFACE,
             TypeKind.SEQUENCE,
@@ -509,13 +510,19 @@ class TypeMapper:
             if member.kind is TypeKind.BUFFER_SOURCE and member.name not in _SPAN_MEMBERS:
                 # Of the buffer sources, those of BufferSource.
                 raise self._refuse(idl_type, where, "a union")
+            if member.kind is TypeKind.INTEGER and member.name not in _CONVERTED_INTEGERS:
+                raise self._refuse(idl_type, where, "a union")
             if member.kind in (TypeKind.SEQUENCE, TypeKind.RECORD):
                 # Checks that its elements convert.
                 self.value_type(member, where)
         # Interfaces with a class can be any number. Of the others, Web IDL's conversion takes the first that fits, so
-        # the writer allows one of each.
+        # the writer allows one of each, and one numeric type, an integer or a floating point one.
         kinds = [
-            (member.kind, member.name) if member.kind is TypeKind.BUFFER_SOURCE else member.kind
+            (member.kind, member.name)
+            if member.kind is TypeKind.BUFFER_SOURCE
+            else TypeKind.FLOATING_POINT
+            if member.kind is TypeKind.INTEGER
+            else member.kind
             for member in idl_type.members
             if member.kind is not TypeKind.INTERFACE
         ]
@@ -534,6 +541,8 @@ class TypeMapper:
             return "bool"
         if member.kind is TypeKind.FLOATING_POINT:
             return "float" if member.name.endswith("float") else "double"
+        if member.kind is TypeKind.INTEGER:
+            return _INTEGERS[member.name]
         if member.kind is TypeKind.STRING and member.name == "ByteString":
             return "std::string"
         if member.kind is TypeKind.STRING:

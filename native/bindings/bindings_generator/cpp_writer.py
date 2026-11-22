@@ -2053,7 +2053,8 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
 
     Web IDL tries the union's members in a fixed order: a dictionary for undefined and null, then an object of each
     interface, then an ArrayBuffer and a view, then a dictionary for any other object, then a boolean for a boolean, a
-    number for a Number, and then, for what is left, a string, or else a number, or else a boolean.
+    number for a Number, and then, for what is left, a string, or else a number, or else a boolean. The number is
+    the union's one numeric member, an integer or a floating point one, which converts as its own type does.
     """
     alternatives = ", ".join(types.union_alternative(member) for member in union.members)
     signature = f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result)"
@@ -2071,7 +2072,9 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
     sequence = next((member for member in union.members if member.kind is TypeKind.SEQUENCE), None)
     record = next((member for member in union.members if member.kind is TypeKind.RECORD), None)
     has_boolean = any(member.kind is TypeKind.BOOLEAN for member in union.members)
-    number = next((member for member in union.members if member.kind is TypeKind.FLOATING_POINT), None)
+    number = next(
+        (member for member in union.members if member.kind in (TypeKind.FLOATING_POINT, TypeKind.INTEGER)), None
+    )
     string = next((member for member in union.members if member.kind is TypeKind.STRING), None)
     convert_dictionary = [
         f"  {dictionary.name if dictionary else ''} dictionary;",

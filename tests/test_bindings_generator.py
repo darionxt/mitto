@@ -386,6 +386,27 @@ def test_a_union_converts_a_number_to_its_floating_point_member() -> None:
     )
 
 
+def test_a_union_converts_a_number_and_what_no_other_member_takes_to_its_integer_member() -> None:
+    # NotificationOptions' vibrate: (unsigned long or sequence<unsigned long>).
+    types = TypeMapper(frozenset(), frozenset())
+    integer = IdlType(TypeKind.INTEGER, "unsigned long")
+    sequence = IdlType(TypeKind.SEQUENCE, "sequence<unsigned long>", members=(integer,))
+    union = IdlType(TypeKind.UNION, "(unsigned long or sequence<unsigned long>)", members=(integer, sequence))
+
+    assert types.value_type(union, "a") == "UnsignedLongOrUnsignedLongSequence"
+    assert types.union_alternative(integer) == "uint32_t"
+    header, source = cpp_writer._write_union("UnsignedLongOrUnsignedLongSequence", union, types)  # pyright: ignore[reportPrivateUsage]
+    text = "\n".join(source)
+
+    assert "using UnsignedLongOrUnsignedLongSequence = std::variant<uint32_t, std::vector<uint32_t>>;" in header
+    # An object with an @@iterator is the sequence; a Number, and then anything else, converts as the integer does.
+    assert text.index("GetIteratorMethod(") < text.index("if (value->IsNumber()) {")
+    assert text.count("FromV8Integer(isolate, value, &number)") == 2
+    # Web IDL's union has one numeric type at most.
+    with pytest.raises(UnhandledError, match="a union"):
+        types.value_type(dataclasses.replace(union, members=(integer, IdlType(TypeKind.FLOATING_POINT, "double"))), "b")
+
+
 def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -> None:
     types = TypeMapper(frozenset(), frozenset({"Options"}))
     union = IdlType(
