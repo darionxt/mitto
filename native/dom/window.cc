@@ -307,7 +307,8 @@ mitto::CookieStore* Window::CookieStore() {
   return cookie_store_.Get();
 }
 
-mitto::CacheStorage* Window::Caches(bindings::ExceptionState& exception_state) {
+mitto::CacheStorage* Window::Caches(
+    bindings::ExceptionState& exception_state) {
   // GlobalCacheStorage::CanCreateCacheStorage(): a document whose origin is
   // opaque, as one that the Session did not load over HTTP or HTTPS has, may
   // not.
