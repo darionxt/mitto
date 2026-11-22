@@ -326,7 +326,7 @@ _AT_RULES = {
 def test_an_at_rule_whose_prelude_does_not_parse_ends_no_imports(
     session: mitto.Session, server: RecordingServer
 ) -> None:
-    styles = []
+    styles: list[str] = []
     for kind, rules in _AT_RULES.items():
         for i, rule in enumerate(rules):
             server.route(f"/{kind}-{i}.css", b"p {}", _CSS)
