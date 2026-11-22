@@ -17,6 +17,7 @@
 #include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_encoding_registry.h"
 #include "mitto/encoding/text_resource_decoder.h"
+#include "mitto/encoding/url_with_encoding.h"
 #include "mitto/header_rules.h"
 
 namespace mitto {
@@ -176,11 +177,35 @@ void StyleRuleImport::RequestStyleSheet() {
   const GURL url = parent->BaseUrl().is_valid()
                        ? parent->BaseUrl().Resolve(href)
                        : document->CompleteUrl(href);
-  // A sheet that imports itself, or one above it, imports nothing.
+  if (!url.is_valid()) {
+    // Blink's KURL keeps the text of a URL that does not resolve, and the
+    // fetcher blocks it. Empty text, as of a relative URL against a base of
+    // about:blank, matches the null URL of an inline sheet above it, which
+    // the check for a cycle takes as one, so that it imports nothing.
+    const std::string text =
+        parent->BaseUrl().is_valid()
+            ? UnresolvedUrlSpec(parent->BaseUrl(), href, std::string_view())
+            : document->UnresolvedUrlSpec(href);
+    if (text.empty()) {
+      for (const StyleSheetContents* sheet = parent; sheet;
+           sheet = sheet->ParentStyleSheet()) {
+        if (sheet->OriginalUrl().is_empty()) {
+          return;
+        }
+      }
+    }
+    FailBlockedRequest();
+    return;
+  }
+  // A sheet that imports itself, or one above it, imports nothing. An inline
+  // sheet's base URL is the document's, as Blink's parser context gives it,
+  // so that @import "" imports nothing either.
   const StyleSheetContents* root = parent;
   for (const StyleSheetContents* sheet = parent; sheet;
        sheet = sheet->ParentStyleSheet()) {
-    if (EqualIgnoringFragment(url, sheet->BaseUrl()) ||
+    const GURL& base =
+        sheet->BaseUrl().is_valid() ? sheet->BaseUrl() : document->BaseUrl();
+    if (EqualIgnoringFragment(url, base) ||
         EqualIgnoringFragment(url, sheet->OriginalUrl())) {
       return;
     }
@@ -205,11 +230,21 @@ void StyleRuleImport::RequestStyleSheet() {
   params.render_blocking = root->RenderBlocking();
   Resource* const resource = document->Fetcher().RequestResource(params);
   if (!resource) {
+    // A document of no window, whose null fetch context Blink gives it.
+    FailBlockedRequest();
     return;
   }
   resource_ = resource;
   loading_ = true;
   resource->AddClient(this);
+}
+
+void StyleRuleImport::FailBlockedRequest() {
+  // StyleSheetContents::NotifyLoadedSheet() of a resource with an error.
+  if (StyleSheetContents* const parent = parent_.Get()) {
+    parent->SetLoadErrorOccurred();
+    parent->CheckLoaded();
+  }
 }
 
 void StyleRuleImport::NotifyFinished(Resource& resource) {

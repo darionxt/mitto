@@ -126,11 +126,13 @@ void HTMLStyleElement::Process() {
   const std::u16string* media = FindAttribute(u"media");
   const bool media_matches = !media || MediaAttributeMatches(document, *media);
   // ComputePendingSheetTypeAndRenderBlockingBehavior(), as a link's sheet
-  // has it.
+  // has it. A document of no window, as DOMParser's, has no scripts or
+  // rendering to hold back, and its parser goes on past a sheet whose import
+  // waits, as in Chrome.
   Document::PendingSheetType sheet_type =
       Document::PendingSheetType::kNonBlocking;
   bool render_blocking = false;
-  if (media_matches) {
+  if (media_matches && document.DefaultView()) {
     if (created_by_parser_) {
       HTMLElement* const body = document.Body();
       sheet_type = Document::PendingSheetType::kBlocking;
@@ -201,29 +203,39 @@ void HTMLStyleElement::SheetLoaded(bool error) {
 
 void HTMLStyleElement::ScheduleEvent(bool loaded) {
   Document& document = GetDocument();
+  // The old document of a window that a navigation has replaced fires
+  // nothing. One of no window, as DOMImplementation and DOMParser make,
+  // fires from the tasks of the window whose script made it, as Blink's
+  // Document::GetTaskRunner() takes its execution context's.
   Window* const window = document.DefaultView();
-  if (!window || !window->HasContext() || &window->GetDocument() != &document) {
+  if (window &&
+      (!window->HasContext() || &window->GetDocument() != &document)) {
     return;
   }
-  WindowTasks* const tasks = window->GetTasks();
+  WindowTasks* const tasks = document.GetTasks();
   if (!tasks) {
     return;
   }
   // From the networking task source, so that the sheet applies before the
-  // next script loads, holding the load event back until it fires.
-  document.IncrementLoadEventDelayCount();
+  // next script loads, holding a window's load event back until it fires.
+  const bool delays_load_event = window != nullptr;
+  if (delays_load_event) {
+    document.IncrementLoadEventDelayCount();
+  }
   tasks->PostTask(
       TaskType::kNetworking,
       base::BindOnce(
           [](const cppgc::Persistent<HTMLStyleElement>& style,
-             const cppgc::WeakPersistent<Document>& document, bool loaded) {
+             const cppgc::WeakPersistent<Document>& document, bool loaded,
+             bool delays_load_event) {
             FireSimpleEvent(*style, loaded ? u"load" : u"error");
-            if (document) {
+            if (delays_load_event && document) {
               document->DecrementLoadEventDelayCountAndCheckLoadEvent();
             }
           },
           cppgc::Persistent<HTMLStyleElement>(this),
-          cppgc::WeakPersistent<Document>(&document), loaded));
+          cppgc::WeakPersistent<Document>(&document), loaded,
+          delays_load_event));
 }
 
 }  // namespace mitto

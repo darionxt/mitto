@@ -289,6 +289,59 @@ def test_a_sheet_for_other_media_an_alternate_or_a_scripts_holds_no_script_back(
     assert asked_early
 
 
+# Style elements in documents that no window shows, and in the page's own, each with what it imports, and the events
+# they fire in turn.
+_UNSHOWN_STYLES = """
+new Promise(resolve => {
+  const events = [];
+  const style = (doc, name, text) => {
+    const element = doc.createElement('style');
+    element.onload = () => events.push(`${name} load`);
+    element.onerror = () => events.push(`${name} error`);
+    element.textContent = text;
+    return element;
+  };
+  const made = document.implementation.createHTMLDocument();
+  made.head.append(style(made, 'made relative', '@import url("/relative.css");'));
+  made.head.append(style(made, 'made plain', 'p {}'));
+  made.head.append(style(made, 'made data', '@import url("data:text/css,p{}");'));
+  const parsed = new DOMParser().parseFromString('<style>@import url("/parsed.css");</style><p>after</p>', 'text/html');
+  const imported = parsed.querySelector('style');
+  imported.onload = () => events.push('parsed load');
+  imported.onerror = () => events.push('parsed error');
+  document.head.append(style(document, 'page invalid', '@import url("http://[");'));
+  document.head.append(style(document, 'page itself', '@import url("");'));
+  setTimeout(() => resolve({events, parsed: parsed.body.textContent}), 500);
+})
+"""
+
+
+def test_a_style_element_of_a_document_with_no_window_fires_load_or_error(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", "<p>page</p>")
+
+    with _open_page(session, url) as page:
+        result = page.evaluate(_UNSHOWN_STYLES, timeout=TIMEOUT_SECONDS)
+
+    # What Chrome 157 gives. A document that no window shows fetches nothing: an import goes to its fetcher, which
+    # blocks it, so the sheet errs, but a relative URL against the base of about:blank resolves to nothing, which the
+    # check for a cycle takes as the inline sheet's own null URL, so that it imports nothing. The page's own sheet
+    # errs for a URL that does not resolve, and imports nothing for its own URL.
+    assert result == {
+        "events": [
+            "made relative load",
+            "made plain load",
+            "made data error",
+            "parsed error",
+            "page invalid error",
+            "page itself load",
+        ],
+        "parsed": "after",
+    }
+    assert without_favicon(server.paths()) == ["/"]
+
+
 def test_link_and_style_elements_fire_load_or_error_once_their_imports_end(
     session: mitto.Session, server: RecordingServer
 ) -> None:
