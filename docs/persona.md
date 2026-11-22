@@ -210,6 +210,8 @@ The kinds after the first four come from [the cases of documents](baselines.md#d
 | `beacon` | `beacon_text`, and `beacon_blob`, a body with no `Content-Type`, for the priority | `beacon_text`. A page writes JSON as text | `client_hints_fetch_post` |
 | `iframe` | `frame_same_origin` | None | `client_hints_navigation`, in a navigation's order, but `Sec-Fetch-User`, which a frame's navigation has not |
 | `favicon` | `favicon` | None | `client_hints_image` |
+| `module_json` | `module_json` | None | `client_hints_script` |
+| `prefetch` | `prefetch` | None | `client_hints_script` |
 
 A `User-Agent` that comes after `Referer` in a Baseline is `//net`'s, as on a worker's script, so the kind has no line for it.
 

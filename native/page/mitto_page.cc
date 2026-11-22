@@ -6,12 +6,14 @@
 // what the script returns, as String() would write it, or what the promise it
 // returns was fulfilled with.
 // The context's document is about:blank's, or with --html= the one that the
-// HTML parser builds from MARKUP. SCRIPT "-" reads the script from standard
-// input, for one longer than a command line holds. Both are in UTF-8.
+// HTML parser builds from MARKUP. With --worker, the context is a dedicated
+// worker's, whose global object is a DedicatedWorkerGlobalScope, with no
+// document. SCRIPT "-" reads the script from standard input, for one longer
+// than a command line holds. Both are in UTF-8.
 //
 // Usage: mitto_page [--enable-blink-features=NAMES]
 //                   [--disable-blink-features=NAMES] [--js-flags=FLAGS]
-//                   [--html=MARKUP] SCRIPT
+//                   [--html=MARKUP | --worker] SCRIPT
 //        mitto_page [--enable-blink-features=NAMES]
 //                   [--disable-blink-features=NAMES] [--js-flags=FLAGS]
 //                   --session=CHANNEL,PARENT
@@ -39,6 +41,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -52,7 +55,6 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
@@ -69,6 +71,7 @@
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
@@ -124,8 +127,8 @@ constexpr int kWrongArguments = 2;
 
 constexpr std::string_view kUsage =
     "usage: mitto_page [--enable-blink-features=NAMES] "
-    "[--disable-blink-features=NAMES] [--js-flags=FLAGS] [--html=MARKUP] "
-    "SCRIPT | --session=CHANNEL,PARENT | --version";
+    "[--disable-blink-features=NAMES] [--js-flags=FLAGS] "
+    "[--html=MARKUP | --worker] SCRIPT | --session=CHANNEL,PARENT | --version";
 constexpr std::string_view kEnableFeatures = "--enable-blink-features=";
 constexpr std::string_view kDisableFeatures = "--disable-blink-features=";
 constexpr std::string_view kJsFlags = "--js-flags=";
@@ -134,6 +137,7 @@ constexpr std::string_view kJsFlags = "--js-flags=";
 // takes its Machine's from its start.
 constexpr int kMemoryGib = 8;
 constexpr std::string_view kHtml = "--html=";
+constexpr std::string_view kWorker = "--worker";
 constexpr std::string_view kStandardInput = "-";
 
 // The program's arguments, in UTF-8. Windows gives main() its arguments in the
@@ -197,17 +201,27 @@ std::optional<std::string> ToUtf8(v8::Isolate* isolate,
 }
 
 // Writes what a timer, a microtask or a listener threw, which nothing caught,
-// as a console shows it, once the window's error listeners have had it.
+// as a console shows it, once the window's error listeners have had it, whose
+// error event says `text`.
 void PrintUncaught(v8::Local<v8::Message> message,
-                   v8::Local<v8::Value> exception) {
+                   v8::Local<v8::Value> exception,
+                   std::u16string text) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   mitto::ReportUncaughtError(
-      isolate, message, exception, [isolate](v8::Local<v8::Value> uncaught) {
-        const v8::TryCatch try_catch(isolate);
-        const std::optional<std::string> text =
-            ToUtf8(isolate, isolate->GetCurrentContext(), uncaught);
-        WriteLine(stderr, "Uncaught " + text.value_or("exception"));
+      isolate, message, exception, std::move(text),
+      [isolate](v8::Local<v8::Value> uncaught,
+                const std::u16string& uncaught_text) {
+        WriteLine(stderr, base::UTF16ToUTF8(mitto::MessageForConsole(
+                              isolate, uncaught, uncaught_text)));
       });
+}
+
+// V8's message listener, which has had the message say what it reports.
+void OnMessage(v8::Local<v8::Message> message, v8::Local<v8::Value> exception) {
+  std::u16string text;
+  std::ignore = mitto::bindings::FromV8String(v8::Isolate::GetCurrent(),
+                                              message->Get(), &text);
+  PrintUncaught(message, exception, std::move(text));
 }
 
 // The command line's client of V8's inspector, which a Page's console has as
@@ -341,9 +355,28 @@ base::expected<v8::Isolate*, std::string> StartV8ForSession(
 class CommandLineLoop final : public base::TaskObserver {
  public:
   CommandLineLoop(v8::Isolate* isolate, base::RunLoop& run_loop)
-      : isolate_(isolate), run_loop_(run_loop) {
+      : isolate_(isolate), run_loop_(&run_loop) {
     base::CurrentThread::Get()->AddTaskObserver(this);
   }
+
+  // Whether nothing waits that a later task would run: a timer, or in a
+  // window an idle callback, an animation frame or a scheduled task too.
+  static bool NothingWaits() {
+    mitto::ExecutionContext& context = mitto::ExecutionContext::Current();
+    if (context.TimerCount() != 0) {
+      return false;
+    }
+    if (!context.IsWindow()) {
+      return true;
+    }
+    mitto::Window& window = mitto::Window::Current();
+    return window.IdleCallbackCount() == 0 &&
+           window.AnimationFrameCallbackCount() == 0 &&
+           window.ScheduledTaskCount() == 0;
+  }
+
+  // The loop that the next task that leaves nothing waiting ends.
+  void SetRunLoop(base::RunLoop& run_loop) { run_loop_ = &run_loop; }
 
   CommandLineLoop(const CommandLineLoop&) = delete;
   CommandLineLoop& operator=(const CommandLineLoop&) = delete;
@@ -358,59 +391,68 @@ class CommandLineLoop final : public base::TaskObserver {
   void DidProcessTask(const base::PendingTask& pending_task) override {
     const v8::HandleScope handle_scope(isolate_);
     v8::MicrotasksScope::PerformCheckpoint(isolate_);
-    if (mitto::Window::Current().TimerCount() == 0 &&
-        mitto::Window::Current().IdleCallbackCount() == 0 &&
-        mitto::Window::Current().AnimationFrameCallbackCount() == 0 &&
-        mitto::Window::Current().ScheduledTaskCount() == 0) {
+    if (NothingWaits()) {
       run_loop_->QuitWhenIdle();
     }
   }
 
  private:
   const raw_ptr<v8::Isolate> isolate_;
-  const raw_ref<base::RunLoop> run_loop_;
+  raw_ptr<base::RunLoop> run_loop_;
 };
 
-// Runs `source` in a new context whose document `html` builds, then the event
-// loop until nothing is left, and writes what the script returns to standard
-// output, or what it threw to standard error. Returns whether it finished
-// without throwing.
+// Runs `source` in a new context, a window's whose document `html` builds or,
+// for `worker`, a dedicated worker's, then the event loop until nothing is
+// left, and writes what the script returns to standard output, or what it
+// threw to standard error. Returns whether it finished without throwing.
 bool RunScript(v8::Isolate* isolate,
                std::string_view html,
+               bool worker,
                std::string_view source) {
   const v8::HandleScope handle_scope(isolate);
   // Its about:blank's loading started when the context did.
   mitto::ChromeObjectData chrome_data(
       mitto::bindings::PerIsolateData::From(isolate)->time_origin());
   CommandLineInspector inspector(isolate);
-  const v8::Local<v8::Context> context = mitto::NewPageContext(
-      isolate, base::UTF8ToUTF16(html),
-      [&inspector, &chrome_data](v8::Local<v8::Context> context) {
-        mitto::InitializePageContext(context);
-        inspector.ContextCreated(context);
-        mitto::InstallChromeObject(context, chrome_data);
-      });
+  const v8::Local<v8::Context> context =
+      worker ? mitto::NewWorkerContext(
+                   isolate, std::u16string(),
+                   [&inspector](v8::Local<v8::Context> context) {
+                     mitto::InitializePageContext(context);
+                     inspector.ContextCreated(context);
+                   })
+             : mitto::NewPageContext(
+                   isolate, base::UTF8ToUTF16(html),
+                   [&inspector, &chrome_data](v8::Local<v8::Context> context) {
+                     mitto::InitializePageContext(context);
+                     inspector.ContextCreated(context);
+                     mitto::InstallChromeObject(context, chrome_data);
+                   });
   const v8::Context::Scope context_scope(context);
   mitto::DOMTimerCoordinator timers(isolate, context);
-  mitto::Window::Current().SetTimers(&timers);
+  mitto::ExecutionContext::Current().SetTimers(&timers);
   mitto::IdleTaskController idle_tasks(isolate, context);
-  mitto::Window::Current().SetIdleTasks(&idle_tasks);
   mitto::AnimationFrameController animation_frames(isolate, context);
-  mitto::Window::Current().SetAnimationFrames(&animation_frames);
-  mitto::Window::Current().SetDocumentLoadTiming(chrome_data.load_timing.Get());
-  isolate->AddMessageListenerWithErrorLevel(&PrintUncaught,
+  if (!worker) {
+    mitto::Window::Current().SetIdleTasks(&idle_tasks);
+    mitto::Window::Current().SetAnimationFrames(&animation_frames);
+    mitto::Window::Current().SetDocumentLoadTiming(
+        chrome_data.load_timing.Get());
+  }
+  isolate->AddMessageListenerWithErrorLevel(&OnMessage,
                                             v8::Isolate::kMessageError);
   mitto::bindings::PerIsolateData::From(isolate)->SetExceptionReporter(
-      base::BindRepeating(
-          [](v8::Local<v8::Value> exception, v8::Local<v8::Message> message) {
-            PrintUncaught(message, exception);
-          }));
+      base::BindRepeating([](v8::Local<v8::Value> exception,
+                             v8::Local<v8::Message> message,
+                             std::u16string text) {
+        PrintUncaught(message, exception, std::move(text));
+      }));
 
   v8::Global<v8::Value> result;
   v8::Global<v8::Value> exception;
   bool threw = false;
   base::RunLoop run_loop;
-  const CommandLineLoop loop(isolate, run_loop);
+  CommandLineLoop loop(isolate, run_loop);
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(
@@ -450,9 +492,20 @@ bool RunScript(v8::Isolate* isolate,
           },
           isolate, source, &result, &exception, &threw));
   run_loop.Run();
-  mitto::Window::Current().SetTimers(nullptr);
-  mitto::Window::Current().SetIdleTasks(nullptr);
-  mitto::Window::Current().SetAnimationFrames(nullptr);
+  // A loop ends once it is idle after a task that left nothing waiting, even
+  // if a later task set a timer before it was idle, as a script that sets its
+  // first timer after a message has come does. The loop goes on until nothing
+  // waits.
+  while (!CommandLineLoop::NothingWaits()) {
+    base::RunLoop more;
+    loop.SetRunLoop(more);
+    more.Run();
+  }
+  mitto::ExecutionContext::Current().SetTimers(nullptr);
+  if (!worker) {
+    mitto::Window::Current().SetIdleTasks(nullptr);
+    mitto::Window::Current().SetAnimationFrames(nullptr);
+  }
   chrome_data.detached = true;
 
   const v8::TryCatch try_catch(isolate);
@@ -513,6 +566,7 @@ int main(int argc, char** argv) {
   bool enable_given = false;
   bool disable_given = false;
   std::optional<std::string_view> html;
+  bool worker = false;
   for (const std::string_view option :
        base::span(arguments).subspan(1u).first(arguments.size() - 2)) {
     if (option.starts_with(kEnableFeatures)) {
@@ -525,6 +579,8 @@ int main(int argc, char** argv) {
       js_flags = option.substr(kJsFlags.size());
     } else if (option.starts_with(kHtml)) {
       html = option.substr(kHtml.size());
+    } else if (option == kWorker) {
+      worker = true;
     } else {
       WriteLine(stderr, kUsage);
       return kWrongArguments;
@@ -538,12 +594,17 @@ int main(int argc, char** argv) {
       WriteLine(stderr, "--session= names no channel and process");
       return kWrongArguments;
     }
-    if (html || enable_given || disable_given) {
+    if (html || worker || enable_given || disable_given) {
       // A Session's Page gets its document from the Session, and its features
       // in its start message.
       WriteLine(stderr, kUsage);
       return kWrongArguments;
     }
+  }
+  if (html && worker) {
+    // A worker has no document.
+    WriteLine(stderr, kUsage);
+    return kWrongArguments;
   }
   std::optional<mitto::bindings::RuntimeFeatureSet> features;
   if (!session) {
@@ -597,7 +658,11 @@ int main(int argc, char** argv) {
   } else {
     StartV8(v8, main_thread->V8TaskRunner(), kMemoryGib, {},
             mitto::SplitJsFlags(js_flags), *std::move(features));
-    finished = RunScript(v8.isolate, html.value_or(""), argument);
+    if (worker) {
+      // Its isolate is a worker's, whose templates are a worker's.
+      mitto::bindings::PerIsolateData::From(v8.isolate)->set_worker();
+    }
+    finished = RunScript(v8.isolate, html.value_or(""), worker, argument);
   }
   StopV8(v8, std::move(main_thread));
   return finished ? 0 : kScriptThrew;

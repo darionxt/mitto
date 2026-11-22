@@ -48,6 +48,8 @@ DOCUMENTS_START_PATH = "/case/documents-start"
 _DOCUMENT_DONE_PATH = "/case/documents-done"
 DOCUMENTS_FRAMES_PATH = "/case/documents-frames"
 DOCUMENT_PATH = "/case/document"
+# What the document's own script asks for last, three seconds after its load event, once it has asked for all else.
+DOCUMENT_LAST_PATH = "/case/favicon-not-asked"
 DOCUMENTS_FORMS_PATH = "/case/documents-forms"
 CREDENTIALS_COOKIE_SET_PATH = "/case/credentials-cookie-set"
 _HISTORY_NEXT_PATH = "/case/history-next"
@@ -61,6 +63,7 @@ _JAVASCRIPT = "text/javascript; charset=utf-8"
 _PNG = "image/png"
 _CSS = "text/css; charset=utf-8"
 _WOFF2 = "font/woff2"
+_JSON = "application/json"
 _EVERY_ORIGIN = ("Access-Control-Allow-Origin", "*")
 _ETAG = '"mitto"'
 
@@ -172,6 +175,10 @@ _MODULE = _case("module")
 _MODULE_STATIC_IMPORT = _case("module_static_import")
 _MODULE_DYNAMIC_IMPORT = _case("module_dynamic_import")
 _MODULE_CROSS_SITE = _case("module_cross_site")
+_MODULE_JSON = _case("module_json")
+# Chrome 155 has no text modules: its import() of one rejects before any request.
+_MODULE_TEXT_REFUSED_PATH = "/case/module-text-refused"
+_MODULE_TEXT = _case("module_text", refused_path=_MODULE_TEXT_REFUSED_PATH)
 _XHR_GET = _case("xhr_get")
 _XHR_GET_CROSS_SITE = _case("xhr_get_cross_site")
 _XHR_POST_TEXT = _case("xhr_post_text")
@@ -217,9 +224,12 @@ _DOCUMENT_IMAGE_SMALL = _case("document_image_small")
 _DOCUMENT_IMAGE = _case("document_image")
 _DOCUMENT_STYLE_BODY = _case("document_style_body")
 _DOCUMENT_SCRIPT_DEFERRED = _case("document_script_deferred")
-_FAVICON_NOT_ASKED_PATH = "/case/favicon-not-asked"
+_FAVICON_NOT_ASKED_PATH = DOCUMENT_LAST_PATH
 # Chrome asks for it by itself, at a path of its own, if it asks at all.
 _FAVICON = Case("favicon", "/favicon.ico", refused_path=_FAVICON_NOT_ASKED_PATH)
+# What a link with rel="prefetch" asks for, of the page's origin and of another site, once the document has loaded.
+_PREFETCH = _case("prefetch")
+_PREFETCH_CROSS_SITE = _case("prefetch_cross_site")
 _URLENCODED_QUERY = "name=mitto&a+b%26c=d+e%26f%2Bg"
 """What the fields of the forms make, urlencoded."""
 # A form that GETs puts its fields in the query, which is part of what stands for the case.
@@ -350,6 +360,8 @@ DOCUMENT_CASES = (
     _MODULE_STATIC_IMPORT,
     _MODULE_DYNAMIC_IMPORT,
     _MODULE_CROSS_SITE,
+    _MODULE_JSON,
+    _MODULE_TEXT,
     _XHR_GET,
     _XHR_GET_CROSS_SITE,
     _XHR_POST_TEXT,
@@ -385,6 +397,8 @@ DOCUMENT_CASES = (
     _FRAME_NESTED_FETCH,
     *_DOCUMENT_ORDERED,
     _FAVICON,
+    _PREFETCH,
+    _PREFETCH_CROSS_SITE,
     _FORM_GET,
     _FORM_TEXT,
     _FORM_CROSS_SITE,
@@ -960,8 +974,13 @@ _DOCUMENTS_START_SCRIPT = """
   });
 """
 
-# A module that imports two more, and then says so to the page. The page waits for its event before it goes on.
+# A module that imports two more, a JSON module and a text module, and then says so to the page. The page waits for
+# its event before it goes on. Chrome 155 has no text modules: a static import of one would fail the whole module, and
+# its import() rejects before any request, so this takes the text module with import(), whose request carries the same
+# lines as a static import's, and says so when it is refused.
 _MODULE_SOURCE = f"""import "{_MODULE_STATIC_IMPORT.path}";
+import "{_MODULE_JSON.path}" with {{type: "json"}};
+await import("{_MODULE_TEXT.path}", {{with: {{type: "text"}}}}).catch(() => fetch("{_MODULE_TEXT_REFUSED_PATH}"));
 await import("{_MODULE_DYNAMIC_IMPORT.path}");
 dispatchEvent(new Event("mitto-module"));
 """
@@ -1014,13 +1033,23 @@ _NESTED_FRAME_COOKIES = tuple(
     for same_site in ("Strict", "Lax", "None")
 )
 
-# Chrome asks for /favicon.ico after a load, if it asks at all, so the page gives it time before it says that it did
-# not, which counts only if Chrome did not.
-_DOCUMENT_SCRIPT_SOURCE = f"""
+
+def _document_script_source(cross_site: str) -> str:
+    """Return the document's own script. Once the document has loaded, it adds links that prefetch, which wait for
+    nothing else on the page, so they leave the order of the rest alone. Chrome asks for /favicon.ico after a load, if it
+    asks at all, so the script gives it time before it says that it did not, which counts only if Chrome did not."""
+    return f"""
   addEventListener("load", () => {{
+    for (const href of ["{_PREFETCH.path}", "{cross_site}{_PREFETCH_CROSS_SITE.path}"]) {{
+      const link = document.createElement("link");
+      link.rel = "prefetch";
+      link.href = href;
+      document.head.append(link);
+    }}
     setTimeout(() => get("{_FAVICON_NOT_ASKED_PATH}").then(showNext).catch(report), 3000);
   }});
 """
+
 
 # A no-store page that a script's request got a no-store answer for stays out of the back/forward cache, as does one
 # whose cookies changed. Either way the traversal back to it is a request. The cookie, which only that request
@@ -1099,7 +1128,7 @@ def _style_source(cross_site: str) -> bytes:
 """.encode()
 
 
-def _document_page() -> Response:
+def _document_page(cross_site: str) -> Response:
     """Return a document whose markup asks for what most pages' does, and which names no icon."""
     body = f"""<!doctype html>
 <html lang="en">
@@ -1120,7 +1149,7 @@ def _document_page() -> Response:
 <link rel="stylesheet" href="{_DOCUMENT_STYLE_BODY.path}">
 <script src="{_DOCUMENT_SCRIPT_DEFERRED.path}" defer></script>
 {_link(DOCUMENTS_FORMS_PATH)}
-<script>{_PAGE_SCRIPT}{_DOCUMENT_SCRIPT_SOURCE}</script>
+<script>{_PAGE_SCRIPT}{_document_script_source(cross_site)}</script>
 </body>
 </html>
 """.encode()
@@ -1168,6 +1197,9 @@ def _document_responses(
         _MODULE_STATIC_IMPORT.path: script,
         _MODULE_DYNAMIC_IMPORT.path: script,
         _MODULE_CROSS_SITE.path: script,
+        _MODULE_JSON.path: _case_response(_JSON, b"{}\n"),
+        _MODULE_TEXT.path: text,
+        _MODULE_TEXT_REFUSED_PATH: text,
         _XHR_GET.path: text,
         _XHR_GET_CROSS_SITE.path: text,
         _XHR_POST_TEXT.path: text,
@@ -1224,7 +1256,7 @@ def _document_responses(
         _FRAME_FETCH.path: text,
         _FRAME_NESTED.path: _case_response(_HTML, _document(_NESTED_FRAME)),
         _FRAME_NESTED_FETCH.path: text,
-        DOCUMENT_PATH: _document_page(),
+        DOCUMENT_PATH: _document_page(cross_site),
         _DOCUMENT_STYLE.path: style,
         _DOCUMENT_PRELOAD_STYLE.path: style,
         _DOCUMENT_PRELOAD_SCRIPT.path: script,
@@ -1237,6 +1269,8 @@ def _document_responses(
         _DOCUMENT_SCRIPT_DEFERRED.path: script,
         _FAVICON.path: image,
         _FAVICON_NOT_ASKED_PATH: text,
+        _PREFETCH.path: text,
+        _PREFETCH_CROSS_SITE.path: text,
         DOCUMENTS_FORMS_PATH: _page(_form(_FORM_GET.path.partition("?")[0], method="get")),
         _FORM_GET.path: _page(_form(_FORM_TEXT.path, enctype="text/plain")),
         _FORM_TEXT.path: _page(_form(cross_site + _FORM_CROSS_SITE.path)),

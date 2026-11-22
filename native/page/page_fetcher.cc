@@ -3,7 +3,10 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notreached.h"
 #include "mitto/page_messages.h"
+#include "url/gurl.h"
+#include "url/scheme_host_port.h"
 
 namespace mitto {
 namespace {
@@ -38,6 +41,28 @@ PageCredentialsMode ToPageCredentialsMode(FetchCredentialsMode credentials) {
   }
 }
 
+// A request's priority byte: one more than the net::RequestPriority that
+// Blink's WebURLRequest::ConvertToNetPriority() gives, which the Page program,
+// with no //net, names by number: IDLE 1, LOWEST 2, LOW 3, MEDIUM 4 and
+// HIGHEST 5.
+// Upstream: third_party/blink/renderer/platform/exported/web_url_request.cc
+uint8_t ToPagePriority(FetchPriority priority) {
+  switch (priority) {
+    case FetchPriority::kVeryLow:
+      return 1 + 1;
+    case FetchPriority::kLow:
+      return 1 + 2;
+    case FetchPriority::kMedium:
+      return 1 + 3;
+    case FetchPriority::kHigh:
+      return 1 + 4;
+    case FetchPriority::kVeryHigh:
+      return 1 + 5;
+  }
+}
+
+}  // namespace
+
 PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy) {
   switch (policy) {
     case FetchReferrerPolicy::kDefault:
@@ -60,28 +85,6 @@ PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy) {
       return PageReferrerPolicy::kUnsafeUrl;
   }
 }
-
-// A request's priority byte: one more than the net::RequestPriority that
-// Blink's WebURLRequest::ConvertToNetPriority() gives, which the Page program,
-// with no //net, names by number: IDLE 1, LOWEST 2, LOW 3, MEDIUM 4 and
-// HIGHEST 5.
-// Upstream: third_party/blink/renderer/platform/exported/web_url_request.cc
-uint8_t ToPagePriority(FetchPriority priority) {
-  switch (priority) {
-    case FetchPriority::kVeryLow:
-      return 1 + 1;
-    case FetchPriority::kLow:
-      return 1 + 2;
-    case FetchPriority::kMedium:
-      return 1 + 3;
-    case FetchPriority::kHigh:
-      return 1 + 4;
-    case FetchPriority::kVeryHigh:
-      return 1 + 5;
-  }
-}
-
-}  // namespace
 
 // One fetch, between the Page's requests and the DOM's client.
 class PageFetcher::Request final : public PageRequests::Client,
@@ -107,6 +110,7 @@ class PageFetcher::Request final : public PageRequests::Client,
 
   // PageRequests::Client:
   void OnResponseStarted(const PageResponseStarted& response) override {
+    response_url_ = response.url;
     FetchResponseHead head;
     head.status = response.status;
     head.status_text = response.status_text;
@@ -121,10 +125,14 @@ class PageFetcher::Request final : public PageRequests::Client,
     client_->OnResponseBody(std::move(bytes));
   }
   void OnResponseEnded(int net_error) override {
+    if (net_error == 0 && response_url_) {
+      fetcher_->finished_responses_.insert(*response_url_);
+    }
     client_->OnResponseEnded(net_error);
     // Destroys this.
     fetcher_->Finished(number_);
   }
+  void OnRequestBodyCredit() override { client_->OnBodyRoom(); }
 
   // FetchController:
   void TookBody(size_t bytes) override {
@@ -135,6 +143,15 @@ class PageFetcher::Request final : public PageRequests::Client,
     // Destroys this.
     fetcher_->Finished(number_);
   }
+  size_t BodyRoom() const override {
+    return fetcher_->requests_->BodyCredit(number_);
+  }
+  void SendBody(std::string_view bytes) override {
+    fetcher_->requests_->SendBodyPart(number_, bytes);
+  }
+  void EndBody(bool errored) override {
+    fetcher_->requests_->EndBody(number_, errored);
+  }
 
  private:
   const raw_ref<PageFetcher> fetcher_;
@@ -142,7 +159,47 @@ class PageFetcher::Request final : public PageRequests::Client,
   const bool keepalive_;
   size_t keepalive_bytes_ = 0;
   uint64_t number_ = 0;
+  // The response's URL, once it has started.
+  std::optional<std::string> response_url_;
 };
+
+namespace {
+
+// The Request Kind of a request: a module script, or what one imports, by
+// its destination, where a text module, whose Request Kind comes once Chrome
+// 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
+// send a JavaScript module's lines, Known Gaps; a classic script; an image;
+// a style sheet; a font; a favicon; a prefetch; or a fetch.
+PageRequestKind KindOf(const FetchRequestData& data) {
+  if (data.is_module) {
+    return data.destination == FetchDestination::kJson
+               ? PageRequestKind::kModuleJson
+               : PageRequestKind::kModule;
+  }
+  switch (data.destination) {
+    case FetchDestination::kEmpty:
+      return PageRequestKind::kFetch;
+    case FetchDestination::kScript:
+      return PageRequestKind::kScript;
+    case FetchDestination::kImage:
+      return PageRequestKind::kImage;
+    case FetchDestination::kStyle:
+      return PageRequestKind::kStyle;
+    case FetchDestination::kFont:
+      return PageRequestKind::kFont;
+    case FetchDestination::kFavicon:
+      return PageRequestKind::kFavicon;
+    case FetchDestination::kPrefetch:
+      return PageRequestKind::kPrefetch;
+    case FetchDestination::kJson:
+    case FetchDestination::kText:
+    case FetchDestination::kWorker:
+      // Only a module's fetch has these destinations.
+      NOTREACHED();
+  }
+}
+
+}  // namespace
 
 PageFetcher::PageFetcher(PageRequests& requests) : requests_(requests) {}
 
@@ -191,13 +248,12 @@ void PageFetcher::Fetch(FetchRequestData data,
     keepalive_bytes_ += body_size;
   }
   PageRequest page_request;
-  page_request.kind = data.destination == FetchDestination::kScript
-                          ? PageRequestKind::kScript
-                          : PageRequestKind::kFetch;
+  page_request.kind = KindOf(data);
   page_request.url = std::move(data.url);
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);
   page_request.body = std::move(data.body);
+  page_request.streams_body = data.streams_body;
   if (data.mode) {
     page_request.mode = ToPageRequestMode(*data.mode);
   }
@@ -214,9 +270,32 @@ void PageFetcher::Fetch(FetchRequestData data,
     page_request.priority = ToPagePriority(*data.priority);
   }
   page_request.keepalive = data.keepalive;
+  // A request with no entry in the Performance Timeline, as the favicon's.
   started.set_number(
-      requests_->Start(std::move(page_request), started, data.render_blocking));
+      data.resource_timing
+          ? requests_->Start(std::move(page_request), started,
+                             data.render_blocking)
+          : requests_->StartUntimed(std::move(page_request), started));
   open_.emplace(started.number(), std::move(request));
+}
+
+bool PageFetcher::HasFinishedResponse(std::string_view url) const {
+  return finished_responses_.contains(url);
+}
+
+void PageFetcher::PrefetchDns(const GURL& url) {
+  PageNetworkHint hint;
+  hint.type = PageNetworkHintType::kPrefetchDns;
+  hint.url = url::SchemeHostPort(url).GetURL().spec();
+  requests_->Hint(hint);
+}
+
+void PageFetcher::Preconnect(const GURL& url, bool allow_credentials) {
+  PageNetworkHint hint;
+  hint.type = PageNetworkHintType::kPreconnect;
+  hint.allow_credentials = allow_credentials;
+  hint.url = url::SchemeHostPort(url).GetURL().spec();
+  requests_->Hint(hint);
 }
 
 void PageFetcher::Finished(uint64_t number) {

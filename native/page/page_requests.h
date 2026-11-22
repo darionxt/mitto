@@ -13,11 +13,15 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/time/time.h"
 #include "mitto/page/page_reporter.h"
+#include "mitto/page/session_sender.h"
 #include "mitto/page_messages.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
@@ -25,7 +29,7 @@
 
 namespace mitto {
 
-class Window;
+class ExecutionContext;
 
 class PageRequests {
  public:
@@ -44,15 +48,20 @@ class PageRequests {
     // The end: net::OK when all of the body has come, and otherwise why the
     // request failed, with or without a response. Nothing more comes.
     virtual void OnResponseEnded(int net_error) = 0;
+    // For a request whose body streams: the Session has given credit for
+    // more of it.
+    virtual void OnRequestBodyCredit() {}
 
    protected:
     virtual ~Client() = default;
   };
 
-  // `send` sends a frame to the Session, and `refuse` refuses what it sent,
-  // saying why.
-  PageRequests(SendFrame send,
-               base::RepeatingCallback<void(std::string why)> refuse);
+  // `sender` sends frames to the Session, and `refuse` refuses what it sent,
+  // saying why. The responses of a dedicated worker's requests reach its
+  // thread through `route`; without one they reach the main thread.
+  PageRequests(scoped_refptr<SessionSender> sender,
+               base::RepeatingCallback<void(std::string why)> refuse,
+               SessionSender::ResponseRoute route = {});
 
   PageRequests(const PageRequests&) = delete;
   PageRequests& operator=(const PageRequests&) = delete;
@@ -63,11 +72,12 @@ class PageRequests {
   // opens, if it makes one: its response is the Page's document.
   void SetNavigationClient(Client& client);
 
-  // Asks the Session for a request of `kind` for `url`, with the Page's
-  // document as its Initiator. `client` hears how it goes, and has to live
-  // until its end. The current window's Performance Timeline gets an entry of
-  // it once it ends, as Blink's ResourceFetcher adds one, which says that it
-  // blocked rendering if `render_blocking`.
+  // Asks the Session for a request of `kind` for `url`, from the current
+  // context, a document or a worker, from which the Session works out its
+  // Initiator. `client` hears how it goes, and has to live until its end. The
+  // current window's Performance Timeline gets an entry of it once it ends, as
+  // Blink's ResourceFetcher adds one, which says that it blocked rendering if
+  // `render_blocking`.
   uint64_t Start(PageRequestKind kind,
                  std::string url,
                  Client& client,
@@ -77,18 +87,29 @@ class PageRequests {
                  Client& client,
                  bool render_blocking = false);
 
+  // The same, but with no entry in the Performance Timeline, as for a
+  // worker's script, which Chrome's browser fetches.
+  uint64_t StartUntimed(PageRequest request, Client& client);
+  // The same for a synchronous request, as importScripts() makes one: this
+  // thread waits for each part of its response and hands it to `client`,
+  // which takes each part of the body as it comes, and returns once it has
+  // ended, or once `abort` is signaled, as when the worker ends, which cancels
+  // it.
+  void StartSynchronous(PageRequest request,
+                        Client& client,
+                        base::WaitableEvent& abort);
+
   // Asks the Session for `request`, a navigation that the current window's
   // document starts, whose number this sets, and returns it. Its response is
   // a document's, which gets no entry in the Performance Timeline of the
   // window that asked.
   uint64_t StartNavigation(PageRequest request, Client& client);
 
-  // The number that the next request gets.
-  uint64_t NextNumber() const { return next_number_; }
-
   // Tells the Session that request `number` is no longer wanted. Its client
   // hears nothing more of it.
   void Cancel(uint64_t number);
+  // The same for every request that has a client, as when a worker ends.
+  void CancelAll();
 
   // Lets keepalive request `number` go on without its client, which hears
   // nothing more of it, and without its document, which is going and adds no
@@ -96,13 +117,25 @@ class PageRequests {
   // the Page, once it hears of the next document.
   void LetGo(uint64_t number);
 
+  // Sends the Session a network hint of the current window's document.
+  void Hint(const PageNetworkHint& hint);
+
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);
+
+  // For request `number`, whose body streams: how many more bytes of the body
+  // the Session has given credit for, none until it starts reading it; sends
+  // `bytes` of it, at most that many; and ends it, which fails the request if
+  // `errored`. Once the request has ended these do nothing.
+  size_t BodyCredit(uint64_t number) const;
+  void SendBodyPart(uint64_t number, std::string_view bytes);
+  void EndBody(uint64_t number, bool errored);
 
   // What the Session sends.
   void OnResponseStarted(const PageResponseStarted& response);
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(const PageResponseEnded& ended);
+  void OnRequestBodyCredit(const PageCredit& credit);
 
  private:
   // What the entry of a request of the Page's is made of: ResourceFetcher's
@@ -119,9 +152,10 @@ class PageRequests {
     bool render_blocking = false;
     std::optional<PageResponseStarted> response;
     uint64_t decoded_body_size = 0;
-    // The window that asked, whose timeline gets the entry while it runs, and
-    // its context, in which the entry is added, whoever ends the request.
-    cppgc::WeakPersistent<Window> window;
+    // The window or worker that asked, whose timeline gets the entry while it
+    // runs, and its context, in which the entry is added, whoever ends the
+    // request.
+    cppgc::WeakPersistent<ExecutionContext> execution_context;
     v8::Global<v8::Context> context;
   };
 
@@ -136,6 +170,13 @@ class PageRequests {
     // kBodyWindow.
     size_t untaken = 0;
     bool started = false;
+    // For a body that streams: how much of it the Session has given credit
+    // for, which it does first when it starts reading it, and how much the
+    // Page has sent.
+    bool streams_body = false;
+    bool body_ended = false;
+    uint64_t body_credited = 0;
+    uint64_t body_sent = 0;
     // For a request of the Page's, not the navigation.
     std::optional<Timed> timed;
   };
@@ -144,18 +185,24 @@ class PageRequests {
   // it sent. The navigation that the Session makes when the Page opens is
   // found once the Session sends something of it.
   Open* Find(uint64_t number, std::string_view message);
+  // Numbers `request` and sends it as `context`'s, with its response going
+  // to `route`, and returns its number.
+  uint64_t Send(uint64_t context,
+                PageRequest& request,
+                const SessionSender::ResponseRoute& route);
+  uint64_t Send(uint64_t context, PageRequest& request);
   // Adds the entry of a request that ended at `response_end`, with `ended`'s
   // totals if the Session said them.
   static void AddResourceTiming(Timed& timed,
                                 base::TimeTicks response_end,
                                 const PageResponseEnded* ended);
 
-  const SendFrame send_;
+  const scoped_refptr<SessionSender> sender_;
   const base::RepeatingCallback<void(std::string)> refuse_;
+  const SessionSender::ResponseRoute route_;
   std::map<uint64_t, Open> open_;
   raw_ptr<Client> navigation_client_ = nullptr;
   bool navigation_seen_ = false;
-  uint64_t next_number_ = kNavigationRequest + 1;
 };
 
 }  // namespace mitto

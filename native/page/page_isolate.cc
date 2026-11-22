@@ -10,6 +10,7 @@
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_dom_exception.h"
+#include "mitto/dom/modulator.h"
 #include "mitto/dom/time_clamper.h"
 #include "mitto/page/wasm_response_extensions.h"
 #include "v8/include/v8-array-buffer.h"
@@ -119,6 +120,32 @@ void ConfigurePageIsolate(v8::Isolate::CreateParams& params, int memory_gib) {
   params.allow_atomics_wait = false;
 }
 
+void ConfigureWorkerIsolate(v8::Isolate::CreateParams& params, int memory_gib) {
+  ConfigurePageIsolate(params, memory_gib);
+  // V8PerIsolateData: a worker's isolate allows Atomics.wait().
+  params.allow_atomics_wait = true;
+}
+
+void InitializeWorkerIsolate(v8::Isolate* isolate) {
+  // V8Initializer::InitializeV8Common(): the limits of WasmModuleOverride()
+  // and WasmInstanceOverride() hold on the main thread alone.
+  isolate->SetWasmCustomDescriptorsEnabledCallback(
+      &WasmCustomDescriptorsEnabled);
+  isolate->SetSharedArrayBufferConstructorEnabledCallback(
+      &SharedArrayBufferConstructorEnabled);
+  isolate->SetIsJSApiWrapperNativeErrorCallback(&IsDOMExceptionWrapper);
+  isolate->SetHostImportModuleDynamicallyCallback(&HostImportModuleDynamically);
+  isolate->SetHostInitializeImportMetaObjectCallback(
+      &HostInitializeImportMetaObject);
+  InitializeWasmResponseExtensions(isolate);
+  // InitializeWorker(): kWorkerMaxStackSize below the stack's current
+  // position.
+  constexpr uintptr_t kWorkerMaxStackSize = 500 * 1024;
+  uintptr_t here = 0;
+  const uintptr_t position = reinterpret_cast<uintptr_t>(&here);
+  isolate->SetStackLimit(position - kWorkerMaxStackSize);
+}
+
 void InitializePageIsolate(v8::Isolate* isolate) {
   // V8Initializer::InitializeV8Common().
   isolate->SetWasmModuleCallback(&WasmModuleOverride);
@@ -128,6 +155,9 @@ void InitializePageIsolate(v8::Isolate* isolate) {
   isolate->SetSharedArrayBufferConstructorEnabledCallback(
       &SharedArrayBufferConstructorEnabled);
   isolate->SetIsJSApiWrapperNativeErrorCallback(&IsDOMExceptionWrapper);
+  isolate->SetHostImportModuleDynamicallyCallback(&HostImportModuleDynamically);
+  isolate->SetHostInitializeImportMetaObjectCallback(
+      &HostInitializeImportMetaObject);
   InitializeWasmResponseExtensions(isolate);
 }
 

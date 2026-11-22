@@ -52,10 +52,12 @@ class PerIsolateData {
   // Reports an exception that a page's callback threw and nothing caught, as
   // Blink's V8Initializer::MessageHandlerInMainThread() does: the window's
   // error event, and then the console. `message` is V8's message of it, which
-  // says where it was thrown.
+  // says where it was thrown, and `text` what the message says, as V8 gives it
+  // its message listeners (ReportException() in v8_conversions.h).
   using ExceptionReporter =
       base::RepeatingCallback<void(v8::Local<v8::Value> exception,
-                                   v8::Local<v8::Message> message)>;
+                                   v8::Local<v8::Message> message,
+                                   std::u16string text)>;
 
   // Tells the Session that a document reached a Known Gap, named as the
   // listing names it, such as "Navigator.prototype.getBattery".
@@ -127,19 +129,32 @@ class PerIsolateData {
   }
 
   // Whether the Page's context is a secure context, which decides whether it
-  // gets the members that Web IDL's [SecureContext] puts behind one. A Page's
-  // first document is about:blank, which is. The document it loads decides it
-  // for the context made for that document.
+  // gets the members that Web IDL's [SecureContext] puts behind one. Each
+  // document's origin decides it for the context made for that document, and
+  // a Session's Page's first, about:blank with an opaque origin, is none. The
+  // Page program's command line keeps it, as a file: page is one.
   bool secure_context() const { return secure_context_; }
   void set_secure_context(bool secure_context) {
     secure_context_ = secure_context;
   }
+
+  // Whether the isolate's contexts are a window's, as a Page's main thread
+  // has them, or a dedicated worker's, as each worker's thread has. An
+  // isolate never has both, so the bindings decide what [Exposed] puts on
+  // one global object or the other once for each isolate.
+  bool is_window() const { return window_; }
+  void set_worker() { window_ = false; }
 
   // The template of an interface or a callback interface, which this makes
   // the first time.
   v8::Local<v8::FunctionTemplate> InterfaceTemplate(
       v8::Isolate* isolate,
       const WrapperTypeInfo* info);
+
+  // The template of the plain objects that wrap a C++ object of the bindings'
+  // own, such as the data of a ScriptFunction's function, which this makes the
+  // first time.
+  v8::Local<v8::ObjectTemplate> HolderTemplate(v8::Isolate* isolate);
 
   // The template of a namespace, which this makes the first time.
   v8::Local<v8::ObjectTemplate> NamespaceTemplate(v8::Isolate* isolate,
@@ -206,7 +221,9 @@ class PerIsolateData {
   base::TimeTicks time_origin_;
   ExceptionReporter exception_reporter_;
   bool secure_context_ = true;
+  bool window_ = true;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::Template>> templates_;
+  v8::Eternal<v8::ObjectTemplate> holder_template_;
   std::map<const ExposedConstructInfo*, v8::Eternal<v8::FunctionTemplate>>
       factory_function_templates_;
   DOMExceptionHooks dom_exception_hooks_;

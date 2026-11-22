@@ -83,6 +83,14 @@ class RunningRequest {
   virtual void Detach(
       base::RepeatingCallback<bool(const RequestEvent&)> allows_response) = 0;
 
+  // For a body that streams: goes on with a read of it that waits, now that
+  // more of it, or its end, is in its channel. This may end the request.
+  virtual void SendBody() = 0;
+  // For a body that streams: ends the request with ERR_FAILED, because the
+  // body's source failed, as a data pipe's producer that closes with an
+  // error fails the upload in Chrome's network service.
+  virtual void FailBody() = 0;
+
  protected:
   virtual ~RunningRequest() = default;
 };

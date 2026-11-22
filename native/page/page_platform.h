@@ -1,8 +1,9 @@
 // The Page program's v8::Platform, as gin's V8Platform is Chrome's renderers':
 // V8's tasks for the main thread are tasks of the Page's event loop, on the
-// main thread's task runner, and the clock that V8's Date reads is coarsened
-// as Chrome coarsens it. Worker threads, jobs, the page allocator and tracing
-// stay libplatform's.
+// main thread's task runner, those for a dedicated worker's isolate tasks of
+// its thread, and the clock that V8's Date reads is coarsened as Chrome
+// coarsens it. Worker threads, jobs, the page allocator and tracing stay
+// libplatform's.
 //
 // Upstream: gin/v8_platform.cc
 // Upstream: gin/public/v8_platform.h
@@ -13,10 +14,13 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/thread_annotations.h"
 #include "mitto/page/wall_clock_clamper.h"
 #include "v8/include/v8-platform.h"
 
@@ -33,6 +37,16 @@ class PagePlatform final : public v8::Platform {
   PagePlatform& operator=(const PagePlatform&) = delete;
 
   ~PagePlatform() override;
+
+  // The process's, once the Page program has made it.
+  static PagePlatform* Get();
+
+  // Has V8's foreground tasks for `isolate`, a dedicated worker's, go to
+  // `task_runner`, its thread's, until UnregisterIsolate(), as gin gives each
+  // isolate a task runner of its own. Any thread.
+  void RegisterIsolate(v8::Isolate* isolate,
+                       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  void UnregisterIsolate(v8::Isolate* isolate);
 
   // v8::Platform:
   v8::PageAllocator* GetPageAllocator() override;
@@ -70,9 +84,13 @@ class PagePlatform final : public v8::Platform {
 
  private:
   const std::unique_ptr<v8::Platform> delegate_;
-  // The Page has one isolate, on the main thread, so all of its priorities
-  // share one runner, as they share one queue of the main thread.
+  // The main thread's isolate, and each worker's, has one runner for all of
+  // its priorities, as they share one queue of the isolate's thread.
   const std::shared_ptr<v8::TaskRunner> main_thread_;
+  base::Lock lock_;
+  // V8 asks for a runner from its own threads too.
+  std::map<v8::Isolate*, std::shared_ptr<v8::TaskRunner>> workers_
+      GUARDED_BY(lock_);
   const WallClockClamper clamper_;
 };
 

@@ -29,6 +29,7 @@
 #include "mitto/page_channel.h"
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
+#include "mitto/page_storage_buckets.h"
 #include "mitto/request_client.h"
 #include "mitto/request_options.h"
 #include "mitto/storage/storage_key.h"
@@ -52,6 +53,7 @@ class IndexedDbContext;
 class PageCacheStorage;
 class PageIndexedDb;
 class PageHost;
+class PreconnectManager;
 class ReadyRequests;
 class StorageQuota;
 class SessionStorageNamespace;
@@ -133,13 +135,15 @@ class PageNetwork {
  public:
   // Starts a request for a Page, which tells `client` how it goes until it
   // finishes or the client abandons it. It is the Session's, as a request of
-  // the C API's is.
+  // the C API's is. A body that streams, for `options.stream_body`, is read
+  // from `body_channel`, which the client writes.
   virtual base::WeakPtr<RunningRequest> StartPageRequest(
       RequestClient& client,
       GURL url,
       net::HttpRequestHeaders headers,
       RequestOptions options,
-      std::optional<std::vector<char>> body) = 0;
+      std::optional<std::vector<char>> body,
+      scoped_refptr<RequestChannel> body_channel) = 0;
 
   virtual net::CookieStore& cookie_store() = 0;
 
@@ -165,6 +169,10 @@ class PageNetwork {
 
   // The Session's storage, which all its Pages share.
   virtual StorageContext& storage_context() = 0;
+
+  // What resolves and connects as its Pages' documents hint, as Chrome's
+  // browser has one PreconnectManager for a profile.
+  virtual PreconnectManager& preconnect_manager() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -331,6 +339,11 @@ class PageHost final : public PageChannel::Delegate {
     // context that started a worker; kNoDocument for the top-level document.
     uint64_t parent = kNoDocument;
     bool is_worker = false;
+    // The final URLs of the context's requests that have finished, which a
+    // request of the context may name as its referrer, as a module names the
+    // module that imports it, or a style sheet the sheet that imports it, in
+    // Chrome, whose browser takes the renderer's word for a referrer.
+    std::set<GURL> response_urls;
   };
 
   // What a document's cookie calls are made for, as its frame's
@@ -354,6 +367,14 @@ class PageHost final : public PageChannel::Delegate {
   void OnGetCookies(uint64_t question, const CookieContext& context);
   void OnSetCookie(const std::string& line, const CookieContext& context);
   void OnCancel(uint64_t number);
+  // A fetch()'s body that streams from the Page, which a request of
+  // `options.stream_body` reads.
+  void OnRequestBodyPart(const PageRequestBodyPart& part);
+  void OnRequestBodyEnded(const PageRequestBodyEnded& ended);
+  // The request of `number` whose body streams and has not ended, for `what`
+  // of it that the Page sent; null if the request has ended since, or if the
+  // Page breaks the protocol, which this refuses.
+  Request* RequestWithBodyStream(uint64_t number, std::string_view what);
   // What the document's CookieStore asks, as Chrome's RestrictedCookieManager
   // answers it, always for the document that the Session loaded.
   void OnCookieStoreGet(PageCookieStoreGet get, const CookieContext& context);
@@ -422,6 +443,25 @@ class PageHost final : public PageChannel::Delegate {
   void OnIndexedDb(PageIndexedDbCall call,
                    uint64_t context_id,
                    const GURL& document_url);
+  // What a context's Storage Buckets API asks, which PageStorageBuckets
+  // serves, with the storage key of the context that asks.
+  void OnStorageBuckets(PageStorageBucketCall call,
+                        uint64_t context_id,
+                        const GURL& document_url);
+  // The storage key of context `context_id`'s IndexedDB and Cache API, as
+  // ContextSerializedStorageKey() gives it, if the context is a secure one,
+  // as the Cache API and the Storage Buckets API need.
+  std::optional<std::string> SecureContextStorageKey(uint64_t context_id,
+                                                     const GURL& url);
+  // Where a call that names bucket `bucket` of context `context_id` goes, of
+  // the storage key `storage_key`: its default bucket for 0, made if it has
+  // none, as Chrome makes it once IndexedDB or the Cache API reaches it.
+  // None, after the Page has been refused, for a bucket that it was not
+  // given.
+  std::optional<PageStorageBuckets::Target> LocateBucket(
+      uint64_t bucket,
+      uint64_t context_id,
+      const std::string& storage_key);
   // What a document's localStorage and sessionStorage ask, as Chrome's
   // storage service answers a renderer: an area takes its storage key from the
   // URL that the library loaded the document at that binds it.
@@ -429,6 +469,10 @@ class PageHost final : public PageChannel::Delegate {
   void OnStorageGetAll(const PageStorageGetAll& get_all);
   void OnStorageMutation(PageMessage type, PageStorageMutation mutation);
   void OnStorageUnbind(uint64_t area);
+  // A connection that document `document` hints it will want, as Chrome's
+  // NetworkHintsHandlerImpl hears of it, with the network anonymization key
+  // of the document's subresources.
+  void OnNetworkHint(const PageNetworkHint& hint, uint64_t document);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -461,11 +505,20 @@ class PageHost final : public PageChannel::Delegate {
                     net::HttpRequestHeaders headers,
                     RequestOptions options,
                     std::optional<std::vector<char>> body,
+                    scoped_refptr<RequestChannel> body_channel,
                     FetchChecks checks);
 
   // What a Request hears of its job.
-  void OnResponseStarted(Request& request, const RequestEvent& event);
+  void OnResponseStarted(Request& request, RequestEvent event);
   void OnBodyRead(Request& request, size_t size);
+  // A navigation whose response the Page makes no document of: it keeps its
+  // document, and the library reads the body to its end and drops it.
+  void DropNavigation(Request& request, const RequestEvent& event);
+  // Tells the Page that the response of `request` has started.
+  void StartResponse(Request& request, const RequestEvent& event);
+  // Ends the sniffing of a navigation's response: a download, or the
+  // response with what was read of its body.
+  void FinishSniffing(Request& request);
   // This deletes `request`.
   void OnRequestFinished(Request& request, int net_error);
   // Reads more of the body of `request` if the Page has given credit for it.
@@ -621,6 +674,9 @@ class PageHost final : public PageChannel::Delegate {
   uint64_t next_cache_storage_number_ = 1;
   // The document's IndexedDB, from its first call until the Page goes.
   std::unique_ptr<PageIndexedDb> indexed_db_;
+  // The Storage Buckets API of the Page's contexts, from its first call until
+  // the Page goes.
+  std::unique_ptr<PageStorageBuckets> storage_buckets_;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 

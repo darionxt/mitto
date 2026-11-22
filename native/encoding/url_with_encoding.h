@@ -26,6 +26,14 @@ GURL ResolveUrlWithEncoding(const GURL& base,
                             std::u16string_view relative,
                             std::string_view encoding);
 
+// What Blink's KURL keeps of `relative` when it does not resolve against
+// `base`: the canonicalizer's output as far as it got, which KURL keeps as its
+// string while it is not valid, so that a URL such as "//[" is not empty.
+// Empty for one that resolves.
+std::string UnresolvedUrlSpec(const GURL& base,
+                              std::u16string_view relative,
+                              std::string_view encoding);
+
 }  // namespace mitto
 
 #endif  // MITTO_ENCODING_URL_WITH_ENCODING_H_

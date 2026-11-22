@@ -24,8 +24,10 @@
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/html_link_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/html_style_element.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/qualified_name.h"
@@ -444,6 +446,15 @@ struct InsertionLocation {
 // HTMLConstructionSite have it, without the parts of Blink's that a Page has
 // no use for: the sanitizer, document patching, custom elements and the
 // counters of its use.
+bool IsForeignContentBreakoutStartTag(const HtmlToken& token) {
+  if (token.name == u"font") {
+    return FindTokenAttribute(token, u"color") ||
+           FindTokenAttribute(token, u"face") ||
+           FindTokenAttribute(token, u"size");
+  }
+  return IsOneOf(token.name, kForeignContentBreakoutNames);
+}
+
 class HtmlTreeBuilder {
  public:
   // For a document. What the builder refers to stays in `references`, which
@@ -454,7 +465,8 @@ class HtmlTreeBuilder {
       : references_(references),
         document_(&references.document()),
         tokenizer_(tokenizer),
-        scripting_flag_(options.scripting_flag) {}
+        scripting_flag_(options.scripting_flag),
+        include_shadow_roots_(options.include_shadow_roots) {}
 
   // For a fragment whose context is `context`, as the standard's fragment
   // parsing algorithm sets the builder up. Blink's root is the fragment
@@ -468,6 +480,7 @@ class HtmlTreeBuilder {
         document_(&references.document()),
         tokenizer_(tokenizer),
         scripting_flag_(options.scripting_flag),
+        include_shadow_roots_(options.include_shadow_roots),
         fragment_context_(&context),
         context_entry_{&context, IsHtmlAnnotationXml(context)} {
     references_->Keep(&context);
@@ -523,6 +536,8 @@ class HtmlTreeBuilder {
   }
 
   Element* fragment_root() const { return root_; }
+  // HTMLTreeBuilder::SetShouldSkipLeadingNewline().
+  void SetShouldSkipLeadingNewline(bool skip) { skip_leading_newline_ = skip; }
   // Blink's kAllowScriptingContentAndDoNotMarkAlreadyStarted: the script
   // elements are neither the parser's nor already started.
   void SetScriptsRunnable() { scripts_parser_inserted_ = false; }
@@ -990,6 +1005,13 @@ class HtmlTreeBuilder {
     Element* const element = OwnerDocumentForCurrentNode().CreateElement(
         namespace_uri, std::nullopt, token.name);
     const bool foreign = namespace_uri != html_names::kXhtmlNamespace;
+    // CreateElementFlags::ByParser() and ByFragmentParser(): the link and
+    // style elements that the parser makes hold scripts back.
+    if (!foreign && token.name == u"link") {
+      static_cast<HTMLLinkElement*>(element)->SetCreatedByParser();
+    } else if (!foreign && token.name == u"style") {
+      static_cast<HTMLStyleElement*>(element)->SetCreatedByParser();
+    }
     for (const HtmlAttribute& attribute : token.attributes) {
       if (const std::optional<QualifiedName> name =
               foreign ? ForeignAttributeName(attribute.name) : std::nullopt) {
@@ -1231,7 +1253,7 @@ class HtmlTreeBuilder {
     const std::u16string* const mode =
         FindTokenAttribute(token, u"shadowrootmode");
     const bool attaches_shadow_root =
-        !IsFragment() && mode &&
+        !IsFragment() && include_shadow_roots_ && mode &&
         (base::EqualsCaseInsensitiveASCII(*mode, u"open") ||
          base::EqualsCaseInsensitiveASCII(*mode, u"closed"));
     if (attaches_shadow_root) {
@@ -1347,6 +1369,9 @@ class HtmlTreeBuilder {
   // open elements: a patching template's patch finishes
   // (Patch::Finalize()), its markers and the template going.
   void FinishParsingChildren(Element& element) {
+    if (element.HasHTMLTagName(u"style")) {
+      static_cast<HTMLStyleElement&>(element).FinishParsingChildren();
+    }
     const auto it = patches_.find(&element);
     if (it == patches_.end()) {
       return;
@@ -3124,12 +3149,7 @@ class HtmlTreeBuilder {
   }
 
   static bool IsForeignContentBreakout(const HtmlToken& token) {
-    if (token.name == u"font") {
-      return FindTokenAttribute(token, u"color") ||
-             FindTokenAttribute(token, u"face") ||
-             FindTokenAttribute(token, u"size");
-    }
-    return IsOneOf(token.name, kForeignContentBreakoutNames);
+    return IsForeignContentBreakoutStartTag(token);
   }
 
   void ProcessTokenInForeignContent(HtmlToken& token) {
@@ -3224,6 +3244,7 @@ class HtmlTreeBuilder {
   const raw_ptr<Document> document_;
   const raw_ref<HtmlTokenizer> tokenizer_;
   const bool scripting_flag_;
+  const bool include_shadow_roots_;
   const raw_ptr<Element> fragment_context_;
   // Whether the script elements it makes are the parser's.
   bool scripts_parser_inserted_ = true;
@@ -3279,6 +3300,7 @@ void HtmlTreeBuilderReferences::KeepOnly(const std::vector<Node*>& nodes) {
 HtmlParserOptions HtmlParserOptions::ForDocument(const Document& document) {
   HtmlParserOptions options;
   options.scripting_flag = document.DefaultView() != nullptr;
+  options.include_shadow_roots = document.AllowsDeclarativeShadowRoots();
   return options;
 }
 
@@ -3339,14 +3361,41 @@ void HtmlDocumentParser::Insert(std::u16string_view markup) {
   tokenizer_->Insert(markup);
 }
 
+std::u16string_view HtmlDocumentParser::UnreadInput() const {
+  return tokenizer_->UnreadInput();
+}
+
 Element* HtmlDocumentParser::Pump() {
   HtmlToken token;
   while (tokenizer_->NextToken(token)) {
     if (Element* const script = tree_builder_->ProcessToken(token)) {
       return script;
     }
+    if (should_pause_ && should_pause_.Run()) {
+      return nullptr;
+    }
   }
   return nullptr;
+}
+
+void HtmlDocumentParser::StartTextDocument() {
+  // Two tokens that no markup gave, so that the tokenizer's positions stay
+  // those of the text.
+  HtmlToken meta;
+  meta.type = HtmlToken::Type::kStartTag;
+  meta.name = u"meta";
+  meta.attributes = {{u"name", u"color-scheme"}, {u"content", u"light dark"}};
+  tree_builder_->ProcessToken(meta);
+  HtmlToken pre;
+  pre.type = HtmlToken::Type::kStartTag;
+  pre.name = u"pre";
+  pre.attributes = {
+      {u"style", u"word-wrap: break-word; white-space: pre-wrap;"}};
+  tree_builder_->ProcessToken(pre);
+  // The text's first line feed stays, as the pre's would not, and the rest
+  // is text, as plaintext's is.
+  tree_builder_->SetShouldSkipLeadingNewline(false);
+  tokenizer_->SetState(HtmlTokenizer::State::kPlaintext);
 }
 
 const std::vector<std::string>& HtmlDocumentParser::skipped_rules() const {

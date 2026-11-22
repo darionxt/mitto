@@ -3,13 +3,16 @@
 #include <stdint.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "base/no_destructor.h"
 #include "mitto/bindings/v8_conversions.h"
-#include "mitto/bindings/v8_window.h"
+#include "mitto/bindings/v8_dom_exception.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/dom_exception.h"
 #include "mitto/dom/error_event.h"
+#include "mitto/dom/event_target.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/promise_rejection_event.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/persistent.h"
@@ -22,35 +25,22 @@ namespace mitto {
 
 namespace {
 
-// ExecutionContext's state of its error events. A Page runs one window's
-// scripts at a time, on one thread.
-struct ErrorEventState {
-  // Whether the window's error listeners run, which queues an error that
-  // they throw for the console alone.
-  bool in_dispatch_error_event = false;
-  // Whether those queued errors go to the console, which drops any error
-  // thrown meanwhile.
-  bool draining_pending_exceptions = false;
-  std::vector<v8::Global<v8::Value>> pending_exceptions;
-};
-
-ErrorEventState& State() {
-  static base::NoDestructor<ErrorEventState> state;
-  return *state;
-}
-
-// The window of the current context, while the Page still runs its scripts,
-// as Blink's ScriptState::ContextIsValid() asks.
-Window* CurrentWindow(v8::Isolate* isolate) {
+// The execution context of the current context, a window or a worker's global
+// scope, while the Page still runs its scripts, as Blink's
+// ScriptState::ContextIsValid() asks.
+ExecutionContext* CurrentContext(v8::Isolate* isolate) {
   if (!isolate->InContext()) {
     return nullptr;
   }
-  Window* const window = bindings::V8Window::ToWrappable(
-      isolate, isolate->GetCurrentContext()->Global());
-  if (!window || !window->HasContext() || !window->Document()) {
+  ExecutionContext* const context =
+      ExecutionContext::From(isolate, isolate->GetCurrentContext());
+  if (!context || !context->HasContext()) {
     return nullptr;
   }
-  return window;
+  if (context->IsWindow() && !static_cast<Window*>(context)->Document()) {
+    return nullptr;
+  }
+  return context;
 }
 
 std::u16string ToU16String(v8::Isolate* isolate, v8::Local<v8::Value> value) {
@@ -64,20 +54,37 @@ std::u16string ToU16String(v8::Isolate* isolate, v8::Local<v8::Value> value) {
   return text;
 }
 
-// The ErrorEvent of V8's message, as Blink's MessageHandlerInMainThread()
-// makes it: the message's text, such as "Uncaught TypeError: x is not a
-// function", and CaptureSourceLocation()'s place, the script's URL or else the
-// document's, its line, and its column counted from 1, as no DevTools asks V8
-// for stack traces of uncaught errors.
+// The ErrorEvent of V8's message, which says `text`, as Blink's
+// MessageHandlerInMainThread() makes it.
 ErrorEvent* ErrorEventOf(v8::Isolate* isolate,
-                         Window& window,
+                         ExecutionContext& execution_context,
                          v8::Local<v8::Message> message,
-                         v8::Local<v8::Value> exception) {
+                         v8::Local<v8::Value> exception,
+                         const std::u16string& text) {
+  const ErrorMessageInfo info =
+      DescribeErrorMessage(isolate, execution_context, message);
+  return ErrorEvent::CreateForScriptError(text, info.filename, info.line,
+                                          info.column, exception);
+}
+
+}  // namespace
+
+ErrorMessageInfo::ErrorMessageInfo() = default;
+ErrorMessageInfo::ErrorMessageInfo(const ErrorMessageInfo&) = default;
+ErrorMessageInfo& ErrorMessageInfo::operator=(const ErrorMessageInfo&) =
+    default;
+ErrorMessageInfo::~ErrorMessageInfo() = default;
+
+ErrorMessageInfo DescribeErrorMessage(v8::Isolate* isolate,
+                                      ExecutionContext& execution_context,
+                                      v8::Local<v8::Message> message) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  std::u16string filename =
+  ErrorMessageInfo info;
+  info.message = ToU16String(isolate, message->Get());
+  info.filename =
       ToU16String(isolate, message->GetScriptOrigin().ResourceName());
-  if (filename.empty()) {
-    filename = window.GetDocument().UrlForBinding();
+  if (info.filename.empty()) {
+    info.filename = execution_context.Url();
   }
   int line = 0;
   int column = 0;
@@ -85,53 +92,67 @@ ErrorEvent* ErrorEventOf(v8::Isolate* isolate,
       message->GetStartColumn(context).To(&column)) {
     ++column;
   }
-  return ErrorEvent::CreateForScriptError(
-      ToU16String(isolate, message->Get()), filename,
-      static_cast<uint32_t>(line < 0 ? 0 : line),
-      static_cast<uint32_t>(column < 0 ? 0 : column), exception);
+  info.line = static_cast<uint32_t>(line < 0 ? 0 : line);
+  info.column = static_cast<uint32_t>(column < 0 ? 0 : column);
+  return info;
 }
-
-}  // namespace
 
 void ReportUncaughtError(v8::Isolate* isolate,
                          v8::Local<v8::Message> message,
                          v8::Local<v8::Value> exception,
+                         std::u16string text,
                          ReportToConsole to_console) {
-  ErrorEventState& state = State();
+  ExecutionContext* const context = CurrentContext(isolate);
+  if (!context) {
+    to_console(exception, text);
+    return;
+  }
+  ExecutionContext::ErrorEventState& state = context->GetErrorEventState();
   if (state.draining_pending_exceptions) {
     return;
   }
   if (state.in_dispatch_error_event) {
-    state.pending_exceptions.emplace_back(isolate, exception);
+    state.pending_exceptions.emplace_back(
+        v8::Global<v8::Value>(isolate, exception), std::move(text));
     return;
   }
   bool canceled = false;
-  Window* const window = CurrentWindow(isolate);
-  if (window && !message.IsEmpty()) {
+  if (!message.IsEmpty()) {
     const v8::HandleScope handle_scope(isolate);
-    // A script whose errors are muted shows the window's listeners nothing
+    // A script whose errors are muted shows the context's listeners nothing
     // of its error.
     const cppgc::Persistent<ErrorEvent> event(
         message->IsSharedCrossOrigin()
-            ? ErrorEventOf(isolate, *window, message, exception)
+            ? ErrorEventOf(isolate, *context, message, exception, text)
             : ErrorEvent::CreateSanitized());
     event->SetTrusted(true);
     state.in_dispatch_error_event = true;
-    window->DispatchEvent(event.Get());
+    context->ErrorEventTarget()->DispatchEvent(event.Get());
     state.in_dispatch_error_event = false;
     canceled = event->DefaultPrevented();
   }
   state.draining_pending_exceptions = true;
   if (!canceled) {
-    to_console(exception);
+    to_console(exception, text);
   }
-  std::vector<v8::Global<v8::Value>> pending;
+  std::vector<ExecutionContext::PendingException> pending;
   pending.swap(state.pending_exceptions);
-  for (const v8::Global<v8::Value>& pending_exception : pending) {
+  for (const ExecutionContext::PendingException& pending_exception : pending) {
     const v8::HandleScope handle_scope(isolate);
-    to_console(pending_exception.Get(isolate));
+    to_console(pending_exception.exception.Get(isolate),
+               pending_exception.text);
   }
   state.draining_pending_exceptions = false;
+}
+
+std::u16string MessageForConsole(v8::Isolate* isolate,
+                                 v8::Local<v8::Value> exception,
+                                 const std::u16string& text) {
+  const DOMException* const dom_exception =
+      bindings::V8DOMException::ToWrappable(isolate, exception);
+  const std::u16string for_console =
+      dom_exception ? dom_exception->ToStringForConsole() : std::u16string();
+  return for_console.empty() ? text : u"Uncaught " + for_console;
 }
 
 bool RejectionFiresEvents(v8::Isolate* isolate, v8::Local<v8::Value> reason) {
@@ -146,8 +167,8 @@ bool RejectionFiresEvents(v8::Isolate* isolate, v8::Local<v8::Value> reason) {
 bool DispatchUnhandledRejection(v8::Isolate* isolate,
                                 v8::Local<v8::Promise> promise,
                                 v8::Local<v8::Value> reason) {
-  Window* const window = CurrentWindow(isolate);
-  if (!window) {
+  ExecutionContext* const context = CurrentContext(isolate);
+  if (!context) {
     return true;
   }
   const cppgc::Persistent<PromiseRejectionEvent> event(
@@ -155,15 +176,21 @@ bool DispatchUnhandledRejection(v8::Isolate* isolate,
                                                 /*cancelable=*/true, promise,
                                                 reason));
   event->SetTrusted(true);
-  return window->DispatchEvent(event.Get());
+  return context->ErrorEventTarget()->DispatchEvent(event.Get());
 }
 
 v8::ScriptOrigin ClassicScriptOrigin(v8::Local<v8::Value> name,
                                      bool muted_errors,
                                      int line_offset,
-                                     int column_offset) {
+                                     int column_offset,
+                                     v8::Local<v8::Data> host_defined_options) {
   return v8::ScriptOrigin(name, line_offset, column_offset,
-                          /*resource_is_shared_cross_origin=*/!muted_errors);
+                          /*resource_is_shared_cross_origin=*/!muted_errors,
+                          /*script_id=*/-1,
+                          /*source_map_url=*/v8::Local<v8::Value>(),
+                          /*resource_is_opaque=*/false,
+                          /*is_wasm=*/false, /*is_module=*/false,
+                          host_defined_options);
 }
 
 void ReportScriptException(v8::Isolate* isolate,
@@ -177,8 +204,8 @@ void ReportScriptException(v8::Isolate* isolate,
 void DispatchRejectionHandled(v8::Isolate* isolate,
                               v8::Local<v8::Promise> promise,
                               v8::Local<v8::Value> reason) {
-  Window* const window = CurrentWindow(isolate);
-  if (!window) {
+  ExecutionContext* const context = CurrentContext(isolate);
+  if (!context) {
     return;
   }
   const cppgc::Persistent<PromiseRejectionEvent> event(
@@ -186,7 +213,7 @@ void DispatchRejectionHandled(v8::Isolate* isolate,
                                                 /*cancelable=*/false, promise,
                                                 reason));
   event->SetTrusted(true);
-  window->DispatchEvent(event.Get());
+  context->ErrorEventTarget()->DispatchEvent(event.Get());
 }
 
 }  // namespace mitto

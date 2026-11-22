@@ -185,6 +185,8 @@ class EventTarget : public bindings::ScriptWrappable {
 
   // Whether a listener of `type` is there, an event handler's among them.
   bool HasEventListeners(std::u16string_view type) const;
+  // Whether one of them listens in the capture phase.
+  bool HasCapturingEventListeners(std::u16string_view type) const;
   // Removes the listener of `type` with `callback` and `capture`, if there is
   // one, as removeEventListener() does.
   void RemoveListener(const std::u16string& type,

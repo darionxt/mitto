@@ -51,7 +51,6 @@
 #include "build/build_config.h"
 #include "mitto/body_stream.h"
 #include "mitto/cache_storage/cache_storage_context.h"
-#include "mitto/indexed_db/indexed_db_context.h"
 #include "mitto/client_hints.h"
 #include "mitto/connect_retrying_socket_factory.h"
 #include "mitto/cookie_json.h"
@@ -60,6 +59,7 @@
 #include "mitto/feature_list.h"
 #include "mitto/fetch_rules.h"
 #include "mitto/ignore_errors_cert_verifier.h"
+#include "mitto/indexed_db/indexed_db_context.h"
 #include "mitto/mitto.h"
 #include "mitto/network_quality.h"
 #include "mitto/network_session_configurator.h"
@@ -67,6 +67,7 @@
 #include "mitto/page_host.h"
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
+#include "mitto/preconnect_manager.h"
 #include "mitto/ready_requests.h"
 #include "mitto/request_channel.h"
 #include "mitto/request_client.h"
@@ -161,7 +162,8 @@ struct MittoSession final : public mitto::PageNetwork {
       GURL url,
       net::HttpRequestHeaders headers,
       mitto::RequestOptions options,
-      std::optional<std::vector<char>> body) override;
+      std::optional<std::vector<char>> body,
+      scoped_refptr<mitto::RequestChannel> body_channel) override;
   net::CookieStore& cookie_store() override;
   const scoped_refptr<mitto::KeepaliveInFlight>& keepalive_in_flight()
       override {
@@ -175,6 +177,7 @@ struct MittoSession final : public mitto::PageNetwork {
   mitto::StorageQuota& storage_quota() override;
   mitto::IndexedDbContext& indexed_db() override;
   mitto::StorageContext& storage_context() override;
+  mitto::PreconnectManager& preconnect_manager() override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
@@ -183,6 +186,9 @@ struct MittoSession final : public mitto::PageNetwork {
   // must not ask. `context` points to it, so it has to come first.
   std::unique_ptr<net::HostResolverManager> own_host_resolver_manager;
   std::unique_ptr<net::URLRequestContext> context;
+  // What its Pages' network hints resolve and connect through, in
+  // `context`, so it comes after it.
+  std::unique_ptr<mitto::PreconnectManager> preconnect_manager_for_pages;
   // The verifier in `context` holds this, and this makes its requests in
   // `context`, until the destructor shuts it down.
   scoped_refptr<net::CertNetFetcherURLRequest> cert_net_fetcher;
@@ -363,10 +369,17 @@ class RequestJob final : public net::URLRequest::Delegate,
       GURL url,
       net::HttpRequestHeaders headers,
       RequestOptions options,
-      std::optional<std::vector<char>> body) {
-    return base::WrapUnique(new RequestJob(
-        session, &client, nullptr, nullptr, std::move(url), std::move(headers),
-        std::move(options), std::move(body)));
+      std::optional<std::vector<char>> body,
+      scoped_refptr<RequestChannel> body_channel) {
+    // A fetch() whose body is a stream: network::URLLoader's
+    // has_fetch_streaming_upload_body_, for a body of no known size.
+    const bool fetch_streaming_upload =
+        options.stream_body && !options.stream_body_size;
+    auto job = base::WrapUnique(new RequestJob(
+        session, &client, nullptr, std::move(body_channel), std::move(url),
+        std::move(headers), std::move(options), std::move(body)));
+    job->fetch_streaming_upload_ = fetch_streaming_upload;
+    return job;
   }
 
   RequestJob(const RequestJob&) = delete;
@@ -452,7 +465,7 @@ class RequestJob final : public net::URLRequest::Delegate,
 
   // Goes on with a read of the stream body that waits for the caller, who has now
   // answered. This may delete the job, so nothing may touch it afterwards.
-  void SendBody() {
+  void SendBody() override {
     // A 303 drops the body, and with it the stream.
     if (body_stream_) {
       body_stream_->OnCallerAnswered();
@@ -473,6 +486,8 @@ class RequestJob final : public net::URLRequest::Delegate,
   }
 
   void Cancel() { Finish(net::ERR_ABORTED); }
+
+  void FailBody() override { Finish(net::ERR_FAILED); }
 
   // BodyStream::Delegate:
   void OnBodyWanted() override { client_->OnBodyWanted(); }
@@ -538,6 +553,13 @@ class RequestJob final : public net::URLRequest::Delegate,
 
   void OnAuthRequired(net::URLRequest* request,
                       const net::AuthChallengeInfo& auth_info) override {
+    // Chrome's network service fails a page's stream at any challenge, a
+    // proxy's too, since the stream cannot go again.
+    // Upstream: services/network/url_loader.cc
+    if (fetch_streaming_upload_) {
+      request->CancelWithError(net::ERR_FAILED);
+      return;
+    }
     // A server's challenge goes to the caller, as a response.
     if (!auth_info.is_proxy) {
       request->CancelAuth();
@@ -1015,6 +1037,8 @@ class RequestJob final : public net::URLRequest::Delegate,
   bool read_wanted_ = false;
   bool read_in_progress_ = false;
   bool proxy_auth_answered_ = false;
+  // A Page's fetch() whose body is a stream of no known size.
+  bool fetch_streaming_upload_ = false;
   base::OneShotTimer connect_timer_;
   base::OneShotTimer read_timer_;
   base::OneShotTimer total_timer_;
@@ -1045,10 +1069,11 @@ base::WeakPtr<mitto::RunningRequest> MittoSession::StartPageRequest(
     GURL url,
     net::HttpRequestHeaders headers,
     mitto::RequestOptions options,
-    std::optional<std::vector<char>> body) {
+    std::optional<std::vector<char>> body,
+    scoped_refptr<mitto::RequestChannel> body_channel) {
   std::unique_ptr<mitto::RequestJob> job = mitto::RequestJob::ForPage(
       *this, client, std::move(url), std::move(headers), std::move(options),
-      std::move(body));
+      std::move(body), std::move(body_channel));
   mitto::RequestJob* const started_job = job.get();
   const base::WeakPtr<mitto::RequestJob> weak_job = job->GetWeakPtr();
   jobs.insert(std::move(job));
@@ -1078,6 +1103,10 @@ mitto::IndexedDbContext& MittoSession::indexed_db() {
 
 mitto::StorageContext& MittoSession::storage_context() {
   return *storage;
+}
+
+mitto::PreconnectManager& MittoSession::preconnect_manager() {
+  return *preconnect_manager_for_pages;
 }
 
 void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
@@ -1211,7 +1240,8 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   session->quota_manager = std::make_unique<StorageQuota>(
       settings.storage_directory,
       base::SysInfo::AmountOfTotalPhysicalMemory().InBytes(),
-      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}));
+      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}),
+      session->storage->blocking_task_runner());
   session->cache_storage_context = std::make_unique<CacheStorageContext>(
       settings.storage_directory, *session->quota_manager);
   session->indexed_db_context = std::make_unique<IndexedDbContext>(
@@ -1288,6 +1318,8 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
 
   session->context = builder.Build();
   session->cert_net_fetcher->SetURLRequestContext(session->context.get());
+  session->preconnect_manager_for_pages =
+      std::make_unique<mitto::PreconnectManager>(*session->context);
   ConfigureQuicHints(session->context->http_server_properties());
   // The timer belongs to the Session, so it can only run while the Session
   // exists. NetworkService does this with one timer and a list of contexts.
@@ -1404,7 +1436,7 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     base::WaitableEvent done;
     PostTask(base::BindOnce(
         [](MittoSession* session, bool* opened, base::WaitableEvent* done) {
-          // localStorage's database, then IndexedDB's.
+          // localStorage's database, then IndexedDB's, then the buckets.
           session->storage->Open(base::BindOnce(
               [](MittoSession* session, bool* opened, base::WaitableEvent* done,
                  bool result) {
@@ -1413,11 +1445,21 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
                   return;
                 }
                 session->indexed_db_context->Open(base::BindOnce(
-                    [](bool* opened, base::WaitableEvent* done, bool result) {
-                      *opened = result;
-                      done->Signal();
+                    [](MittoSession* session, bool* opened,
+                       base::WaitableEvent* done, bool result) {
+                      if (!result) {
+                        done->Signal();
+                        return;
+                      }
+                      session->quota_manager->Open(base::BindOnce(
+                          [](bool* opened, base::WaitableEvent* done,
+                             bool result) {
+                            *opened = result;
+                            done->Signal();
+                          },
+                          opened, done));
                     },
-                    opened, done));
+                    base::Unretained(session), opened, done));
               },
               base::Unretained(session), base::Unretained(opened),
               base::Unretained(done)));

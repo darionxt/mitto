@@ -98,6 +98,25 @@ def test_intl_has_icus_whole_data(program: Path) -> None:
     assert _evaluate(program, script) == "5 true de"
 
 
+def test_a_timer_that_a_later_task_sets_keeps_the_program_running(program: Path) -> None:
+    # The first task leaves nothing waiting, and the messages' tasks set the first timer: the program runs it before it
+    # ends.
+    script = """
+        (async () => {
+          const { port1, port2 } = new MessageChannel();
+          port2.onmessage = (e) => port2.postMessage(e.data + 1);
+          const got = await new Promise((resolve) => {
+            port1.onmessage = (e) => resolve(e.data);
+            port1.postMessage(1);
+          });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return got;
+        })()
+    """
+
+    assert _evaluate(program, script) == "2"
+
+
 def test_a_script_that_throws_prints_what_it_threw(program: Path) -> None:
     result = _run(program, "throw new TypeError('no ' + 'good')")
 
@@ -137,7 +156,7 @@ _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
-_PROTOCOL_VERSION = 22
+_PROTOCOL_VERSION = 27
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -222,6 +241,9 @@ class _Session:
         self.reports: list[tuple[int, bytes]] = []
         # The documents that the Page has told of, as the payloads of their messages, in order.
         self.documents: list[bytes] = []
+        # The requests for the icon that each document asks for once it has loaded, as Chrome's favicon driver does,
+        # as the payloads of their messages, in order. Nothing answers them.
+        self.favicons: list[bytes] = []
         ours, theirs = socket.socketpair()
         self.socket = ours
         self.socket.settimeout(_TIMEOUT_SECONDS)
@@ -238,13 +260,16 @@ class _Session:
 
     def receive(self) -> tuple[int, bytes]:
         """Return the next message, as (type, payload), but for the documents that the Page tells of, which go to
-        `documents`."""
+        `documents`, and its requests for icons, which go to `favicons`."""
         while True:
             size, message_type = struct.unpack("<II", self._read(8))
             payload = self._read(size)
-            if message_type != _DOCUMENT_COMMITTED:
+            if message_type == _DOCUMENT_COMMITTED:
+                self.documents.append(payload)
+            elif message_type == _REQUEST and payload[16] == _FAVICON_KIND:
+                self.favicons.append(payload)
+            else:
                 return message_type, payload
-            self.documents.append(payload)
 
     def start(self, start: dict[str, object] = _DEFAULT_START) -> None:
         assert self.receive() == (_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
@@ -481,6 +506,7 @@ def test_cpu_performance_is_chromes_tier_of_the_machines_processors(
 ) -> None:
     # content::cpu_performance's GetTierFromCpuInfo() for an AMD or Intel CPU of none of the models it singles out.
     session.start({**_DEFAULT_START, "processors": processors})
+    _loaded(session, _SECURE_URL)
 
     assert session.evaluate("[navigator.cpuPerformance, navigator.hardwareConcurrency]") == (
         False,
@@ -524,6 +550,7 @@ def test_enumerate_devices_lists_one_entry_of_each_kind_of_device_the_machine_ha
     # MediaDevicesManager: the first device of each kind, in the order of MediaDeviceType, from a task of its own, as
     # new objects each time.
     session.start({**_DEFAULT_START, "media_devices": devices})
+    _loaded(session, _SECURE_URL)
 
     assert session.evaluate(_ENUMERATE_DEVICES) == (
         False,
@@ -745,7 +772,11 @@ _COOKIE_STORE_CHANGE = 24
 _BROADCAST_RECEIVED = 26
 _BODY_WINDOW = 64 * 1024
 _SCRIPT_KIND = 1
+_FAVICON_KIND = 12
 _DOCUMENT_URL = "http://www.example.test/page"
+# A document of a potentially trustworthy origin, for what Web IDL's [SecureContext] puts behind one, which the Page's
+# first document, about:blank with an opaque origin, is not, as in Chrome.
+_SECURE_URL = "https://www.example.test/page"
 # The ID that the Page gives the document of its navigation, after about:blank's 1, as its messages carry it.
 _DOCUMENT = struct.pack("<Q", 2)
 
@@ -916,7 +947,7 @@ def test_a_documents_event_handler_attributes_run_as_it_loads(session: _Session)
     assert session.close() == 0
 
 
-def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -> None:
+def test_a_page_takes_what_comes_while_its_parser_waits(session: _Session) -> None:
     session.start()
     first = b"<script src=/wait.js></script>"
     second = b"<p id=later>" + b"x" * 2000 + b"</p>"
@@ -925,13 +956,13 @@ def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -
     assert session.receive()[0] == _CREDIT
     assert session.receive()[0] == _REQUEST
 
-    # The parser waits for the script, so what comes meanwhile waits too, and the Session gets no room for more.
+    # The parser waits for the script, and what comes meanwhile goes into its input, as Chrome's loader appends it
+    # for the preload scanner to read, so the Session gets room for more.
     _body(session, 0, second)
-    assert _nothing_comes(session)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(second)))
 
     _respond(session, 1, "http://www.example.test/wait.js", "text/javascript")
     _end(session, 1)
-    assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(second)))
     _end(session, 0)
     assert session.receive() == (_LOADED, _DOCUMENT)
     assert session.evaluate("document.getElementById('later').textContent.length") == (False, "2000")
@@ -943,10 +974,11 @@ _CANCEL = 17
 _ERR_ABORTED = -3
 
 
-def _loaded(session: _Session) -> None:
-    """Give the Page an empty document, and wait until it has loaded."""
-    _respond(session, 0, _DOCUMENT_URL, "text/html")
-    _body(session, 0, b"<p>fetch</p>")
+def _loaded(session: _Session, url: str = _DOCUMENT_URL, connection: tuple[int, float] = (0, 0.0)) -> None:
+    """Give the Page an empty document at `url`, and wait until it has loaded. Its icon is a data: URL, which asks for
+    nothing, so that the requests after it are its scripts' alone."""
+    _respond(session, 0, url, "text/html", connection=connection)
+    _body(session, 0, b"<link rel=icon href='data:,'><p>fetch</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
     assert session.receive() == (_LOADED, _DOCUMENT)
@@ -1056,6 +1088,8 @@ _NAVIGATOR_AND_SCREEN = """
 
 def test_a_page_reads_the_browser_and_the_machine_that_it_starts_with(session: _Session) -> None:
     session.start()
+    # navigator.userAgentData is there only in a secure context. The document keeps about:blank's connection.
+    _loaded(session, _SECURE_URL, connection=(100, 2.65))
 
     failed, text = session.evaluate(_NAVIGATOR_AND_SCREEN)
 
@@ -1135,6 +1169,7 @@ def test_a_page_reads_its_languages_as_chrome_parses_its_setting(
 
 def test_high_entropy_values_resolve_with_what_the_hints_send(session: _Session) -> None:
     session.start()
+    _loaded(session, _SECURE_URL)
     script = """
         navigator.userAgentData.getHighEntropyValues(
           ["wow64", "platformVersion", "architecture", "model", "bitness", "uaFullVersion", "fullVersionList",
@@ -1277,7 +1312,7 @@ def test_a_broadcast_from_another_page_reaches_only_the_channels_of_its_origin(s
     assert session.close() == 0
 
 
-def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session) -> None:
+def test_a_no_store_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session) -> None:
     session.start()
     _loaded(session)
     session.send(
@@ -1286,10 +1321,11 @@ def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session
     # fetch() asks the Session at once, before the script that calls it returns.
     assert session.receive()[0] == _REQUEST
     assert session.evaluated() == (1, False, "null")
-    _respond(session, 1, "http://www.example.test/large", "text/plain")
+    _respond(session, 1, "http://www.example.test/large", "text/plain", headers="Cache-Control: no-store\n")
     _body(session, 1, b"x" * _BODY_WINDOW)
 
-    # The Response holds its window, and no script reads it, so the Session gets no room for more.
+    # Blink buffers no body of a no-store response, so it waits in its window, which no script reads, and the Session
+    # gets no room for more.
     assert _nothing_comes(session)
 
     session.send(_EVALUATE, struct.pack("<Q", 2) + b"response.text().then(text => text.length)")
@@ -1297,6 +1333,27 @@ def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session
     _body(session, 1, b"y" * 10)
     assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 10))
     _end(session, 1)
+    assert session.evaluated() == (2, False, str(_BODY_WINDOW + 10))
+    assert session.close() == 0
+
+
+def test_a_fetchs_body_gets_credit_once_blink_would_buffer_it(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE, struct.pack("<Q", 1) + b"window.got = fetch('/large').then(r => { window.response = r; }); null"
+    )
+    assert session.receive()[0] == _REQUEST
+    assert session.evaluated() == (1, False, "null")
+    _respond(session, 1, "http://www.example.test/large", "text/plain")
+    _body(session, 1, b"x" * _BODY_WINDOW)
+
+    # Blink's BufferingBytesConsumer takes the body 50 ms after it starts, though no script reads it.
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, _BODY_WINDOW))
+    _body(session, 1, b"y" * 10)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 10))
+    _end(session, 1)
+    session.send(_EVALUATE, struct.pack("<Q", 2) + b"got.then(() => response.text()).then(text => text.length)")
     assert session.evaluated() == (2, False, str(_BODY_WINDOW + 10))
     assert session.close() == 0
 
@@ -1419,12 +1476,8 @@ def test_timers_run_while_the_page_waits_for_a_response(session: _Session) -> No
 
 def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Session) -> None:
     session.start()
-    first = b"<script src=/wait.js></script>"
     _respond(session, 0, _DOCUMENT_URL, "text/html")
-    _body(session, 0, first)
-    assert session.receive()[0] == _CREDIT
-    assert session.receive()[0] == _REQUEST
-
+    # The whole window, then a byte more, before the parser has taken any of it.
     _body(session, 0, b"x" * _BODY_WINDOW)
     _body(session, 0, b"x")
 
@@ -1843,6 +1896,7 @@ def test_webkit_request_file_system_names_a_persistent_one_and_refuses_another_t
 def test_a_presentation_availability_outlives_its_request_until_its_promise_settles(session: _Session) -> None:
     # Blink's resolver holds what it resolves with, so a page that keeps only the promise still gets the availability.
     session.start(_with_features(v8_flags=["--expose-gc"]))
+    _loaded(session, _SECURE_URL)
     script = """new Promise((resolve) => {
         const promise = new PresentationRequest("https://a.test/").getAvailability();
         gc();
@@ -1945,25 +1999,14 @@ def test_credential_requests_that_have_their_answer_go(session: _Session) -> Non
     assert session.evaluate(script) == (False, json.dumps([[True] * 6, False], separators=(",", ":")))
 
 
-def test_credentials_get_refuses_an_opaque_origin(session: _Session) -> None:
-    # about:blank, which the Page starts with, is a secure context with an opaque origin, which WebAuthn's browser
-    # refuses (OriginAllowedToMakeWebAuthnRequests()), and the digital credentials API before it asks for an activation.
+def test_about_blank_is_no_secure_context_so_it_has_no_credentials(session: _Session) -> None:
+    # The Page's first document is a tab's about:blank, whose opaque origin is not potentially trustworthy, so Web IDL's
+    # [SecureContext] leaves out navigator.credentials, caches and the rest, as Chrome 157 does for a new tab.
     session.start()
-    script = """Promise.all([
-        navigator.credentials.get({publicKey: {challenge: new Uint8Array(1)}}),
-        navigator.credentials.get({digital: {requests: []}}),
-    ].map((p) => p.then(String, (e) => e.name + ": " + e.message)))"""
 
-    assert session.evaluate(script) == (
+    assert session.evaluate("[isSecureContext, self.origin, typeof navigator.credentials, typeof caches]") == (
         False,
-        json.dumps(
-            [
-                "NotAllowedError: The current origin is an opaque origin and hence not allowed to access"
-                " 'PublicKeyCredential' objects.",
-                "NotAllowedError: The credential operation is not allowed in an opaque origin.",
-            ],
-            separators=(",", ":"),
-        ),
+        json.dumps([False, "null", "undefined", "undefined"], separators=(",", ":")),
     )
 
 

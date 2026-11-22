@@ -14,6 +14,7 @@
 #include "mitto/bindings/v8_idb_factory.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_exception.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/idb_event_dispatcher.h"
 #include "mitto/dom/idb_factory_client.h"
 #include "mitto/dom/idb_key_conversion.h"
@@ -21,7 +22,8 @@
 #include "mitto/dom/idb_open_db_request.h"
 #include "mitto/dom/idb_request.h"
 #include "mitto/dom/indexed_db_host.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/storage_bucket.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
@@ -72,16 +74,14 @@ void SettleDatabaseInfo(v8::Isolate* isolate,
 
 }  // namespace
 
-IDBFactory::IDBFactory(Window* window) : window_(window) {}
+IDBFactory::IDBFactory(ExecutionContext* execution_context)
+    : execution_context_(execution_context) {}
+
+IDBFactory::IDBFactory(ExecutionContext* execution_context,
+                       StorageBucket* bucket)
+    : execution_context_(execution_context), bucket_(bucket) {}
 
 IDBFactory::~IDBFactory() = default;
-
-// static
-bindings::ScriptWrappable* IDBFactory::CreateForKnownGap(
-    const bindings::WrapperTypeInfo& info) {
-  return bindings::MakeForKnownGap<IDBFactory>(
-      info, bindings::V8IDBFactory::kWrapperTypeInfo, nullptr);
-}
 
 const bindings::WrapperTypeInfo* IDBFactory::GetWrapperTypeInfo() const {
   return &bindings::V8IDBFactory::kWrapperTypeInfo;
@@ -89,15 +89,20 @@ const bindings::WrapperTypeInfo* IDBFactory::GetWrapperTypeInfo() const {
 
 void IDBFactory::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
-  visitor->Trace(window_);
+  visitor->Trace(execution_context_);
+  visitor->Trace(bucket_);
 }
 
-Window* IDBFactory::ValidWindow() const {
-  Window* const window = window_.Get();
-  if (!window || !window->HasContext()) {
+uint64_t IDBFactory::BucketNumber() const {
+  return bucket_ ? bucket_->bucket() : 0;
+}
+
+ExecutionContext* IDBFactory::ValidContext() const {
+  ExecutionContext* const execution_context = execution_context_.Get();
+  if (!execution_context || !execution_context->HasContext()) {
     return nullptr;
   }
-  return window;
+  return execution_context;
 }
 
 v8::Local<v8::Promise> IDBFactory::GetDatabaseInfo(
@@ -108,14 +113,14 @@ v8::Local<v8::Promise> IDBFactory::GetDatabaseInfo(
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return {};
   }
-  Window* const window = ValidWindow();
-  if (!window) {
+  ExecutionContext* const execution_context = ValidContext();
+  if (!execution_context) {
     // Blink's resolver->Reject(), with undefined.
     std::ignore = resolver->Reject(context, v8::Undefined(isolate));
     return resolver->GetPromise();
   }
 
-  IndexedDbHost* const host = window->GetDocument().GetIndexedDbHost();
+  IndexedDbHost* const host = execution_context->GetIndexedDbHost();
   if (!host) {
     // The bindings reject the promise with it.
     exception_state.ThrowDOMException(
@@ -126,19 +131,22 @@ v8::Local<v8::Promise> IDBFactory::GetDatabaseInfo(
 
   PageIndexedDbCall call;
   call.op = IndexedDbCallOp::kGetDatabaseInfo;
-  host->Ask(std::move(call),
-            base::BindRepeating(
-                [](v8::Isolate* isolate, cppgc::WeakPersistent<Window> window,
-                   v8::Global<v8::Promise::Resolver>* resolver,
-                   PageIndexedDbCallback answer) {
-                  // Nothing settles once the window's context has gone.
-                  RunInIDBContext(window.Get(), [&] {
-                    SettleDatabaseInfo(isolate, resolver->Get(isolate), answer);
-                  });
-                },
-                isolate, cppgc::WeakPersistent<Window>(window),
-                base::Owned(std::make_unique<v8::Global<v8::Promise::Resolver>>(
-                    isolate, resolver))));
+  call.bucket = BucketNumber();
+  host->Ask(
+      std::move(call),
+      base::BindRepeating(
+          [](v8::Isolate* isolate,
+             cppgc::WeakPersistent<ExecutionContext> execution_context,
+             v8::Global<v8::Promise::Resolver>* resolver,
+             PageIndexedDbCallback answer) {
+            // Nothing settles once the context has gone.
+            RunInContext(execution_context.Get(), [&] {
+              SettleDatabaseInfo(isolate, resolver->Get(isolate), answer);
+            });
+          },
+          isolate, cppgc::WeakPersistent<ExecutionContext>(execution_context),
+          base::Owned(std::make_unique<v8::Global<v8::Promise::Resolver>>(
+              isolate, resolver))));
   return resolver->GetPromise();
 }
 
@@ -161,11 +169,11 @@ IDBOpenDBRequest* IDBFactory::OpenInternal(
     int64_t version,
     bindings::ExceptionState& exception_state) {
   DCHECK(version >= 1 || version == IDBDatabaseMetadata::kNoVersion);
-  Window* const window = ValidWindow();
-  if (!window) {
+  ExecutionContext* const execution_context = ValidContext();
+  if (!execution_context) {
     return nullptr;
   }
-  IndexedDbHost* const host = window->GetDocument().GetIndexedDbHost();
+  IndexedDbHost* const host = execution_context->GetIndexedDbHost();
   if (!host) {
     exception_state.ThrowDOMException(
         "SecurityError",
@@ -176,11 +184,13 @@ IDBOpenDBRequest* IDBFactory::OpenInternal(
   const uint64_t connection = host->NextNumber();
   const uint64_t transaction_id = host->NextNumber();
   IDBOpenDBRequest* const request =
-      bindings::MakeGarbageCollected<IDBOpenDBRequest>(
-          window, this, host, name, connection, transaction_id, version);
+      bindings::MakeGarbageCollected<IDBOpenDBRequest>(execution_context, this,
+                                                       host, name, connection,
+                                                       transaction_id, version);
 
   PageIndexedDbCall call;
   call.op = IndexedDbCallOp::kOpen;
+  call.bucket = BucketNumber();
   call.connection = connection;
   call.transaction = transaction_id;
   call.name = name;
@@ -195,11 +205,11 @@ IDBOpenDBRequest* IDBFactory::OpenInternal(
 IDBOpenDBRequest* IDBFactory::DeleteDatabase(
     const std::u16string& name,
     bindings::ExceptionState& exception_state) {
-  Window* const window = ValidWindow();
-  if (!window) {
+  ExecutionContext* const execution_context = ValidContext();
+  if (!execution_context) {
     return nullptr;
   }
-  IndexedDbHost* const host = window->GetDocument().GetIndexedDbHost();
+  IndexedDbHost* const host = execution_context->GetIndexedDbHost();
   if (!host) {
     exception_state.ThrowDOMException(
         "SecurityError",
@@ -209,11 +219,12 @@ IDBOpenDBRequest* IDBFactory::DeleteDatabase(
 
   IDBOpenDBRequest* const request =
       bindings::MakeGarbageCollected<IDBOpenDBRequest>(
-          window, this, host, name, /*connection=*/0, /*transaction_id=*/0,
-          IDBDatabaseMetadata::kDefaultVersion);
+          execution_context, this, host, name, /*connection=*/0,
+          /*transaction_id=*/0, IDBDatabaseMetadata::kDefaultVersion);
 
   PageIndexedDbCall call;
   call.op = IndexedDbCallOp::kDeleteDatabase;
+  call.bucket = BucketNumber();
   call.name = name;
   host->Ask(std::move(call),
             base::BindRepeating(&IDBFactoryClient::OnAnswer,

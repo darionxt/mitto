@@ -22,8 +22,10 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_reporter.h"
+#include "mitto/page/session_sender.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-function-callback.h"
 #include "v8/include/v8-local-handle.h"
@@ -41,9 +43,11 @@ class DOMTimerCoordinator;
 class AnimationFrameController;
 class CacheStorageHost;
 class IndexedDbHost;
+class StorageBucketHost;
 class IdleTaskController;
 class Document;
 class PageFetcher;
+class PageWorkerStarter;
 class PageFrame;
 class PageRequests;
 class SessionCookieJar;
@@ -53,10 +57,12 @@ class WindowTasks;
 // V8's random numbers, as Chrome's renderers do.
 bool GenerateEntropy(unsigned char* buffer, size_t size);
 
-// Whether a document at `url` is a secure context: the HTML Standard's
-// potentially trustworthy URL, as Chrome decides it with no allowlist.
-// Upstream: net/base/is_potentially_trustworthy.cc
-bool IsUrlPotentiallyTrustworthy(const GURL& url);
+// Whether a top-level document of `origin` is a secure context: the HTML
+// Standard's potentially trustworthy origin, as Chrome decides it with no
+// allowlist. An opaque origin is not one, such as that of a tab's first
+// about:blank, which has no creator to take an origin from, or of a data: URL.
+// Upstream: services/network/public/cpp/is_potentially_trustworthy.cc
+bool IsOriginPotentiallyTrustworthy(const url::Origin& origin);
 
 // The main thread is the Page's event loop: each Session frame, each step of a
 // document's loading, each timer, each part of a response and each of V8's own
@@ -76,12 +82,12 @@ class ScriptRunner final : public base::TaskObserver {
   // neither is read from the machine, and makes the context, about:blank's,
   // whose window reads the rest of `start`, as each later window does.
   // Returns why not, if ICU does not know one of them. What the Page sends from
-  // then on goes through `send`, and what the Page refuses of what the Session
-  // sends through `refuse`. Documents that the Session loads read and write
-  // their cookies through `cookie_jar`, which outlives this.
+  // then on goes through `sender`, and what the Page refuses of what the
+  // Session sends through `refuse`. Documents that the Session loads read and
+  // write their cookies through `cookie_jar`, which outlives this.
   std::optional<std::string> Start(
       const PageStart& start,
-      SendFrame send,
+      scoped_refptr<SessionSender> sender,
       base::RepeatingCallback<void(std::string why)> refuse,
       SessionCookieJar& cookie_jar);
 
@@ -99,10 +105,14 @@ class ScriptRunner final : public base::TaskObserver {
   // Where the documents that the Session loads over HTTP or HTTPS reach its
   // IndexedDB, which outlives this.
   void SetIndexedDbHost(IndexedDbHost& host) { indexed_db_host_ = &host; }
+  void SetStorageBucketHost(StorageBucketHost& host) {
+    storage_bucket_host_ = &host;
+  }
 
   void OnResponseStarted(PageResponseStarted response);
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(PageResponseEnded ended);
+  void OnRequestBodyCredit(PageCredit credit);
 
   // What a document's loading uses, on the main thread.
   //
@@ -117,11 +127,15 @@ class ScriptRunner final : public base::TaskObserver {
   // promise of the old context fail, as DevTools' do when a page navigates,
   // and the old window's timers and fetches stop. The new window's
   // performance.timeOrigin is `navigation_start`, and its
-  // navigator.connection gives `connection`.
-  Document& CommitDocument(uint64_t navigation,
-                           const GURL& url,
-                           base::TimeTicks navigation_start,
-                           const PageConnection& connection);
+  // navigator.connection gives `connection`. With `xml_content_type`, the
+  // document is an XMLDocument of that MIME type, as Blink's DocumentInit
+  // makes one for an XML response, and otherwise an HTMLDocument.
+  Document& CommitDocument(
+      uint64_t navigation,
+      const GURL& url,
+      base::TimeTicks navigation_start,
+      const PageConnection& connection,
+      const std::optional<std::u16string>& xml_content_type = std::nullopt);
   // How the current window's document loads, which its document's loading
   // fills in, and performance.timing and window.chrome read.
   DocumentLoadTiming& document_load_timing() {
@@ -184,7 +198,9 @@ class ScriptRunner final : public base::TaskObserver {
   static void OnRejected(const v8::FunctionCallbackInfo<v8::Value>& info);
 
   const raw_ptr<v8::Isolate> isolate_;
+  scoped_refptr<SessionSender> sender_;
   SendFrame send_;
+  base::RepeatingCallback<void(std::string why)> refuse_;
   std::unique_ptr<PageReporter> reporter_;
   // What the Page started with, which each window reads.
   PageStart start_;
@@ -196,6 +212,7 @@ class ScriptRunner final : public base::TaskObserver {
   raw_ptr<SessionCookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
+  raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   std::unique_ptr<PageRequests> requests_;
   // The Page's frame, which loads its documents.
   std::unique_ptr<PageFrame> frame_;
@@ -205,14 +222,13 @@ class ScriptRunner final : public base::TaskObserver {
   std::unique_ptr<AnimationFrameController> animation_frames_;
   std::unique_ptr<PageFetcher> fetcher_;
   std::unique_ptr<WindowTasks> window_tasks_;
+  std::unique_ptr<PageWorkerStarter> worker_starter_;
   // What window.chrome of each window that the Page has made reads, the
   // current one's last. They live as long as the Page, for a callback of a
   // window that has gone.
   std::vector<std::unique_ptr<ChromeObjectData>> chrome_object_data_;
   // How many tasks that report rejections wait to run.
   int reports_queued_ = 0;
-  // The ID of the last document the Page made.
-  uint64_t last_document_id_ = kNoDocument;
   v8::Global<v8::Context> context_;
 };
 

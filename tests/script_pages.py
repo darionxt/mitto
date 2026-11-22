@@ -42,26 +42,20 @@ class Case:
     routes: dict[str, Route]
 
 
-class _BacklogServer(QuietServer):
-    """A local server that queues as many connections as a page opens at once.
-
-    A case that opens a connection for each of some twenty scripts would find socketserver's backlog of five refusing
-    the rest on a busy macOS runner, which a script reports as an error.
-    """
-
-    request_queue_size = 128
-
-
 class ScriptServer:
     """A local server for one case at a time, which records the path of each request it gets, in order.
 
     A request for /mark/NAME sets the mark NAME, and sending a route's whole response sets served:PATH. The body of each
-    POST to /result goes to `results`.
+    POST to /result goes to `results`, the Referer of each request to `referers`, and its headers to `request_headers`.
     """
 
     def __init__(self) -> None:
         self.case = Case({})
         self.requests: list[str] = []
+        # The Referer of each request, by its path, or None for a request without one.
+        self.referers: dict[str, str | None] = {}
+        # The headers of the last request for each path, by their names in lower case.
+        self.request_headers: dict[str, dict[str, str]] = {}
         self.results: list[str] = []
         self._marks: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
@@ -83,7 +77,7 @@ class ScriptServer:
             def log_message(self, format: str, *args: Any) -> None:
                 pass
 
-        self._server = _BacklogServer(("127.0.0.1", 0), Handler)
+        self._server = QuietServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     def url(self, path: str = "/") -> str:
@@ -104,6 +98,8 @@ class ScriptServer:
         path = handler.path
         with self._lock:
             self.requests.append(path)
+            self.referers[path] = handler.headers.get("Referer")
+            self.request_headers[path] = {name.lower(): value for name, value in handler.headers.items()}
         if path.startswith("/mark/"):
             self.mark(path.removeprefix("/mark/")).set()
             self.answer(handler, 200, "text/plain", b"ok")

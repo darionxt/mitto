@@ -18,6 +18,7 @@
 #include "mitto/bindings/v8_idb_request.h"
 #include "mitto/dom/dom_exception.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/idb_any.h"
 #include "mitto/dom/idb_cursor.h"
 #include "mitto/dom/idb_cursor_with_value.h"
@@ -28,7 +29,6 @@
 #include "mitto/dom/idb_request_queue_item.h"
 #include "mitto/dom/idb_transaction.h"
 #include "mitto/dom/quota_exceeded_error.h"
-#include "mitto/dom/window.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
@@ -106,15 +106,17 @@ IDBRequest* IDBRequest::Create(bindings::ScriptWrappable* source,
                                IDBTransaction* transaction) {
   CHECK(transaction);
   IDBRequest* const request = bindings::MakeGarbageCollected<IDBRequest>(
-      transaction->GetWindow(), source, transaction);
+      transaction->GetExecutionContext(), source, transaction);
   transaction->RegisterRequest(request);
   return request;
 }
 
-IDBRequest::IDBRequest(Window* window,
+IDBRequest::IDBRequest(ExecutionContext* execution_context,
                        bindings::ScriptWrappable* source,
                        IDBTransaction* transaction)
-    : transaction_(transaction), window_(window), source_(source) {}
+    : transaction_(transaction),
+      execution_context_(execution_context),
+      source_(source) {}
 
 IDBRequest::~IDBRequest() = default;
 
@@ -125,7 +127,7 @@ const bindings::WrapperTypeInfo* IDBRequest::GetWrapperTypeInfo() const {
 void IDBRequest::Trace(cppgc::Visitor* visitor) const {
   EventTarget::Trace(visitor);
   visitor->Trace(transaction_);
-  visitor->Trace(window_);
+  visitor->Trace(execution_context_);
   visitor->Trace(source_);
   visitor->Trace(result_);
   visitor->Trace(error_);
@@ -139,8 +141,8 @@ void IDBRequest::SetNativeSuccessListener(NativeSuccessListener* listener) {
 }
 
 bool IDBRequest::HasContext() const {
-  Window* const window = window_.Get();
-  return window && window->HasContext();
+  ExecutionContext* const execution_context = execution_context_.Get();
+  return execution_context && execution_context->HasContext();
 }
 
 v8::Local<v8::Value> IDBRequest::Result(
@@ -215,14 +217,15 @@ void IDBRequest::Abort(bool queue_dispatch) {
   if (queue_dispatch) {
     // Held until its error fires, as Blink's pending activity keeps a request
     // that is not done, which its transaction no longer holds.
-    PostIDBTask(window_.Get(), base::BindOnce(
-                                   [](cppgc::Persistent<IDBRequest> request,
-                                      cppgc::Persistent<DOMException> error) {
-                                     request->SendError(error.Get(),
-                                                        /*force=*/true);
-                                   },
-                                   cppgc::Persistent<IDBRequest>(this),
-                                   cppgc::Persistent<DOMException>(error)));
+    PostIDBTask(execution_context_.Get(),
+                base::BindOnce(
+                    [](cppgc::Persistent<IDBRequest> request,
+                       cppgc::Persistent<DOMException> error) {
+                      request->SendError(error.Get(),
+                                         /*force=*/true);
+                    },
+                    cppgc::Persistent<IDBRequest>(this),
+                    cppgc::Persistent<DOMException>(error)));
   } else {
     SendError(error, /*force=*/true);
   }

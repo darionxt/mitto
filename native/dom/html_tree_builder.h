@@ -27,6 +27,7 @@
 #include <string_view>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
@@ -40,6 +41,7 @@ namespace mitto {
 class Document;
 class Element;
 class HtmlTokenizer;
+struct HtmlToken;
 class HtmlTreeBuilder;
 
 // What Blink's HTMLParserOptions holds of a parse.
@@ -53,6 +55,10 @@ struct HtmlParserOptions {
   // The HTML Standard's scripting flag. On, noscript holds raw text. Off, its
   // contents are markup, with the "in head noscript" insertion mode.
   bool scripting_flag = false;
+  // Whether a document's template with a shadowrootmode attaches a
+  // declarative shadow root, which a document that DOMParser makes refuses,
+  // as Blink's HTMLDocumentParser reads its DeclarativeShadowRootAllowState.
+  bool include_shadow_roots = true;
 };
 
 // What a tree builder refers to: its document and every node that it holds,
@@ -113,18 +119,33 @@ class HtmlDocumentParser {
   void PopInsertionPoint();
   bool HasInsertionPoint() const;
   void Insert(std::u16string_view markup);
+  // What of the markup the tokenizer has not read yet.
+  std::u16string_view UnreadInput() const;
 
   // Builds the tree from the markup so far. Returns the script element whose
   // end tag it reached, where the standard would run the script before it
   // goes on, or null once it needs more markup or has reached the end. Call
   // it again to go on.
   Element* Pump();
+  // What Pump() asks after each token, to stop before the next when it says
+  // so, as Blink's parser stops for a style sheet in the body that it
+  // waits for.
+  void SetShouldPause(base::RepeatingCallback<bool()> should_pause) {
+    should_pause_ = std::move(should_pause);
+  }
+
+  // TextDocumentParser::InsertFakePreElement(): the start of a text
+  // document, a meta of its color scheme and a pre whose text the rest of the
+  // input is, as Blink's parser of a text file makes them before its first
+  // piece.
+  void StartTextDocument();
 
   // The rules the tree builder could not follow so far, each once, in the
   // order it first met them.
   const std::vector<std::string>& skipped_rules() const;
 
  private:
+  base::RepeatingCallback<bool()> should_pause_;
   const cppgc::Persistent<HtmlTreeBuilderReferences> own_references_;
   std::unique_ptr<HtmlTokenizer> tokenizer_;
   std::unique_ptr<HtmlTreeBuilder> tree_builder_;
@@ -166,6 +187,10 @@ NodeVector ParseHtmlFragment(
     const HtmlParserOptions& options,
     std::vector<std::string>* skipped_rules = nullptr,
     FragmentScripts scripts = FragmentScripts::kAlreadyStarted);
+
+// Blink's IsForeignContentBreakoutStartTag(): whether a start tag ends
+// foreign content, as the preload scanner asks too.
+bool IsForeignContentBreakoutStartTag(const HtmlToken& token);
 
 }  // namespace mitto
 

@@ -7,6 +7,7 @@
 #include "mitto/dom/idb_open_db_request.h"
 #include "mitto/dom/idb_request.h"
 #include "mitto/dom/indexed_db_host.h"
+#include "mitto/dom/window_task.h"
 
 namespace mitto {
 
@@ -43,7 +44,7 @@ bool IDBFactoryClient::Deliver(const PageIndexedDbCallback& answer) {
     return false;
   }
   bool taken = false;
-  const bool ran = RunInIDBContext(request->GetWindow(), [&] {
+  const bool ran = RunInContext(request->GetExecutionContext(), [&] {
     switch (answer.op) {
       case IndexedDbCallbackOp::kError:
         Detach();
@@ -80,7 +81,7 @@ bool IDBFactoryClient::Deliver(const PageIndexedDbCallback& answer) {
     }
   });
   if (!ran) {
-    // The window's context went, which detaches Blink's client.
+    // The context went, which detaches Blink's client.
     Detach();
   }
   return taken;

@@ -12,6 +12,7 @@
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/event_target.h"
+#include "mitto/dom/performance.h"
 #include "mitto/dom/scheduler_task_context.h"
 #include "mitto/dom/time_clamper.h"
 #include "mitto/dom/window.h"
@@ -54,6 +55,13 @@ struct AnimationFrameController::FrameCallback {
   cppgc::Persistent<SchedulerTaskContext> task_state;
 };
 
+// The microtask of a worker's frame: the controller, while it lasts, and the
+// frame's time.
+struct AnimationFrameController::WorkerFrame {
+  base::WeakPtr<AnimationFrameController> controller;
+  double time = 0;
+};
+
 struct AnimationFrameController::QueuedEvent {
   cppgc::Persistent<EventTarget> target;
   cppgc::Persistent<Event> event;
@@ -61,9 +69,11 @@ struct AnimationFrameController::QueuedEvent {
 
 AnimationFrameController::AnimationFrameController(
     v8::Isolate* isolate,
-    v8::Local<v8::Context> context)
+    v8::Local<v8::Context> context,
+    std::optional<base::TimeTicks> worker_time_origin)
     : isolate_(isolate),
-      context_(std::make_unique<v8::Global<v8::Context>>(isolate, context)) {}
+      context_(std::make_unique<v8::Global<v8::Context>>(isolate, context)),
+      worker_time_origin_(worker_time_origin) {}
 
 AnimationFrameController::~AnimationFrameController() = default;
 
@@ -107,6 +117,12 @@ void AnimationFrameController::EnqueueEvent(EventTarget& target, Event& event) {
   ScheduleAnimationIfNeeded();
 }
 
+void AnimationFrameController::RequestPostLifecycleSteps(
+    base::OnceClosure steps) {
+  post_lifecycle_steps_.push_back(std::move(steps));
+  ScheduleAnimationIfNeeded();
+}
+
 void AnimationFrameController::BeginLifecycleUpdates() {
   if (!lifecycle_updates_deferred_) {
     return;
@@ -117,7 +133,8 @@ void AnimationFrameController::BeginLifecycleUpdates() {
 
 void AnimationFrameController::ScheduleAnimationIfNeeded() {
   if (frame_requested_ || lifecycle_updates_deferred_ ||
-      (callbacks_.empty() && events_.empty())) {
+      (callbacks_.empty() && events_.empty() &&
+       post_lifecycle_steps_.empty())) {
     return;
   }
   frame_requested_ = true;
@@ -133,6 +150,16 @@ void AnimationFrameController::ScheduleAnimationIfNeeded() {
 void AnimationFrameController::ServiceScriptedAnimations(
     base::TimeTicks frame_time) {
   frame_requested_ = false;
+  if (worker_time_origin_) {
+    // WorkerAnimationFrameProvider::BeginFrame(): a microtask runs the
+    // callbacks, with the frame's time as performance.now() would give it.
+    const double time = Performance::MonotonicTimeToDOMHighResTimeStamp(
+        *worker_time_origin_, frame_time);
+    isolate_->EnqueueMicrotask(
+        &AnimationFrameController::RunWorkerFrameCallbacks,
+        new WorkerFrame{weak_factory_.GetWeakPtr(), time});
+    return;
+  }
   const v8::HandleScope handle_scope(isolate_);
   const v8::Context::Scope context_scope(context_->Get(isolate_));
   DocumentLoadTiming& timing = Window::Current().GetDocumentLoadTiming();
@@ -153,6 +180,32 @@ void AnimationFrameController::ServiceScriptedAnimations(
       animation_time_.InMillisecondsF(),
       timing.MonotonicTimeToPseudoWallTime(zero_time + animation_time_)
           .InMillisecondsF());
+  if (!self) {
+    return;
+  }
+  // The frame's post-lifecycle steps, after the lifecycle that the Page,
+  // laying nothing out, does not run.
+  std::vector<base::OnceClosure> steps;
+  steps.swap(post_lifecycle_steps_);
+  for (base::OnceClosure& step : steps) {
+    std::move(step).Run();
+    if (!self) {
+      return;
+    }
+  }
+}
+
+// static
+void AnimationFrameController::RunWorkerFrameCallbacks(void* data) {
+  const std::unique_ptr<WorkerFrame> frame(static_cast<WorkerFrame*>(data));
+  AnimationFrameController* const controller = frame->controller.get();
+  if (!controller) {
+    return;
+  }
+  const v8::HandleScope handle_scope(controller->isolate_);
+  const v8::Context::Scope context_scope(
+      controller->context_->Get(controller->isolate_));
+  controller->ExecuteFrameCallbacks(frame->time, frame->time);
 }
 
 // ScriptedAnimationController::DispatchEvents(): the events that wait now,
@@ -199,8 +252,10 @@ void AnimationFrameController::ExecuteFrameCallbacks(
                                                       : high_res_now_ms);
     std::ignore = frame_callback.callback.Get(isolate_)->Call(
         context, v8::Undefined(isolate_), 1, &argument);
+    // As InvokeAndReportException() reports it, from a verbose TryCatch.
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
-      bindings::ReportException(isolate_, try_catch.Exception());
+      bindings::ReportException(isolate_, try_catch.Exception(),
+                                try_catch.Message());
     }
     // The callback may have ended the window's context, and this with it.
     if (!self) {

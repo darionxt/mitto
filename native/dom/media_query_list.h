@@ -35,6 +35,7 @@ namespace bindings {
 class RuntimeFeatureSet;
 }  // namespace bindings
 
+class Document;
 class Window;
 
 // Which media features parse, as the Page's runtime-enabled features say.
@@ -46,6 +47,12 @@ MediaQueryFeatures MediaQueryFeaturesFor(
 // cap and lh resolve against are Blink's sizes for a document with no font
 // data, until the Runtime has fonts (roadmap, M9).
 MediaValues MediaValuesFor(const PageStart& start);
+
+// Whether `media`, the media attribute of an element of `document`, matches
+// its window, as a MediaQueryEvaluator of the document's frame evaluates it:
+// an empty one does, as does any in a document with no window.
+bool MediaAttributeMatches(const Document& document,
+                           const std::u16string& media);
 
 class MediaQueryList final : public EventTarget {
  public:

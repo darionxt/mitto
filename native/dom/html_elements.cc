@@ -62,8 +62,10 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/form_control_attributes.h"
+#include "mitto/dom/html_image_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_parser_idioms.h"
+#include "mitto/dom/media_query_list.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 
@@ -429,6 +431,17 @@ HTMLPictureElement::HTMLPictureElement(Document& document)
 const bindings::WrapperTypeInfo* HTMLPictureElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8HTMLPictureElement::kWrapperTypeInfo;
+}
+
+// Upstream: third_party/blink/renderer/core/html/html_picture_element.cc
+void HTMLPictureElement::SourceChanged() {
+  for (Node* child = FirstChild(); child; child = child->NextSibling()) {
+    if (child->IsElementNode() &&
+        static_cast<Element*>(child)->HasHTMLTagName(u"img")) {
+      static_cast<HTMLImageElement*>(child)->SelectSourceURL(
+          ImageLoader::kUpdateNormal);
+    }
+  }
 }
 
 // static
@@ -1248,6 +1261,58 @@ std::u16string HTMLSourceElement::Type() const {
 
 void HTMLSourceElement::SetType(const std::u16string& type) {
   SetAttributeWithoutValidation(u"type", type);
+}
+
+namespace {
+
+// The source's parent, if it is a picture element.
+HTMLPictureElement* PictureParent(Node* parent) {
+  if (!parent || !parent->IsElementNode() ||
+      !static_cast<Element*>(parent)->HasHTMLTagName(u"picture")) {
+    return nullptr;
+  }
+  return static_cast<HTMLPictureElement*>(parent);
+}
+
+}  // namespace
+
+// Upstream: third_party/blink/renderer/core/html/html_source_element.cc
+bool HTMLSourceElement::MediaQueryMatches() const {
+  const std::u16string* const media = FindAttribute(u"media");
+  return !media || MediaAttributeMatches(GetDocument(), *media);
+}
+
+Node::InsertionNotificationRequest HTMLSourceElement::InsertedInto(
+    Node& insertion_point) {
+  HTMLElement::InsertedInto(insertion_point);
+  if (ParentNode() == &insertion_point) {
+    if (HTMLPictureElement* const picture = PictureParent(ParentNode())) {
+      picture->SourceChanged();
+    }
+  }
+  return InsertionNotificationRequest::kInsertionDone;
+}
+
+void HTMLSourceElement::RemovedFrom(Node& insertion_point) {
+  if (!ParentNode()) {
+    if (HTMLPictureElement* const picture = PictureParent(&insertion_point)) {
+      picture->SourceChanged();
+    }
+  }
+  HTMLElement::RemovedFrom(insertion_point);
+}
+
+void HTMLSourceElement::AttributeChanged(const QualifiedName& name,
+                                         const std::u16string* old_value,
+                                         const std::u16string* new_value) {
+  HTMLElement::AttributeChanged(name, old_value, new_value);
+  if (!name.namespace_uri &&
+      (name.local_name == u"srcset" || name.local_name == u"sizes" ||
+       name.local_name == u"media" || name.local_name == u"type")) {
+    if (HTMLPictureElement* const picture = PictureParent(ParentNode())) {
+      picture->SourceChanged();
+    }
+  }
 }
 
 }  // namespace mitto

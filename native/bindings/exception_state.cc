@@ -42,6 +42,23 @@ void ExceptionState::ThrowDOMException(v8::Local<v8::Value> exception) {
   isolate_->ThrowException(exception);
 }
 
+void ExceptionState::RethrowV8Exception(v8::TryCatch& try_catch) {
+  // What a scope inside another rethrows may be what this state threw, which
+  // the outer scope then rethrows again, as Blink's nested scopes do.
+  had_exception_ = true;
+  try_catch.ReThrow();
+}
+
+TryRethrowScope::TryRethrowScope(v8::Isolate* isolate,
+                                 ExceptionState& exception_state)
+    : try_catch_(isolate), exception_state_(exception_state) {}
+
+TryRethrowScope::~TryRethrowScope() {
+  if (try_catch_.HasCaught()) {
+    exception_state_->RethrowV8Exception(try_catch_);
+  }
+}
+
 void ThrowTypeError(v8::Isolate* isolate, std::string_view message) {
   isolate->ThrowException(
       v8::Exception::TypeError(ToV8StringFromUtf8(isolate, message)));

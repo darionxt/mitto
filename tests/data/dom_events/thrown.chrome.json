@@ -1,0 +1,17 @@
+[
+ "Uncaught ",
+ "Uncaught [object Object]",
+ "Uncaught ",
+ "Uncaught ",
+ "Uncaught TypeError: from a timer",
+ "Uncaught SyntaxError: Failed to execute 'querySelector' on 'Document': '!' is not a valid selector.",
+ "Uncaught Error",
+ "Uncaught thrown with no name",
+ "name read",
+ "Uncaught Named: by getters",
+ "Uncaught exception",
+ "Uncaught its own toString",
+ "Uncaught TypeError: from a frame",
+ "Uncaught TypeError: from a classic script",
+ "Uncaught "
+]

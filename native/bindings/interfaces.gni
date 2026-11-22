@@ -34,7 +34,10 @@
 #
 # "maplike" or "setlike" in `implemented` gives a read-only declaration of
 # that kind its behaviour: the bindings write its members, which read the
-# class's MaplikeEntries() or SetlikeValues().
+# class's MaplikeEntries() or SetlikeValues(). A value async iterable has its
+# behaviour unless the entry names it as missing or names only other members:
+# the bindings write values(), whose iterator takes its source from the
+# class's CreateAsyncIterationSource().
 mitto_bindings_interfaces = [
   {
     name = "AbortController"
@@ -110,6 +113,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "ByteLengthQueuingStrategy"
+    file = "byte_length_queuing_strategy"
+  },
+  {
     name = "CacheStorage"
     file = "cache_storage"
     implemented = [
@@ -153,6 +160,10 @@ mitto_bindings_interfaces = [
     file = "cookie_change_event"
   },
   {
+    name = "CompressionStream"
+    file = "compression_stream"
+  },
+  {
     name = "CookieStore"
     file = "cookie_store"
 
@@ -169,6 +180,10 @@ mitto_bindings_interfaces = [
     file = "crash_report_context"
     made_by_known_gaps = true
     implemented = []
+  },
+  {
+    name = "CountQueuingStrategy"
+    file = "count_queuing_strategy"
   },
   {
     name = "Crypto"
@@ -192,6 +207,19 @@ mitto_bindings_interfaces = [
   {
     name = "CustomEvent"
     file = "custom_event"
+  },
+  {
+    name = "DedicatedWorkerGlobalScope"
+    file = "dedicated_worker_global_scope"
+
+    # onmessage and onmessageerror run as every event handler attribute does.
+    implemented = [
+      "name",
+      "postMessage",
+      "close",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+    ]
   },
   {
     # location.ancestorOrigins, a Known Gap, gives an empty one.
@@ -221,6 +249,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "DecompressionStream"
+    file = "decompression_stream"
+  },
+  {
     name = "DOMException"
     file = "dom_exception"
   },
@@ -231,6 +263,10 @@ mitto_bindings_interfaces = [
   {
     name = "DOMImplementation"
     file = "dom_implementation"
+  },
+  {
+    name = "DOMParser"
+    file = "dom_parser"
   },
   {
     name = "DOMRect"
@@ -362,6 +398,9 @@ mitto_bindings_interfaces = [
       "writeln",
       "createProcessingInstruction",
       "createCDATASection",
+      "xmlEncoding",
+      "xmlVersion",
+      "xmlStandalone",
       "dir",
       "fgColor",
       "bgColor",
@@ -681,6 +720,10 @@ mitto_bindings_interfaces = [
     implemented = [ "get location" ]
   },
   {
+    name = "XMLSerializer"
+    file = "xml_serializer"
+  },
+  {
     name = "HTMLElement"
     file = "html_element"
     implemented = [
@@ -794,6 +837,11 @@ mitto_bindings_interfaces = [
     implemented = [
       "width",
       "height",
+      "naturalWidth",
+      "naturalHeight",
+      "complete",
+      "currentSrc",
+      "decode",
       "Image",
     ]
   },
@@ -1242,10 +1290,8 @@ mitto_bindings_interfaces = [
     ]
   },
   {
-    # StorageBucket's indexedDB, a Known Gap, gives one of no window.
     name = "IDBFactory"
     file = "idb_factory"
-    made_by_known_gaps = true
   },
   {
     name = "IDBIndex"
@@ -1512,6 +1558,7 @@ mitto_bindings_interfaces = [
       "permissions",
       "geolocation",
       "storage",
+      "storageBuckets",
       "getGamepads",
       "locks",
       "getBattery",
@@ -1802,6 +1849,31 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "ReadableByteStreamController"
+    file = "readable_byte_stream_controller"
+  },
+  {
+    name = "ReadableStream"
+    file = "readable_stream"
+    made_by_known_gaps = true
+  },
+  {
+    name = "ReadableStreamBYOBReader"
+    file = "readable_stream_byob_reader"
+  },
+  {
+    name = "ReadableStreamBYOBRequest"
+    file = "readable_stream_byob_request"
+  },
+  {
+    name = "ReadableStreamDefaultController"
+    file = "readable_stream_default_controller"
+  },
+  {
+    name = "ReadableStreamDefaultReader"
+    file = "readable_stream_default_reader"
+  },
+  {
     name = "Request"
     file = "request"
     implemented = [
@@ -1809,6 +1881,13 @@ mitto_bindings_interfaces = [
       "url",
       "headers",
       "signal",
+      "duplex",
+      "body",
+      "bodyUsed",
+      "arrayBuffer",
+      "json",
+      "text",
+      "textStream",
     ]
   },
   {
@@ -1822,10 +1901,12 @@ mitto_bindings_interfaces = [
       "ok",
       "statusText",
       "headers",
+      "body",
       "bodyUsed",
       "arrayBuffer",
       "json",
       "text",
+      "textStream",
     ]
   },
   {
@@ -2399,8 +2480,8 @@ mitto_bindings_interfaces = [
   {
     name = "SVGImageElement"
     file = "svg_image_element"
-    header = "svg_elements"
     implemented = [
+      "decode",
       "href",
       "x",
       "y",
@@ -2783,6 +2864,20 @@ mitto_bindings_interfaces = [
     file = "storage_event"
   },
   {
+    # Its getDirectory() answers as navigator.storage's does, and locks is
+    # behind StorageBucketsLocks, which is off in stable.
+    name = "StorageBucket"
+    file = "storage_bucket"
+    missing = [
+      "getDirectory",
+      "locks",
+    ]
+  },
+  {
+    name = "StorageBucketManager"
+    file = "storage_bucket_manager"
+  },
+  {
     name = "StorageManager"
     file = "storage_manager"
 
@@ -2834,12 +2929,28 @@ mitto_bindings_interfaces = [
     file = "text_decoder"
   },
   {
+    name = "TextDecoderStream"
+    file = "text_decoder_stream"
+  },
+  {
     name = "TextEncoder"
     file = "text_encoder"
   },
   {
+    name = "TextEncoderStream"
+    file = "text_encoder_stream"
+  },
+  {
     name = "ToggleEvent"
     file = "toggle_event"
+  },
+  {
+    name = "TransformStream"
+    file = "transform_stream"
+  },
+  {
+    name = "TransformStreamDefaultController"
+    file = "transform_stream_default_controller"
   },
   {
     name = "TreeWalker"
@@ -2994,6 +3105,86 @@ mitto_bindings_interfaces = [
     name = "WindowProperties"
     file = "window_properties"
     missing = []
+  },
+  {
+    name = "Worker"
+    file = "worker"
+
+    # onmessage and onerror run as every event handler attribute does.
+    implemented = [
+      "terminate",
+      "postMessage",
+    ]
+  },
+  {
+    name = "WorkerLocation"
+    file = "worker_location"
+  },
+  {
+    name = "WorkerNavigator"
+    file = "worker_navigator"
+    implemented = [
+      "hardwareConcurrency",
+      "appCodeName",
+      "appName",
+      "appVersion",
+      "platform",
+      "product",
+      "userAgent",
+      "language",
+      "languages",
+      "onLine",
+      "connection",
+      "deviceMemory",
+      "userAgentData",
+      "permissions",
+      "storage",
+      "locks",
+      "storageBuckets",
+    ]
+  },
+  {
+    name = "WorkerGlobalScope"
+    file = "worker_global_scope"
+
+    # onerror and the other event handlers run as every event handler
+    # attribute does.
+    implemented = [
+      "self",
+      "location",
+      "navigator",
+      "origin",
+      "isSecureContext",
+      "performance",
+      "crypto",
+      "scheduler",
+      "caches",
+      "indexedDB",
+      "structuredClone",
+      "importScripts",
+      "fetch",
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "queueMicrotask",
+      "atob",
+      "btoa",
+      "reportError",
+    ]
+  },
+  {
+    name = "WritableStream"
+    file = "writable_stream"
+    made_by_known_gaps = true
+  },
+  {
+    name = "WritableStreamDefaultController"
+    file = "writable_stream_default_controller"
+  },
+  {
+    name = "WritableStreamDefaultWriter"
+    file = "writable_stream_default_writer"
   },
   {
     name = "XMLDocument"

@@ -18,6 +18,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page
+from tests.page_server import without_favicon
 from tests.script_pages import Case, Route, ScriptServer
 
 pytestmark = pytest.mark.usefixtures("both_apis")
@@ -219,7 +220,8 @@ _CASES["inserted_moved"] = Case(
 )
 
 # SVG scripts that the DOM inserts: as soon as each arrives, unless an async attribute that comes and goes made them
-# run in order. Each first script waits until the second has been served.
+# run in order. The first async script waits until the second has run, since two that arrive together may run in
+# either order, and the first ordered one until the second has been served.
 _CASES["svg_inserted_order"] = Case(
     {
         "/": _page(
@@ -235,8 +237,8 @@ _CASES["svg_inserted_order"] = Case(
             "svgScript('a2');"
             "</script>"
         ),
-        "/a1.js": _js("log('a1 ' + current());", hold="served:/a2.js"),
-        "/a2.js": _js("log('a2 ' + current());"),
+        "/a1.js": _js("log('a1 ' + current());", hold="a2"),
+        "/a2.js": _js("log('a2 ' + current()); mark('a2');"),
         "/o1.js": _js("log('o1 ' + current());", hold="served:/o2.js"),
         "/o2.js": _js("log('o2 ' + current());"),
     }
@@ -437,7 +439,7 @@ _CASES["current_script"] = Case(
             "<script id=s1>"
             "log('inline ' + current());"
             "Promise.resolve().then(() => log('microtask ' + current()));"
-            "setTimeout(() => log('timer ' + current()));"
+            "setTimeout(() => { log('timer ' + current()); mark('timer'); });"
             "document.addEventListener('DOMContentLoaded', () => { log('listener ' + current()); mark('dcl'); });"
             "addEventListener('load', () => { log('load ' + current()); setTimeout(() => finish(logged), 100); });"
             "</script>"
@@ -446,7 +448,8 @@ _CASES["current_script"] = Case(
             "<script id=s4 async src=/s4.js></script>"
             "<script>log('anonymous inline ' + current() + ' ' + document.currentScript.textContent.startsWith('log('))</script>"
         ),
-        "/s2.js": _js("log('external ' + current());"),
+        # Chrome's network answered after the timer, which the preload scanner's early request would not wait for.
+        "/s2.js": _js("log('external ' + current());", hold="timer"),
         "/s3.js": _js("log('deferred ' + current());"),
         "/s4.js": _js("log('async ' + current());", hold="dcl"),
     }
@@ -869,7 +872,7 @@ def test_a_document_resolves_its_scripts_and_fetches_against_its_base_url(
 ) -> None:
     page, _ = _run(session, server, "base_url")
     with page:
-        assert [path for path in server.requests if not path.startswith(("/mark/", "/result"))] == [
+        assert without_favicon(path for path in server.requests if not path.startswith(("/mark/", "/result"))) == [
             "/",
             "/sub/dir/b.js",
             "/sub/dir/f.json",

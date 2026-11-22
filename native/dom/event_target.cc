@@ -17,6 +17,7 @@
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_handler_attributes.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/permissions_policy.h"
@@ -255,7 +256,7 @@ void CallListener(v8::Isolate* isolate,
 // allow, as where the seed deprecates unload, is refused, and the console
 // reports the violation each time.
 bool AllowsUnloadListener(const std::u16string& type) {
-  if (type != u"unload") {
+  if (type != u"unload" || !ExecutionContext::Current().IsWindow()) {
     return true;
   }
   Window& window = Window::Current();
@@ -272,9 +273,10 @@ bool AllowsUnloadListener(const std::u16string& type) {
 // Runs an event handler attribute's handler, as Blink's
 // JSEventHandler::InvokeInternal() does: nothing for one that cannot be
 // called, which a page can set; the current target for `this`; and for an
-// ErrorEvent of type error at a window, the HTML Standard's special error
-// event handling: five arguments, the event's message, filename, lineno, colno
-// and error, and a return value of true cancels the event. For any other
+// ErrorEvent of type error at a window or a worker's global scope, the HTML
+// Standard's special error event handling: five arguments, the event's
+// message, filename, lineno, colno and error, and a return value of true
+// cancels the event. For any other
 // event, the event is its argument, and a return value of false cancels it,
 // but for beforeunload, whose handler is an OnBeforeUnloadEventHandler: a
 // return value that is not null or undefined, as a string, cancels a
@@ -288,10 +290,16 @@ void CallAttributeHandler(v8::Isolate* isolate,
   if (!handler->IsFunction()) {
     return;
   }
-  const bool special_error_event_handling = event->IsErrorEvent() &&
-                                            event->Type() == u"error" &&
-                                            current_target.ToWindow();
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  // An OnErrorEventHandler: a window's onerror, or a worker's global scope's.
+  ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  const bool on_error_handler =
+      current_target.ToWindow() ||
+      (execution_context && !execution_context->IsWindow() &&
+       execution_context->ErrorEventTarget() == &current_target);
+  const bool special_error_event_handling =
+      event->IsErrorEvent() && event->Type() == u"error" && on_error_handler;
   const v8::MicrotasksScope microtasks_scope(
       context, v8::MicrotasksScope::kRunMicrotasks);
   const v8::TryCatch try_catch(isolate);
@@ -514,6 +522,16 @@ bool EventTarget::HasEventListeners(std::u16string_view type) const {
   for (EventListenerEntry* entry = first_listener_.Get(); entry;
        entry = entry->next()) {
     if (entry->type() == type) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool EventTarget::HasCapturingEventListeners(std::u16string_view type) const {
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    if (entry->type() == type && entry->capture()) {
       return true;
     }
   }

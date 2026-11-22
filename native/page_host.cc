@@ -27,12 +27,15 @@
 #include "mitto/mitto.h"
 #include "mitto/page_cache_storage.h"
 #include "mitto/page_indexed_db.h"
+#include "mitto/preconnect_manager.h"
 #include "mitto/ready_requests.h"
 #include "mitto/sec_header_helpers.h"
 #include "mitto/storage/storage_area_impl.h"
 #include "mitto/storage/storage_context.h"
+#include "mitto/storage_quota.h"
 #include "net/base/io_buffer.h"
 #include "net/base/isolation_info.h"
+#include "net/base/mime_sniffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
 #include "net/base/url_util.h"
@@ -96,6 +99,8 @@ constexpr auto kRequestKindNames =
         {"beacon", PageRequestKind::kBeacon},
         {"iframe", PageRequestKind::kIframe},
         {"favicon", PageRequestKind::kFavicon},
+        {"module_json", PageRequestKind::kModuleJson},
+        {"prefetch", PageRequestKind::kPrefetch},
     });
 constexpr std::string_view kWithBodySuffix = "_with_body";
 constexpr std::string_view kSecFetchMode = "Sec-Fetch-Mode";
@@ -549,6 +554,20 @@ std::optional<std::string> HeaderValue(std::string_view lines,
   return value;
 }
 
+// The MIME type of a response, lowercased, as net::HttpUtil::ParseContentType()
+// reads Content-Type, or "" for none.
+std::string MimeTypeOf(const RequestEvent& event) {
+  std::string mime_type;
+  std::string charset;
+  bool had_charset = false;
+  if (const std::optional<std::string> content_type =
+          HeaderValue(event.headers, "Content-Type")) {
+    net::HttpUtil::ParseContentType(*content_type, &mime_type, &charset,
+                                    &had_charset, nullptr);
+  }
+  return mime_type;
+}
+
 // NavigationRequest::OnResponseStarted() and download_utils::MustDownload():
 // Chrome makes no document of a navigation's response that is a 204 or a 205,
 // nor of a download, which is one that Content-Disposition says is an
@@ -567,15 +586,30 @@ bool MakesDocument(const RequestEvent& event) {
                          .is_attachment()) {
     return false;
   }
-  std::string mime_type;
-  std::string charset;
-  bool had_charset = false;
-  if (const std::optional<std::string> content_type =
-          HeaderValue(event.headers, "Content-Type")) {
-    net::HttpUtil::ParseContentType(*content_type, &mime_type, &charset,
-                                    &had_charset, nullptr);
-  }
+  const std::string mime_type = MimeTypeOf(event);
   return mime_type.empty() || IsSupportedMimeType(mime_type);
+}
+
+// URLLoader's ShouldSniffContent() for a navigation, which asks for
+// kURLLoadOptionSniffMimeType: Chrome's network service holds back a
+// response whose MIME type net::ShouldSniffMimeType() would sniff, such as
+// text/plain or none, unless the first value of X-Content-Type-Options is
+// nosniff.
+// Upstream: services/network/url_loader.cc
+// Upstream: net/base/mime_sniffer.cc
+bool ShouldSniffContent(const RequestEvent& event,
+                        const std::string& mime_type) {
+  if (const std::optional<std::string> options =
+          HeaderValue(event.headers, "X-Content-Type-Options")) {
+    const std::string_view first = base::TrimWhitespaceASCII(
+        std::string_view(*options).substr(0, options->find(',')),
+        base::TRIM_ALL);
+    if (base::EqualsCaseInsensitiveASCII(first, "nosniff")) {
+      return false;
+    }
+  }
+  return net::ShouldSniffMimeType(GURL(event.url),
+                                  /*http_response_headers=*/nullptr, mime_type);
 }
 
 // network::ParseTimingAllowOrigin() and TimingAllowOriginCheck(): whether a
@@ -784,6 +818,45 @@ class PageHost::Request final : public RequestClient {
   // download manager reads it.
   bool keeps_document() const { return keeps_document_; }
   void set_keeps_document() { keeps_document_ = true; }
+
+  // A navigation's response that Chrome's network service holds back while
+  // it sniffs the MIME type from the start of the body, as URLLoader does.
+  struct Sniffing {
+    RequestEvent response;
+    // The MIME type before sniffing, and the one sniffed so far.
+    std::string mime_type;
+    std::string sniffed;
+    // What has been read of the body.
+    std::string body;
+  };
+  bool sniffing() const { return sniffing_.has_value(); }
+  // The response held back while it is sniffed, or null.
+  const RequestEvent* held_response() const {
+    return sniffing_ ? &sniffing_->response : nullptr;
+  }
+  void HoldForSniffing(RequestEvent response, std::string mime_type) {
+    sniffing_.emplace();
+    sniffing_->response = std::move(response);
+    sniffing_->mime_type = std::move(mime_type);
+  }
+  // Sniffs `bytes` that the body went on with, or none at its end, as
+  // URLLoader::DidRead() sniffs: until net::SniffMimeType() has decided,
+  // net::kMaxBytesToSniff bytes have come or the body has ended. Returns
+  // whether sniffing is over.
+  bool Sniff(base::span<const uint8_t> bytes, bool ended) {
+    sniffing_->body.append(base::as_string_view(bytes));
+    const std::string_view data =
+        std::string_view(sniffing_->body).substr(0, net::kMaxBytesToSniff);
+    const bool decided = net::SniffMimeType(
+        data, GURL(sniffing_->response.url), sniffing_->mime_type,
+        net::ForceSniffFileUrlsForHtml::kDisabled, &sniffing_->sniffed);
+    return decided || ended || sniffing_->body.size() >= net::kMaxBytesToSniff;
+  }
+  Sniffing TakeSniffing() {
+    Sniffing sniffing = *std::move(sniffing_);
+    sniffing_.reset();
+    return sniffing;
+  }
   // The origin of the document that asked, opaque for a navigation.
   const url::Origin& document_origin() const {
     return response_checks_.document_origin();
@@ -854,6 +927,9 @@ class PageHost::Request final : public RequestClient {
   // Lets the job go on without this Request, if it is still running, held to
   // the same checks, and still counting among the keepalive requests in
   // flight until it ends.
+  // A body that streams from the document, of which the library does not
+  // have all yet, fails from a later task, as Blink's BytesUploader answers
+  // GetSize() with ERR_FAILED once its context is destroyed.
   void DetachJob() {
     if (job_) {
       job_->Detach(base::BindRepeating(
@@ -861,6 +937,10 @@ class PageHost::Request final : public RequestClient {
              const RequestEvent& event) { return checks->Allows(event); },
           base::Owned(std::make_unique<ResponseChecks>(response_checks_)),
           base::Owned(std::move(keepalive_share_))));
+      if (body_channel_ && !end_written_) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&RunningRequest::FailBody, job_));
+      }
       job_.reset();
     }
   }
@@ -871,6 +951,9 @@ class PageHost::Request final : public RequestClient {
   uint64_t context() const { return context_; }
   void set_context(uint64_t context) { context_ = context; }
   void set_started() { started_ = true; }
+  // The URL of the response, after any redirects, once it has started.
+  const GURL& response_url() const { return response_url_; }
+  void set_response_url(GURL url) { response_url_ = std::move(url); }
   void AddCredit(uint32_t bytes) { credit_ += bytes; }
   base::span<const uint8_t> TakeRead(size_t size) {
     credit_ -= static_cast<uint32_t>(size);
@@ -889,6 +972,41 @@ class PageHost::Request final : public RequestClient {
         FROM_HERE, base::BindOnce(&RunningRequest::ReadBody, job_));
   }
 
+  // A body that streams from the Page, which the job reads from `channel` as
+  // //net asks for it, as Chrome's network service reads a fetch()'s stream
+  // from the data pipe that Blink's BytesUploader writes.
+  void set_body_channel(scoped_refptr<RequestChannel> channel) {
+    body_channel_ = std::move(channel);
+  }
+  bool streams_body() const { return body_channel_ != nullptr; }
+  // Whether the Page has ended the body that streams.
+  bool page_ended_body() const { return page_ended_body_; }
+  // Whether `size` more bytes of the body fit in the credit that the library
+  // gave the Page.
+  bool BodyPartFits(size_t size) const { return size <= body_credit_; }
+  // Bytes of the body that the Page sent, which wait for room in the channel.
+  void AddBodyPart(std::string_view bytes) {
+    body_credit_ -= static_cast<uint32_t>(bytes.size());
+    body_waiting_.append(bytes);
+    WriteBody();
+  }
+  // The Page's end of the body: all of it has come, or its stream errored,
+  // which fails the request with ERR_FAILED from a later task, as
+  // BytesUploader's answer of ERR_FAILED to GetSize() fails it in Chrome.
+  // Upstream: third_party/blink/renderer/core/fetch/bytes_uploader.cc
+  void EndBody(bool errored) {
+    page_ended_body_ = true;
+    if (errored) {
+      body_waiting_.clear();
+      if (job_) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&RunningRequest::FailBody, job_));
+      }
+      return;
+    }
+    WriteBody();
+  }
+
   // RequestClient:
   bool AllowsResponse(const RequestEvent& event) override {
     return response_checks_.Allows(event);
@@ -900,7 +1018,7 @@ class PageHost::Request final : public RequestClient {
       FollowRedirect(event, document_origin());
     }
     if (event.type == MITTO_EVENT_RESPONSE_STARTED) {
-      host_->OnResponseStarted(*this, event);
+      host_->OnResponseStarted(*this, std::move(event));
     }
   }
   net::IOBuffer* read_buffer() override { return buffer_.get(); }
@@ -910,6 +1028,21 @@ class PageHost::Request final : public RequestClient {
     host_->OnBodyRead(*this, size);
   }
   void OnTotals(const RequestTotals& totals) override { totals_ = totals; }
+  void OnBodyWanted() override {
+    // The channel's events are for a caller on another thread, and this one
+    // has heard of its own.
+    RequestEvent event;
+    while (body_channel_->NextEvent(base::TimeDelta(), event) == net::OK) {
+    }
+    // //net's first read of the body is where Chrome's network service asks
+    // the renderer to start reading the stream, with StartReading(), which
+    // here is the Page's first credit, of one window.
+    if (!body_started_) {
+      body_started_ = true;
+      GiveBodyCredit(kBodyWindow);
+    }
+    WriteBody();
+  }
   void OnFinished(int net_error) override {
     // The job goes after this, and so does this Request.
     job_ = nullptr;
@@ -917,14 +1050,63 @@ class PageHost::Request final : public RequestClient {
   }
 
  private:
+  // Writes what waits of the body into the channel, all at once as far as
+  // the channel has room, as ChunkedDataPipeUploadDataStream reads what its
+  // data pipe holds, then the end once the Page has ended it, and gives the
+  // Page credit for what went. What the job no longer wants, as after a 303,
+  // goes as well.
+  // Upstream: services/network/chunked_data_pipe_upload_data_stream.cc
+  void WriteBody() {
+    bool wake = false;
+    size_t taken = 0;
+    if (!body_waiting_.empty()) {
+      const int result =
+          body_channel_->WriteBody(base::as_byte_span(body_waiting_), wake);
+      // ERR_IO_PENDING: //net has yet to take the last write, and
+      // OnBodyWanted() says when it has.
+      DCHECK_NE(result, net::ERR_INVALID_ARGUMENT);
+      if (result == 0) {
+        taken = body_waiting_.size();
+      } else if (result > 0) {
+        taken = static_cast<size_t>(result);
+      }
+      body_waiting_.erase(0, taken);
+    }
+    if (body_waiting_.empty() && page_ended_body_ && !end_written_) {
+      end_written_ = true;
+      bool wake_for_end = false;
+      body_channel_->EndBody(wake_for_end);
+      wake = wake || wake_for_end;
+    }
+    if (taken > 0) {
+      GiveBodyCredit(static_cast<uint32_t>(taken));
+    }
+    // //net's read of the body that waits goes on from a later task, since
+    // this may run within it.
+    if (wake && job_) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(&RunningRequest::SendBody, job_));
+    }
+  }
+
+  void GiveBodyCredit(uint32_t bytes) {
+    body_credit_ += bytes;
+    PageCredit credit;
+    credit.number = number_;
+    credit.bytes = bytes;
+    host_->channel_->Send(EncodeRequestBodyCredit(credit));
+  }
+
   const raw_ref<PageHost> host_;
   const uint64_t number_;
   const GURL first_url_;
   bool keeps_document_ = false;
+  std::optional<Sniffing> sniffing_;
   ResponseChecks response_checks_;
   // A keepalive request's place among those in flight.
   std::unique_ptr<KeepaliveShare> keepalive_share_;
   uint64_t context_ = kNoDocument;
+  GURL response_url_;
   const base::TimeTicks start_;
   const scoped_refptr<net::IOBufferWithSize> buffer_;
   base::WeakPtr<RunningRequest> job_;
@@ -940,6 +1122,16 @@ class PageHost::Request final : public RequestClient {
   bool cross_origin_redirect_ = false;
   base::TimeTicks last_redirect_end_;
   RequestTotals totals_;
+  // A body that streams from the Page: its channel, what the Page sent that
+  // waits for room there, how much more the Page may send, whether //net has
+  // started reading it, and whether the Page, and then the channel, has ended
+  // it.
+  scoped_refptr<RequestChannel> body_channel_;
+  std::string body_waiting_;
+  uint32_t body_credit_ = 0;
+  bool body_started_ = false;
+  bool page_ended_body_ = false;
+  bool end_written_ = false;
 };
 
 // One storage area that the Page has bound, and its observer, which the Page
@@ -1090,7 +1282,7 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
     navigation_options.fetch->initiator = std::nullopt;
     StartRequest(kNavigationRequest, kNoDocument, url::Origin(), *options_.url,
                  navigation.headers, std::move(navigation_options),
-                 std::nullopt, FetchChecks{.is_navigation = true});
+                 std::nullopt, nullptr, FetchChecks{.is_navigation = true});
   }
   return true;
 }
@@ -1102,10 +1294,14 @@ void PageHost::StartRequest(uint64_t number,
                             net::HttpRequestHeaders headers,
                             RequestOptions options,
                             std::optional<std::vector<char>> body,
+                            scoped_refptr<RequestChannel> body_channel,
                             FetchChecks checks) {
   auto request =
       std::make_unique<Request>(*this, number, document_origin, url, checks);
   request->set_context(context_id);
+  if (body_channel) {
+    request->set_body_channel(body_channel);
+  }
   if (checks.keepalive) {
     request->set_keepalive_share(std::make_unique<KeepaliveShare>(
         network_->keepalive_in_flight(), keepalive_in_flight_,
@@ -1113,9 +1309,9 @@ void PageHost::StartRequest(uint64_t number,
   }
   Request& client = *request;
   requests_.emplace(number, std::move(request));
-  client.set_job(
-      network_->StartPageRequest(client, std::move(url), std::move(headers),
-                                 std::move(options), std::move(body)));
+  client.set_job(network_->StartPageRequest(
+      client, std::move(url), std::move(headers), std::move(options),
+      std::move(body), std::move(body_channel)));
 }
 
 void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
@@ -1160,19 +1356,25 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   }
   const auto with_body = options_.requests_with_body.find(asked.kind);
   const auto without_body = options_.requests.find(asked.kind);
+  const bool has_body = asked.body || asked.streams_body;
   const PageRequestTemplate* const request_template =
-      asked.body && with_body != options_.requests_with_body.end()
+      has_body && with_body != options_.requests_with_body.end()
           ? &with_body->second
       : without_body != options_.requests.end() ? &without_body->second
                                                 : nullptr;
   GURL url(asked.url);
   // The Page names only a referrer of its document's origin, as Fetch makes
-  // any other the document's own URL.
+  // any other the document's own URL, or the final URL of an earlier request
+  // of the context that has finished, as for what a module or a style sheet
+  // of another origin imports.
   GURL referrer;
   if (!asked.referrer.empty()) {
     referrer = GURL(asked.referrer);
-    if (!referrer.is_valid() || !document_origin.IsSameOriginWith(referrer)) {
-      Refuse("a request whose referrer is not a URL of its document's origin");
+    if (!referrer.is_valid() || (!document_origin.IsSameOriginWith(referrer) &&
+                                 !context.response_urls.contains(referrer))) {
+      Refuse(
+          "a request whose referrer is neither a URL of its document's origin "
+          "nor that of a response it has had");
       return;
     }
   }
@@ -1202,9 +1404,10 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     net_error = net::ERR_UNKNOWN_URL_SCHEME;
   } else if (!request_template) {
     net_error = net::ERR_NOT_IMPLEMENTED;
-  } else if (document_origin.opaque()) {
+  } else if (document_origin.opaque() && !context.is_worker) {
     // A document that the Session did not load, such as about:blank, has no
-    // Initiator that a request can name, and nor has a worker of a data: URL.
+    // Initiator that a request can name. A worker of a data: URL, whose
+    // origin is opaque, asks as that origin.
     net_error = net::ERR_ACCESS_DENIED;
   } else if (asked.mode == PageRequestMode::kSameOrigin &&
              !document_origin.IsSameOriginWith(url)) {
@@ -1238,7 +1441,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   if (!asked.referrer.empty()) {
     options.fetch->referrer_source = referrer;
   }
-  if (asked.body && !std::ranges::any_of(lines, [](const auto& entry) {
+  if (has_body && !std::ranges::any_of(lines, [](const auto& entry) {
         return base::EqualsCaseInsensitiveASCII(
             entry.first, net::HttpRequestHeaders::kContentType);
       })) {
@@ -1268,6 +1471,18 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   if (asked.body) {
     body.emplace(asked.body->begin(), asked.body->end());
   }
+  // A fetch() whose body is a stream: a chunked upload, which //net makes
+  // only over HTTP/2 or HTTP/3, as Chrome's ChunkedDataPipeUploadDataStream
+  // allows no HTTP/1.1, of mode cors-with-forced-preflight, as Blink's
+  // FetchManager gives it.
+  // Upstream: third_party/blink/renderer/core/fetch/fetch_manager.cc
+  scoped_refptr<RequestChannel> body_channel;
+  if (asked.streams_body) {
+    body_channel = base::MakeRefCounted<RequestChannel>();
+    body_channel->OpenBody(std::nullopt);
+    options.stream_body = true;
+    options.fetch->force_preflight = true;
+  }
   if (asked.kind == PageRequestKind::kIframe) {
     frame_navigation_responses_[asked.number] = {.parent = frame_parent,
                                                  .target = asked.target};
@@ -1277,6 +1492,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   StartRequest(
       asked.number, context_id, document_origin, std::move(url),
       std::move(headers), std::move(options), std::move(body),
+      std::move(body_channel),
       FetchChecks{
           .cors = options_mode == RequestMode::kCors,
           .same_origin = options_mode == RequestMode::kSameOrigin,
@@ -1304,10 +1520,13 @@ void PageHost::OnCancel(uint64_t number) {
     return;
   }
   // A navigation that the Page let go before its response, as when another
-  // takes its place, has ended.
+  // takes its place, has ended, and so has one whose response is held back
+  // while it is sniffed, as one that the Page let go after its response came.
   if (found->second->is_navigation() && !found->second->started()) {
     PushNavigated(found->second->first_url().possibly_invalid_spec(), 0,
                   net::ERR_ABORTED);
+  } else if (const RequestEvent* const held = found->second->held_response()) {
+    PushNavigated(held->url, 0, net::ERR_ABORTED);
   }
   // The Request abandons its job as it goes.
   requests_.erase(found);
@@ -1339,24 +1558,102 @@ void PageHost::OnCredit(const PageCredit& credit) {
   request.ReadIfCredited();
 }
 
-void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
-  request.set_started();
-  if (request.is_navigation() && !MakesDocument(event)) {
-    // NavigationRequest::OnResponseStarted() drops a navigation whose response
-    // is no document, and the Page keeps its document. A download goes on
-    // without it.
-    request.set_keeps_document();
-    PushNavigated(event.url, event.status, net::ERR_ABORTED);
-    // The Page's frame lets its navigation go.
-    if (channel_) {
-      PageResponseEnded ended;
-      ended.number = request.number();
-      ended.net_error = net::ERR_ABORTED;
-      channel_->Send(EncodeResponseEnded(ended));
+PageHost::Request* PageHost::RequestWithBodyStream(uint64_t number,
+                                                   std::string_view what) {
+  const auto found = requests_.find(number);
+  if (found == requests_.end()) {
+    // The request may have ended since the Page sent this.
+    if (number > last_request_number_) {
+      Refuse(base::StrCat({what, " of request ", base::NumberToString(number),
+                           ", which the Page has not asked for"}));
     }
-    request.ReadIfCredited();
+    return nullptr;
+  }
+  Request& request = *found->second;
+  if (!request.streams_body() || request.page_ended_body()) {
+    Refuse(base::StrCat({what, " of request ", base::NumberToString(number),
+                         ", whose body does not stream or has ended"}));
+    return nullptr;
+  }
+  return &request;
+}
+
+void PageHost::OnRequestBodyPart(const PageRequestBodyPart& part) {
+  Request* const request =
+      RequestWithBodyStream(part.number, "a part of the body");
+  if (!request) {
     return;
   }
+  if (!request->BodyPartFits(part.bytes.size())) {
+    Refuse(base::StrCat({"more of the body of request ",
+                         base::NumberToString(part.number),
+                         " than the library gave credit for"}));
+    return;
+  }
+  request->AddBodyPart(part.bytes);
+}
+
+void PageHost::OnRequestBodyEnded(const PageRequestBodyEnded& ended) {
+  if (Request* const request =
+          RequestWithBodyStream(ended.number, "the end of the body")) {
+    request->EndBody(ended.errored);
+  }
+}
+
+void PageHost::OnResponseStarted(Request& request, RequestEvent event) {
+  request.set_started();
+  request.set_response_url(GURL(event.url));
+  if (request.is_navigation() && !MakesDocument(event)) {
+    DropNavigation(request, event);
+    return;
+  }
+  if (request.is_navigation()) {
+    if (std::string mime_type = MimeTypeOf(event);
+        ShouldSniffContent(event, mime_type)) {
+      request.HoldForSniffing(std::move(event), std::move(mime_type));
+      request.ReadIfCredited();
+      return;
+    }
+  }
+  StartResponse(request, event);
+}
+
+void PageHost::DropNavigation(Request& request, const RequestEvent& event) {
+  // NavigationRequest::OnResponseStarted() drops a navigation whose response
+  // is no document, and the Page keeps its document. A download goes on
+  // without it.
+  request.set_keeps_document();
+  PushNavigated(event.url, event.status, net::ERR_ABORTED);
+  // The Page's frame lets its navigation go.
+  if (channel_) {
+    PageResponseEnded ended;
+    ended.number = request.number();
+    ended.net_error = net::ERR_ABORTED;
+    channel_->Send(EncodeResponseEnded(ended));
+  }
+  request.ReadIfCredited();
+}
+
+void PageHost::FinishSniffing(Request& request) {
+  Request::Sniffing sniffing = request.TakeSniffing();
+  // A sniffed type that Chrome does not show, such as application/octet-stream
+  // for text/plain that holds binary bytes, makes it a download, as
+  // download_utils::MustDownload() decides from the type that the network
+  // service sniffed. Any other sniffed type reaches the Page as the
+  // response's own.
+  if (!IsSupportedMimeType(sniffing.sniffed)) {
+    // The Page never gets what was read.
+    request.AddCredit(static_cast<uint32_t>(sniffing.body.size()));
+    DropNavigation(request, sniffing.response);
+    return;
+  }
+  StartResponse(request, sniffing.response);
+  if (channel_ && !sniffing.body.empty()) {
+    channel_->Send(EncodeResponseBody(request.number(), sniffing.body));
+  }
+}
+
+void PageHost::StartResponse(Request& request, const RequestEvent& event) {
   if (request.is_navigation()) {
     // The document that the Page makes of it, which it tells the library of,
     // and the caller hears of then.
@@ -1437,6 +1734,16 @@ void PageHost::OnBodyRead(Request& request, size_t size) {
     request.ReadIfCredited();
     return;
   }
+  if (request.sniffing()) {
+    // What is read while sniffing waits, counted against the Page's credit,
+    // until the sniffing decides whether the Page gets it.
+    if (request.Sniff(bytes, /*ended=*/false)) {
+      FinishSniffing(request);
+    } else {
+      request.ReadIfCredited();
+    }
+    return;
+  }
   if (channel_) {
     channel_->Send(
         EncodeResponseBody(request.number(), base::as_string_view(bytes)));
@@ -1446,6 +1753,12 @@ void PageHost::OnBodyRead(Request& request, size_t size) {
 
 void PageHost::OnRequestFinished(Request& request, int net_error) {
   const uint64_t number = request.number();
+  // A body that ends, or fails, while sniffing ends the sniffing with what
+  // it gave.
+  if (request.sniffing()) {
+    request.Sniff({}, /*ended=*/true);
+    FinishSniffing(request);
+  }
   // A frame's navigation, or a worker's script, that ends with no response
   // gives the Page nothing to make a context of.
   if (!request.started()) {
@@ -1465,6 +1778,14 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
       channel_->Send(EncodeResponseEnded(ended));
     }
   } else if (channel_) {
+    // A response that has come whole is one the context may name as the
+    // referrer of what it imports.
+    if (net_error == net::OK && request.started()) {
+      if (const auto context = contexts_.find(request.context());
+          context != contexts_.end()) {
+        context->second.response_urls.insert(request.response_url());
+      }
+    }
     PageResponseEnded ended;
     ended.number = number;
     ended.net_error = net_error;
@@ -1869,14 +2190,84 @@ void PageHost::OnCacheStorage(PageCacheStorageCall call,
             weak_factory_.GetWeakPtr()),
         next_cache_storage_number_);
   }
-  // GlobalCacheStorage::CanCreateCacheStorage() and caches' [SecureContext]:
-  // an origin that is not opaque, of a potentially trustworthy URL.
-  std::optional<std::string> storage_key;
-  if (document_url.SchemeIs(url::kHttpsScheme) ||
-      net::IsLocalhost(document_url)) {
-    storage_key = ContextSerializedStorageKey(context_id);
+  std::optional<std::string> storage_key =
+      SecureContextStorageKey(context_id, document_url);
+  bool bucket_live = true;
+  switch (call.op) {
+    case CacheStorageCallOp::kOpen:
+    case CacheStorageCallOp::kHas:
+    case CacheStorageCallOp::kDelete:
+    case CacheStorageCallOp::kKeys:
+    case CacheStorageCallOp::kMatch:
+      // CacheStorage's calls go to the bucket they name.
+      if (storage_key) {
+        std::optional<PageStorageBuckets::Target> target =
+            LocateBucket(call.bucket, context_id, *storage_key);
+        if (!target) {
+          return;
+        }
+        storage_key = std::move(target->bucket_key);
+        bucket_live = target->live;
+      }
+      break;
+    default:
+      break;
   }
-  cache_storage_->OnCall(std::move(call), context_id, storage_key);
+  cache_storage_->OnCall(std::move(call), context_id, storage_key, bucket_live);
+}
+
+std::optional<std::string> PageHost::SecureContextStorageKey(
+    uint64_t context_id,
+    const GURL& url) {
+  // GlobalCacheStorage::CanCreateCacheStorage(), and the [SecureContext] of
+  // caches and of the Storage Buckets API: an origin that is not opaque, of a
+  // potentially trustworthy URL.
+  if (!url.SchemeIs(url::kHttpsScheme) && !net::IsLocalhost(url)) {
+    return std::nullopt;
+  }
+  return ContextSerializedStorageKey(context_id);
+}
+
+std::optional<PageStorageBuckets::Target> PageHost::LocateBucket(
+    uint64_t bucket,
+    uint64_t context_id,
+    const std::string& storage_key) {
+  if (bucket == 0) {
+    network_->storage_quota().EnsureDefaultBucket(storage_key);
+    return PageStorageBuckets::Target{storage_key, true};
+  }
+  if (!storage_buckets_) {
+    Refuse(base::StrCat({"a call of the storage of bucket ",
+                         base::NumberToString(bucket),
+                         ", which the Page was not given"}));
+    return std::nullopt;
+  }
+  return storage_buckets_->Locate(bucket, context_id);
+}
+
+void PageHost::OnStorageBuckets(PageStorageBucketCall call,
+                                uint64_t context_id,
+                                const GURL& document_url) {
+  if (!storage_buckets_) {
+    storage_buckets_ = std::make_unique<PageStorageBuckets>(
+        network_->storage_quota(),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string frame) {
+              if (host && host->channel_ && !host->refused_by_library_) {
+                host->channel_->Send(std::move(frame));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string why) {
+              if (host && !host->refused_by_library_) {
+                host->Refuse(std::move(why));
+              }
+            },
+            weak_factory_.GetWeakPtr()));
+  }
+  storage_buckets_->OnCall(std::move(call), context_id,
+                           SecureContextStorageKey(context_id, document_url));
 }
 
 void PageHost::OnIndexedDb(PageIndexedDbCall call,
@@ -1902,8 +2293,28 @@ void PageHost::OnIndexedDb(PageIndexedDbCall call,
   }
   // IDBFactory's check that the origin may reach databases: not an opaque
   // one, which a Page's documents only have outside HTTP and HTTPS.
-  indexed_db_->OnCall(std::move(call), context_id,
-                      ContextSerializedStorageKey(context_id));
+  std::optional<std::string> storage_key =
+      ContextSerializedStorageKey(context_id);
+  bool bucket_live = true;
+  switch (call.op) {
+    case IndexedDbCallOp::kGetDatabaseInfo:
+    case IndexedDbCallOp::kOpen:
+    case IndexedDbCallOp::kDeleteDatabase:
+      // A factory's calls go to the bucket they name.
+      if (storage_key) {
+        std::optional<PageStorageBuckets::Target> target =
+            LocateBucket(call.bucket, context_id, *storage_key);
+        if (!target) {
+          return;
+        }
+        storage_key = std::move(target->bucket_key);
+        bucket_live = target->live;
+      }
+      break;
+    default:
+      break;
+  }
+  indexed_db_->OnCall(std::move(call), context_id, storage_key, bucket_live);
 }
 
 std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
@@ -2088,6 +2499,39 @@ void PageHost::OnStorageUnbind(uint64_t area) {
   if (storage_areas_.erase(area) == 0) {
     Refuse("a storage area that is not bound");
   }
+}
+
+void PageHost::OnNetworkHint(const PageNetworkHint& hint, uint64_t document) {
+  // The Page names an origin, as Blink's WebPrescientNetworkingImpl hands the
+  // browser a url::SchemeHostPort, and only of HTTP or HTTPS, the only ones
+  // that PreconnectManager takes.
+  const GURL url(hint.url);
+  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() ||
+      url != url.DeprecatedGetOriginAsURL()) {
+    Refuse("a network hint that is not an HTTP or HTTPS origin");
+    return;
+  }
+  // GetPendingIsolationInfoForSubresources() of the document's frame.
+  const Context& context = contexts_.at(document);
+  const FrameTree tree = FrameTreeOf(document);
+  const net::SiteForCookies site_for_cookies =
+      tree.cross_site ? net::SiteForCookies()
+                      : net::SiteForCookies::FromOrigin(tree.top_frame_origin);
+  const net::NetworkAnonymizationKey key =
+      net::IsolationInfo::Create(net::IsolationInfo::RequestType::kOther,
+                                 tree.top_frame_origin, context.origin,
+                                 site_for_cookies)
+          .network_anonymization_key();
+  PreconnectManager& preconnect_manager = network_->preconnect_manager();
+  switch (hint.type) {
+    case PageNetworkHintType::kPrefetchDns:
+      preconnect_manager.StartPreresolveHost(url, key);
+      return;
+    case PageNetworkHintType::kPreconnect:
+      preconnect_manager.StartPreconnectUrl(url, hint.allow_credentials, key);
+      return;
+  }
+  NOTREACHED();
 }
 
 void PageHost::DeliverBroadcast(const url::Origin& origin,
@@ -2322,8 +2766,9 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
     // Its CookieStore listened over a pipe that went with it.
     cookie_store_listeners_.erase(id);
   }
-  // Its Cache API's puts that wait for a body fail, as its pipes go with it in
-  // Chrome, so that none holds its cache.
+  // Its Cache API's puts that wait for a body fail, and its caches and stored
+  // bodies are let go, as its pipes go with it in Chrome, so that none holds
+  // its cache.
   if (cache_storage_) {
     cache_storage_->ForgetContexts(ids);
   }
@@ -2331,6 +2776,10 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
   // it goes.
   if (indexed_db_) {
     indexed_db_->ForgetContexts(ids);
+  }
+  // Its StorageBuckets' remotes go with it.
+  if (storage_buckets_) {
+    storage_buckets_->ForgetContexts(ids);
   }
   std::erase_if(frame_navigation_responses_, [&ids](const auto& entry) {
     return ids.contains(entry.second.parent) ||
@@ -2386,10 +2835,15 @@ void PageHost::FillContextFetch(uint64_t id,
                                 FetchParams& fetch) const {
   const Context& context = contexts_.at(id);
   // The Initiator is the context's URL, or the origin of a frame's initial
-  // about:blank, which has its parent's.
-  fetch.initiator = context.origin.IsSameOriginWith(context.url)
-                        ? context.url
-                        : context.origin.GetURL();
+  // about:blank, which has its parent's, or the opaque origin of a worker of
+  // a data: URL, whose requests send "null" as their Origin, as Chrome's do.
+  if (context.origin.opaque()) {
+    fetch.opaque_initiator = context.origin;
+  } else {
+    fetch.initiator = context.origin.IsSameOriginWith(context.url)
+                          ? context.url
+                          : context.origin.GetURL();
+  }
   // Blink's OutgoingReferrer(): an about:blank document's is its parent's,
   // and a worker's is its script's URL, of which a blob: or data: one gives
   // none.
@@ -2400,7 +2854,7 @@ void PageHost::FillContextFetch(uint64_t id,
   }
   if (!source->url.SchemeIsHTTPOrHTTPS()) {
     fetch.referrer_policy = net::ReferrerPolicy::NO_REFERRER;
-  } else if (source->url != *fetch.initiator) {
+  } else if (fetch.initiator && source->url != *fetch.initiator) {
     fetch.referrer_source = source->url;
   }
   // The frame tree, from the context's frame, or from a frame's parent for
@@ -2408,10 +2862,14 @@ void PageHost::FillContextFetch(uint64_t id,
   // it out. A frame's navigation always names the top-level frame, since its
   // Initiator need not be it.
   const FrameTree tree = FrameTreeOf(parent != kNoDocument ? parent : id);
-  if (!tree.is_top_level || parent != kNoDocument) {
+  if (!tree.is_top_level || parent != kNoDocument ||
+      fetch.opaque_initiator.has_value()) {
     fetch.top_frame_origin = tree.top_frame_origin;
   }
-  fetch.cross_site_ancestor = tree.cross_site;
+  // An opaque origin is of no site, so its requests have no site for
+  // cookies, as the storage key of a worker of a data: URL gives them.
+  fetch.cross_site_ancestor =
+      tree.cross_site || fetch.opaque_initiator.has_value();
   fetch.cross_origin_ancestor = tree.cross_origin;
   fetch.from_worker = context.is_worker;
 }
@@ -2541,7 +2999,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     }
     if (context->is_worker && frame->type != PageMessage::kRequest &&
         frame->type != PageMessage::kBroadcast &&
-        frame->type != PageMessage::kCacheStorage) {
+        frame->type != PageMessage::kCacheStorage &&
+        frame->type != PageMessage::kIndexedDb &&
+        frame->type != PageMessage::kStorageBuckets) {
       Refuse(base::StrCat({"message type ", base::NumberToString(type),
                            " of a worker, which only a document sends"}));
       return;
@@ -2630,6 +3090,12 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCancel:
       OnCancel(frame->cancelled);
       return;
+    case PageMessage::kRequestBodyPart:
+      OnRequestBodyPart(frame->request_body_part);
+      return;
+    case PageMessage::kRequestBodyEnded:
+      OnRequestBodyEnded(frame->request_body_ended);
+      return;
     case PageMessage::kKnownGap: {
       PageEvent event;
       event.type = MITTO_PAGE_EVENT_KNOWN_GAP;
@@ -2666,6 +3132,10 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       OnIndexedDb(std::move(frame->indexed_db_call), frame->document,
                   document_url);
       return;
+    case PageMessage::kStorageBuckets:
+      OnStorageBuckets(std::move(frame->storage_bucket_call), frame->document,
+                       document_url);
+      return;
     case PageMessage::kWorkerStarted:
       OnWorkerStarted(frame->worker_started);
       return;
@@ -2686,6 +3156,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kStorageUnbind:
       OnStorageUnbind(frame->storage_unbind);
       return;
+    case PageMessage::kNetworkHint:
+      OnNetworkHint(frame->network_hint, frame->document);
+      return;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -2704,6 +3177,8 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kStoragePart:
     case PageMessage::kCacheStorageAnswer:
     case PageMessage::kIndexedDbCallback:
+    case PageMessage::kStorageBucketsAnswer:
+    case PageMessage::kRequestBodyCredit:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }

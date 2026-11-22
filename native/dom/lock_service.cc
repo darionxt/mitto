@@ -14,6 +14,8 @@
 namespace mitto {
 namespace {
 
+// Posts `task` to the calling thread's queue of Web Locks, as a client's
+// message reaches the browser.
 void Post(base::OnceClosure task) {
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
@@ -23,6 +25,15 @@ void Post(base::OnceClosure task) {
 }
 
 }  // namespace
+
+LockService::Client::Client(scoped_refptr<base::SequencedTaskRunner> runner)
+    : base::RefCountedDeleteOnSequence<Client>(std::move(runner)) {}
+
+LockService::Client::~Client() = default;
+
+void LockService::Client::PostToClient(base::OnceClosure task) {
+  owning_task_runner()->PostTask(FROM_HERE, std::move(task));
+}
 
 LockService::Lock::Lock(scoped_refptr<Client> client,
                         std::string client_id,
@@ -47,7 +58,8 @@ class LockService::LockGroupState {
   // Breaks the lock at `it`, which tells its client, and returns the next.
   Queue::iterator BreakLock(Queue& request_queue, Queue::iterator it) {
     lock_id_to_iterator_.erase(it->lock_id);
-    Post(base::BindOnce(&Client::Broken, it->client, it->lock_id));
+    it->client->PostToClient(
+        base::BindOnce(&Client::Broken, it->client, it->lock_id));
     return request_queue.erase(it);
   }
 
@@ -76,7 +88,8 @@ class LockService::LockGroupState {
                                   request_queue.back().mode == Mode::kShared &&
                                   lock.mode == Mode::kShared);
     if (!can_grant && wait == WaitMode::kNoWait) {
-      Post(base::BindOnce(&Client::Failed, lock.client, lock.lock_id));
+      lock.client->PostToClient(
+          base::BindOnce(&Client::Failed, lock.client, lock.lock_id));
       if (request_queue.empty()) {
         resource_names_to_requests_.erase(lock.name);
       }
@@ -142,7 +155,8 @@ class LockService::LockGroupState {
   static void Grant(Lock& lock) {
     CHECK(!lock.granted);
     lock.granted = true;
-    Post(base::BindOnce(&Client::Granted, lock.client, lock.lock_id));
+    lock.client->PostToClient(
+        base::BindOnce(&Client::Granted, lock.client, lock.lock_id));
   }
 
   // By name, in the order of their bytes, as base::flat_map keeps them.
@@ -165,18 +179,17 @@ int64_t LockService::RequestLock(scoped_refptr<Client> client,
                                  std::string name,
                                  Mode mode,
                                  WaitMode wait) {
-  const int64_t lock_id = ++next_lock_id_;
+  int64_t lock_id;
+  {
+    const base::AutoLock locked(lock_);
+    lock_id = ++next_lock_id_;
+  }
   Post(base::BindOnce(&LockService::DoRequestLock, base::Unretained(this),
                       std::move(origin),
                       Lock(std::move(client), std::move(client_id),
                            std::move(name), mode, lock_id),
                       wait));
   return lock_id;
-}
-
-void LockService::ReleaseLock(std::string origin, int64_t lock_id) {
-  Post(base::BindOnce(&LockService::DoReleaseLock, base::Unretained(this),
-                      std::move(origin), lock_id));
 }
 
 void LockService::QueryState(
@@ -193,11 +206,16 @@ void LockService::QueryState(
       base::Unretained(this), std::move(origin), std::move(answer)));
 }
 
+void LockService::ReleaseLockNow(const std::string& origin, int64_t lock_id) {
+  DoReleaseLock(origin, lock_id);
+}
+
 // LockManager::RequestLock(), once the request has reached the browser.
 void LockService::DoRequestLock(std::string origin, Lock lock, WaitMode wait) {
   if (wait == WaitMode::kPreempt) {
     CHECK_EQ(lock.mode, Mode::kExclusive);
   }
+  const base::AutoLock locked(lock_);
   std::unique_ptr<LockGroupState>& state = lock_groups_[origin];
   if (!state) {
     state = std::make_unique<LockGroupState>();
@@ -213,6 +231,7 @@ void LockService::DoRequestLock(std::string origin, Lock lock, WaitMode wait) {
 }
 
 void LockService::DoReleaseLock(std::string origin, int64_t lock_id) {
+  const base::AutoLock locked(lock_);
   const auto it = lock_groups_.find(origin);
   if (it == lock_groups_.end()) {
     return;
@@ -225,6 +244,7 @@ void LockService::DoReleaseLock(std::string origin, int64_t lock_id) {
 
 std::pair<std::vector<LockService::Info>, std::vector<LockService::Info>>
 LockService::Snapshot(const std::string& origin) const {
+  const base::AutoLock locked(lock_);
   const auto it = lock_groups_.find(origin);
   if (it == lock_groups_.end()) {
     return {};

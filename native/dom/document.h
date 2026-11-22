@@ -13,8 +13,8 @@
 #ifndef MITTO_DOM_DOCUMENT_H_
 #define MITTO_DOM_DOCUMENT_H_
 
-#include <memory>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,6 +26,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/time/time.h"
 #include "mitto/dom/document_parser.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/markup_position.h"
@@ -43,9 +44,11 @@ class CDATASection;
 class Comment;
 class CacheStorageHost;
 class IndexedDbHost;
+class StorageBucketHost;
 class CookieJar;
 class DOMImplementation;
 class DocumentFragment;
+class ResourceFetcher;
 class CustomElementRegistry;
 class DocumentLoadTiming;
 class DocumentScriptRunner;
@@ -62,6 +65,7 @@ class NodeIterator;
 class PermissionsPolicy;
 class ProcessingInstruction;
 class Range;
+class SVGSVGElement;
 class Text;
 class TreeWalker;
 class Window;
@@ -123,8 +127,29 @@ class Document : public Node {
   // too.
   std::u16string CharacterSet() const;
   std::u16string ContentType() const { return content_type_; }
+  // xmlEncoding, xmlVersion and xmlStandalone, which the XML parser sets from
+  // an XML declaration, as Blink's Document holds them: no encoding, and a
+  // version that is null for an HTML document and "1.0" for any other. Only
+  // "1.0" can be set, as Blink's XMLDocumentParser::SupportsXMLVersion()
+  // says.
+  const std::optional<std::u16string>& XmlEncoding() const {
+    return xml_encoding_;
+  }
+  const std::optional<std::u16string>& XmlVersion() const {
+    return xml_version_;
+  }
+  void SetXmlVersion(const std::optional<std::u16string>& version,
+                     bindings::ExceptionState& exception_state);
+  bool XmlStandalone() const {
+    return xml_standalone_ == StandaloneStatus::kStandalone;
+  }
+  void SetXmlStandalone(bool standalone,
+                        bindings::ExceptionState& exception_state);
   DocumentType* Doctype() const;
   Element* DocumentElement() const { return FirstElementChild(); }
+  // SVG's rootElement: the document's element if it is an svg element of
+  // SVG's namespace, as Blink's SVGDocumentExtensions::rootElement() has it.
+  SVGSVGElement* RootElement() const;
   std::u16string Title() const;
   void SetTitle(const std::u16string& title);
   // The html element's dir, "" for a document element that is not one.
@@ -195,8 +220,6 @@ class Document : public Node {
   bool FullscreenEnabled() const { return window_; }
   bool PictureInPictureEnabled() const { return window_; }
   Element* FullscreenElement() const { return nullptr; }
-  // An SVG document's root, which an HTML document lacks.
-  bindings::ScriptWrappable* RootElement() const { return nullptr; }
   // The window's custom elements, and none for a document of no window.
   mitto::CustomElementRegistry* CustomElementRegistry() const;
   // When the response says it last changed, or else now, in the local time of
@@ -326,8 +349,42 @@ class Document : public Node {
 
   // What the DOM and the parser use.
   bool IsHTMLDocument() const { return is_html_; }
+  // Whether an XML declaration said standalone, as Blink's StandaloneStatus.
+  enum class StandaloneStatus {
+    kStandaloneUnspecified,
+    kStandalone,
+    kNotStandalone,
+  };
+  StandaloneStatus XmlStandaloneStatus() const { return xml_standalone_; }
+  // Whether the XML parser read an XML declaration, which XMLSerializer
+  // writes again for the document, and what it said.
+  bool HasXMLDeclaration() const { return has_xml_declaration_; }
+  void SetHasXMLDeclaration(bool has) { has_xml_declaration_ = has; }
+  void SetXmlEncoding(const std::optional<std::u16string>& encoding) {
+    xml_encoding_ = encoding;
+  }
+  // Whether the parser attaches the declarative shadow roots of its
+  // templates, which a document that DOMParser makes does not, as Blink's
+  // DeclarativeShadowRootAllowState.
+  bool AllowsDeclarativeShadowRoots() const {
+    return allow_declarative_shadow_roots_;
+  }
+  void SetAllowDeclarativeShadowRoots(bool allow) {
+    allow_declarative_shadow_roots_ = allow;
+  }
+  // Blink's Document::SetContent(): the document opened, `content` parsed
+  // with a script-created parser, and closed, as DOMParser fills an HTML
+  // document.
+  void SetContent(const std::u16string& content);
   CompatibilityMode GetCompatibilityMode() const { return compat_mode_; }
-  void SetCompatibilityMode(CompatibilityMode mode) { compat_mode_ = mode; }
+  // Sets the mode unless it is locked, as a text, JSON, image or media
+  // document's no-quirks mode is.
+  void SetCompatibilityMode(CompatibilityMode mode) {
+    if (!compat_mode_locked_) {
+      compat_mode_ = mode;
+    }
+  }
+  void LockCompatibilityMode() { compat_mode_locked_ = true; }
   bool InQuirksMode() const {
     return compat_mode_ == CompatibilityMode::kQuirks;
   }
@@ -342,11 +399,17 @@ class Document : public Node {
   bool EncodingWasDetectedHeuristically() const {
     return encoding_detected_heuristically_;
   }
+  // Whether the decoder of the document's body met a byte that its encoding
+  // cannot decode, which stops the decoder of XML.
+  bool SawDecodingError() const { return saw_decoding_error_; }
   // Sets the encoding as the decoder of the document's body has it after each
-  // piece, as Blink's Document::SetEncodingData() does. When a <meta> found
-  // late changes windows-1252 to another, the text of the document's <title>,
-  // decoded as windows-1252 already, decodes again with the new one.
-  void SetEncoding(std::string_view encoding, bool detected_heuristically);
+  // piece, and whether it met an error, as Blink's Document::SetEncodingData()
+  // does. When a <meta> found late changes windows-1252 to another, the text
+  // of the document's <title>, decoded as windows-1252 already, decodes again
+  // with the new one.
+  void SetEncoding(std::string_view encoding,
+                   bool detected_heuristically,
+                   bool saw_decoding_error);
   // The time of its response's Last-Modified, which lastModified gives.
   void SetLastModified(base::Time time) { last_modified_ = time; }
   // The referrer of the navigation that loaded the document, which referrer
@@ -369,6 +432,14 @@ class Document : public Node {
   // origin may not.
   void SetIndexedDbHost(IndexedDbHost* host) { indexed_db_host_ = host; }
   IndexedDbHost* GetIndexedDbHost() const { return indexed_db_host_; }
+  // Where the document's Storage Buckets API reaches its Session's buckets,
+  // which only a document that the Session loaded over HTTP or HTTPS has.
+  void SetStorageBucketHost(StorageBucketHost* host) {
+    storage_bucket_host_ = host;
+  }
+  StorageBucketHost* GetStorageBucketHost() const {
+    return storage_bucket_host_;
+  }
   Readiness GetReadiness() const { return readiness_; }
   // Sets the readiness, marks when it changed the first time in the load
   // timing, and fires readystatechange at the document, as Blink's
@@ -403,8 +474,16 @@ class Document : public Node {
   // with the query in the document's encoding, which every URL that the
   // document resolves goes through. An invalid GURL if it does not resolve.
   GURL CompleteUrl(std::u16string_view url) const;
+  // The text that Blink's KURL keeps of a `url` that does not resolve, empty
+  // for one that does.
+  std::string UnresolvedUrlSpec(std::u16string_view url) const;
   // The document's URL, as no frame gives a document of a Page another.
   GURL FallbackBaseUrl() const { return GURL(url_); }
+  // Blink's ValidBaseElementURL(): the URL that the first base element with
+  // an href gives, if it is valid.
+  GURL ValidBaseElementUrl() const {
+    return base_element_url_.is_valid() ? base_element_url_ : GURL();
+  }
   // Blink's Document::ProcessBaseElement(), once a base element comes, goes,
   // or changes its href.
   void ProcessBaseElement();
@@ -415,18 +494,61 @@ class Document : public Node {
   //
   // The async and in-order scripts, which it makes the first time.
   DocumentScriptRunner& GetScriptRunner();
+  // Where a referrer policy comes from, as Blink's ReferrerPolicySource.
+  enum class ReferrerPolicySource {
+    kHttpHeader,
+    kMetaTag,
+  };
+  // The document's referrer policy, which a request that leaves its own to
+  // the document goes with: kDefault, Chrome's, unless the response's
+  // Referrer-Policy or a meta element named referrer set one.
+  FetchReferrerPolicy GetReferrerPolicy() const { return referrer_policy_; }
+  // ExecutionContext::ParseAndSetReferrerPolicy(): a header's last policy
+  // that it names, or a meta element's one, with the legacy keywords, and
+  // Chrome's console error for one that names none.
+  void ParseAndSetReferrerPolicy(std::u16string_view policy,
+                                 ReferrerPolicySource source);
+
+  // What fetches the document's subresources, such as its images.
+  ResourceFetcher& Fetcher();
+  bool HasFetcher() const { return fetcher_.Get() != nullptr; }
+  // The fetcher if the document has made one, as a const document reads it.
+  ResourceFetcher* ExistingFetcher() const { return fetcher_.Get(); }
   // The HTML Standard's currentScript, as Blink keeps it for scripts that
   // run inside others.
   void PushCurrentScript(Element* element);
   void PopCurrentScript(Element* element);
-  // Whether no style sheet blocks scripts, which none does while a Page loads
-  // no style sheets.
-  bool IsScriptExecutionReady() const { return true; }
+  // Whether no style sheet blocks scripts.
+  bool IsScriptExecutionReady() const {
+    return pending_script_blocking_stylesheets_ == 0;
+  }
+  // Blink's PendingSheetType: what a style sheet that loads holds back.
+  enum class PendingSheetType {
+    kNone,
+    // Nothing: one whose media does not match, or an alternate one.
+    kNonBlocking,
+    // Rendering, but not scripts: one that a script inserted.
+    kDynamicRenderBlocking,
+    // Scripts, and rendering before the body or the parser in it: one that
+    // the parser inserted.
+    kBlocking,
+  };
+  // StyleEngine::AddPendingBlockingSheet() and RemovePendingBlockingSheet()
+  // of a sheet that `owner`, a link or a style element, loads: one of type
+  // kBlocking blocks scripts, and before the body rendering, or in it the
+  // parser. Removing the last that blocks scripts lets the scripts that wait
+  // for them run, from a task, as Document::DidLoadAllScriptBlockingResources()
+  // posts it.
+  void AddPendingBlockingSheet(Element& owner, PendingSheetType type);
+  void RemovePendingBlockingSheet(Element& owner, PendingSheetType type);
   // What holds the load event back, such as an async script that has not
   // run. Once nothing does, CheckCompleted() runs from a task, as Blink's
   // load event delay timer runs it.
   void IncrementLoadEventDelayCount() { ++load_event_delay_count_; }
   void DecrementLoadEventDelayCount();
+  // The same, but checks the load event at once, from a task that a delay
+  // held, such as an image's load event.
+  void DecrementLoadEventDelayCountAndCheckLoadEvent();
   bool IsDelayingLoadEvent() const { return load_event_delay_count_ > 0; }
 
   // How the document loads, as Blink's Document and its frame's loader see
@@ -442,7 +564,9 @@ class Document : public Node {
   MarkupPosition EventHandlerPosition() const;
   // Document::OpenForNavigation(): a parser for the document's response,
   // which `client` feeds, with the document loading.
-  DocumentParser& OpenForNavigation(DocumentParser::Client& client);
+  DocumentParser& OpenForNavigation(
+      DocumentParser::Client& client,
+      DocumentParser::Kind kind = DocumentParser::Kind::kHtml);
   // Document::CancelParsing(), as stopping the document's loading does: the
   // parser goes, the document is complete, and open() and write() do nothing
   // from then on if a parser was parsing.
@@ -451,8 +575,9 @@ class Document : public Node {
   // Document::FinishedParsing(), once the parser is done: DOMContentLoaded,
   // a microtask checkpoint, then CheckCompleted() for a document of a window.
   void FinishedParsing();
-  // Document::WillInsertBody(), as the parser inserts the body: a document
-  // with something to show begins rendering, once no script blocks it.
+  // Document::WillInsertBody(), as the parser inserts the body: the fetches
+  // that waited for it start, and a document with something to show begins
+  // rendering, once no script blocks it.
   void WillInsertBody();
   // RenderBlockingResourceManager's pending scripts: a potentially
   // render-blocking script that is fetched before the body blocks the
@@ -461,6 +586,10 @@ class Document : public Node {
   // Removing the last one begins rendering if the body is there.
   void AddPendingRenderBlockingScript(Element& script);
   void RemovePendingRenderBlockingScript(Element& script);
+  // RenderBlockingResourceManager::AddPendingStylesheet(): whether a style
+  // sheet that `owner` loads blocks rendering, which one before the body
+  // does, as a script does.
+  bool AddPendingRenderBlockingSheet(Element& owner);
   // Document::CheckCompleted(): complete, and the window's load event, once
   // parsing has finished and nothing holds the load event back.
   void CheckCompleted();
@@ -470,6 +599,16 @@ class Document : public Node {
   // What runs each time the window's load event has been dispatched.
   void SetDidDispatchLoadEvent(base::RepeatingClosure did_dispatch) {
     did_dispatch_load_event_ = std::move(did_dispatch);
+  }
+  // What runs once, just before the window's next load event, as the XML
+  // tree viewer's isolated world's onload does in Blink.
+  void RunBeforeLoadEvent(base::OnceClosure closure) {
+    run_before_load_event_ = std::move(closure);
+  }
+  // Whether the document has made an element of the HTML, SVG or MathML
+  // namespace, as Blink's SawElementsInKnownNamespaces() says.
+  bool SawElementsInKnownNamespaces() const {
+    return saw_elements_in_known_namespaces_;
   }
   // Whether write() or writeln() runs.
   bool IsInDocumentWrite() const { return write_recursion_depth_ > 0; }
@@ -520,7 +659,9 @@ class Document : public Node {
   // LocalFrameView::ProcessUrlFragment(), as ElementFragmentAnchor::TryCreate()
   // runs it: the CSS target becomes the element that the fragment of `url`
   // indicates, or none, once the document has finished parsing and after each
-  // navigation within it.
+  // navigation within it. The indicated part is revealed: each closed details
+  // element around it opens, and each ancestor hidden "until-found" gets
+  // beforematch and shows.
   void ProcessUrlFragment(const GURL& url);
 
   // The language that the response's Content-Language and a content-language
@@ -579,18 +720,17 @@ class Document : public Node {
     state_preserving_atomic_move_in_progress_ = value;
   }
   void SetPopoverRemovalRoot(Node* root) { popover_removal_root_ = root; }
+  // The MIME type that contentType gives, which an XML document and the loader
+  // of a response set as Blink's SetMimeType() does.
+  void SetContentType(std::u16string content_type) {
+    content_type_ = std::move(content_type);
+  }
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
   // A new document of the same class, which a copy starts from, as Blink's
   // CloneDocumentWithoutChildren() makes it.
   virtual Document* CloneDocumentWithoutChildren() const;
-  // The MIME type that contentType gives, which an XML document sets as Blink's
-  // SetMimeType() does.
-  void SetContentType(std::u16string content_type) {
-    content_type_ = std::move(content_type);
-  }
-
  private:
   std::u16string BodyAttribute(std::u16string_view name) const;
   // Blink's SetBodyAttribute(): nothing for a frameset, no body, or the value
@@ -605,9 +745,14 @@ class Document : public Node {
   // what they do once the checks have passed, as Blink splits them.
   void Open(Window* entered_window, bindings::ExceptionState& exception_state);
   void Open();
+  // close() once its checks have passed: the end of a script-created parser's
+  // input.
+  void Close();
   // Document::ImplicitOpen(): the document emptied and loading, with a new
   // parser.
-  DocumentParser& ImplicitOpen(DocumentParser::Client* client);
+  DocumentParser& ImplicitOpen(
+      DocumentParser::Client* client,
+      DocumentParser::Kind kind = DocumentParser::Kind::kHtml);
   void DetachParser();
   // Document::BeginLifecycleUpdatesIfRenderingReady(): the window begins
   // rendering once no script blocks it.
@@ -631,6 +776,13 @@ class Document : public Node {
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
   std::u16string content_type_;
+  std::optional<std::u16string> xml_encoding_;
+  std::optional<std::u16string> xml_version_;
+  StandaloneStatus xml_standalone_ = StandaloneStatus::kStandaloneUnspecified;
+  bool has_xml_declaration_ = false;
+  bool allow_declarative_shadow_roots_ = true;
+  bool saw_elements_in_known_namespaces_ = false;
+  base::OnceClosure run_before_load_event_;
   // How many times each named item was added and not yet removed, and the
   // named items in the order in which they came.
   std::map<std::u16string, int> named_item_counts_;
@@ -640,9 +792,11 @@ class Document : public Node {
   const base::TimeTicks start_time_ = base::TimeTicks::Now();
   bool design_mode_ = false;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
+  bool compat_mode_locked_ = false;
   std::u16string url_ = u"about:blank";
   std::string encoding_ = "UTF-8";
   bool encoding_detected_heuristically_ = false;
+  bool saw_decoding_error_ = false;
   std::optional<base::Time> last_modified_;
   // A document that no parser is loading is complete, as Blink's starts.
   Readiness readiness_ = Readiness::kComplete;
@@ -656,6 +810,7 @@ class Document : public Node {
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
+  raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   cppgc::Member<Window> window_;
   cppgc::Member<Element> css_target_;
   cppgc::Member<HTMLCollection> images_;
@@ -677,9 +832,13 @@ class Document : public Node {
   GURL base_element_url_;
   GURL base_url_ = GURL("about:blank");
   cppgc::Member<DocumentScriptRunner> script_runner_;
+  cppgc::Member<ResourceFetcher> fetcher_;
+  FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;
+  int pending_script_blocking_stylesheets_ = 0;
+  int pending_parser_blocking_stylesheets_ = 0;
   bool load_event_check_pending_ = false;
   cppgc::Member<DocumentParser> parser_;
   cppgc::Member<DocumentLoadTiming> load_timing_;

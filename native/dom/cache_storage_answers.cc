@@ -10,14 +10,14 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/per_isolate_data.h"
-#include "mitto/bindings/v8_window.h"
+#include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/cache_body_loader.h"
 #include "mitto/dom/cache_storage_host.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/quota_exceeded_error.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/response.h"
-#include "mitto/dom/window.h"
 #include "mitto/header_rules.h"
 #include "url/gurl.h"
 #include "v8/include/v8-context.h"
@@ -95,11 +95,10 @@ v8::Local<v8::Value> CacheStorageException(v8::Isolate* isolate,
           bindings::RuntimeFeature::kQuotaExceededErrorUpdate)) {
     // QuotaExceededError::Reject(): the interface of its own with
     // QuotaExceededErrorUpdate, which is on, and with neither quota nor
-    // requested.
-    return QuotaExceededError::Create(
-               base::UTF8ToUTF16(bindings::ExceptionMessages::FailedToExecute(
-                   method, interface_name, final_message)),
-               std::nullopt, std::nullopt)
+    // requested, made without the resolver's context, so its message names no
+    // call.
+    return QuotaExceededError::Create(base::UTF8ToUTF16(final_message),
+                                      std::nullopt, std::nullopt)
         ->ToV8(isolate);
   }
   return CacheCallException(
@@ -195,25 +194,24 @@ Response* ResponseFromCache(CacheStorageHost& host,
                                    url, response.url_list.size() > 1, headers,
                                    nullptr);
   }
-  // The loader goes to the host, and the Response holds it until it goes.
-  Response* const page_response = Response::CreateFetched(
-      type, response.status, response.status_text, url,
-      response.url_list.size() > 1, headers, nullptr);
+  // The loader goes to the host, and its consumer to the body, which drops
+  // the stored body once it goes.
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  auto loader = std::make_unique<CacheBodyLoader>(
-      host, response.body, page_response, isolate,
-      isolate->GetCurrentContext());
-  CacheBodyLoader* const loader_pointer = loader.get();
+  auto loader = std::make_unique<CacheBodyLoader>(host, response.body, isolate,
+                                                  isolate->GetCurrentContext());
+  BodyStreamBuffer* const body = BodyStreamBuffer::Create(
+      isolate, loader->consumer(), /*signal=*/nullptr);
   host.AdoptStoredBody(response.body, std::move(loader));
-  page_response->AttachBodyLoader(loader_pointer);
-  return page_response;
+  return Response::CreateFetched(type, response.status, response.status_text,
+                                 url, response.url_list.size() > 1, headers,
+                                 body);
 }
 
 bool CacheContextIsAlive(v8::Isolate* isolate,
                          v8::Local<v8::Context> context) {
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
-  return window && window->HasContext();
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  return execution_context && execution_context->HasContext();
 }
 
 void RunInCacheContext(v8::Isolate* isolate,

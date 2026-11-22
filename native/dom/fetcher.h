@@ -14,12 +14,28 @@
 #include <string>
 #include <string_view>
 
+class GURL;
+
 namespace mitto {
 
-// The Fetch Standard's request destination: none for fetch().
+// The Fetch Standard's request destination: none for fetch(), image for an
+// img, and json, style and text for module scripts of those types.
 enum class FetchDestination {
   kEmpty,
   kScript,
+  kImage,
+  kJson,
+  kStyle,
+  kFont,
+  kText,
+  // A module of a module worker's graph.
+  kWorker,
+  // Not the Fetch Standard's: what the browser's favicon driver fetches, an
+  // image of the Request Kind favicon.
+  kFavicon,
+  // Not the Fetch Standard's: what a link with rel prefetch asks for, whose
+  // destination is empty, of the Request Kind prefetch.
+  kPrefetch,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.
@@ -88,6 +104,35 @@ FetchPriorityHint FetchPriorityHintFromAttribute(std::u16string_view value);
 // Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
 FetchReferrerPolicy FetchReferrerPolicyFromString(std::u16string_view value);
 
+// Whether header lines, as FetchResponseHead has them, say
+// X-Content-Type-Options: nosniff, as Blink's ParseContentTypeOptionsHeader()
+// reads the field's first value, as the Fetch Standard splits it.
+// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
+bool IsContentTypeOptionsNosniff(std::string_view headers);
+
+// The referrer policy that a Referrer-Policy header names: the last of its
+// comma-separated tokens that names one, without white space around it, and
+// kDefault where none does.
+// Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
+FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value);
+
+// The same with the legacy keywords that an img's referrerpolicy takes:
+// "never" and "none", "always", "origin-when-crossorigin" and "default".
+FetchReferrerPolicy FetchReferrerPolicyFromStringWithLegacyKeywords(
+    std::u16string_view value);
+
+// The state of a crossorigin attribute, Blink's CrossOriginAttributeValue:
+// none without one, use-credentials for that value in any case, and
+// anonymous for any other.
+// Upstream: third_party/blink/renderer/core/html/cross_origin_attribute.cc
+enum class CrossOriginAttribute {
+  kNotSet,
+  kAnonymous,
+  kUseCredentials,
+};
+CrossOriginAttribute CrossOriginAttributeFromValue(
+    const std::optional<std::u16string>& value);
+
 // The referrer of a request that is the document's, as Blink's referrer string
 // says it, and of one that has none.
 inline constexpr char kClientReferrer[] = "about:client";
@@ -106,6 +151,9 @@ struct FetchRequestData {
   // The lines that the script set, each "name: value" and a line feed.
   std::string headers;
   std::optional<std::string> body;
+  // Whether its body streams, as the FetchClient sends it through its
+  // FetchController, from when the Session starts reading it.
+  bool streams_body = false;
   // The request's mode and credentials mode, if not those of its destination.
   std::optional<FetchMode> mode;
   std::optional<FetchCredentialsMode> credentials;
@@ -117,9 +165,16 @@ struct FetchRequestData {
   // Whether it outlives its document.
   bool keepalive = false;
   FetchDestination destination = FetchDestination::kEmpty;
+  // Whether it fetches a module script, or what one imports, which the
+  // Session sends as a module.
+  bool is_module = false;
   // Whether it blocks rendering, which its entry of the Performance Timeline
   // says.
   bool render_blocking = false;
+  // Whether the window's Performance Timeline gets an entry of it, as of a
+  // request of Blink's ResourceFetcher. The icon that the browser has the
+  // renderer's image downloader fetch, through a loader of its own, gets none.
+  bool resource_timing = true;
 };
 
 // A response, after any redirects.
@@ -154,6 +209,15 @@ class FetchController {
   // client must touch nothing of itself after calling it.
   virtual void Cancel() = 0;
 
+  // For a body that streams: how many more bytes of it the Session takes now,
+  // none until it starts reading the body. A request whose body does not
+  // stream, such as one that a preload answers, takes none.
+  virtual size_t BodyRoom() const;
+  // Sends `bytes` of the body, at most BodyRoom().
+  virtual void SendBody(std::string_view bytes) {}
+  // Ends the body, which fails the request if `errored`.
+  virtual void EndBody(bool errored) {}
+
  protected:
   virtual ~FetchController() = default;
 };
@@ -173,12 +237,24 @@ class FetchClient {
   // 0 when all of the body has come, and otherwise a net error, before or
   // after the response started.
   virtual void OnResponseEnded(int net_error) = 0;
+  // For a request whose body streams: the Session takes more of it.
+  virtual void OnBodyRoom() {}
 };
 
 class Fetcher {
  public:
   virtual void Fetch(FetchRequestData request,
                      std::unique_ptr<FetchClient> client) = 0;
+  // Whether a response at `url`, after its redirects, has come whole, which a
+  // later request may name as its referrer, as the Session allows it.
+  virtual bool HasFinishedResponse(std::string_view url) const = 0;
+
+  // Blink's WebPrescientNetworking: hints that the document will soon want
+  // `url`'s origin, which is HTTP or HTTPS, for the browser to resolve its
+  // host's name, or to connect to it as well, with credentials if
+  // `allow_credentials`.
+  virtual void PrefetchDns(const GURL& url) = 0;
+  virtual void Preconnect(const GURL& url, bool allow_credentials) = 0;
 
  protected:
   virtual ~Fetcher() = default;

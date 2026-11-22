@@ -3,6 +3,8 @@
 #include <stdint.h>
 
 #include <optional>
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -28,8 +30,10 @@ namespace {
 // Blink gives each frame a context group of its own. A Page has one.
 constexpr int kContextGroupId = 1;
 
-// The one PageReporter, which V8's callback for rejected promises reaches.
-PageReporter* g_reporter = nullptr;
+// The PageReporter that V8's callback for rejected promises reaches: one for
+// each isolate, on the isolate's thread, the main thread's and each dedicated
+// worker's.
+constinit thread_local PageReporter* g_reporter = nullptr;
 
 // Blink's kMaxReportedHandlersPendingResolution: how many reported rejections
 // a handler that comes later still finds.
@@ -116,8 +120,9 @@ void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
   context_.Reset(isolate_, context);
   v8_inspector::V8ContextInfo info(context, kContextGroupId,
                                    v8_inspector::StringView());
-  // A window's console has memory, as Blink's MainThreadDebugger says.
-  info.hasMemoryOnConsole = true;
+  // A window's console has memory, as Blink's MainThreadDebugger says, and a
+  // worker's has none, as WorkerThreadDebugger says nothing of it.
+  info.hasMemoryOnConsole = !for_worker_;
   inspector_->contextCreated(info);
 }
 
@@ -217,7 +222,8 @@ void PageReporter::Revoke(Rejection rejection) {
 }
 
 void PageReporter::ReportException(v8::Local<v8::Value> exception,
-                                   v8::Local<v8::Message> message) {
+                                   v8::Local<v8::Message> message,
+                                   std::u16string text) {
   const v8::HandleScope handle_scope(isolate_);
   v8::Local<v8::Context> context = isolate_->GetCurrentContext();
   if (context.IsEmpty()) {
@@ -231,10 +237,25 @@ void PageReporter::ReportException(v8::Local<v8::Value> exception,
     message = v8::Exception::CreateMessage(isolate_, exception);
   }
   ReportUncaughtError(
-      isolate_, message, exception,
-      [this, context](v8::Local<v8::Value> uncaught) {
-        send_.Run(EncodeUncaughtError(DescribeUncaught(
-            isolate_, context, uncaught, "Uncaught ", kMaxPayloadSize)));
+      isolate_, message, exception, std::move(text),
+      [this, message, exception](v8::Local<v8::Value> uncaught,
+                                 const std::u16string& uncaught_text) {
+        if (uncaught_sink_) {
+          // An error that an error listener threw has a message of its own.
+          uncaught_sink_.Run(
+              uncaught == exception
+                  ? message
+                  : v8::Exception::CreateMessage(isolate_, uncaught),
+              uncaught, uncaught_text);
+          return;
+        }
+        // What Chrome's console says of it, which may be as long as any
+        // string.
+        std::string description;
+        base::TruncateUTF8ToByteSize(base::UTF16ToUTF8(MessageForConsole(
+                                         isolate_, uncaught, uncaught_text)),
+                                     kMaxPayloadSize, &description);
+        send_.Run(EncodeUncaughtError(description));
       });
 }
 
@@ -263,8 +284,12 @@ void PageReporter::consoleAPIMessage(int context_group_id,
 // static
 void PageReporter::OnMessage(v8::Local<v8::Message> message,
                              v8::Local<v8::Value> exception) {
+  // V8 has had the message say what it reports to its listeners.
   if (g_reporter) {
-    g_reporter->ReportException(exception, message);
+    std::u16string text;
+    std::ignore =
+        bindings::FromV8String(g_reporter->isolate_, message->Get(), &text);
+    g_reporter->ReportException(exception, message, std::move(text));
   }
 }
 

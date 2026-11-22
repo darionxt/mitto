@@ -144,7 +144,7 @@ class IDBCursor : public bindings::ScriptWrappable {
                                 const char* read_only_error_message);
 
   // Sends `call` of the Session's cursor, whose answer goes to `answer_to`
-  // in the window's context, and what nothing answers. Blink's cursor is
+  // in the context, and what nothing answers. Blink's cursor is
   // associated with its connection's interface, so nothing goes once the
   // connection has closed.
   void Ask(PageIndexedDbCall call, IDBRequest* request, AnswerTo answer_to);

@@ -4,6 +4,7 @@ A replay does what a caller of the public API can do today, and what it cannot d
 gains something a case needs, the replay here passes it on, and those gaps leave the known-gaps list. See docs/parity.md.
 """
 
+import time
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -18,6 +19,7 @@ from tools.capture import (
     CREDENTIALS_COOKIE_SET_PATH,
     CROSS_SITE_HOST,
     DOCUMENT_CASES,
+    DOCUMENT_LAST_PATH,
     DOCUMENT_PATH,
     DOCUMENT_RUNS,
     DOCUMENTS_FORMS_PATH,
@@ -46,8 +48,20 @@ _JSON: BodyOptions = {"json": {"json": "body"}}
 _FORM_FIELDS = {"name": "mitto", "a b&c": "d e&f+g"}
 # Longer than a Page takes to load a case page and navigate from it, even on a busy runner.
 _PAGE_TIMEOUT_SECONDS = 30.0
+# What the start page's script does for its classic worker: it waits until the worker, whose script calls importScripts()
+# and then fetch(), answers once both have ended.
+_WORKER_ANSWERED = """new Promise((resolve, reject) => {
+  const worker = new Worker(urls.worker);
+  worker.onmessage = () => {
+    worker.terminate();
+    resolve();
+  };
+  worker.onerror = () => reject(new Error(urls.worker + " failed"));
+})"""
 # How long a Page's document stays where it is before a replay takes it that it navigates no further.
 _SETTLED_SECONDS = 3.0
+# How often a replay looks for the request that ends a page that does not navigate.
+_POLL_SECONDS = 0.1
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,10 +90,15 @@ class Replay:
             caller cannot say, such as a navigation that no user started. No check replays it until that issue
             replays it through a Page and clears this.
         through_page: Whether a Page makes the request, as the case's page made it: the Page opens at `page`, runs
-            `page_script`, if there is one, and its document navigates until a navigation lands at `lands_at`.
+            `page_script`, if there is one, and for a navigation its document navigates until a navigation lands at
+            `lands_at`.
         page_script: What the Page runs once its document has loaded, for a page whose own script would ask for much that
-            a Page does not do yet before it navigates: the last step of that script.
+            a Page does not do yet first: the step of that script that makes the request, which for a request that is no
+            navigation settles once the request has ended.
         lands_at: The case whose page the navigation ends at, for a hop of a redirect, or nothing for the case itself.
+        until: For a page that does not navigate, the path that its own script asks for last: the Page stays open until
+            the server has had a request for it, by when every other request of the page has ended, so that closing
+            the Page cancels none.
     """
 
     kind: RequestKind
@@ -99,6 +118,7 @@ class Replay:
     through_page: bool = False
     page_script: str | None = None
     lands_at: str | None = None
+    until: str | None = None
 
 
 def _hops(prefix: str, kind: RequestKind, page: str) -> dict[str, Replay]:
@@ -192,14 +212,22 @@ def _document_replays() -> dict[str, Replay]:
         "module_static_import": Replay(RequestKind.MODULE, page=_PATHS["module"]),
         "module_dynamic_import": Replay(RequestKind.MODULE, page=_PATHS["module"]),
         "module_cross_site": Replay(RequestKind.MODULE, host=CROSS_SITE_HOST, page=start),
+        "module_json": Replay(RequestKind.MODULE_JSON, page=_PATHS["module"]),
+        # RequestKind.MODULE_TEXT comes with the Chrome 158 run, when the Supported Window becomes 156-158, by the
+        # owner's choice of 2026-11-19: Chrome 155 has no text modules, so no Baseline of 155 holds one.
+        "module_text": Replay(RequestKind.MODULE, page=_PATHS["module"], made_by_a_page=291),
         "xhr_get": Replay(RequestKind.XHR, page=start),
         "xhr_get_cross_site": Replay(RequestKind.XHR, host=CROSS_SITE_HOST, page=start),
         "xhr_post_text": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start),
         "xhr_get_sync": Replay(RequestKind.XHR, page=start, made_by_a_page=283),
         "xhr_post_text_sync": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start, made_by_a_page=283),
         "worker": Replay(RequestKind.WORKER, page=start),
-        "worker_import_scripts": Replay(RequestKind.SCRIPT, page=_PATHS["worker"], made_by_a_page=289),
-        "worker_fetch": Replay(RequestKind.FETCH, page=_PATHS["worker"], made_by_a_page=289),
+        # The start page's script reaches its workers only after much that a Page does not do yet, so the Page starts
+        # the worker itself, whose script asks for both.
+        "worker_import_scripts": Replay(
+            RequestKind.SCRIPT, page=start, through_page=True, page_script=_WORKER_ANSWERED
+        ),
+        "worker_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, page_script=_WORKER_ANSWERED),
         "worker_module": Replay(RequestKind.WORKER, page=start),
         "worker_blob_fetch": Replay(RequestKind.FETCH, page=start, made_by_a_page=289),
         "beacon_text": Replay(RequestKind.BEACON, _POST, body=_TEXT, page=start),
@@ -239,12 +267,15 @@ def _document_replays() -> dict[str, Replay]:
         ),
         "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start, mode="no-cors"),
         # The start page asks for web fonts, modules, workers and beacons before its script sets location, so the
-        # Page takes that last step itself. Each later page navigates on its own: a click, a refresh, location.
+        # Page takes that last step itself, once the module says that it has run, as the page's script waits for it.
+        # The window's load event does not wait for the module's import()s, and a navigation that commits while one
+        # is still open cancels it, which over HTTP/3 opens the QPACK decoder stream that Chrome's run never opened.
+        # Each later page navigates on its own: a click, a refresh, location.
         "navigation_location": Replay(
             RequestKind.NAVIGATION,
             page=start,
             through_page=True,
-            page_script="location.href = urls.navigation_location",
+            page_script="void moduleRan.then(() => { location.href = urls.navigation_location; })",
         ),
         "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"], through_page=True),
         "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"], through_page=True),
@@ -281,17 +312,36 @@ def _document_replays() -> dict[str, Replay]:
         "frame_nested_fetch": Replay(
             RequestKind.FETCH, asks=(DOCUMENTS_FRAMES_PATH,), page=_PATHS["frame_nested"], made_by_a_page=285
         ),
-        "document_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_preload_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_preload_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_preload_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_preload_font": Replay(RequestKind.FONT, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_image_small": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_style_body": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
-        "document_script_deferred": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
-        "favicon": Replay(RequestKind.FAVICON, page=DOCUMENT_PATH),
+        "document_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        "document_preload_style": Replay(
+            RequestKind.STYLE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_preload_script": Replay(
+            RequestKind.SCRIPT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_preload_image": Replay(
+            RequestKind.IMAGE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_preload_font": Replay(
+            RequestKind.FONT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        "document_image_small": Replay(
+            RequestKind.IMAGE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        "document_style_body": Replay(
+            RequestKind.STYLE, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "document_script_deferred": Replay(
+            RequestKind.SCRIPT, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
+        "favicon": Replay(RequestKind.FAVICON, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        # What a link with rel="prefetch" asks for, which the document's script adds once it has loaded.
+        "prefetch": Replay(RequestKind.PREFETCH, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH),
+        "prefetch_cross_site": Replay(
+            RequestKind.PREFETCH, host=CROSS_SITE_HOST, page=DOCUMENT_PATH, through_page=True, until=DOCUMENT_LAST_PATH
+        ),
         "navigation_form_get": Replay(RequestKind.NAVIGATION, page=DOCUMENTS_FORMS_PATH),
         "navigation_form_text": Replay(
             RequestKind.NAVIGATION,
@@ -450,7 +500,8 @@ def through_page(case: str) -> bool:
 
 def _replay_through_page(session: Session, server: CaptureServer, run: Run, case: str, steps: Replay) -> None:
     """Open a Page at the case's page and let its document navigate as the case's page did, with no user's activation,
-    until a navigation lands where the case's ends.
+    until a navigation lands where the case's ends, or for a request that is no navigation, until the page's script that
+    makes it has settled.
 
     Raises:
         RequestError: A navigation failed, or another took its place.
@@ -458,10 +509,16 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
     if steps.page is None:
         raise ValueError(f"{case} names no page to open")
     page_url = server.url(run.route, host=steps.page_host or run.host, path=steps.page)
+    if steps.until is not None:
+        with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS):  # pyright: ignore[reportPrivateUsage]
+            _wait_for_request(server, run, steps.until)
+        return
     lands_at = _PATHS[steps.lands_at or case]
     with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         if steps.page_script is not None:
             page.evaluate(steps.page_script)
+        if steps.kind is not RequestKind.NAVIGATION:
+            return
         while urlsplit(page.wait_for_navigation(timeout=_PAGE_TIMEOUT_SECONDS).url).path != lands_at:
             pass
         # The case's page navigates on, as the pages of Chrome's run did. Each navigation ends before the Page closes,
@@ -474,3 +531,18 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
                 return
             except RequestError:
                 continue
+
+
+def _wait_for_request(server: CaptureServer, run: Run, path: str) -> None:
+    """Wait until the server has had a request for `path` on a run's route.
+
+    Raises:
+        TimeoutError: No such request came in time.
+    """
+    deadline = time.monotonic() + _PAGE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        recording = server.recording(run.route, host=run.host)
+        if any(request.target == path for connection in recording.connections for request in connection.requests):
+            return
+        time.sleep(_POLL_SECONDS)
+    raise TimeoutError(f"the page asked for no {path} in {_PAGE_TIMEOUT_SECONDS:g} seconds")

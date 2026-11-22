@@ -261,9 +261,11 @@ def test_performance_now_is_coarsened_to_a_tenth_of_a_millisecond_and_never_goes
     times, time_origin, now = _evaluate(program, script)
 
     after = time.time() * 1000
-    # Each time is a multiple of 100 microseconds, up to the rounding of a double, as Chrome's are when a page is not
-    # cross-origin isolated.
-    assert all(abs(value * 10 - round(value * 10)) < 1e-6 for value in times)
+    # Each time is a multiple of 100 microseconds, as Chrome's are when a page is not cross-origin isolated, up to the
+    # rounding of doubles: Blink subtracts the time origin from the time, each coarsened in milliseconds since the
+    # machine started, so after days of uptime a time is off by about 1e-7 milliseconds, as Chrome 157 gave
+    # 125.39999985694885 on a Mac up for weeks. 1e-4 milliseconds allows centuries of uptime.
+    assert all(abs(value * 10 - round(value * 10)) < 1e-3 for value in times)
     assert times == sorted(times)
     # timeOrigin is a Unix time in milliseconds, coarsened too, and Date.now() an integer of milliseconds.
     assert before - 1000 <= time_origin <= after

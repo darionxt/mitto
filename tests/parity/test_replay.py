@@ -97,11 +97,18 @@ def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of
     waiting = {name: replay.made_by_a_page for name, replay in REPLAYS.items() if replay.made_by_a_page is not None}
 
     assert set(waiting) <= {case.name for case in DOCUMENT_CASES}
-    assert set(waiting.values()) <= {280, 283, 284, 285, 289}
+    assert set(waiting.values()) <= {280, 283, 285, 289, 291}
 
 
-def test_only_the_navigations_that_a_page_starts_are_replayed_through_a_page_from_the_page_they_came_from() -> None:
+def test_a_page_replays_its_own_navigations_its_workers_requests_and_what_a_documents_markup_asks_for() -> None:
     through = {name for name, replay in REPLAYS.items() if replay.through_page}
+    # The favicon is the browser's, after the document's load event, and the prefetches come from links that the
+    # document's script adds then.
+    markup = {
+        case.name
+        for case in DOCUMENT_CASES
+        if case.name.startswith("document_") or case.name in {"favicon", "prefetch", "prefetch_cross_site"}
+    }
 
     assert through == {
         "navigation_location",
@@ -109,15 +116,20 @@ def test_only_the_navigations_that_a_page_starts_are_replayed_through_a_page_fro
         "navigation_meta_refresh",
         "redirect_location_1",
         "redirect_location_2",
+        "worker_import_scripts",
+        "worker_fetch",
+        *markup,
     }
     assert all(REPLAYS[name].page is not None and REPLAYS[name].made_by_a_page is None for name in through)
+    # The document's page navigates nowhere, so its Page stays until its script has asked for all it does.
+    assert {name for name in through if REPLAYS[name].until is not None} == markup
 
 
 def test_a_check_skips_a_case_that_only_a_page_makes() -> None:
     def recorder(baseline: Baseline) -> dict[str, Json]:
         raise AssertionError(f"{baseline.case} was replayed")
 
-    baseline = Baseline(_RELEASE, "document_style", HTTP2, {"request": None})
+    baseline = Baseline(_RELEASE, "xhr_get_sync", HTTP2, {"request": None})
 
     assert find_gaps([baseline], recorder) == []
 

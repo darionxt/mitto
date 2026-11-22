@@ -52,6 +52,9 @@ class IndexedDbFile {
   // returns whether it could, which writes none of it if not.
   bool Write(const std::string& storage_key, const KvBatch& batch);
 
+  // Deletes the store of `storage_key`, and returns whether it could.
+  bool Delete(const std::string& storage_key);
+
  private:
   std::unique_ptr<sql::Database> database_;
 };

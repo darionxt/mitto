@@ -397,6 +397,27 @@ def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -
         types.default_value(dataclasses.replace(union, members=union.members[:1] * 2), "{}", "b")
 
 
+def test_a_dictionary_with_a_required_member_takes_no_undefined_or_null() -> None:
+    # QueuingStrategyInit's highWaterMark: Chrome's "The provided value is not of type 'QueuingStrategyInit'." for
+    # new CountQueuingStrategy(undefined), as bind_gen's conversion of a dictionary with a required member has it.
+    types = TypeMapper(frozenset(), frozenset())
+    required = DictionaryMember(
+        "highWaterMark",
+        IdlType(TypeKind.FLOATING_POINT, "unrestricted double"),
+        True,
+        None,
+        ExtendedAttributes(),
+        ALWAYS,
+    )
+    dictionary = Dictionary("Init", None, (required,), ExtendedAttributes())
+
+    _, required_source = cpp_writer._write_dictionary(dictionary, types, has_required=True)  # pyright: ignore[reportPrivateUsage]
+    _, optional_source = cpp_writer._write_dictionary(dictionary, types)  # pyright: ignore[reportPrivateUsage]
+
+    assert "value->IsNullOrUndefined()" not in "\n".join(required_source)
+    assert "value->IsNullOrUndefined()" in "\n".join(optional_source)
+
+
 def test_a_buffer_source_in_a_dictionary_converts_as_blinks_union_of_a_buffer_and_a_view() -> None:
     # WebAuthn's challenge: BufferSource, which a dictionary member holds as the union it is.
     types = TypeMapper(frozenset(), frozenset())
@@ -614,13 +635,26 @@ def test_a_nullable_reflected_attribute_reads_its_keywords() -> None:
         (Condition(other=("SecureContext",)), "data->secure_context()"),
         (Condition(other=("RuntimeEnabled=G in the context",)), "features.IsEnabled(RuntimeFeature::kG)"),
         (Condition(other=("Exposed=Window,Worker",)), "true"),
-        (Condition(other=("Exposed=Worker",)), None),
+        (Condition(other=("Exposed=Window",)), "data->is_window()"),
+        (Condition(other=("Exposed=Worker",)), "!data->is_window()"),
+        (Condition(other=("Exposed=DedicatedWorker",)), "!data->is_window()"),
+        (Condition(other=("Exposed=ServiceWorker,SharedWorker",)), None),
+        # bind_gen's test of a global name whose exposure needs a feature, such as navigator.serviceWorker's.
+        (
+            Condition(other=("Exposed=ServiceWorker,DedicatedWorker:F",)),
+            "(!data->is_window() && (features.IsEnabled(RuntimeFeature::kF)))",
+        ),
+        (
+            Condition(other=("Exposed=Window:F,Worker",)),
+            "((data->is_window() && (features.IsEnabled(RuntimeFeature::kF))) || !data->is_window())",
+        ),
         (Condition(other=("ContextEnabled=X",)), None),
         (Condition(other=("CrossOriginIsolated",)), None),
     ],
 )
 def test_a_page_installs_what_its_conditions_allow(condition: Condition, test: str | None) -> None:
-    # A Page is a secure top-level window with no origin trials and nothing a context enables.
+    # A Page is a secure top-level window with no origin trials and nothing a context enables, and so are its dedicated
+    # workers, each of whose isolates has only workers' contexts.
     assert condition_test(condition, "Thing.x") == test
 
 
@@ -844,12 +878,14 @@ def test_namespaces_and_callback_interfaces_have_constants_on_their_object_only(
 
 
 def test_an_operation_is_installed_where_any_of_its_overloads_is() -> None:
-    either = Condition(alternatives=(Condition(features=("A",)), Condition(other=("Exposed=Worker",))))
+    either = Condition(alternatives=(Condition(features=("A",)), Condition(other=("Exposed=ServiceWorker",))))
+    on_workers = Condition(alternatives=(Condition(features=("A",)), Condition(other=("Exposed=Worker",))))
     always = Condition(alternatives=(Condition(features=("A",)), ALWAYS))
 
     assert condition_test(either, "Thing.f") == "((features.IsEnabled(RuntimeFeature::kA)))"
+    assert condition_test(on_workers, "Thing.f") == "((features.IsEnabled(RuntimeFeature::kA)) || (!data->is_window()))"
     assert condition_test(always, "Thing.f") == "true"
-    assert either.describe() == "([RuntimeEnabled=A]) or ([Exposed=Worker])"
+    assert on_workers.describe() == "([RuntimeEnabled=A]) or ([Exposed=Worker])"
 
 
 def test_the_listing_names_what_each_exposed_construct_gives() -> None:
@@ -888,6 +924,20 @@ def test_a_table_holds_each_member_in_the_plans_order_with_its_condition() -> No
     assert "    7,\n    &kThingTable," in source
     assert files["interfaces_without_class_1.cc"].count("const WrapperTypeInfo") == 0
     assert "class V8Thing final {" in files["interfaces_without_class.h"]
+
+
+def test_an_iterators_table_keeps_its_display_name_apart_from_its_identifier() -> None:
+    # Chrome's errors name the identifier, "Failed to execute 'next' on 'AsyncIterator_ReadableStream'", and its
+    # @@toStringTag the display name, "ReadableStream AsyncIterator".
+    interface = _interface(name="AsyncIterator_Thing", kind="async iterator")
+    construct = Construct(interface, 3, None, False, "Thing AsyncIterator", "v8::kAsyncIteratorPrototype")
+
+    source = write_tables([construct], 1, lambda name: False, condition_test, _context())[
+        "interfaces_without_class_0.cc"
+    ]
+
+    assert '    {1},\n    "AsyncIterator_Thing",' in source
+    assert '    "Thing AsyncIterator",\n};' in source
 
 
 def test_a_table_leaves_out_what_a_page_never_installs() -> None:
@@ -1322,6 +1372,68 @@ def test_a_factory_function_with_behaviour_calls_the_class_and_the_window_instal
     assert "&V8Thing::ImageLegacyFactoryFunctionCallback}" in files["v8_window.cc"]
 
 
+def test_a_dedicated_workers_global_object_has_what_workers_expose() -> None:
+    # Once DedicatedWorkerGlobalScope has a class, a construct that only workers expose gets a table, and the worker's
+    # global object a function of its own that sets it up; until then, neither.
+    thing = _interface(name="WorkerThing", exposure=(("Worker", None),))
+
+    def global_object(name: str, tag: int, exposure: str, names: tuple[str, ...]) -> Interface:
+        return _interface(
+            name=name,
+            tag=tag,
+            max_subclass_tag=tag,
+            exposure=((exposure, None),),
+            extended_attributes=_extended("Global"),
+            exposed_constructs=names,
+            exposed=tuple(ExposedConstruct(construct, "interface", construct, ALWAYS) for construct in names),
+        )
+
+    window = global_object("Window", 2, "Window", ("Window",))
+    worker = global_object(
+        "DedicatedWorkerGlobalScope", 3, "DedicatedWorker", ("DedicatedWorkerGlobalScope", "WorkerThing")
+    )
+    definitions = Definitions(
+        {"WorkerThing": thing, "Window": window, "DedicatedWorkerGlobalScope": worker}, {}, {}, {}, frozenset()
+    )
+    window_class = ImplementedInterface("Window", "mitto/dom/window.h")
+    worker_class = ImplementedInterface("DedicatedWorkerGlobalScope", "mitto/dom/dedicated_worker_global_scope.h")
+
+    with_workers = write_bindings(definitions, [], [window_class, worker_class])
+    without = write_bindings(definitions, [], [window_class])
+
+    def tables(files: dict[str, str]) -> str:
+        return "".join(content for name, content in files.items() if name.startswith("interfaces_without_class_"))
+
+    assert "void InstallWorkerInterfaceObjects(v8::Local<v8::Context> context);" in with_workers["interface_objects.h"]
+    assert "V8DedicatedWorkerGlobalScope::kWrapperTypeInfo" in with_workers["interface_objects.cc"]
+    assert '"WorkerThing"' in tables(with_workers)
+    assert "InstallWorkerInterfaceObjects" not in without["interface_objects.h"]
+    assert '"WorkerThing"' not in tables(without)
+
+
+def test_a_stringifier_has_the_condition_of_its_declaration() -> None:
+    # DOMMatrixReadOnly's stringifier is [Exposed=Window], so a worker's DOMMatrixReadOnly has no toString().
+    on_window = Condition(other=("Exposed=Window",), context_dependent=True)
+    thing = _interface(exposure=(("Window", None), ("Worker", None)), stringifier="", stringifier_condition=on_window)
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Thing", "Window"),
+        exposed=(
+            ExposedConstruct("Thing", "interface", "Thing", ALWAYS),
+            ExposedConstruct("Window", "interface", "Window", ALWAYS),
+        ),
+    )
+    definitions = Definitions({"Thing": thing, "Window": window}, {}, {}, {}, frozenset())
+
+    files = write_bindings(definitions, [], [ImplementedInterface("Window", "mitto/dom/window.h")])
+
+    tables = "".join(content for name, content in files.items() if name.startswith("interfaces_without_class_"))
+    assert "data->is_window()" in tables
+
+
 def test_a_class_declared_in_a_shared_header_is_included_from_it() -> None:
     # svg_elements.h declares the classes of SVG that have nothing of their own, which interfaces.gni's `header` names.
     part = _interface(name="Part", tag=3, max_subclass_tag=3)
@@ -1669,6 +1781,58 @@ def test_a_read_only_maplike_with_behaviour_reads_the_classs_entries() -> None:
     assert "->Call(context, info[1], 3, arguments).IsEmpty()" in source
     assert "info.GetReturnValue().Set(v8::Undefined(isolate));" in source
     assert "info.GetReturnValue().Set(v8::False(isolate));" in source
+
+
+def test_a_value_async_iterable_with_behaviour_takes_its_source_from_the_class() -> None:
+    # ReadableStream's async_iterable<any>(optional ReadableStreamIteratorOptions options = {}).
+    options = Argument("options", IdlType(TypeKind.ANY, "any"), True, False, None)
+    iterator = IdlType(TypeKind.ITERATOR, "AsyncIterator_Thing")
+    values = Operation("values", (options,), iterator, False, ExtendedAttributes(), ALWAYS)
+    async_iterable = CollectionLike(
+        "async iterable",
+        (),
+        (OperationGroup("values", (values,), False, 0, ExtendedAttributes(), ALWAYS),),
+        "values",
+        iterator="AsyncIterator_Thing",
+        has_return=True,
+        value_type=IdlType(TypeKind.ANY, "any"),
+    )
+
+    source = _bindings_of(_interface(collection=async_iterable), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert '#include "mitto/bindings/async_iterable.h"' in source
+    assert "impl->CreateAsyncIterationSource(arg1_options, exception_state);" in source
+    assert "NewAsyncIterator(context, V8AsyncIterator_Thing::kWrapperTypeInfo, source)" in source
+    assert "v8::Symbol::GetAsyncIterator(isolate)" in source
+
+
+def test_a_value_async_iterable_that_is_missing_writes_no_source() -> None:
+    iterator = IdlType(TypeKind.ITERATOR, "AsyncIterator_Thing")
+    values = Operation("values", (), iterator, False, ExtendedAttributes(), ALWAYS)
+    async_iterable = CollectionLike(
+        "async iterable",
+        (),
+        (OperationGroup("values", (values,), False, 0, ExtendedAttributes(), ALWAYS),),
+        "values",
+        iterator="AsyncIterator_Thing",
+        value_type=IdlType(TypeKind.ANY, "any"),
+    )
+
+    source = _bindings_of(
+        _interface(collection=async_iterable), ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=())
+    )
+
+    assert "CreateAsyncIterationSource" not in source
+
+
+def test_a_nullable_view_attribute_gives_null_for_an_empty_handle() -> None:
+    # ReadableStreamBYOBRequest's view, which is null once the request is answered.
+    view = IdlType(TypeKind.BUFFER_SOURCE, "ArrayBufferView", nullable=True)
+    interface = _interface(attributes=(Attribute("view", view, True, False, ExtendedAttributes(), ALWAYS),))
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert "info.GetReturnValue().Set(ToV8NullableObject(isolate, impl->View()));" in source
 
 
 def test_a_promise_attribute_that_is_a_known_gap_has_no_signature() -> None:
