@@ -102,7 +102,13 @@ def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of
 
 def test_a_page_replays_its_own_navigations_its_workers_requests_and_what_a_documents_markup_asks_for() -> None:
     through = {name for name, replay in REPLAYS.items() if replay.through_page}
-    markup = {case.name for case in DOCUMENT_CASES if case.name.startswith("document_")}
+    # The favicon is the browser's, after the document's load event, and the prefetches come from links that the
+    # document's script adds then.
+    markup = {
+        case.name
+        for case in DOCUMENT_CASES
+        if case.name.startswith("document_") or case.name in {"favicon", "prefetch", "prefetch_cross_site"}
+    }
 
     assert through == {
         "navigation_location",

@@ -71,3 +71,9 @@
 # navigation's number. Each message of a document starts with its ID.
 "\x01\x00\x00\x00\x00\x00\x00\x00\x00"
 "\x02\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00"
+# A network hint: a byte for its type, 0 for a DNS prefetch and 1 for a
+# preconnect, a byte that is 1 if a preconnect may carry credentials, and an
+# origin.
+"\x00\x00"
+"\x01\x01"
+"https://example.com/"

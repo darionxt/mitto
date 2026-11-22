@@ -154,6 +154,8 @@ _DOCUMENT_SITE_MODE_AND_DESTINATION = {
     "document_image": ("same-origin", *_NO_CORS_IMAGE),
     "document_style_body": ("same-origin", *_NO_CORS_STYLE),
     "document_script_deferred": ("same-origin", *_NO_CORS_SCRIPT),
+    "prefetch": ("same-origin", "no-cors", "empty"),
+    "prefetch_cross_site": ("cross-site", "no-cors", "empty"),
     "navigation_form_get": ("same-origin", *_NAVIGATE),
     "navigation_form_text": ("same-origin", *_NAVIGATE),
     "navigation_form_cross_site": ("cross-site", *_NAVIGATE),

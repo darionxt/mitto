@@ -163,6 +163,8 @@ shared_library("mitto_core") {
     "page_host.h",
     "page_launcher.cc",
     "page_launcher.h",
+    "preconnect_manager.cc",
+    "preconnect_manager.h",
     "ready_requests.cc",
     "ready_requests.h",
     "request_channel.cc",

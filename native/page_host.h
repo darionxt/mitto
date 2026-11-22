@@ -53,6 +53,7 @@ class IndexedDbContext;
 class PageCacheStorage;
 class PageIndexedDb;
 class PageHost;
+class PreconnectManager;
 class ReadyRequests;
 class StorageQuota;
 class SessionStorageNamespace;
@@ -168,6 +169,10 @@ class PageNetwork {
 
   // The Session's storage, which all its Pages share.
   virtual StorageContext& storage_context() = 0;
+
+  // What resolves and connects as its Pages' documents hint, as Chrome's
+  // browser has one PreconnectManager for a profile.
+  virtual PreconnectManager& preconnect_manager() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -464,6 +469,10 @@ class PageHost final : public PageChannel::Delegate {
   void OnStorageGetAll(const PageStorageGetAll& get_all);
   void OnStorageMutation(PageMessage type, PageStorageMutation mutation);
   void OnStorageUnbind(uint64_t area);
+  // A connection that document `document` hints it will want, as Chrome's
+  // NetworkHintsHandlerImpl hears of it, with the network anonymization key
+  // of the document's subresources.
+  void OnNetworkHint(const PageNetworkHint& hint, uint64_t document);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.

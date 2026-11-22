@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 25;
+inline constexpr uint32_t kPageProtocolVersion = 27;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -234,6 +234,10 @@ enum class PageMessage : uint32_t {
   // frame's document that its element let go or a worker that ended, which
   // the Page names no more. The contexts under it go with it.
   kContextGone = 101,
+  // To the Session: the ID of the document, and a connection that it hints it
+  // will want, as PageNetworkHint says: Blink's WebPrescientNetworking, which
+  // a link of rel dns-prefetch or preconnect asks.
+  kNetworkHint = 140,
   // To the Session: what the document's StorageBucketManager or one of its
   // StorageBuckets asks, as storage_bucket_messages.h says.
   kStorageBuckets = 180,
@@ -273,6 +277,26 @@ enum class PageStorageKind : uint8_t {
   kSession = 2,
 };
 
+// What a document's network hint asks the browser to do with an origin.
+enum class PageNetworkHintType : uint8_t {
+  // Resolve its host's name, as NetworkHintsHandler's PrefetchDNS().
+  kPrefetchDns = 0,
+  // Resolve it and open a connection to it, as Preconnect().
+  kPreconnect = 1,
+};
+
+// A network hint of a document.
+struct PageNetworkHint {
+  PageNetworkHintType type = PageNetworkHintType::kPrefetchDns;
+  // For a preconnect, whether the connection may carry credentials, for a
+  // link with no crossorigin or a use-credentials one. A DNS prefetch has
+  // none.
+  bool allow_credentials = false;
+  // The origin, in UTF-8, as an HTTP or HTTPS URL with the path "/" and
+  // nothing after it.
+  std::string url;
+};
+
 // Whether a message of `type` names the document it comes from: each of the
 // Page's that a document sends. The ID comes first in its payload.
 bool NamesDocument(PageMessage type);
@@ -294,6 +318,8 @@ enum class PageRequestKind : uint8_t {
   kFavicon = 12,
   // What a module imports with `with {type: "json"}`.
   kModuleJson = 13,
+  // What a link with rel prefetch asks for.
+  kPrefetch = 14,
 };
 
 // What a Page's request says of its mode, as Fetch names it, where 0 leaves
@@ -1093,6 +1119,8 @@ struct FrameFromPage {
   PageStorageMutation storage_mutation;
   // kStorageUnbind.
   uint64_t storage_unbind = 0;
+  // kNetworkHint.
+  PageNetworkHint network_hint;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -1236,6 +1264,8 @@ bool StorageMutationFits(const PageStorageMutation& mutation);
 std::string EncodeStorageMutation(PageMessage type,
                                   const PageStorageMutation& mutation);
 std::string EncodeStorageUnbind(uint64_t area);
+// The hint's URL fits in a frame.
+std::string EncodeNetworkHint(uint64_t document, const PageNetworkHint& hint);
 // Returns the frames that hold what an area holds, at most kMaxPayloadSize
 // bytes each, the last of which says so. An entry that cannot fit in a frame
 // of its own is left out, which no area that the Session keeps holds.

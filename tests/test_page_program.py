@@ -156,7 +156,7 @@ _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
-_PROTOCOL_VERSION = 25
+_PROTOCOL_VERSION = 27
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -241,6 +241,9 @@ class _Session:
         self.reports: list[tuple[int, bytes]] = []
         # The documents that the Page has told of, as the payloads of their messages, in order.
         self.documents: list[bytes] = []
+        # The requests for the icon that each document asks for once it has loaded, as Chrome's favicon driver does,
+        # as the payloads of their messages, in order. Nothing answers them.
+        self.favicons: list[bytes] = []
         ours, theirs = socket.socketpair()
         self.socket = ours
         self.socket.settimeout(_TIMEOUT_SECONDS)
@@ -257,13 +260,16 @@ class _Session:
 
     def receive(self) -> tuple[int, bytes]:
         """Return the next message, as (type, payload), but for the documents that the Page tells of, which go to
-        `documents`."""
+        `documents`, and its requests for icons, which go to `favicons`."""
         while True:
             size, message_type = struct.unpack("<II", self._read(8))
             payload = self._read(size)
-            if message_type != _DOCUMENT_COMMITTED:
+            if message_type == _DOCUMENT_COMMITTED:
+                self.documents.append(payload)
+            elif message_type == _REQUEST and payload[16] == _FAVICON_KIND:
+                self.favicons.append(payload)
+            else:
                 return message_type, payload
-            self.documents.append(payload)
 
     def start(self, start: dict[str, object] = _DEFAULT_START) -> None:
         assert self.receive() == (_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
@@ -766,6 +772,7 @@ _COOKIE_STORE_CHANGE = 24
 _BROADCAST_RECEIVED = 26
 _BODY_WINDOW = 64 * 1024
 _SCRIPT_KIND = 1
+_FAVICON_KIND = 12
 _DOCUMENT_URL = "http://www.example.test/page"
 # A document of a potentially trustworthy origin, for what Web IDL's [SecureContext] puts behind one, which the Page's
 # first document, about:blank with an opaque origin, is not, as in Chrome.
@@ -968,9 +975,10 @@ _ERR_ABORTED = -3
 
 
 def _loaded(session: _Session, url: str = _DOCUMENT_URL, connection: tuple[int, float] = (0, 0.0)) -> None:
-    """Give the Page an empty document at `url`, and wait until it has loaded."""
+    """Give the Page an empty document at `url`, and wait until it has loaded. Its icon is a data: URL, which asks for
+    nothing, so that the requests after it are its scripts' alone."""
     _respond(session, 0, url, "text/html", connection=connection)
-    _body(session, 0, b"<p>fetch</p>")
+    _body(session, 0, b"<link rel=icon href='data:,'><p>fetch</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
     assert session.receive() == (_LOADED, _DOCUMENT)

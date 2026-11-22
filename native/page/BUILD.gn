@@ -64,6 +64,8 @@ executable("mitto_page") {
     "dedicated_worker_thread.h",
     "document_loader.cc",
     "document_loader.h",
+    "favicon_loader.cc",
+    "favicon_loader.h",
     "idle_helper.cc",
     "idle_helper.h",
     "mitto_page.cc",

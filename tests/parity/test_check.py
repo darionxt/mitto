@@ -78,7 +78,7 @@ def test_other_files_are_not_baselines(sample_baselines: Path) -> None:
         ('{"requests": {"image": {}}}', "protocol"),
         ('{"protocol": "h2"}', "requests"),
         ('{"protocol": "h2", "requests": {}}', "requests"),
-        ('{"protocol": "h2", "requests": {"prefetch": {}}}', "unknown Recording Case"),
+        ('{"protocol": "h2", "requests": {"no_such_case": {}}}', "unknown Recording Case"),
         ('{"protocol": "h2", "requests": {"plain_http_fetch": {}}}', "unknown Recording Case"),
     ],
 )

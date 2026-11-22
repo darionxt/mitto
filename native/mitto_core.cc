@@ -51,7 +51,6 @@
 #include "build/build_config.h"
 #include "mitto/body_stream.h"
 #include "mitto/cache_storage/cache_storage_context.h"
-#include "mitto/indexed_db/indexed_db_context.h"
 #include "mitto/client_hints.h"
 #include "mitto/connect_retrying_socket_factory.h"
 #include "mitto/cookie_json.h"
@@ -60,6 +59,7 @@
 #include "mitto/feature_list.h"
 #include "mitto/fetch_rules.h"
 #include "mitto/ignore_errors_cert_verifier.h"
+#include "mitto/indexed_db/indexed_db_context.h"
 #include "mitto/mitto.h"
 #include "mitto/network_quality.h"
 #include "mitto/network_session_configurator.h"
@@ -67,6 +67,7 @@
 #include "mitto/page_host.h"
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
+#include "mitto/preconnect_manager.h"
 #include "mitto/ready_requests.h"
 #include "mitto/request_channel.h"
 #include "mitto/request_client.h"
@@ -176,6 +177,7 @@ struct MittoSession final : public mitto::PageNetwork {
   mitto::StorageQuota& storage_quota() override;
   mitto::IndexedDbContext& indexed_db() override;
   mitto::StorageContext& storage_context() override;
+  mitto::PreconnectManager& preconnect_manager() override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
@@ -184,6 +186,9 @@ struct MittoSession final : public mitto::PageNetwork {
   // must not ask. `context` points to it, so it has to come first.
   std::unique_ptr<net::HostResolverManager> own_host_resolver_manager;
   std::unique_ptr<net::URLRequestContext> context;
+  // What its Pages' network hints resolve and connect through, in
+  // `context`, so it comes after it.
+  std::unique_ptr<mitto::PreconnectManager> preconnect_manager_for_pages;
   // The verifier in `context` holds this, and this makes its requests in
   // `context`, until the destructor shuts it down.
   scoped_refptr<net::CertNetFetcherURLRequest> cert_net_fetcher;
@@ -1100,6 +1105,10 @@ mitto::StorageContext& MittoSession::storage_context() {
   return *storage;
 }
 
+mitto::PreconnectManager& MittoSession::preconnect_manager() {
+  return *preconnect_manager_for_pages;
+}
+
 void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
                                      const url::Origin& origin,
                                      const mitto::PageBroadcast& broadcast) {
@@ -1309,6 +1318,8 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
 
   session->context = builder.Build();
   session->cert_net_fetcher->SetURLRequestContext(session->context.get());
+  session->preconnect_manager_for_pages =
+      std::make_unique<mitto::PreconnectManager>(*session->context);
   ConfigureQuicHints(session->context->http_server_properties());
   // The timer belongs to the Session, so it can only run while the Session
   // exists. NetworkService does this with one timer and a list of contexts.
