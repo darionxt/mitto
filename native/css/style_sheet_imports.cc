@@ -1,9 +1,14 @@
 #include "mitto/css/style_sheet_imports.h"
 
+#include <algorithm>
 #include <array>
+#include <initializer_list>
 #include <map>
+#include <optional>
 #include <string>
+#include <vector>
 
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "mitto/css/css_token.h"
 #include "mitto/css/css_token_stream.h"
@@ -54,7 +59,7 @@ AllowedRules ComputeNewAllowedRules(AllowedRules allowed, RuleKind rule) {
 // The at-rules that Blink parses at the top level of a style sheet, with a
 // block or as a statement, which a valid one of makes the rest regular.
 bool IsKnownBlockAtRule(std::u16string_view name) {
-  static constexpr std::array<std::u16string_view, 16> kNames = {
+  static constexpr std::array<std::u16string_view, 17> kNames = {
       u"media",
       u"supports",
       u"font-face",
@@ -71,6 +76,7 @@ bool IsKnownBlockAtRule(std::u16string_view name) {
       u"view-transition",
       u"position-try",
       u"font-feature-values",
+      u"function",
   };
   for (const std::u16string_view known : kNames) {
     if (name == known) {
@@ -84,6 +90,20 @@ bool IsWhitespace(const CssToken& token) {
   return token.type == CssTokenType::kWhitespace;
 }
 
+// Of a block's text from just after its start, the text up to its end, as
+// the stream has consumed the block: without its closing character, which an
+// end of the sheet may leave out.
+std::u16string_view BlockContents(std::u16string_view text,
+                                  size_t start,
+                                  size_t end) {
+  std::u16string_view contents = text.substr(start, end - start);
+  if (!contents.empty() && (contents.back() == ')' || contents.back() == ']' ||
+                            contents.back() == '}')) {
+    contents.remove_suffix(1);
+  }
+  return contents;
+}
+
 // The rest of the prelude of an at-rule, up to its ; or block, and whether a
 // block follows, which it consumes. Returns false at the end of the stream
 // after a prelude with neither, which still ends a statement.
@@ -92,10 +112,14 @@ struct Prelude {
   // The string of each url() among `tokens`, by index, that holds nothing
   // else, as ConsumeUrlAsStringView() takes it.
   std::map<size_t, std::u16string> url_strings;
+  // The text inside each block among `tokens`, by index.
+  std::map<size_t, std::u16string_view> block_contents;
   bool has_block = false;
+  // The text inside the rule's block.
+  std::u16string_view body;
 };
 
-Prelude ConsumePrelude(CssTokenStream& stream) {
+Prelude ConsumePrelude(CssTokenStream& stream, std::u16string_view text) {
   Prelude prelude;
   while (!stream.AtEnd()) {
     const CssToken& token = stream.Peek();
@@ -105,27 +129,38 @@ Prelude ConsumePrelude(CssTokenStream& stream) {
     }
     if (token.type == CssTokenType::kLeftBrace) {
       prelude.has_block = true;
-      const CssTokenStream::BlockGuard guard(stream);
+      size_t start = 0;
+      {
+        const CssTokenStream::BlockGuard guard(stream);
+        start = stream.Offset();
+      }
+      prelude.body = BlockContents(text, start, stream.Offset());
       return prelude;
     }
     if (token.block_type == CssBlockType::kBlockStart) {
       // A block within the prelude, such as supports(...), stays one token
-      // here and is skipped whole, but for the string of a url(): white
-      // space, the string, white space and the block's end.
+      // here, with its text, but for the string of a url(): white space, the
+      // string, white space and the block's end.
       prelude.tokens.push_back(token);
+      const size_t index = prelude.tokens.size() - 1;
       const CssToken& block = prelude.tokens.back();
-      const CssTokenStream::BlockGuard guard(stream);
-      if (block.type == CssTokenType::kFunction &&
-          base::EqualsCaseInsensitiveASCII(block.value, u"url")) {
-        stream.ConsumeWhitespace();
-        if (!stream.AtEnd() && stream.Peek().type == CssTokenType::kString) {
-          CssToken string = stream.ConsumeIncludingWhitespace();
-          if (stream.AtEnd()) {
-            prelude.url_strings[prelude.tokens.size() - 1] =
-                std::move(string.value);
+      size_t start = 0;
+      {
+        const CssTokenStream::BlockGuard guard(stream);
+        start = stream.Offset();
+        if (block.type == CssTokenType::kFunction &&
+            base::EqualsCaseInsensitiveASCII(block.value, u"url")) {
+          stream.ConsumeWhitespace();
+          if (!stream.AtEnd() && stream.Peek().type == CssTokenType::kString) {
+            CssToken string = stream.ConsumeIncludingWhitespace();
+            if (stream.AtEnd()) {
+              prelude.url_strings[index] = std::move(string.value);
+            }
           }
         }
       }
+      prelude.block_contents[index] =
+          BlockContents(text, start, stream.Offset());
       continue;
     }
     prelude.tokens.push_back(stream.Consume());
@@ -208,6 +243,467 @@ bool IsLayerStatementPrelude(const Prelude& prelude) {
   return any && !expect_name;
 }
 
+bool IsIdentNamed(const CssToken& token, std::u16string_view name) {
+  return token.type == CssTokenType::kIdent &&
+         base::EqualsCaseInsensitiveASCII(token.value, name);
+}
+
+bool IsIdentAmong(const CssToken& token,
+                  std::initializer_list<std::u16string_view> names) {
+  for (const std::u16string_view name : names) {
+    if (IsIdentNamed(token, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// css_parsing_utils::IsCSSWideKeyword(), and "default", which no name may be
+// either.
+bool IsCssWideKeywordOrDefault(const CssToken& token) {
+  return IsIdentAmong(token, {u"initial", u"inherit", u"unset", u"revert",
+                              u"revert-layer", u"default"});
+}
+
+// css_parsing_utils::IsDashedIdent().
+bool IsDashedIdent(const CssToken& token) {
+  return token.type == CssTokenType::kIdent &&
+         base::StartsWith(token.value, u"--");
+}
+
+// The prelude's tokens but white space, with each one's index.
+std::vector<size_t> Parts(const Prelude& prelude) {
+  std::vector<size_t> parts;
+  for (size_t i = 0; i < prelude.tokens.size(); ++i) {
+    if (!IsWhitespace(prelude.tokens[i])) {
+      parts.push_back(i);
+    }
+  }
+  return parts;
+}
+
+// The tokens of `text`, but white space.
+std::vector<CssToken> TokensOf(std::u16string_view text) {
+  std::vector<CssToken> tokens;
+  CssTokenStream stream(text);
+  while (!stream.AtEnd()) {
+    if (stream.Peek().block_type == CssBlockType::kBlockStart) {
+      tokens.push_back(stream.Peek());
+      const CssTokenStream::BlockGuard guard(stream);
+      continue;
+    }
+    if (stream.Peek().block_type == CssBlockType::kBlockEnd) {
+      break;
+    }
+    CssToken token = stream.Consume();
+    if (!IsWhitespace(token)) {
+      tokens.push_back(std::move(token));
+    }
+  }
+  return tokens;
+}
+
+// <supports-in-parens> and the container query's <query-in-parens>: a block
+// of ( or a function, which Blink takes, as <general-enclosed> at least,
+// whatever it holds.
+bool IsInParens(const CssToken& token) {
+  return token.type == CssTokenType::kLeftParenthesis ||
+         token.type == CssTokenType::kFunction;
+}
+
+// CSSSupportsParser::ConsumeSupportsCondition() and ContainerQueryParser's
+// condition, as far as whether one parses: not and one in parens, or ones in
+// parens joined by and alone or or alone, to the end.
+bool IsCondition(const Prelude& prelude,
+                 const std::vector<size_t>& parts,
+                 size_t first) {
+  if (first >= parts.size()) {
+    return false;
+  }
+  const std::vector<CssToken>& tokens = prelude.tokens;
+  if (IsIdentNamed(tokens[parts[first]], u"not")) {
+    return parts.size() == first + 2 && IsInParens(tokens[parts[first + 1]]);
+  }
+  if (!IsInParens(tokens[parts[first]])) {
+    return false;
+  }
+  std::u16string_view joiner;
+  for (size_t i = first + 1; i < parts.size(); i += 2) {
+    const CssToken& token = tokens[parts[i]];
+    const bool is_and = IsIdentNamed(token, u"and");
+    if (!is_and && !IsIdentNamed(token, u"or")) {
+      return false;
+    }
+    const std::u16string_view this_joiner = is_and ? u"and" : u"or";
+    if (!joiner.empty() && joiner != this_joiner) {
+      return false;
+    }
+    joiner = this_joiner;
+    if (i + 1 >= parts.size() || !IsInParens(tokens[parts[i + 1]])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// ConsumeContainerRule(): a name that is no keyword, a condition, or both.
+bool IsContainerPrelude(const Prelude& prelude) {
+  const std::vector<size_t> parts = Parts(prelude);
+  if (parts.empty()) {
+    return false;
+  }
+  const CssToken& first = prelude.tokens[parts[0]];
+  if (first.type != CssTokenType::kIdent || IsIdentNamed(first, u"not")) {
+    return IsCondition(prelude, parts, 0);
+  }
+  if (IsIdentAmong(first, {u"none", u"and", u"or"}) ||
+      IsCssWideKeywordOrDefault(first)) {
+    return false;
+  }
+  return parts.size() == 1 || IsCondition(prelude, parts, 1);
+}
+
+// ConsumeLayerRule() with a block: none, or one name of idents joined by
+// dots, with nothing between them.
+bool IsLayerBlockPrelude(const Prelude& prelude) {
+  size_t begin = 0;
+  size_t end = prelude.tokens.size();
+  while (begin < end && IsWhitespace(prelude.tokens[begin])) {
+    ++begin;
+  }
+  while (end > begin && IsWhitespace(prelude.tokens[end - 1])) {
+    --end;
+  }
+  if (begin == end) {
+    return true;
+  }
+  for (size_t i = begin; i < end; ++i) {
+    const CssToken& token = prelude.tokens[i];
+    const bool want_name = (i - begin) % 2 == 0;
+    if (want_name ? token.type != CssTokenType::kIdent
+                  : !(token.type == CssTokenType::kDelimiter &&
+                      token.delimiter == '.')) {
+      return false;
+    }
+  }
+  return (end - begin) % 2 == 1;
+}
+
+// ParsePageSelector(): none, or a name, a pseudo-class of :first, :left or
+// :right, or both, with nothing between them.
+bool IsPagePrelude(const Prelude& prelude) {
+  size_t begin = 0;
+  size_t end = prelude.tokens.size();
+  while (begin < end && IsWhitespace(prelude.tokens[begin])) {
+    ++begin;
+  }
+  while (end > begin && IsWhitespace(prelude.tokens[end - 1])) {
+    --end;
+  }
+  size_t i = begin;
+  if (i < end && prelude.tokens[i].type == CssTokenType::kIdent) {
+    ++i;
+  }
+  if (i < end) {
+    if (prelude.tokens[i].type != CssTokenType::kColon || i + 1 >= end ||
+        !IsIdentAmong(prelude.tokens[i + 1], {u"first", u"left", u"right"})) {
+      return false;
+    }
+    i += 2;
+  }
+  return i == end;
+}
+
+// ConsumeScopeRule(): none, ( a selector list ), then to and one, or to and
+// one alone.
+bool IsScopePrelude(const Prelude& prelude,
+                    const CssSelectorParserContext& context) {
+  const std::vector<size_t> parts = Parts(prelude);
+  auto is_selectors = [&](size_t part) {
+    const size_t index = parts[part];
+    if (prelude.tokens[index].type != CssTokenType::kLeftParenthesis) {
+      return false;
+    }
+    const auto contents = prelude.block_contents.find(index);
+    return contents != prelude.block_contents.end() &&
+           ParseCssSelectorList(contents->second, context) != nullptr;
+  };
+  size_t i = 0;
+  if (i < parts.size() && !IsIdentNamed(prelude.tokens[parts[i]], u"to")) {
+    if (!is_selectors(i)) {
+      return false;
+    }
+    ++i;
+  }
+  if (i < parts.size()) {
+    if (!IsIdentNamed(prelude.tokens[parts[i]], u"to") ||
+        i + 1 >= parts.size() || !is_selectors(i + 1)) {
+      return false;
+    }
+    i += 2;
+  }
+  return i == parts.size();
+}
+
+// css_parsing_utils::ConsumeFontFamily() of names alone: a string or idents
+// for each, apart by commas, but for a generic family or a keyword that is
+// a name alone.
+bool IsFontFamilyNames(const Prelude& prelude) {
+  const std::vector<size_t> parts = Parts(prelude);
+  size_t i = 0;
+  while (true) {
+    if (i >= parts.size()) {
+      return false;
+    }
+    const CssToken& first = prelude.tokens[parts[i]];
+    if (first.type == CssTokenType::kString) {
+      ++i;
+    } else if (first.type == CssTokenType::kIdent) {
+      size_t count = 0;
+      while (i < parts.size() &&
+             prelude.tokens[parts[i]].type == CssTokenType::kIdent) {
+        ++i;
+        ++count;
+      }
+      if (count == 1 &&
+          (IsCssWideKeywordOrDefault(first) ||
+           IsIdentAmong(first, {u"serif", u"sans-serif", u"cursive", u"fantasy",
+                                u"monospace", u"system-ui", u"math",
+                                u"-webkit-body"}))) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+    if (i == parts.size()) {
+      return true;
+    }
+    if (prelude.tokens[parts[i]].type != CssTokenType::kComma) {
+      return false;
+    }
+    ++i;
+  }
+}
+
+// ConsumeFunctionRule(): a function of parameters that each start with a
+// dashed ident, apart by commas, and then nothing, or returns and a type.
+bool IsFunctionPrelude(const Prelude& prelude) {
+  const std::vector<size_t> parts = Parts(prelude);
+  if (parts.empty() ||
+      prelude.tokens[parts[0]].type != CssTokenType::kFunction) {
+    return false;
+  }
+  const auto contents = prelude.block_contents.find(parts[0]);
+  if (contents != prelude.block_contents.end()) {
+    const std::vector<CssToken> parameters = TokensOf(contents->second);
+    bool want_name = true;
+    for (const CssToken& token : parameters) {
+      if (want_name) {
+        if (!IsDashedIdent(token)) {
+          return false;
+        }
+        want_name = false;
+      } else if (token.type == CssTokenType::kComma) {
+        want_name = true;
+      }
+    }
+    if (want_name && !parameters.empty()) {
+      return false;
+    }
+  }
+  return parts.size() == 1 ||
+         (parts.size() > 2 &&
+          IsIdentNamed(prelude.tokens[parts[1]], u"returns"));
+}
+
+// CSSSyntaxStringParser: * or components apart by |, each a type in angle
+// brackets or an ident that no keyword is, with + or # after it, but for a
+// transform list.
+bool IsSyntaxString(std::u16string_view syntax) {
+  const std::u16string trimmed(
+      base::TrimString(syntax, u" \t\n\f\r", base::TRIM_ALL));
+  if (trimmed == u"*") {
+    return true;
+  }
+  static constexpr std::array<std::u16string_view, 15> kTypes = {
+      u"angle",
+      u"color",
+      u"custom-ident",
+      u"image",
+      u"integer",
+      u"length",
+      u"length-percentage",
+      u"number",
+      u"percentage",
+      u"resolution",
+      u"string",
+      u"time",
+      u"url",
+      u"transform-function",
+      u"transform-list"};
+  for (const std::u16string_view piece : base::SplitStringPiece(
+           trimmed, u"|", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
+    std::u16string_view component = piece;
+    if (component.empty()) {
+      return false;
+    }
+    bool multiplied = false;
+    if (component.back() == '+' || component.back() == '#') {
+      component.remove_suffix(1);
+      multiplied = true;
+    }
+    if (component.size() > 2 && component.front() == '<' &&
+        component.back() == '>') {
+      const std::u16string_view type =
+          component.substr(1, component.size() - 2);
+      if (std::find(kTypes.begin(), kTypes.end(), type) == kTypes.end() ||
+          (multiplied && type == u"transform-list")) {
+        return false;
+      }
+      continue;
+    }
+    const std::vector<CssToken> tokens = TokensOf(component);
+    if (tokens.size() != 1 || tokens[0].type != CssTokenType::kIdent ||
+        IsCssWideKeywordOrDefault(tokens[0]) ||
+        component.find_first_of(u" \t\n\f\r") != std::u16string_view::npos) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// ConsumePropertyRule(): a dashed ident, and a block whose syntax and
+// inherits parse, with an initial value unless the syntax is *. Whether the
+// initial value fits the syntax, and is computationally independent, needs
+// the values of style: a Known Gap.
+bool IsPropertyRule(const Prelude& prelude) {
+  const std::vector<size_t> parts = Parts(prelude);
+  if (parts.size() != 1 || !IsDashedIdent(prelude.tokens[parts[0]])) {
+    return false;
+  }
+  std::optional<std::u16string> syntax;
+  std::optional<bool> inherits;
+  bool initial_value = false;
+  CssTokenStream stream(prelude.body);
+  while (!stream.AtEnd()) {
+    stream.ConsumeWhitespace();
+    if (stream.AtEnd()) {
+      break;
+    }
+    std::u16string name;
+    if (stream.Peek().type == CssTokenType::kIdent) {
+      name = base::ToLowerASCII(stream.Consume().value);
+    }
+    stream.ConsumeWhitespace();
+    const bool has_colon =
+        !stream.AtEnd() && stream.Peek().type == CssTokenType::kColon;
+    std::vector<CssToken> value;
+    if (has_colon) {
+      stream.Consume();
+    }
+    while (!stream.AtEnd() && stream.Peek().type != CssTokenType::kSemicolon) {
+      if (stream.Peek().block_type == CssBlockType::kBlockStart) {
+        value.push_back(stream.Peek());
+        const CssTokenStream::BlockGuard guard(stream);
+        continue;
+      }
+      CssToken token = stream.Consume();
+      if (!IsWhitespace(token)) {
+        value.push_back(std::move(token));
+      }
+    }
+    if (!stream.AtEnd()) {
+      stream.Consume();
+    }
+    if (!has_colon) {
+      continue;
+    }
+    if (name == u"syntax" && value.size() == 1 &&
+        value[0].type == CssTokenType::kString &&
+        IsSyntaxString(value[0].value)) {
+      syntax = value[0].value;
+    } else if (name == u"inherits" && value.size() == 1 &&
+               IsIdentAmong(value[0], {u"true", u"false"})) {
+      inherits = IsIdentNamed(value[0], u"true");
+    } else if (name == u"initial-value") {
+      initial_value = true;
+    }
+  }
+  if (!syntax || !inherits) {
+    return false;
+  }
+  return initial_value ||
+         base::TrimString(*syntax, u" \t\n\f\r", base::TRIM_ALL) == u"*";
+}
+
+// Whether Blink's CSSParserImpl makes a rule of an at-rule of a known name
+// that has a block, from its prelude, and for @property its descriptors.
+// One that it drops leaves the imports that may follow as they were.
+bool IsValidBlockAtRule(std::u16string_view name,
+                        const Prelude& prelude,
+                        const CssSelectorParserContext& context) {
+  const std::vector<size_t> parts = Parts(prelude);
+  const std::vector<CssToken>& tokens = prelude.tokens;
+  auto single = [&]() -> const CssToken* {
+    return parts.size() == 1 ? &tokens[parts[0]] : nullptr;
+  };
+  if (name == u"media") {
+    // MediaQueryParser makes not all of a query that does not parse.
+    return true;
+  }
+  if (name == u"supports") {
+    return IsCondition(prelude, parts, 0);
+  }
+  if (name == u"font-face" || name == u"starting-style" ||
+      name == u"view-transition") {
+    return parts.empty();
+  }
+  if (name == u"keyframes" || name == u"-webkit-keyframes") {
+    // IsValidIdentAnimationName(), or a string.
+    const CssToken* const token = single();
+    return token && (token->type == CssTokenType::kString ||
+                     (token->type == CssTokenType::kIdent &&
+                      !IsCssWideKeywordOrDefault(*token) &&
+                      !IsIdentNamed(*token, u"none")));
+  }
+  if (name == u"counter-style") {
+    // ConsumeCounterStyleNameInPrelude(): no name of a counter style that may
+    // not be redefined.
+    const CssToken* const token = single();
+    return token && token->type == CssTokenType::kIdent &&
+           !IsCssWideKeywordOrDefault(*token) &&
+           !IsIdentAmong(*token,
+                         {u"none", u"decimal", u"disc", u"square", u"circle",
+                          u"disclosure-open", u"disclosure-closed"});
+  }
+  if (name == u"font-palette-values" || name == u"position-try") {
+    const CssToken* const token = single();
+    return token && IsDashedIdent(*token);
+  }
+  if (name == u"property") {
+    return IsPropertyRule(prelude);
+  }
+  if (name == u"page") {
+    return IsPagePrelude(prelude);
+  }
+  if (name == u"container") {
+    return IsContainerPrelude(prelude);
+  }
+  if (name == u"layer") {
+    return IsLayerBlockPrelude(prelude);
+  }
+  if (name == u"scope") {
+    return IsScopePrelude(prelude, context);
+  }
+  if (name == u"font-feature-values") {
+    return IsFontFamilyNames(prelude);
+  }
+  if (name == u"function") {
+    return IsFunctionPrelude(prelude);
+  }
+  return false;
+}
+
 }  // namespace
 
 std::vector<StyleSheetImport> FindStyleSheetImports(
@@ -228,7 +724,7 @@ std::vector<StyleSheetImport> FindStyleSheetImports(
     RuleKind rule = RuleKind::kInvalid;
     if (stream.Peek().type == CssTokenType::kAtKeyword) {
       const std::u16string name = base::ToLowerASCII(stream.Consume().value);
-      const Prelude prelude = ConsumePrelude(stream);
+      const Prelude prelude = ConsumePrelude(stream, text);
       if (name == u"charset") {
         // Blink makes no rule of @charset; it only ends the section where
         // one may stand.
@@ -251,7 +747,8 @@ std::vector<StyleSheetImport> FindStyleSheetImports(
         if (IsLayerStatementPrelude(prelude)) {
           rule = RuleKind::kLayerStatement;
         }
-      } else if (IsKnownBlockAtRule(name) && prelude.has_block) {
+      } else if (IsKnownBlockAtRule(name) && prelude.has_block &&
+                 IsValidBlockAtRule(name, prelude, context)) {
         rule = RuleKind::kRegular;
       }
     } else {

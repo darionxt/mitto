@@ -289,6 +289,60 @@ def test_a_sheet_for_other_media_an_alternate_or_a_scripts_holds_no_script_back(
     assert asked_early
 
 
+# At-rules with a block, each before an import of its own: those whose prelude or, for @property, whose descriptors
+# Blink does not parse, which its parser drops, and those it makes rules of, which end the imports.
+_AT_RULES = {
+    "dropped": [
+        "@supports foo",
+        "@supports (a: b) and (c: d) or (e: f)",
+        "@container none (width > 1px)",
+        "@container foo bar",
+        "@layer a, b",
+        "@scope (> p)",
+        "@keyframes none",
+        "@font-face x",
+        "@page :nope",
+        "@counter-style decimal",
+        "@position-try a",
+        "@font-feature-values serif",
+        "@function --f",
+        "@property --a",
+    ],
+    "kept": [
+        "@media !!!",
+        "@supports not(a: b)",
+        "@container foo",
+        "@layer initial.a",
+        "@scope (p) to (q)",
+        '@keyframes "a"',
+        "@page a:left",
+        "@counter-style a",
+        "@font-feature-values a serif",
+        "@function --f(--a <length>) returns <length>",
+    ],
+}
+
+
+def test_an_at_rule_whose_prelude_does_not_parse_ends_no_imports(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    styles = []
+    for kind, rules in _AT_RULES.items():
+        for i, rule in enumerate(rules):
+            server.route(f"/{kind}-{i}.css", b"p {}", _CSS)
+            styles.append(f"<style>{rule} {{}} @import '{kind}-{i}.css';</style>")
+    server.route("/property-kept.css", b"p {}", _CSS)
+    styles.append("<style>@property --a { syntax: '*'; inherits: false; } @import 'property-kept.css';</style>")
+    url = server.page("/", "".join(styles))
+
+    with _open_page(session, url):
+        pass
+
+    # What Chrome 157 fetched: the import after each rule that its parser dropped.
+    fetched = sorted(path for path in without_favicon(server.paths()) if path != "/")
+    assert fetched == sorted(f"/dropped-{i}.css" for i in range(len(_AT_RULES["dropped"])))
+
+
 # Style elements in documents that no window shows, and in the page's own, each with what it imports, and the events
 # they fire in turn.
 _UNSHOWN_STYLES = """
