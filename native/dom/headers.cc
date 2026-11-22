@@ -1,11 +1,14 @@
 #include "mitto/dom/headers.h"
 
+#include <algorithm>
 #include <variant>
 
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_headers.h"
 #include "mitto/header_rules.h"
+#include "v8/include/cppgc/member.h"
 
 namespace mitto {
 namespace {
@@ -15,6 +18,40 @@ constexpr std::string_view kInvalidValue = "Invalid value";
 constexpr std::string_view kImmutable = "Headers are immutable";
 
 }  // namespace
+
+class Headers::IterationSource final : public bindings::PairIterationSource {
+ public:
+  explicit IterationSource(Headers* headers) : headers_(headers) {}
+
+  void Trace(cppgc::Visitor* visitor) const override {
+    bindings::PairIterationSource::Trace(visitor);
+    visitor->Trace(headers_);
+  }
+
+ protected:
+  bool FetchNextItem(v8::Isolate* isolate,
+                     v8::Local<v8::Value>* key,
+                     v8::Local<v8::Value>* value) override {
+    // Blink's Headers resets each iterator's list when its own changes.
+    if (!lines_ || changes_ != headers_->changes_) {
+      lines_ = headers_->SortAndCombine();
+      changes_ = headers_->changes_;
+    }
+    if (current_ >= lines_->size()) {
+      return false;
+    }
+    const auto& [name, line_value] = (*lines_)[current_++];
+    *key = bindings::ToV8ByteString(isolate, name);
+    *value = bindings::ToV8ByteString(isolate, line_value);
+    return true;
+  }
+
+ private:
+  const cppgc::Member<Headers> headers_;
+  std::optional<std::vector<std::pair<std::string, std::string>>> lines_;
+  uint64_t changes_ = 0;
+  size_t current_ = 0;
+};
 
 // static
 Headers* Headers::Create(
@@ -126,6 +163,7 @@ void Headers::Remove(const std::string& name,
   std::erase_if(list_, [&name](const auto& line) {
     return base::EqualsCaseInsensitiveASCII(line.first, name);
   });
+  DidChangeList();
 }
 
 std::optional<std::string> Headers::Get(
@@ -200,6 +238,11 @@ void Headers::Set(const std::string& name,
   if (!found) {
     list_.emplace_back(name, std::string(normalized));
   }
+  DidChangeList();
+}
+
+bindings::PairIterationSource* Headers::CreateIterationSource() {
+  return bindings::MakeGarbageCollected<IterationSource>(this);
 }
 
 void Headers::AppendLine(std::string name, std::string value) {
@@ -211,6 +254,7 @@ void Headers::AppendLine(std::string name, std::string value) {
     }
   }
   list_.emplace_back(std::move(name), std::move(value));
+  DidChangeList();
 }
 
 std::optional<std::string> Headers::GetValue(std::string_view name) const {
@@ -226,6 +270,27 @@ std::optional<std::string> Headers::GetValue(std::string_view name) const {
     }
   }
   return combined;
+}
+
+std::vector<std::pair<std::string, std::string>> Headers::SortAndCombine()
+    const {
+  std::vector<std::string> names;
+  for (const auto& line : list_) {
+    names.push_back(base::ToLowerASCII(line.first));
+  }
+  std::ranges::sort(names);
+  names.erase(std::ranges::unique(names).begin(), names.end());
+  std::vector<std::pair<std::string, std::string>> lines;
+  for (const std::string& name : names) {
+    if (name != "set-cookie") {
+      lines.emplace_back(name, *GetValue(name));
+      continue;
+    }
+    for (std::string& value : GetSetCookie()) {
+      lines.emplace_back(name, std::move(value));
+    }
+  }
+  return lines;
 }
 
 std::string Headers::ToLines() const {

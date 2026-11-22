@@ -319,6 +319,13 @@ v8::Local<v8::Value> ToV8StringArray(v8::Isolate* isolate,
   return v8::Array::New(isolate, strings.data(), strings.size());
 }
 
+v8::Local<v8::Value> ToV8Array(
+    v8::Isolate* isolate,
+    const std::vector<v8::Local<v8::Value>>& values) {
+  return v8::Array::New(
+      isolate, const_cast<v8::Local<v8::Value>*>(values.data()), values.size());
+}
+
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
                                  std::u16string_view text) {
   return v8::String::NewFromTwoByte(

@@ -381,6 +381,10 @@ v8::Local<v8::String> ToV8StringFromUtf8(v8::Isolate* isolate,
 // The wrapper of `object`, or null.
 v8::Local<v8::Value> ToV8(v8::Isolate* isolate, ScriptWrappable* object);
 
+// An array of the values.
+v8::Local<v8::Value> ToV8Array(v8::Isolate* isolate,
+                               const std::vector<v8::Local<v8::Value>>& values);
+
 // An array of the objects' wrappers.
 template <typename T>
 v8::Local<v8::Value> ToV8Array(v8::Isolate* isolate,

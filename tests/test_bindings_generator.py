@@ -1295,6 +1295,159 @@ def test_overloads_of_two_interfaces_choose_by_the_object_and_fail_for_anything_
     assert body.index("V8Blob::ToWrappable") < body.index("Overload resolution failed.") < body.index("mitto::Source*")
 
 
+def test_overloads_of_an_interface_and_a_string_choose_the_interface_for_its_objects() -> None:
+    # FormData's append(USVString name, USVString value) and append(USVString name, Blob value, optional USVString
+    # filename): a Blob takes the second, anything else, null among it, the first, and three arguments the second.
+    string = IdlType(TypeKind.STRING, "USVString")
+    name = Argument("name", string, False, False, None)
+    with_string = Operation(
+        "add", (name, Argument("value", string, False, False, None)), UNDEFINED, False, ExtendedAttributes(), ALWAYS
+    )
+    with_blob = Operation(
+        "add",
+        (
+            name,
+            Argument("value", IdlType(TypeKind.INTERFACE, "Blob"), False, False, None),
+            Argument("filename", string, True, False, None),
+        ),
+        UNDEFINED,
+        False,
+        ExtendedAttributes(),
+        ALWAYS,
+    )
+    thing = _interface(
+        operation_groups=(OperationGroup("add", (with_string, with_blob), False, 2, ExtendedAttributes(), ALWAYS),)
+    )
+    blob = _interface(name="Blob", tag=3, max_subclass_tag=3)
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Blob", "Thing", "Window"),
+        exposed=tuple(ExposedConstruct(n, "interface", n, ALWAYS) for n in ("Blob", "Thing", "Window")),
+    )
+    definitions = Definitions({"Thing": thing, "Blob": blob, "Window": window}, {}, {}, {}, frozenset())
+    files = write_bindings(
+        definitions,
+        [],
+        [
+            ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("add",)),
+            ImplementedInterface("Blob", "mitto/dom/blob.h"),
+            ImplementedInterface("Window", "mitto/dom/window.h"),
+        ],
+    )
+
+    body = files["v8_thing.cc"][files["v8_thing.cc"].index("void AddOperationCallback") :]
+    assert "if (info.Length() >= 3) {" in body
+    assert "if (V8Blob::ToWrappable(isolate, info[1])) {" in body
+    assert body.index("info.Length() >= 3") < body.index("if (V8Blob::ToWrappable") < body.index("arg2_value;")
+
+
+def test_a_pair_iterable_with_behaviour_takes_its_source_from_the_class() -> None:
+    # Headers' iterable<ByteString, ByteString>.
+    string = IdlType(TypeKind.STRING, "ByteString")
+    callback = Argument("callback", IdlType(TypeKind.CALLBACK_FUNCTION, "ForEachIteratorCallback"), False, False, None)
+    this_arg = Argument("thisArg", IdlType(TypeKind.ANY, "any"), True, False, None)
+
+    def group(name: str, arguments: tuple[Argument, ...], returns: IdlType) -> OperationGroup:
+        operation = Operation(name, arguments, returns, False, ExtendedAttributes(), ALWAYS)
+        return OperationGroup(name, (operation,), False, len(arguments), ExtendedAttributes(), ALWAYS)
+
+    iterator = IdlType(TypeKind.ITERATOR, "SyncIterator_Thing")
+    iterable = CollectionLike(
+        "iterable",
+        (),
+        (
+            group("entries", (), iterator),
+            group("keys", (), iterator),
+            group("values", (), iterator),
+            group("forEach", (callback, this_arg), UNDEFINED),
+        ),
+        "entries",
+        iterator="SyncIterator_Thing",
+        key_type=string,
+        value_type=string,
+    )
+
+    source = _bindings_of(
+        _interface(collection=iterable), ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("iterable",))
+    )
+
+    assert '#include "mitto/bindings/pair_iterable.h"' in source
+    for kind in ("kKeyValue", "kKey", "kValue"):
+        assert f"impl->CreateIterationSource(), PairIterationKind::{kind})" in source
+    assert "NewPairIterator(context, V8SyncIterator_Thing::kWrapperTypeInfo," in source
+    assert "impl->CreateIterationSource()->ForEach(isolate, arg1_callback, info[1], info.This());" in source
+    assert "v8::Symbol::GetIterator(isolate)" in source
+
+
+def test_a_pair_iterable_that_is_missing_writes_no_source() -> None:
+    string = IdlType(TypeKind.STRING, "USVString")
+    iterator = IdlType(TypeKind.ITERATOR, "SyncIterator_Thing")
+    entries = Operation("entries", (), iterator, False, ExtendedAttributes(), ALWAYS)
+    iterable = CollectionLike(
+        "iterable",
+        (),
+        (OperationGroup("entries", (entries,), False, 0, ExtendedAttributes(), ALWAYS),),
+        "entries",
+        iterator="SyncIterator_Thing",
+        key_type=string,
+        value_type=string,
+    )
+
+    source = _bindings_of(
+        _interface(collection=iterable), ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=())
+    )
+
+    assert "CreateIterationSource" not in source
+
+
+def test_a_union_of_a_class_and_a_string_is_a_value_the_class_makes() -> None:
+    # FormData's get(), (File or USVString)?, and getAll(), sequence<(File or USVString)>.
+    union = IdlType(
+        TypeKind.UNION,
+        "Blob or USVString",
+        members=(IdlType(TypeKind.INTERFACE, "Blob"), IdlType(TypeKind.STRING, "USVString")),
+    )
+    nullable = IdlType(TypeKind.UNION, "Blob or USVString", nullable=True, members=union.members)
+    get = Operation("get", (), nullable, False, ExtendedAttributes(), ALWAYS)
+    get_all = Operation(
+        "getAll", (), IdlType(TypeKind.SEQUENCE, "sequence", members=(union,)), False, ExtendedAttributes(), ALWAYS
+    )
+    thing = _interface(
+        operation_groups=(
+            OperationGroup("get", (get,), False, 0, ExtendedAttributes(), ALWAYS),
+            OperationGroup("getAll", (get_all,), False, 0, ExtendedAttributes(), ALWAYS),
+        )
+    )
+    blob = _interface(name="Blob", tag=3, max_subclass_tag=3)
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Blob", "Thing", "Window"),
+        exposed=tuple(ExposedConstruct(n, "interface", n, ALWAYS) for n in ("Blob", "Thing", "Window")),
+    )
+    definitions = Definitions({"Thing": thing, "Blob": blob, "Window": window}, {}, {}, {}, frozenset())
+    files = write_bindings(
+        definitions,
+        [],
+        [
+            ImplementedInterface("Thing", "mitto/dom/thing.h"),
+            ImplementedInterface("Blob", "mitto/dom/blob.h"),
+            ImplementedInterface("Window", "mitto/dom/window.h"),
+        ],
+    )
+
+    source = files["v8_thing.cc"]
+    assert "v8::Local<v8::Value> result = impl->Get();" in source
+    assert "info.GetReturnValue().Set(result);" in source
+    assert "std::vector<v8::Local<v8::Value>> result = impl->GetAll();" in source
+    assert "info.GetReturnValue().Set(ToV8Array(isolate, result));" in source
+
+
 def test_overloads_with_optional_arguments_choose_by_count_then_by_type() -> None:
     # Window's postMessage(message, USVString targetOrigin, optional sequence<object> transfer = []) and
     # postMessage(message, optional options = {}).
@@ -1953,13 +2106,12 @@ def test_a_class_returns_a_union_of_values_and_takes_it_nullable() -> None:
         "  return;",
         "}",
     ]
-    # A union with an interface is not one of values, and a nullable one with a dictionary takes undefined as the
-    # dictionary.
+    # A union with an interface that has a class is a value the class makes too, as FormData's get() gives a File or
+    # a string, and a nullable one with a dictionary takes undefined as the dictionary.
     node_or_string = IdlType(
         TypeKind.UNION, "x", nullable=True, members=(IdlType(TypeKind.INTERFACE, "Node"), members[2])
     )
-    with pytest.raises(UnhandledError):
-        TypeMapper(frozenset({"Node"}), frozenset()).return_type(node_or_string, "x")
+    assert TypeMapper(frozenset({"Node"}), frozenset()).return_type(node_or_string, "x") == "v8::Local<v8::Value>"
     with_dictionary = IdlType(TypeKind.UNION, "y", nullable=True, members=(BOOLEAN, IdlType(TypeKind.DICTIONARY, "D")))
     with pytest.raises(UnhandledError):
         types.argument_type(with_dictionary, "y")

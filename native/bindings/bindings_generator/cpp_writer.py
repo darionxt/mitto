@@ -614,8 +614,10 @@ class _InterfaceWriter:
     def _collection_with_behaviour(self) -> CollectionLike | None:
         """The interface's maplike or setlike declaration, when its class names it: the writer writes its members, which
         read the class's MaplikeEntries() or SetlikeValues(), as Blink's classes give their iteration source. Or its
-        value async iterable declaration, unless the class lists it as missing or names only other members: the
-        writer writes values(), which takes the iterator's source from the class's CreateAsyncIterationSource()."""
+        value async iterable or pair iterable declaration, unless the class lists it as missing or names only other
+        members: the writer writes values(), which takes the iterator's source from the class's
+        CreateAsyncIterationSource(), or a pair iterable's entries(), keys(), values() and forEach(), which take theirs
+        from its CreateIterationSource()."""
         collection = self.interface.collection
         if collection is None:
             return None
@@ -626,6 +628,8 @@ class _InterfaceWriter:
             if collection.key_type is not None:
                 raise UnhandledError(f"{where}: the C++ writer handles the behaviour of value async iterables only")
             return collection
+        if collection.kind == "iterable" and collection.key_type is not None:
+            return collection if self.implemented.has_behaviour(collection.kind) else None
         if collection.kind not in (self.implemented.implemented or ()):
             return None
         if collection.kind not in ("maplike", "setlike") or collection.value_type is None:
@@ -671,13 +675,44 @@ class _InterfaceWriter:
         ]
         return self._add_callback(name, body)
 
+    def _pair_iterable_member(self, collection: CollectionLike, name: str, member: OperationGroup) -> str:
+        """The callback of one member of a pair iterable with behaviour, as bind_gen's entriesForBinding() and the
+        others: the class makes the iteration source, and entries(), keys() and values() an iterator over it, while
+        forEach() calls its callback with each pair that the source gives."""
+        where = f"{collection.kind} of {self.interface.name}"
+        assert collection.iterator is not None
+        body = self._receiver()
+        if member.name in ("entries", "keys", "values"):
+            kind = {"entries": "kKeyValue", "keys": "kKey", "values": "kValue"}[member.name]
+            body += [
+                "const v8::Local<v8::Context> context = isolate->GetCurrentContext();",
+                "v8::Local<v8::Value> iterator;",
+                f"if (NewPairIterator(context, V8{collection.iterator}::kWrapperTypeInfo,",
+                f"                    impl->CreateIterationSource(), PairIterationKind::{kind})",
+                "        .ToLocal(&iterator)) {",
+                "  info.GetReturnValue().Set(iterator);",
+                "}",
+            ]
+            return self._add_callback(name, body)
+        if member.name != "forEach":
+            raise UnhandledError(f"{where}: the C++ writer does not handle {member.name}()")
+        operation = member.only_overload(f"{where}: {member.name}()")
+        body.append(self._exception_state())
+        conversions, passed = self._arguments(operation.arguments[:1], f"operation {self.where(member.name)}")
+        body += conversions
+        body.append(f"impl->CreateIterationSource()->ForEach(isolate, {passed[0]}, info[1], info.This());")
+        return self._add_callback(name, body)
+
     def _collection_member(self, collection: CollectionLike, name: str, member: Attribute | OperationGroup) -> str:
         """The callback of one member of a read-only maplike or setlike declaration with behaviour, or of a value async
-        iterable's."""
+        iterable's or a pair iterable's."""
         where = f"{collection.kind} of {self.interface.name}"
         if collection.kind == "async iterable":
             assert isinstance(member, OperationGroup)
             return self._async_iterable_member(collection, name, member)
+        if collection.kind == "iterable":
+            assert isinstance(member, OperationGroup)
+            return self._pair_iterable_member(collection, name, member)
         loop, _, key, value = self._collection_items(collection, where)
         if isinstance(member, Attribute):
             # size
@@ -942,8 +977,9 @@ class _InterfaceWriter:
         self, overloads: list[Operation], where: str, count: int | None = None
     ) -> tuple[list[str], str, list[str], Operation, Operation] | None:
         """For two overloads that take the same arguments but one, which is a string in one and a callback function, as
-        setTimeout() has, a dictionary, as CookieStore's get() has, or a sequence, as PresentationRequest's constructor
-        has, in the other, or a sequence in one and a dictionary in the other, as MessagePort's postMessage() has: the
+        setTimeout() has, a dictionary, as CookieStore's get() has, a sequence, as PresentationRequest's constructor
+        has, or an interface, as FormData's append() has, in the other, or a sequence in one and a dictionary in the
+        other, as MessagePort's postMessage() has, or two interfaces, as URL's createObjectURL() has: the
         statements before the test of Web IDL's overload resolution that chooses the other overload for the value given
         there, the test, the statements after the overload it chooses, and the two overloads, the one that the test
         chooses first. With `count`, only the first `count` arguments of each are compared, for a call given that
@@ -998,6 +1034,18 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
             ]
+        elif kinds == {TypeKind.INTERFACE, TypeKind.STRING}:
+            # An object of an interface that has a class chooses it, as FormData's append() takes a Blob, and anything
+            # else, null among it, the string, which every value converts to.
+            interface_type = next(
+                self.types.reduce(overload.arguments[index].idl_type)
+                for overload in overloads
+                if self.types.reduce(overload.arguments[index].idl_type).kind is TypeKind.INTERFACE
+            )
+            if interface_type.nullable or not self.types.has_class(interface_type.name):
+                return None
+            self.types.used_interfaces.add(interface_type.name)
+            chosen_kind, test = TypeKind.INTERFACE, f"V8{interface_type.name}::ToWrappable(isolate, info[{index}])"
         elif kinds == {TypeKind.INTERFACE}:
             # Two interfaces that have classes, as URL's createObjectURL() takes a Blob or a MediaSource: an object of
             # the first chooses the first, one of the second the second, and anything else, null among it, fails
@@ -1966,6 +2014,8 @@ class _InterfaceWriter:
             includes.add(f"mitto/bindings/{TABLES_HEADER}")
             if collection.kind == "async iterable":
                 includes.add("mitto/bindings/async_iterable.h")
+            elif collection.kind == "iterable":
+                includes.add("mitto/bindings/pair_iterable.h")
         source = [
             _BANNER,
             f'#include "mitto/bindings/{base}.h"',

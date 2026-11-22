@@ -69,6 +69,11 @@ class BodyStreamBuffer::LoaderClient final
     client_->DidFetchDataLoadedString(std::move(string));
   }
 
+  void DidFetchDataLoadedFormData(FormData* form_data) override {
+    buffer_->EndLoading();
+    client_->DidFetchDataLoadedFormData(form_data);
+  }
+
   void DidFetchDataLoadFailed() override {
     buffer_->EndLoading();
     client_->DidFetchDataLoadFailed();

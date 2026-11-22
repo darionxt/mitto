@@ -1,5 +1,6 @@
 // Reads all of a body from a BytesConsumer, as Blink's FetchDataLoader does
-// for text(), json() and arrayBuffer(), and tells its client once it has.
+// for text(), json(), arrayBuffer() and formData(), and tells its client once
+// it has.
 //
 // Upstream: third_party/blink/renderer/core/fetch/fetch_data_loader.h
 // Upstream: third_party/blink/renderer/core/fetch/fetch_data_loader.cc
@@ -20,6 +21,7 @@ class Value;
 namespace mitto {
 
 class BytesConsumer;
+class FormData;
 
 class FetchDataLoader : public cppgc::GarbageCollected<FetchDataLoader> {
  public:
@@ -31,6 +33,8 @@ class FetchDataLoader : public cppgc::GarbageCollected<FetchDataLoader> {
     virtual void DidFetchDataLoadedArrayBuffer(std::string bytes);
     // The whole body decoded as UTF-8, from a loader as a string.
     virtual void DidFetchDataLoadedString(std::u16string string);
+    // The parts of a multipart/form-data body, from a loader as FormData.
+    virtual void DidFetchDataLoadedFormData(FormData* form_data);
     virtual void DidFetchDataLoadFailed() = 0;
     // The body's signal aborted before the loader started, with `reason`.
     virtual void Abort(v8::Local<v8::Value> reason) = 0;
@@ -43,6 +47,18 @@ class FetchDataLoader : public cppgc::GarbageCollected<FetchDataLoader> {
   // CreateUTF8Decode().
   static FetchDataLoader* CreateLoaderAsArrayBuffer();
   static FetchDataLoader* CreateLoaderAsString();
+  // One that gives the bytes decoded as UTF-8 with a byte order mark kept as
+  // U+FEFF, as CreateUTF8DecodeWithoutBOM() has them, as the URL Standard's
+  // application/x-www-form-urlencoded parser takes them.
+  static FetchDataLoader* CreateLoaderAsStringKeepingByteOrderMark();
+  // One that parses a multipart/form-data body of `boundary` into a FormData,
+  // as Blink's FetchDataLoaderAsFormData: a part with a file name gives a
+  // File of its bytes, of its Content-Type or text/plain, and any other its
+  // bytes decoded as UTF-8, and a part that is not UTF-8, has no name or is
+  // not of type form-data fails it.
+  static FetchDataLoader* CreateLoaderAsFormData(std::string boundary);
+  // One that reads the whole body and then fails.
+  static FetchDataLoader* CreateLoaderAsFailure();
 
   FetchDataLoader() = default;
   FetchDataLoader(const FetchDataLoader&) = delete;

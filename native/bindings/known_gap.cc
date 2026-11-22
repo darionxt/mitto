@@ -20,6 +20,7 @@
 #include "mitto/bindings/idl_conversions.h"
 #include "mitto/bindings/idl_member_installer.h"
 #include "mitto/bindings/interface_table.h"
+#include "mitto/bindings/pair_iterable.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
@@ -1006,6 +1007,16 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
       return;
     }
   }
+  // An iterator of a class's pair iterable, such as Headers', takes the next
+  // pair from its source (pair_iterable.h).
+  PairIterationKind kind;
+  if (!asynchronous && !(member.flags & kMemberIteratorReturn)) {
+    if (PairIterationSource* const source =
+            PairIterationSourceOf(isolate, info.This(), &kind)) {
+      info.GetReturnValue().Set(source->Next(isolate, kind));
+      return;
+    }
+  }
   v8::Local<v8::Value> value = (member.flags & kMemberIteratorReturn)
                                    ? info[0]
                                    : v8::Undefined(isolate).As<v8::Value>();
@@ -1014,19 +1025,10 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
       !NextItemOfList(context, info.This(), &value).To(&has_item)) {
     return;
   }
-  // Web IDL's CreateIterResultObject(): value, then done.
-  const v8::Local<v8::Object> result = v8::Object::New(isolate);
-  if (result
-          ->CreateDataProperty(
-              context, v8::String::NewFromUtf8Literal(isolate, "value"), value)
-          .IsNothing() ||
-      result
-          ->CreateDataProperty(context,
-                               v8::String::NewFromUtf8Literal(isolate, "done"),
-                               v8::Boolean::New(isolate, !has_item))
-          .IsNothing()) {
-    return;
-  }
+  // Blink's ESCreateIterResultObject(): done, then value, as every iterator
+  // of Blink's gives it, a maplike's and a setlike's among them.
+  const v8::Local<v8::Object> result =
+      CreateIterResultObject(isolate, value, !has_item);
   if (!asynchronous) {
     info.GetReturnValue().Set(result);
     return;
