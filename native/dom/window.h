@@ -82,6 +82,12 @@ class Window final : public WindowProperties, public ExecutionContext {
   static Window* Create();
   // The Window of the isolate's current context.
   static Window& Current();
+  // The Window of the entered context, as Blink's EnteredDOMWindow() gives
+  // it, if the isolate is in a context.
+  static Window* Entered();
+  // The Window of the incumbent context, as Blink's IncumbentDOMWindow()
+  // gives it, if the isolate is in a context.
+  static Window* Incumbent();
 
   Window();
   ~Window() override;

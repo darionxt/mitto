@@ -129,9 +129,10 @@ class PageFrame final : public NavigationClient, public Frame {
       const PageConnection& connection,
       bool cross_origin_isolated,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
-  // `loader`'s navigation ended with no response, and the frame keeps its
-  // document. `loader` goes.
-  void NavigationEndedWithoutDocument(DocumentLoader& loader);
+  // `loader`'s navigation ended with no response, with `net_error`: the frame
+  // keeps its document, or a child frame commits Chrome's error page for a
+  // navigation that failed. `loader` goes.
+  void NavigationEndedWithoutDocument(DocumentLoader& loader, int net_error);
   // How the current window's document loads, which its document's loading
   // fills in, and performance.timing and window.chrome read.
   DocumentLoadTiming& document_load_timing();
@@ -208,10 +209,12 @@ class PageFrame final : public NavigationClient, public Frame {
     // Its number among the frame's, which the newest takes.
     uint64_t number = 0;
     GURL url;
-    // Its source, kSrcdoc or kAboutBlank, and an about:blank's initiator.
+    // Its source, kSrcdoc, kAboutBlank or kErrorPage, and an about:blank's
+    // initiator.
     PageDocumentCommitted committed;
     // Its document's origin and referrer: the parent document's for a
-    // srcdoc, and the initiator's for an about:blank.
+    // srcdoc, the initiator's for an about:blank, and an opaque origin and
+    // none for an error page.
     url::Origin origin;
     std::u16string referrer;
     // Its document's fallback base URL: the parent document's base URL for a
@@ -220,6 +223,9 @@ class PageFrame final : public NavigationClient, public Frame {
     // A srcdoc's markup.
     std::u16string body;
   };
+  // Commits `navigation` from a later task, as Chrome's browser commits it,
+  // unless a newer navigation of the frame takes its place first.
+  void CommitWithoutNetworkSoon(LocalNavigation navigation);
   // Commits `navigation`, unless another has taken its place: in the same
   // window for a document of the initial about:blank's origin, as Blink's
   // DocumentLoader::CommitNavigation() reuses it, and otherwise in a new

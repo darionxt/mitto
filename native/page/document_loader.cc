@@ -281,8 +281,8 @@ void DocumentLoader::OnResponseEnded(int net_error) {
   const v8::Context::Scope context_scope(frame_->context());
   if (!response_started_) {
     // No document: a 204, a download, a failure, or another navigation that
-    // took its place. The frame keeps its document and lets this go.
-    frame_->NavigationEndedWithoutDocument(*this);
+    // took its place. The frame lets this go.
+    frame_->NavigationEndedWithoutDocument(*this, net_error);
     return;
   }
   // After a response, a body that stops short still makes a document of what
@@ -331,8 +331,8 @@ void DocumentLoader::ParserDetached() {
 void DocumentLoader::DidDispatchLoadEvent() {
   send_.Run(EncodeLoaded(document_id_));
   // The browser's favicon driver fetches the icon once the top-level
-  // document's load event is done.
-  if (!favicon_fetched_ && document_) {
+  // document's load event is done, and a frame's document has none.
+  if (!favicon_fetched_ && document_ && !frame_->Parent()) {
     favicon_fetched_ = true;
     FetchFavicon(*document_);
   }

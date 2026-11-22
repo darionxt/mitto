@@ -132,8 +132,16 @@ void Location::SetLocation(const std::u16string& url,
   if (!window_ || !window_->HasContext()) {
     return;
   }
-  // The entered window's document, which is the window's own in a Page.
-  Document& document = window_->GetDocument();
+  // The entered window's document completes the URL, and the incumbent
+  // window starts the navigation, as in Blink, so a script in one frame that
+  // navigates another names its own document as the initiator.
+  Window* const entered = Window::Entered();
+  Window* const incumbent = Window::Incumbent();
+  if (!entered || !entered->HasDocument() || !incumbent ||
+      !incumbent->HasContext()) {
+    return;
+  }
+  Document& document = entered->GetDocument();
   const GURL completed = document.CompleteUrl(url);
   if (!completed.is_valid()) {
     // The string that KURL keeps of a URL that does not parse, which is what
@@ -149,6 +157,7 @@ void Location::SetLocation(const std::u16string& url,
   FrameLoadRequest request;
   request.url = completed;
   request.reason = ClientNavigationReason::kFrameNavigation;
+  request.origin_window = incumbent;
   Navigate(*window_, request, type);
 }
 

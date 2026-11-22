@@ -74,6 +74,26 @@ Window& Window::Current() {
   return *window;
 }
 
+// static
+Window* Window::Entered() {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!isolate->InContext()) {
+    return nullptr;
+  }
+  return bindings::V8Window::ToWrappable(
+      isolate, isolate->GetEnteredOrMicrotaskContext()->Global());
+}
+
+// static
+Window* Window::Incumbent() {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!isolate->InContext()) {
+    return nullptr;
+  }
+  return bindings::V8Window::ToWrappable(
+      isolate, isolate->GetIncumbentContext()->Global());
+}
+
 Window::Window() = default;
 Window::~Window() = default;
 

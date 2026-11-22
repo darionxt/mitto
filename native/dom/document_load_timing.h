@@ -107,6 +107,10 @@ class DocumentLoadTiming final
   // DocumentLoadTiming::MonotonicTimeToPseudoWallTime(): `time` as a time of
   // the wall clock, since the Unix epoch, as precise as base::TimeTicks.
   base::TimeDelta MonotonicTimeToPseudoWallTime(base::TimeTicks time) const;
+  // Starts the times again at `start`, for a document that takes the place of
+  // the window's first one in the same window, as Blink's new DocumentLoader
+  // has a DocumentLoadTiming of its own. The reference times stay.
+  void Restart(base::TimeTicks start);
 
   // DocumentLoadTiming.
   base::TimeTicks navigation_start;

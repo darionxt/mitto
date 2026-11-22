@@ -108,11 +108,13 @@ class PageRequests {
                         Client& client,
                         base::WaitableEvent& abort);
 
-  // Asks the Session for `request`, a navigation that the current window's
-  // document starts, whose number this sets, and returns it. Its response is
-  // a document's, which gets no entry in the Performance Timeline of the
-  // window that asked.
-  uint64_t StartNavigation(PageRequest request, Client& client);
+  // Asks the Session for `request`, a navigation that document `initiator`
+  // starts, whose number this sets, and returns it. Its response is a
+  // document's, which gets no entry in the Performance Timeline of the window
+  // that asked.
+  uint64_t StartNavigation(uint64_t initiator,
+                           PageRequest request,
+                           Client& client);
 
   // Tells the Session that request `number` is no longer wanted. Its client
   // hears nothing more of it.

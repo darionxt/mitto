@@ -138,16 +138,6 @@ class NestingLevelIncrementer {
   const raw_ref<int> level_;
 };
 
-// The window of the entered context, as Blink's EnteredDOMWindow() gives it.
-Window* EnteredWindow() {
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (!isolate->InContext()) {
-    return nullptr;
-  }
-  return bindings::V8Window::ToWrappable(
-      isolate, isolate->GetEnteredOrMicrotaskContext()->Global());
-}
-
 bool IsAsciiWhitespace(char16_t c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
 }
@@ -1891,7 +1881,7 @@ Document* Document::Open(const std::u16string& type,
                          const std::u16string& replace,
                          bindings::ExceptionState& exception_state) {
   // The type is ignored, and "replace" only counted, as in Blink.
-  Open(EnteredWindow(), exception_state);
+  Open(Window::Entered(), exception_state);
   return this;
 }
 
@@ -2031,7 +2021,7 @@ void Document::Write(const std::vector<std::u16string>& text,
   for (const std::u16string& piece : text) {
     string += piece;
   }
-  Write(string, EnteredWindow(), exception_state);
+  Write(string, Window::Entered(), exception_state);
 }
 
 void Document::Writeln(const std::vector<std::u16string>& text,
@@ -2041,7 +2031,7 @@ void Document::Writeln(const std::vector<std::u16string>& text,
     string += piece;
   }
   string += u'\n';
-  Write(string, EnteredWindow(), exception_state);
+  Write(string, Window::Entered(), exception_state);
 }
 
 void Document::Write(const std::u16string& text,
