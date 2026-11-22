@@ -43,11 +43,13 @@
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_factory.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/html_all_collection.h"
 #include "mitto/dom/html_details_element.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/html_element_factory.h"
+#include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
@@ -1781,20 +1783,59 @@ void Document::BeginLifecycleUpdatesIfRenderingReady() {
 
 void Document::CheckCompleted() {
   // Document::ShouldComplete(), with what a Page's documents hold back: the
-  // async and in-order scripts.
+  // async and in-order scripts, and the frames under the document's that
+  // still load (AllDescendantsAreComplete()).
   if (parsing_state_ != ParsingState::kFinishedParsing ||
       IsDelayingLoadEvent() ||
-      load_event_progress_ == LoadEventProgress::kLoadEventInProgress) {
+      load_event_progress_ == LoadEventProgress::kLoadEventInProgress ||
+      !AllDescendantsAreComplete()) {
     return;
   }
   SetReadiness(Readiness::kComplete);
-  if (load_event_progress_ == LoadEventProgress::kLoadEventNotRun) {
+  const bool load_event_runs =
+      load_event_progress_ == LoadEventProgress::kLoadEventNotRun;
+  if (load_event_runs) {
     DispatchLoadEventAndFinalize();
   }
   // The refresh's delay starts once the load event has finished.
   if (window_ && http_refresh_scheduler_) {
     http_refresh_scheduler_->MaybeStartTimer();
   }
+  // FrameLoader::DidFinishNavigation(): once a frame has loaded, its parent
+  // checks whether all of its frames have.
+  if (load_event_runs && window_) {
+    if (Frame* const frame = window_->GetFrame()) {
+      if (Frame* const parent = frame->Parent()) {
+        if (Window* const parent_window = parent->DomWindow();
+            parent_window && parent_window->HasDocument()) {
+          parent_window->GetDocument().CheckCompleted();
+        }
+      }
+    }
+  }
+}
+
+bool Document::AllDescendantsAreComplete() const {
+  Frame* const frame = window_ ? window_->GetFrame() : nullptr;
+  if (!frame) {
+    return true;
+  }
+  // FrameTree::TraverseNext() over the frame's descendants.
+  std::vector<Frame*> pending;
+  for (size_t index = frame->ChildCount(); index > 0; --index) {
+    pending.push_back(frame->ChildAt(index - 1));
+  }
+  while (!pending.empty()) {
+    Frame* const child = pending.back();
+    pending.pop_back();
+    if (child->IsLoading()) {
+      return false;
+    }
+    for (size_t index = child->ChildCount(); index > 0; --index) {
+      pending.push_back(child->ChildAt(index - 1));
+    }
+  }
+  return true;
 }
 
 void Document::DispatchLoadEventAndFinalize() {
@@ -1817,6 +1858,13 @@ void Document::DispatchLoadEventAndFinalize() {
       timing->load_event_end = base::TimeTicks::Now();
     } else {
       window->DispatchEventWithTarget(event, this);
+    }
+    // Then the load event of the element that holds the window's frame,
+    // which only that element gets.
+    if (Frame* const frame = window->GetFrame()) {
+      if (HTMLFrameOwnerElement* const owner = frame->Owner()) {
+        owner->DispatchLoad();
+      }
     }
     // LocalDOMWindow::DispatchLoadAndPageshowEvents(): pageshow right after
     // load, at the window with the document as its target.
@@ -1872,9 +1920,16 @@ void Document::Open(Window* entered_window,
         "Custom Element constructor should not use open().");
     return;
   }
-  // A Page's documents all have its one window's origin, so the check that
-  // the entered window's is the same always passes.
   if (entered_window && !entered_window->HasContext()) {
+    return;
+  }
+  // The document's origin must be the entered window's, as a frame's parent
+  // has it when it opens the frame's document.
+  if (entered_window && window_ &&
+      !window_->GetSecurityOrigin().IsSameOriginWith(
+          entered_window->GetSecurityOrigin())) {
+    exception_state.ThrowDOMException(
+        "SecurityError", "Can only call open() on same-origin documents.");
     return;
   }
   // A parser that runs a script it reached keeps the document.
@@ -2004,6 +2059,13 @@ void Document::Write(const std::u16string& text,
     return;
   }
   if (entered_window && !entered_window->HasContext()) {
+    return;
+  }
+  if (entered_window && window_ &&
+      !window_->GetSecurityOrigin().IsSameOriginWith(
+          entered_window->GetSecurityOrigin())) {
+    exception_state.ThrowDOMException(
+        "SecurityError", "Can only call write() on same-origin documents.");
     return;
   }
   if (ignore_opens_and_writes_for_abort_) {

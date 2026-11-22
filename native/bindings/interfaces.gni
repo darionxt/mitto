@@ -787,7 +787,10 @@ mitto_bindings_interfaces = [
     name = "HTMLFrameElement"
     file = "html_frame_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "contentDocument",
+      "contentWindow",
+    ]
   },
   {
     name = "HTMLFrameSetElement"
@@ -829,6 +832,8 @@ mitto_bindings_interfaces = [
     implemented = [
       "sandbox",
       "srcdoc",
+      "contentDocument",
+      "contentWindow",
     ]
   },
   {
@@ -3061,8 +3066,13 @@ mitto_bindings_interfaces = [
       "devicePixelRatio",
       "matchMedia",
       "frames",
+      "length",
+      "indexed getter",
       "top",
       "parent",
+      "frameElement",
+      "name",
+      "closed",
       "opener",
       "origin",
       "isSecureContext",

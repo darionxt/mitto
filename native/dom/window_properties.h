@@ -24,8 +24,8 @@ class WindowProperties : public EventTarget {
   // is the only element of that ID and no element has the name as a named
   // item, and otherwise the images, forms, embeds and objects of that name
   // and the elements of that ID, one as itself and more as a collection.
-  // Empty for none. Blink finds a child browsing context of the name first,
-  // which comes with frames.
+  // Empty for none. A child frame of the name comes first, as Blink's
+  // FrameTree::ScopedChild() finds it.
   v8::Local<v8::Value> AnonymousNamedGetter(const std::u16string& name);
 
  protected:

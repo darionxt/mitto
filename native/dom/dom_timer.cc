@@ -308,9 +308,16 @@ void DOMTimerCoordinator::Execute(const Action& action) {
       std::ignore = script->Run(context);
     }
   }
+  // A function's exception goes to the function's realm, and a string's to
+  // the timer's window.
   if (try_catch.HasCaught() && try_catch.CanContinue()) {
-    bindings::ReportException(isolate_, try_catch.Exception(),
-                              try_catch.Message());
+    if (!action.function.IsEmpty()) {
+      bindings::ReportExceptionInCallbackRealm(
+          isolate_, action.function.Get(isolate_), try_catch);
+    } else {
+      bindings::ReportException(isolate_, try_catch.Exception(),
+                                try_catch.Message());
+    }
   }
 }
 

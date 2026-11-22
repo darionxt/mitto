@@ -181,6 +181,23 @@ ChromeObjectData& ScriptRunner::NewChromeObjectData(
   return *chrome_object_data_.back();
 }
 
+size_t ScriptRunner::FrameCount() const {
+  if (!frame_) {
+    return 0;
+  }
+  size_t count = 0;
+  std::vector<const Frame*> pending = {frame_.get()};
+  while (!pending.empty()) {
+    const Frame* const frame = pending.back();
+    pending.pop_back();
+    ++count;
+    for (size_t index = 0; index < frame->ChildCount(); ++index) {
+      pending.push_back(frame->ChildAt(index));
+    }
+  }
+  return count;
+}
+
 void ScriptRunner::TopLevelContextGoes() {
   for (const uint64_t call : waiting_calls_) {
     settled_.push_back(FailureOf(call, std::string(kContextDestroyed)));

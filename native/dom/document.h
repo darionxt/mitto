@@ -620,6 +620,9 @@ class Document : public Node {
   void SetLoadEventProgress(LoadEventProgress progress) {
     load_event_progress_ = progress;
   }
+  // Whether no frame under the document's still loads, which its load event
+  // waits for, as Blink's AllDescendantsAreComplete() says.
+  bool AllDescendantsAreComplete() const;
   bool LoadEventFinished() const {
     return load_event_progress_ >= LoadEventProgress::kLoadEventCompleted;
   }

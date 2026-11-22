@@ -37,9 +37,12 @@ class ScriptWrappable : public v8::Object::Wrappable {
 
   void Trace(cppgc::Visitor* visitor) const override;
 
-  // Returns the wrapper in the isolate's current context, and makes it if this
-  // object has none yet.
+  // Returns the wrapper, and makes it if this object has none yet: in the
+  // relevant realm of the receiver of the binding call that returns it, and
+  // otherwise in the isolate's current context (per_context_data.h).
   v8::Local<v8::Object> ToV8(v8::Isolate* isolate);
+  // Whether this object has its wrapper yet.
+  bool HasWrapper() const { return !wrapper_.IsEmpty(); }
 
   // Makes `wrapper`, which a constructor of the interface got as its receiver,
   // this object's wrapper.

@@ -131,6 +131,10 @@ class ScriptRunner final : public base::TaskObserver {
   // The top-level frame's window loses its context: the calls that wait for
   // a promise of it fail, as DevTools' do when a page navigates.
   void TopLevelContextGoes();
+  // The ID of the Page's next frame, larger than each before it.
+  uint64_t NextFrameId() { return ++last_frame_id_; }
+  // How many frames the Page has, its top-level one among them.
+  size_t FrameCount() const;
 
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,
@@ -206,6 +210,8 @@ class ScriptRunner final : public base::TaskObserver {
   int reports_queued_ = 0;
   // Whether Start() made the top-level frame's first window.
   bool started_ = false;
+  // The ID of the Page's last frame: 1 is the top-level frame's.
+  uint64_t last_frame_id_ = 1;
 };
 
 }  // namespace mitto
