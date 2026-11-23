@@ -2119,6 +2119,24 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             inner = types.from_v8(
                 sequence.members[0], "item", "element", Site(fail="return false;"), f"union {union.syntax}"
             )
+            convert_items = [
+                *["            " + line for line in inner],
+                "            items.push_back(std::move(element));",
+                "            return true;",
+            ]
+            # bind_gen's union.py takes an array by its indices, as IterateSequence() does, before any @@iterator.
+            source += [
+                "    if (value->IsArray()) {",
+                f"      std::vector<{element_type}> items;",
+                "      if (!IterateSequence(isolate, value, exception_state, [&](v8::Local<v8::Value> item) {",
+                *convert_items,
+                "          })) {",
+                "        return false;",
+                "      }",
+                "      *result = std::move(items);",
+                "      return true;",
+                "    }",
+            ]
             source += [
                 "    v8::Local<v8::Function> method;",
                 "    if (!GetIteratorMethod(isolate, value.As<v8::Object>(), &method)) {",
@@ -2128,9 +2146,7 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
                 f"      std::vector<{element_type}> items;",
                 "      if (!IterateSequenceWithMethod(isolate, value.As<v8::Object>(), method,",
                 "                                     [&](v8::Local<v8::Value> item) {",
-                *["            " + line for line in inner],
-                "            items.push_back(std::move(element));",
-                "            return true;",
+                *convert_items,
                 "          })) {",
                 "        return false;",
                 "      }",

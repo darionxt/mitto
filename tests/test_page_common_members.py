@@ -377,6 +377,10 @@ _NOTIFICATION_AS_CHROME = {
         "return new Notification('t', {data: new WebAssembly.Memory({shared: true, initial: 1, maximum: 1}).buffer})",
         "threw: DataCloneError: Failed to construct 'Notification': A SharedArrayBuffer can not be serialized for storage.",
     ),
+    "new Notification with an array whose iterator is not callable": (
+        "const pattern = [200]; pattern[Symbol.iterator] = 5; return new Notification('t', {vibrate: pattern})",
+        "value: [object Notification]",
+    ),
     "new Notification fires error": (
         "return new Promise((r) => { const n = new Notification('t', {data: {x: 1}}); n.onerror = (e) =>"
         " r([e.constructor.name, e.type].join()); n.onshow = () => r('show'); })",
@@ -517,8 +521,9 @@ def program() -> Path:
     return Path(path)
 
 
-def _evaluate(program: Path, script: str) -> str:
-    # The outcome of the script as a string, or what it threw, as tests/test_page_known_gaps.py writes one.
+def _evaluate(program: Path, script: str, *options: str) -> str:
+    # The outcome of the script as a string, or what it threw, as tests/test_page_known_gaps.py writes one. `options`
+    # go to the program before the script, such as its feature switches.
     wrapped = f"""(async () => {{
         try {{
             const value = await (async () => {{ {script} }})();
@@ -529,7 +534,12 @@ def _evaluate(program: Path, script: str) -> str:
         }}
     }})()"""
     result = subprocess.run(
-        [program, "-"], input=wrapped, capture_output=True, encoding="utf-8", timeout=_TIMEOUT_SECONDS, check=False
+        [program, *options, "-"],
+        input=wrapped,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
     )
     assert (result.returncode, result.stderr) == (0, "")
     return result.stdout.removesuffix("\n")
@@ -611,6 +621,47 @@ def test_keyword_attributes_reflect_as_chrome_does(program: Path, script: str, e
 )
 def test_notification_does_what_chrome_does(program: Path, script: str, expected: str) -> None:
     assert _evaluate(program, script) == expected
+
+
+_NOTIFICATION_UNDER_FEATURES = {
+    "new Notification without NotificationConstructor": (
+        "--disable-blink-features=NotificationConstructor",
+        "return new Notification('t')",
+        "threw: TypeError: Failed to construct 'Notification': Illegal constructor. Use"
+        " ServiceWorkerRegistration.showNotification() instead.",
+    ),
+    "new Notification with a showTrigger": (
+        "--enable-blink-features=NotificationTriggers",
+        "return new Notification('t', {showTrigger: new TimestampTrigger(100), silent: true, vibrate: 1})",
+        "threw: TypeError: Failed to construct 'Notification': ShowTrigger is only supported for persistent"
+        " notifications shown using ServiceWorkerRegistration.showNotification().",
+    ),
+    "new Notification with actions before a showTrigger": (
+        "--enable-blink-features=NotificationTriggers",
+        "return new Notification('t', {showTrigger: new TimestampTrigger(100), actions: [{action: 'a', title: 'b'}]})",
+        "threw: TypeError: Failed to construct 'Notification': Actions are only supported for persistent notifications"
+        " shown using ServiceWorkerRegistration.showNotification().",
+    ),
+    "new Notification with a showTrigger that is no TimestampTrigger": (
+        "--enable-blink-features=NotificationTriggers",
+        "return new Notification('t', {showTrigger: 5})",
+        "threw: TypeError: Failed to construct 'Notification': Failed to read the 'showTrigger' property from"
+        " 'NotificationOptions': Failed to convert value to 'TimestampTrigger'.",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("option", "script", "expected"),
+    list(_NOTIFICATION_UNDER_FEATURES.values()),
+    ids=list(_NOTIFICATION_UNDER_FEATURES),
+)
+def test_notification_follows_its_features_as_chrome_does(
+    program: Path, option: str, script: str, expected: str
+) -> None:
+    # Blink checks NotificationConstructor first, then actions, then showTrigger, which the dictionary reads only
+    # with NotificationTriggers on (Chrome for Testing 157 with each switch).
+    assert _evaluate(program, script, option) == expected
 
 
 def test_request_permission_waits_at_the_prompt_on_a_secure_page(program: Path) -> None:

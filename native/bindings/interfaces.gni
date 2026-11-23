@@ -2942,6 +2942,12 @@ mitto_bindings_interfaces = [
     file = "text_encoder_stream"
   },
   {
+    name = "TimestampTrigger"
+    file = "timestamp_trigger"
+    made_by_known_gaps = true
+    implemented = []
+  },
+  {
     name = "ToggleEvent"
     file = "toggle_event"
   },

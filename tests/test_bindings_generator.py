@@ -407,6 +407,22 @@ def test_a_union_converts_a_number_and_what_no_other_member_takes_to_its_integer
         types.value_type(dataclasses.replace(union, members=(integer, IdlType(TypeKind.FLOATING_POINT, "double"))), "b")
 
 
+def test_a_union_takes_an_array_by_its_indices_before_any_iterator() -> None:
+    # bind_gen's union.py: an array goes to the sequence member read by index, so an array whose @@iterator is not
+    # callable still converts, as `new Notification('t', {vibrate: pattern})` does in Chrome.
+    types = TypeMapper(frozenset(), frozenset())
+    integer = IdlType(TypeKind.INTEGER, "unsigned long")
+    sequence = IdlType(TypeKind.SEQUENCE, "sequence<unsigned long>", members=(integer,))
+    union = IdlType(TypeKind.UNION, "(unsigned long or sequence<unsigned long>)", members=(integer, sequence))
+
+    _, source = cpp_writer._write_union("UnsignedLongOrUnsignedLongSequence", union, types)  # pyright: ignore[reportPrivateUsage]
+    text = "\n".join(source)
+
+    assert text.index("if (value->IsArray()) {") < text.index("GetIteratorMethod(")
+    assert "IterateSequence(isolate, value, exception_state," in text
+    assert text.count("items.push_back(std::move(element));") == 2
+
+
 def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -> None:
     types = TypeMapper(frozenset(), frozenset({"Options"}))
     union = IdlType(

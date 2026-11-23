@@ -5,6 +5,9 @@
 
 #include "base/functional/bind.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/per_isolate_data.h"
+#include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_notification.h"
 #include "mitto/dom/event.h"
@@ -32,13 +35,27 @@ Notification* Notification::Create() {
 Notification* Notification::Create(const std::u16string& title,
                                    const bindings::NotificationOptions& options,
                                    bindings::ExceptionState& exception_state) {
-  // Notification::Create(): the constructor is on for a desktop, a Page has
-  // no service worker, and NotificationTriggers, which a showTrigger needs,
-  // is off.
+  // Notification::Create(). NotificationConstructor is on for a desktop, but
+  // a Page's set can turn it off. A Page has no service worker.
+  if (!bindings::PerIsolateData::From(exception_state.GetIsolate())
+           ->features()
+           .IsEnabled(bindings::RuntimeFeature::kNotificationConstructor)) {
+    exception_state.ThrowTypeError(
+        "Illegal constructor. Use ServiceWorkerRegistration.showNotification() "
+        "instead.");
+    return nullptr;
+  }
   if (!options.actions.empty()) {
     exception_state.ThrowTypeError(
         "Actions are only supported for persistent notifications shown using "
         "ServiceWorkerRegistration.showNotification().");
+    return nullptr;
+  }
+  // The dictionary reads showTrigger only with NotificationTriggers on.
+  if (options.show_trigger) {
+    exception_state.ThrowTypeError(
+        "ShowTrigger is only supported for persistent notifications shown "
+        "using ServiceWorkerRegistration.showNotification().");
     return nullptr;
   }
   // CreateNotificationData().
