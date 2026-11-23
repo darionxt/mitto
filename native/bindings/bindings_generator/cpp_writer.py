@@ -921,7 +921,12 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
             ]
-        body += self.types.from_v8(attribute.idl_type, "info[0]", "value", site, where)
+        reduced = self.types.reduce(attribute.idl_type)
+        if reflected is None and reduced.kind is TypeKind.ENUMERATION and not reduced.nullable:
+            # Web IDL's attribute setter returns for a string that is none of the enumeration's, as bind_gen's does.
+            body += self.types.from_v8_enumeration_for_setter(reduced, "info[0]", "value", site, where)
+        else:
+            body += self.types.from_v8(attribute.idl_type, "info[0]", "value", site, where)
         if reflected is not None:
             kind = reflection_kind(attribute)
             assert kind is not None

@@ -19,11 +19,13 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_frame.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "mitto/page/session_history.h"
 #include "mitto/page/session_indexed_db.h"
 #include "mitto/page/session_storage_buckets.h"
 #include "third_party/icu/source/common/unicode/locid.h"
@@ -129,6 +131,7 @@ std::optional<std::string> ScriptRunner::Start(
   cookie_jar_->SetSend(send_);
   refuse_ = refuse;
   requests_ = std::make_unique<PageRequests>(sender_, std::move(refuse));
+  session_history_ = std::make_unique<SessionHistory>();
   // The top-level frame is the Page's first.
   frame_ = std::make_unique<PageFrame>(*this, /*id=*/1);
   frame_->ExpectOpeningNavigation();
@@ -160,6 +163,11 @@ std::optional<std::string> ScriptRunner::Start(
   bindings::PerIsolateData::From(isolate_)->SetExceptionReporter(
       base::BindRepeating(&PageReporter::ReportException,
                           base::Unretained(reporter_.get())));
+  bindings::PerIsolateData::From(isolate_)->SetConsoleWarningReporter(
+      base::BindRepeating([](std::string_view message) {
+        ExecutionContext::Current().AddConsoleMessage(ConsoleLevel::kWarning,
+                                                      std::string(message));
+      }));
   // The first time each document reaches a Known Gap, the Session hears of it.
   bindings::PerIsolateData::From(isolate_)->SetKnownGapReporter(
       base::BindRepeating(

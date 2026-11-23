@@ -14,7 +14,7 @@ namespace mitto {
 NavigationDestination* NavigationDestination::Create(
     std::u16string url,
     bool same_document,
-    std::optional<SerializedScriptValue> state,
+    scoped_refptr<const SharedSerializedScriptValue> state,
     NavigationHistoryEntry* entry) {
   return bindings::MakeGarbageCollected<NavigationDestination>(
       std::move(url), same_document, std::move(state), entry);
@@ -23,7 +23,7 @@ NavigationDestination* NavigationDestination::Create(
 NavigationDestination::NavigationDestination(
     std::u16string url,
     bool same_document,
-    std::optional<SerializedScriptValue> state,
+    scoped_refptr<const SharedSerializedScriptValue> state,
     NavigationHistoryEntry* entry)
     : url_(std::move(url)),
       same_document_(same_document),
@@ -59,7 +59,7 @@ v8::Local<v8::Value> NavigationDestination::GetState() const {
   if (!state_) {
     return v8::Undefined(isolate);
   }
-  return state_->Deserialize(isolate);
+  return state_->data.Deserialize(isolate);
 }
 
 }  // namespace mitto
