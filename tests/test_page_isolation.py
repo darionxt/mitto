@@ -508,3 +508,63 @@ def test_a_frame_whose_response_sandboxes_it_is_not_isolated(session: mitto.Sess
     })()"""
 
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]
+
+
+def test_a_policy_s_second_sandbox_directive_counts_for_nothing(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # The parser ignores a duplicate directive, so a sandbox that keeps allow-same-origin, then a bare one, keeps the
+    # frame's origin and its isolation (Chrome for Testing 157).
+    server.route(
+        "/f-dup",
+        b"<!doctype html><title>d</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox allow-scripts allow-same-origin; sandbox")],
+    )
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/f-dup';
+        document.documentElement.appendChild(frame);
+        await new Promise((resolve) => frame.onload = resolve);
+        return frame.contentWindow.crossOriginIsolated;
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) is True
+
+
+def test_a_redirect_s_resource_policy_comes_before_its_recursion(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # NavigationRequest::OnRequestRedirected() runs EnforceCOEP() before WillRedirectRequest() looks for a URL that two
+    # ancestors have: a redirect of another origin without Cross-Origin-Resource-Policy to such a URL ends with the
+    # error page, not with the frame keeping its document (Chrome for Testing 157).
+    other = server.origin.replace("127.0.0.1", "localhost")
+    server.route(
+        "/p",
+        b"<!doctype html><title>p</title><script>const frame = document.createElement('iframe');"
+        b"frame.src = window.parent.location.pathname === '/p' ? '" + other.encode() + b"/redir' : '/p';"
+        b"document.documentElement.appendChild(frame);</script>",
+        "text/html",
+        [_COEP],
+    )
+    server.routes["/redir"] = Route(b"", 302, [("Location", server.url("/p"))])
+    # The page waits until the grandchild's navigation has ended, then reads whether it committed the error page,
+    # which the page cannot read into, or kept its initial about:blank.
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/p';
+        document.documentElement.appendChild(frame);
+        const grandchild = () => {
+            const inner = frame.contentDocument && frame.contentDocument.querySelector('iframe');
+            return inner && inner.contentDocument ? inner.contentDocument.querySelector('iframe') : null;
+        };
+        while (!grandchild()) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        return grandchild().contentDocument === null ? 'error page' : 'kept';
+    })()"""
+
+    with _open_page(session, server.page("/", _BLANK, _ISOLATING)) as page:
+        assert page.evaluate(script, timeout=TIMEOUT_SECONDS) == "error page"
+        assert server.wait_for_path("/redir")

@@ -643,15 +643,20 @@ bool SandboxesOrigin(std::string_view headers) {
                policy, ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
         const std::vector<std::string_view> tokens = base::SplitStringPiece(
             directive, " \t", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-        if (!tokens.empty() &&
-            base::EqualsCaseInsensitiveASCII(tokens.front(), "sandbox") &&
-            std::ranges::none_of(base::span(tokens).subspan(size_t{1}),
+        if (tokens.empty() ||
+            !base::EqualsCaseInsensitiveASCII(tokens.front(), "sandbox")) {
+          continue;
+        }
+        // A policy's first sandbox directive counts, and a later one of the
+        // same policy is ignored, as the parser ignores a duplicate directive.
+        if (std::ranges::none_of(base::span(tokens).subspan(size_t{1}),
                                  [](std::string_view token) {
                                    return base::EqualsCaseInsensitiveASCII(
                                        token, "allow-same-origin");
                                  })) {
           return true;
         }
+        break;
       }
     }
   }
@@ -787,6 +792,15 @@ class PageHost::ResponseChecks {
   // Whether the response that `event` describes passes: net::OK, or the net
   // error that ends the request.
   int Check(const RequestEvent& event) {
+    // NavigationRequest::OnRequestRedirected(): EnforceCOEP() on each redirect
+    // of a frame's navigation, before WillRedirectRequest() looks at where it
+    // goes. Its response is held to it, and to its parent's
+    // embedder policy, once it is known to make a document
+    // (BlocksFrameNavigation()).
+    if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
+        BlockedByParentResourcePolicy(event)) {
+      return net::ERR_BLOCKED_BY_RESPONSE;
+    }
     // NavigationRequest::WillRedirectRequest(): a frame's navigation that a
     // redirect takes to the URL of two of the frame's ancestors' documents,
     // but for the fragment, is canceled there, as IsSelfReferentialURL() has
@@ -811,14 +825,6 @@ class PageHost::ResponseChecks {
             HeaderValue(event.headers, "Cross-Origin-Resource-Policy"),
             ResourcePolicyMode::kNoCors, event.included_credentials,
             checks_.embedder_policy)) {
-      return net::ERR_BLOCKED_BY_RESPONSE;
-    }
-    // NavigationRequest::OnRequestRedirected(): EnforceCOEP() on each redirect
-    // of a frame's navigation. Its response is held to it, and to its parent's
-    // embedder policy, once it is known to make a document
-    // (BlocksFrameNavigation()).
-    if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
-        BlockedByParentResourcePolicy(event)) {
       return net::ERR_BLOCKED_BY_RESPONSE;
     }
     // DedicatedWorkerHost::DidStartScriptLoad(): a worker's script whose
