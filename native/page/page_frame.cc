@@ -665,13 +665,17 @@ void PageFrame::DetachWindow() {
     Window::Current().SetNavigationClient(nullptr);
     Window::Current().SetFrame(nullptr);
     Window::Current().SetTasks(nullptr);
+    Window::Current().SetWorkerStarter(nullptr);
   }
-  timers_.reset();
-  idle_tasks_.reset();
-  animation_frames_.reset();
-  fetcher_.reset();
-  window_tasks_.reset();
-  worker_starter_.reset();
+  // A timer, an idle or animation frame callback, a task or a fetch's client
+  // of the window may be what removed its frame, and still run, so what runs
+  // them only stops now. It goes with the frame, which the runner keeps until
+  // the task ends, or once the next window's takes its place.
+  timers_->Stop();
+  idle_tasks_->Stop();
+  animation_frames_->Stop();
+  fetcher_->Stop();
+  window_tasks_->Stop();
   runner_->reporter().ContextDestroyed(context);
   chrome_object_data_->detached = true;
 }

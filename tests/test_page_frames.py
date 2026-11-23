@@ -122,8 +122,8 @@ def test_an_indexeddb_open_of_a_frame_that_goes_lets_its_connection_go(page_url:
 @pytest.mark.usefixtures("page_program")
 def test_a_callback_s_exception_goes_to_its_own_realm(page_url: str) -> None:
     # Blink's InvokeAndReportException() reports with the callback's relevant ScriptState, which Chrome 157 gave for
-    # the same script: a frame's function that another frame's requestAnimationFrame(), timer or mutation observer
-    # runs fires the error event of its own frame's window.
+    # the same script: a frame's function that another frame's requestAnimationFrame(), timer, idle callback or
+    # mutation observer runs fires the error event of its own frame's window.
     script = """
       (async () => {
         const windows = [0, 1, 2].map(() => {
@@ -136,6 +136,7 @@ def test_a_callback_s_exception_goes_to_its_own_realm(page_url: str) -> None:
         windows.forEach((w, i) => { w.onerror = () => { calls.push('frame' + i); return true; }; });
         windows[0].requestAnimationFrame(new windows[1].Function('throw new parent.frames[2].Error("raf")'));
         windows[0].setTimeout(new windows[1].Function('throw new Error("timer")'), 0);
+        windows[0].requestIdleCallback(new windows[2].Function('throw new Error("idle")'));
         new windows[0].MutationObserver(new windows[2].Function('throw new Error("records")'))
             .observe(document.body, {childList: true});
         document.body.appendChild(document.createElement('div'));
@@ -144,7 +145,7 @@ def test_a_callback_s_exception_goes_to_its_own_realm(page_url: str) -> None:
       })()
     """
     with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-        assert page.evaluate(script) == ["frame1", "frame1", "frame2"]
+        assert page.evaluate(script) == ["frame1", "frame1", "frame2", "frame2"]
 
 
 @pytest.mark.usefixtures("page_program")
@@ -194,6 +195,110 @@ def test_a_frame_that_removes_itself_as_its_parent_goes_goes_then(page_url: str)
             None,
             None,
             False,
+            0,
+        ]
+        assert page.evaluate("document.title") == "t"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_its_own_timer_removes_goes_then(page_url: str) -> None:
+    # A frame's setTimeout() callback and its setInterval() callback each remove the frame and throw: the timer
+    # returns, the interval runs no more, the frame's window sets no timer, and each error goes to the callback's
+    # window, as Chrome 157 gave for the same script.
+    script = """
+      (async () => {
+        const errors = [];
+        window.onerror = (message) => { errors.push(message); return true; };
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const timeout = document.createElement('iframe');
+        document.body.appendChild(timeout);
+        const timeoutWindow = timeout.contentWindow;
+        const set = await new Promise((resolve) => timeoutWindow.setTimeout(() => {
+          timeout.remove();
+          resolve(timeoutWindow.setTimeout(() => {}, 0));
+          throw new Error('timeout');
+        }, 0));
+        const interval = document.createElement('iframe');
+        document.body.appendChild(interval);
+        let runs = 0;
+        await new Promise((resolve) => interval.contentWindow.setInterval(() => {
+          runs += 1;
+          if (runs === 2) {
+            interval.remove();
+            resolve();
+            throw new Error('interval');
+          }
+        }, 0));
+        await wait(100);
+        return [set, timeout.contentWindow, runs, errors, frames.length];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == [
+            0,
+            None,
+            2,
+            ["Uncaught Error: timeout", "Uncaught Error: interval"],
+            0,
+        ]
+        assert page.evaluate("document.title") == "t"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_its_own_callback_removes_runs_nothing_more(page_url: str) -> None:
+    # A frame's animation frame callback and its idle callback each remove the frame and throw, and a callback that
+    # waits for the same animation frame, the frame's own or one of a frame that the parent's removes, never runs, as
+    # Chrome 157 gave for the same script. A fetch() of a frame that goes once it has its body leaves the Page as it
+    # was.
+    script = """
+      (async () => {
+        const errors = [];
+        window.onerror = (message) => { errors.push(message); return true; };
+        const frame = () => {
+          const element = document.createElement('iframe');
+          document.body.appendChild(element);
+          return element;
+        };
+        const ran = [];
+        const own = frame();
+        await new Promise((resolve) => {
+          own.contentWindow.requestAnimationFrame(() => {
+            ran.push('first');
+            own.remove();
+            setTimeout(resolve, 100);
+            throw new Error('raf');
+          });
+          own.contentWindow.requestAnimationFrame(() => ran.push('second'));
+        });
+        const child = frame();
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => {
+            ran.push('parent');
+            child.remove();
+            setTimeout(resolve, 100);
+          });
+          child.contentWindow.requestAnimationFrame(() => ran.push('child'));
+        });
+        const idle = frame();
+        await new Promise((resolve) => {
+          idle.contentWindow.requestIdleCallback(() => {
+            ran.push('idle');
+            idle.remove();
+            setTimeout(resolve, 100);
+            throw new Error('idle');
+          });
+        });
+        const fetched = frame();
+        const text = await fetched.contentWindow.fetch('/fetched').then((response) => response.text());
+        fetched.remove();
+        return [ran, errors, text.length > 0, frames.length];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == [
+            ["first", "parent", "idle"],
+            ["Uncaught Error: raf", "Uncaught Error: idle"],
+            True,
             0,
         ]
         assert page.evaluate("document.title") == "t"

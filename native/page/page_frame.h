@@ -180,7 +180,9 @@ class PageFrame final : public NavigationClient, public Frame {
                     uint64_t navigation);
   // What goes with the current window's context: its timers, idle callbacks,
   // animation frames, fetches, tasks and workers, and the inspector's and
-  // window.chrome's hold on it.
+  // window.chrome's hold on it. What runs them stops, and goes with the frame
+  // or once the next window's takes its place, as one of them may be what
+  // ended the context.
   void DetachWindow();
   // The frame's Cache API, IndexedDB and Storage Buckets: its own for a child
   // frame, the runner's for the top-level frame.
@@ -227,7 +229,7 @@ class PageFrame final : public NavigationClient, public Frame {
   bool detaching_children_ = false;
   // What the parser of a synchronously committed about:blank reads: nothing.
   std::unique_ptr<DocumentParser::Client> empty_body_;
-  // What the current window runs in its context, which goes with it.
+  // What the current window runs in its context, which stops with it.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;
   std::unique_ptr<AnimationFrameController> animation_frames_;

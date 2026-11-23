@@ -56,7 +56,8 @@ class Frame {
   // HTMLFrameOwnerElement::DisconnectContentFrame(): the frame's documents
   // unload, its window's context goes, and it leaves the frame tree, with
   // its own children. The frame lives on until the task ends, for a script
-  // of it that still runs.
+  // of it that still runs, and so do its window's timers, callbacks and
+  // fetches, which stop at once.
   virtual void Detach() = 0;
 
   // The top-level frame of this one's tree.

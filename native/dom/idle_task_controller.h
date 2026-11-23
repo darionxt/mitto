@@ -40,6 +40,11 @@ class IdleTaskController {
                                uint32_t timeout_ms);
   void CancelIdleCallback(uint32_t id);
 
+  // ScriptedIdleTaskController::ContextDestroyed(): no callback runs again.
+  // The one that runs now, which may have ended the context, returns first,
+  // and the callbacks go with the controller.
+  void Stop();
+
   // How many callbacks wait.
   size_t size() const { return tasks_.size(); }
 
