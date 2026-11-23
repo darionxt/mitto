@@ -299,6 +299,17 @@ bool FromV8Enumeration(v8::Isolate* isolate,
                        std::string_view type_name,
                        std::u16string* result);
 
+// bind_gen's setter of an attribute of an enumeration: converts `value` to a
+// DOMString, and returns true if it is one of `values`, the strings of the
+// enumeration named `type_name`. Another string adds Blink's warning to the
+// console, as ReportInvalidEnumSetToAttribute() does, and returns false, and
+// the setter then does nothing. Returns false too if anything threw.
+bool FromV8EnumerationForSetter(v8::Isolate* isolate,
+                                v8::Local<v8::Value> value,
+                                base::span<const std::u16string_view> values,
+                                std::string_view type_name,
+                                std::u16string* result);
+
 // Web IDL's conversion of `value` to a sequence: gets its @@iterator and calls
 // `each` with each item, until `each` returns false. Throws a TypeError if
 // `value` is not an object or has no @@iterator, and returns false if
@@ -449,6 +460,14 @@ bool FromV8Promise(v8::Isolate* isolate,
 // message from the exception, which says where an error was made, and what V8
 // reads of it.
 void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception);
+// The same for what `callback`, a page's function, threw, which `try_catch`
+// caught, in the callback's own realm, whose window's error event fires, as
+// Blink's CallbackFunctionBase::InvokeAndReportException() reports it with
+// the callback's relevant ScriptState: a frame's callback that another
+// frame's requestAnimationFrame() or timer runs reports in its own frame.
+void ReportExceptionInCallbackRealm(v8::Isolate* isolate,
+                                    v8::Local<v8::Object> callback,
+                                    const v8::TryCatch& try_catch);
 void ReportException(v8::Isolate* isolate,
                      v8::Local<v8::Value> exception,
                      v8::Local<v8::Message> message);

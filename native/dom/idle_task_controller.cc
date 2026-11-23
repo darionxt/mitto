@@ -96,6 +96,13 @@ void IdleTaskController::CancelIdleCallback(uint32_t id) {
   RemoveIdleTask(id);
 }
 
+void IdleTaskController::Stop() {
+  weak_factory_.InvalidateWeakPtrs();
+  for (const auto& [id, task] : tasks_) {
+    task->timeout_factory.InvalidateWeakPtrs();
+  }
+}
+
 void IdleTaskController::PostSchedulerIdleTask(uint32_t id) {
   EventLoopOfPage().PostIdleTask(
       FROM_HERE, base::BindOnce(&IdleTaskController::SchedulerIdleTask,
@@ -142,16 +149,17 @@ void IdleTaskController::RunIdleTask(uint32_t id,
                       SchedulerTaskContext::Priority::kBackground));
     const v8::TryCatch try_catch(isolate_);
     v8::Local<v8::Value> argument = bindings::ToV8(
-        isolate_,
-        bindings::MakeGarbageCollected<IdleDeadline>(deadline, did_timeout));
+        isolate_, bindings::MakeGarbageCollected<IdleDeadline>(
+                      deadline, did_timeout,
+                      Window::Current().CrossOriginIsolatedCapability()));
     std::ignore =
         callback->Call(context, v8::Undefined(isolate_), 1, &argument);
+    // As InvokeAndReportException() reports it, in the callback's realm.
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
-      bindings::ReportException(isolate_, try_catch.Exception(),
-                                try_catch.Message());
+      bindings::ReportExceptionInCallbackRealm(isolate_, callback, try_catch);
     }
   }
-  // The callback may have ended the window's context, and this with it.
+  // The callback may have ended the window's context, which stopped this.
   if (self) {
     RemoveIdleTask(id);
   }

@@ -69,9 +69,11 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   // memory. Before the first ContextCreated().
   void SetForWorker() { for_worker_ = true; }
 
-  // Has the console of `context` report here.
+  // Has the console of `context` report here. The Page's frames each have a
+  // context, so several may be live at once.
   void ContextCreated(v8::Local<v8::Context> context);
   // Says that `context` has gone, as Blink does when a frame's document goes.
+  // Its rejections go with it.
   void ContextDestroyed(v8::Local<v8::Context> context);
 
   // A promise rejected with no handler, and why, as Blink's
@@ -84,6 +86,9 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
 
     v8::Global<v8::Promise> promise;
     v8::Global<v8::Value> reason;
+    // The context that was current when it was rejected, whose window's
+    // events it fires, as Blink takes the current realm's ScriptState for it.
+    v8::Global<v8::Context> context;
     // Whether it fires events at the window: not for a script whose errors
     // are muted.
     bool fires_events = false;
@@ -95,12 +100,12 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   // Blink takes once a microtask checkpoint ends.
   std::vector<Rejection> TakeUnhandledRejections();
 
-  // Reports each of `rejections` that still has no handler, as Blink does from
-  // the task that it queues for them: unhandledrejection at the window, and
-  // unless a listener canceled it, the Session, as a console says it:
-  // "Uncaught (in promise) ...".
-  void ReportUnhandledRejections(v8::Local<v8::Context> context,
-                                 std::vector<Rejection> rejections);
+  // Reports each of `rejections` that still has no handler and whose context
+  // is still live, as Blink does from the task that it queues for them:
+  // unhandledrejection at the window of its context, and unless a listener
+  // canceled it, the Session, as a console says it: "Uncaught (in promise)
+  // ...".
+  void ReportUnhandledRejections(std::vector<Rejection> rejections);
 
   // Reports `exception`, which a script threw and nothing caught: the
   // window's error event, and unless a listener canceled it, the Session, as
@@ -136,6 +141,9 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   void HandlerAdded(v8::Local<v8::Promise> promise);
   // Fires rejectionhandled for `rejection`, as Blink's RevokeNow() does.
   void Revoke(Rejection rejection);
+  // Whether `context` is one that ContextCreated() told of and that has not
+  // gone since.
+  bool IsLive(v8::Local<v8::Context> context) const;
 
   const raw_ptr<v8::Isolate> isolate_;
   const SendFrame send_;
@@ -147,8 +155,9 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   // Those reported with no handler, held weakly, at most the last 1000, as
   // Blink's reported_as_errors_, for a handler that comes later.
   std::vector<Rejection> reported_rejections_;
-  // The newest context, for an error reported where none is entered.
-  v8::Global<v8::Context> context_;
+  // The live contexts, the newest last, which is the one an error goes to
+  // where none is entered.
+  std::vector<v8::Global<v8::Context>> contexts_;
 };
 
 }  // namespace mitto

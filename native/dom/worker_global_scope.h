@@ -74,6 +74,8 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   // The worker's origin, its creator's, serialized.
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
+  // WindowOrWorkerGlobalScope::crossOriginIsolated().
+  bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
   // WorkerPerformance, made the first time, which counts from when the worker
   // started.
   mitto::Performance* Performance() override;
@@ -123,6 +125,12 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   FetchReferrerPolicy OutsideReferrerPolicy() const {
     return outside_referrer_policy_;
   }
+  // Its creator's origin, that of the same outside settings, which may read
+  // its creator's blob: URLs where a worker of an opaque origin may not.
+  void SetOutsideOrigin(url::Origin origin) {
+    outside_origin_ = std::move(origin);
+  }
+  const url::Origin& OutsideOrigin() const { return outside_origin_; }
   // What importScripts() fetches through. Without one, as in the Page program
   // given a script, each script fails to load.
   void SetImportedScriptLoader(ImportedScriptLoader* loader) {
@@ -157,6 +165,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   bool module_ = false;
   FetchReferrerPolicy outside_referrer_policy_ = FetchReferrerPolicy::kDefault;
+  url::Origin outside_origin_;
   bool closing_ = false;
 };
 

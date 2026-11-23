@@ -439,6 +439,28 @@ bool FromV8Enumeration(v8::Isolate* isolate,
 }
 
 // Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+bool FromV8EnumerationForSetter(v8::Isolate* isolate,
+                                v8::Local<v8::Value> value,
+                                base::span<const std::u16string_view> values,
+                                std::string_view type_name,
+                                std::u16string* result) {
+  std::u16string string;
+  if (!FromV8String(isolate, value, &string)) {
+    return false;
+  }
+  for (const std::u16string_view item : values) {
+    if (item == string) {
+      *result = std::move(string);
+      return true;
+    }
+  }
+  PerIsolateData::From(isolate)->ReportConsoleWarning(
+      base::StrCat({"The provided value '", base::UTF16ToUTF8(string),
+                    "' is not a valid enum value of type ", type_name, "."}));
+  return false;
+}
+
+// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 bool IsIterableObject(v8::Isolate* isolate,
                       v8::Local<v8::Value> value,
                       bool* threw) {
@@ -730,6 +752,17 @@ void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception) {
   const v8::Local<v8::Message> message =
       v8::Exception::CreateMessage(isolate, exception);
   Report(isolate, exception, message, MessageText(isolate, message));
+}
+
+void ReportExceptionInCallbackRealm(v8::Isolate* isolate,
+                                    v8::Local<v8::Object> callback,
+                                    const v8::TryCatch& try_catch) {
+  v8::Local<v8::Context> context;
+  if (!callback->GetCreationContext(isolate).ToLocal(&context)) {
+    context = isolate->GetCurrentContext();
+  }
+  const v8::Context::Scope context_scope(context);
+  ReportException(isolate, try_catch.Exception(), try_catch.Message());
 }
 
 void ReportException(v8::Isolate* isolate,

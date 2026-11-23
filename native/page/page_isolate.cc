@@ -10,6 +10,7 @@
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_dom_exception.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/modulator.h"
 #include "mitto/dom/time_clamper.h"
 #include "mitto/page/wasm_response_extensions.h"
@@ -74,11 +75,15 @@ bool WasmInstanceOverride(const v8::FunctionCallbackInfo<v8::Value>& info) {
   return false;
 }
 
-// SharedArrayBufferConstructorEnabledCallback(): only a context that is
-// cross-origin isolated has SharedArrayBuffer, and a Page has no COOP and
-// COEP, nor the enterprise policy or the origin trial that also allow it.
+// SharedArrayBufferConstructorEnabledCallback(): a context has
+// SharedArrayBuffer if its execution context allows its transfer, which a
+// cross-origin isolated one does, as a Page has neither the enterprise policy
+// nor the origin trial that also allow it.
 bool SharedArrayBufferConstructorEnabled(v8::Local<v8::Context> context) {
-  return false;
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(v8::Isolate::GetCurrent(), context);
+  return execution_context &&
+         execution_context->SharedArrayBufferTransferAllowed();
 }
 
 // WasmCustomDescriptorsEnabledCallback(): WebAssembly's custom descriptors,
@@ -94,6 +99,18 @@ bool WasmCustomDescriptorsEnabled(v8::Local<v8::Context> context) {
 bool IsDOMExceptionWrapper(v8::Isolate* isolate, v8::Local<v8::Object> object) {
   return bindings::PerIsolateData::From(isolate)->HasInstance(
       isolate, bindings::V8DOMException::kWrapperTypeInfo, object);
+}
+
+// FineTemporalHostSystemUTCEpochNanosecondsCallback(), for a cross-origin
+// isolated context, with a clamper of its own.
+int64_t FineTemporalNow(v8::Local<v8::Context> context) {
+  static const base::NoDestructor<TimeClamper> clamper;
+  const base::TimeDelta since_epoch =
+      base::Time::Now() - base::Time::UnixEpoch();
+  return clamper
+      ->ClampTimeResolution(since_epoch,
+                            /*cross_origin_isolated_capability=*/true)
+      .InNanoseconds();
 }
 
 // CoarseTemporalHostSystemUTCEpochNanosecondsCallback().
@@ -162,8 +179,14 @@ void InitializePageIsolate(v8::Isolate* isolate) {
 }
 
 void InitializePageContext(v8::Local<v8::Context> context) {
-  // V8Initializer::InitializeContext().
-  context->SetTemporalHostSystemUTCEpochNanosecondsCallback(&CoarseTemporalNow);
+  // V8Initializer::InitializeContext(): Temporal.Now reads a clock of the
+  // context's resolution.
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(v8::Isolate::GetCurrent(), context);
+  context->SetTemporalHostSystemUTCEpochNanosecondsCallback(
+      execution_context && execution_context->CrossOriginIsolatedCapability()
+          ? &FineTemporalNow
+          : &CoarseTemporalNow);
 }
 
 }  // namespace mitto

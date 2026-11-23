@@ -713,6 +713,22 @@ def test_a_module_worker_of_a_data_url_imports_through_its_creator(server: str) 
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_module_worker_of_a_data_url_imports_its_creators_blob_url_statically_only(server: str) -> None:
+    # As in Chrome 157: its top-level graph is fetched through its creator's settings, which may read the creator's
+    # blob: URL, and an import() through its own, of an opaque origin, which may not.
+    script = """new Promise((resolve) => {
+        const module = () => URL.createObjectURL(new Blob(['export const v = 42;'], {type: 'text/javascript'}));
+        const src = "import { v } from '" + module() + "';" +
+            "import('" + module() + "').then(() => 'loaded', (e) => e.name).then((d) => postMessage([v, d]));";
+        const worker = new Worker('data:text/javascript,' + encodeURIComponent(src), {type: 'module'});
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == [42, "TypeError"]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_module_workers_static_imports_are_in_its_creators_timeline(server: str) -> None:
     # As Chrome 157 times them: what its top-level graph imports through its creator's settings in the creator's
     # timeline, and an import() in its own, each of the initiator type script.

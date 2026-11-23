@@ -79,9 +79,11 @@ FetchPriority AdjustPriorityWithPriorityHintAndRenderBlocking(
   return priority;
 }
 
-// MemoryCache::RemoveFragmentIdentifierIfNeeded().
+// MemoryCache::RemoveFragmentIdentifierIfNeeded(): an HTTP URL's resource is
+// the same whatever its fragment, but a data: or a blob: URL's is its own for
+// each.
 GURL WithoutFragment(const GURL& url) {
-  if (!url.has_ref()) {
+  if (!url.has_ref() || !url.SchemeIsHTTPOrHTTPS()) {
     return url;
   }
   GURL::Replacements no_fragment;
@@ -278,11 +280,28 @@ Resource* ResourceFetcher::CachedResource(const GURL& url) const {
   const GURL key = WithoutFragment(url);
   for (size_t i = resources_.size(); i > 0; --i) {
     Resource* const resource = resources_[i - 1];
-    if (WithoutFragment(resource->Url()) == key) {
+    if (WithoutFragment(resource->Url()) == key && !IsRevokedBlob(*resource)) {
       return resource;
     }
   }
   return nullptr;
+}
+
+// static
+bool ResourceFetcher::IsRevokedBlob(const Resource& resource) {
+  // A blob: URL that a context revoked, which Blink's revokeObjectURL()
+  // drops from the memory cache that every document of the renderer shares:
+  // only a preload, which Blink keeps apart, still has it.
+  return resource.Url().SchemeIsBlob() && !resource.IsUnusedPreload() &&
+         !BlobUrlRegistry::Get().ResolveEntry(resource.Url());
+}
+
+void ResourceFetcher::RemoveUrlFromCache(const GURL& url) {
+  const GURL key = WithoutFragment(url);
+  resources_.EraseIf([&key](Resource* resource) {
+    return !resource->IsUnusedPreload() &&
+           WithoutFragment(resource->Url()) == key;
+  });
 }
 
 Resource* ResourceFetcher::UnusedPreload(const GURL& url,
@@ -332,6 +351,9 @@ bool ResourceFetcher::CanUse(const Resource& existing,
   // A data: URL's resource is static.
   if (existing.Url().SchemeIs(url::kDataScheme)) {
     return true;
+  }
+  if (IsRevokedBlob(existing)) {
+    return false;
   }
   // Resource::CanReuse(): the same mode and credentials mode.
   if (existing.Mode() != params.mode ||

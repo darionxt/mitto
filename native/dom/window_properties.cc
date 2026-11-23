@@ -2,7 +2,9 @@
 
 #include "mitto/dom/document.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/html_collection.h"
+#include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/window.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
@@ -21,6 +23,23 @@ v8::Local<v8::Value> WindowProperties::AnonymousNamedGetter(
   if (!window->HasDocument()) {
     return v8::Local<v8::Value>();
   }
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  // The document-tree child navigable target name property set first: the
+  // child frame of that name, unless its document is of another origin than
+  // this window's and the name is not its element's name attribute.
+  if (Frame* const frame = window->GetFrame()) {
+    if (Frame* const child = frame->ScopedChild(name)) {
+      Window* const child_window = child->DomWindow();
+      HTMLFrameOwnerElement* const owner = child->Owner();
+      const std::u16string* const owner_name =
+          owner ? owner->FindAttribute(u"name") : nullptr;
+      if (child_window && (window->GetSecurityOrigin().IsSameOriginWith(
+                               child_window->GetSecurityOrigin()) ||
+                           (owner_name && *owner_name == name))) {
+        return child_window->ToV8(isolate);
+      }
+    }
+  }
   Document& document = window->GetDocument();
   if (!document.IsHTMLDocument()) {
     return v8::Local<v8::Value>();
@@ -30,7 +49,6 @@ v8::Local<v8::Value> WindowProperties::AnonymousNamedGetter(
   if (!has_named_item && !has_id_item) {
     return v8::Local<v8::Value>();
   }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   if (!has_named_item && !document.ContainsMultipleElementsWithId(name)) {
     if (Element* const element = document.GetElementById(name)) {
       return element->ToV8(isolate);

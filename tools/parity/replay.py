@@ -59,14 +59,19 @@ _WORKER_ANSWERED = """new Promise((resolve, reject) => {
   worker.onerror = () => reject(new Error(urls.worker + " failed"));
 })"""
 # What the start page's script does for its worker of a blob: URL, whose script fetches with no URL of its own to name as
-# the referrer, and answers once that has ended.
+# the referrer, and answers once that has ended, or says that it failed, which no error event would.
 _BLOB_WORKER_ANSWERED = """new Promise((resolve, reject) => {
   const source = `fetch("${location.origin}${urls.worker_blob_fetch}")
-    .then((response) => response.text()).then(() => postMessage("done"));`;
+    .then((response) => response.text())
+    .then(() => postMessage("done"), (error) => postMessage("failed: " + error));`;
   const worker = new Worker(URL.createObjectURL(new Blob([source], {type: "text/javascript"})));
-  worker.onmessage = () => {
+  worker.onmessage = (event) => {
     worker.terminate();
-    resolve();
+    if (event.data === "done") {
+      resolve();
+    } else {
+      reject(new Error("the fetch of the worker of a blob: URL " + event.data));
+    }
   };
   worker.onerror = () => reject(new Error("the worker of a blob: URL failed"));
 })"""
@@ -530,7 +535,7 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
     lands_at = _PATHS[steps.lands_at or case]
     with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         if steps.page_script is not None:
-            page.evaluate(steps.page_script)
+            page.evaluate(steps.page_script, timeout=_PAGE_TIMEOUT_SECONDS)
         if steps.kind is not RequestKind.NAVIGATION:
             return
         while urlsplit(page.wait_for_navigation(timeout=_PAGE_TIMEOUT_SECONDS).url).path != lands_at:

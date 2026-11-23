@@ -1,6 +1,7 @@
 // Tasks of one window, which run in its context on the queue of their task
 // type, as Blink posts a task to an ExecutionContext's task runner. They go
-// with the window: a task of a window that has gone does not run.
+// with the window: a task of a window that has gone, or that Stop() says has,
+// does not run.
 
 #ifndef MITTO_DOM_WINDOW_TASKS_H_
 #define MITTO_DOM_WINDOW_TASKS_H_
@@ -35,6 +36,10 @@ class WindowTasks {
                        base::OnceClosure task,
                        base::TimeDelta delay,
                        const base::Location& from_here = FROM_HERE);
+
+  // The window's context has gone, though a task of it may still run: no task
+  // that waits runs.
+  void Stop() { weak_factory_.InvalidateWeakPtrs(); }
 
  private:
   void Run(base::OnceClosure task);

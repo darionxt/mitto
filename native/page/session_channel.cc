@@ -241,6 +241,18 @@ class SessionLink final : public PageChannel::Delegate
             base::BindOnce(&SessionLink::ResponseOnMainThread,
                            base::Unretained(this), *std::move(frame)));
         return;
+      case PageMessage::kIsolation:
+        if (!started_) {
+          Refuse("a cross-origin isolation came before the start");
+          return;
+        }
+        // Only a document's navigation has one, which goes to the main
+        // thread's networking queue in order with its response.
+        networking_->PostTask(
+            FROM_HERE,
+            base::BindOnce(&SessionLink::ResponseOnMainThread,
+                           base::Unretained(this), *std::move(frame)));
+        return;
       case PageMessage::kCookies:
         // The main thread waits for this, so it is handed over here.
         if (!cookie_jar_->Answer(frame->cookies_answer,
@@ -480,6 +492,9 @@ class SessionLink final : public PageChannel::Delegate
         return;
       case PageMessage::kRequestBodyCredit:
         runner_->OnRequestBodyCredit(frame.request_body_credit);
+        return;
+      case PageMessage::kIsolation:
+        runner_->OnIsolation(frame.isolation);
         return;
       default:
         NOTREACHED();

@@ -1130,12 +1130,18 @@ void KnownGapAttributeSetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Value> value;
   if (member.type->kind == IdlTypeKind::kEnumeration) {
     // Web IDL: an attribute's setter ignores a string that is not one of the
-    // enumeration's values, as bind_gen's setters do.
+    // enumeration's values, as bind_gen's setters do, with Blink's warning in
+    // the console (ReportInvalidEnumSetToAttribute()).
     v8::Local<v8::String> string;
     if (!info[0]->ToString(isolate->GetCurrentContext()).ToLocal(&string)) {
       return;
     }
     if (!IsEnumerationValue(isolate, *member.type, string)) {
+      const v8::String::Utf8Value text(isolate, string);
+      PerIsolateData::From(isolate)->ReportConsoleWarning(base::StrCat(
+          {"The provided value '",
+           std::string_view(*text, static_cast<size_t>(text.length())),
+           "' is not a valid enum value of type ", member.type->name, "."}));
       return;
     }
     value = string;

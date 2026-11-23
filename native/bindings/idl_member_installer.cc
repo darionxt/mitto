@@ -24,7 +24,8 @@ namespace mitto::bindings {
 namespace {
 
 // The context's embedder data that holds the objects it made for constructs.
-// Index 0 is Chrome's debugger's (v8-context.h).
+// Index 0 is Chrome's debugger's (v8-context.h), and 2 whether the context is
+// a secure context (per_context_data.cc).
 constexpr int kContextObjectsIndex = 1;
 
 // A member's function, as IDLMemberInstaller's CreateFunctionTemplate() makes
@@ -121,7 +122,18 @@ void ExposedConstructGetter(v8::Local<v8::Name> name,
   v8::Isolate* const isolate = info.GetIsolate();
   const auto& construct = *static_cast<const ExposedConstructInfo*>(
       info.Data().As<v8::External>()->Value(kExposedConstructInfoTag));
-  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  // The construct of the global object's own context, as Blink's
+  // ExposedConstructCallback() takes it from the holder's creation context:
+  // a frame's `w.Document` is the frame's Document, whichever context reads
+  // it.
+  v8::Local<v8::Context> context;
+  if (!info.Holder()->GetCreationContext(isolate).ToLocal(&context)) {
+    context = isolate->GetCurrentContext();
+  }
+  // Made in that context, as V8PerContextData::ConstructorForTypeSlowCase()
+  // enters it, so that what installs by the context, such as a member of an
+  // isolated context alone, reads that context and not the caller's.
+  const v8::Context::Scope context_scope(context);
   switch (construct.kind) {
     case ExposedConstructInfo::Kind::kInterfaceObject:
       info.GetReturnValue().Set(InterfaceObject(context, *construct.target));

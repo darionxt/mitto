@@ -106,16 +106,19 @@ void SessionCookieJar::SetForCookieStore(PageCookieStoreSet set,
   send_.Run(EncodeCookieStoreSet(Window::Current().DocumentId(), set));
 }
 
-void SessionCookieJar::ListenForCookieStore(ChangeListener listener) {
-  const bool listen = !listener.is_null();
-  // The document that listens, whose changes alone it hears of.
-  cookie_store_document_ = Window::Current().DocumentId();
-  if (listen == !cookie_store_listener_.is_null()) {
-    cookie_store_listener_ = std::move(listener);
+void SessionCookieJar::ListenForCookieStore(uint64_t document,
+                                            ChangeListener listener) {
+  if (listener.is_null()) {
+    if (cookie_store_listeners_.erase(document) > 0) {
+      send_.Run(EncodeCookieStoreListen(document, /*listen=*/false));
+    }
     return;
   }
-  cookie_store_listener_ = std::move(listener);
-  send_.Run(EncodeCookieStoreListen(cookie_store_document_, listen));
+  const bool listened = cookie_store_listeners_.contains(document);
+  cookie_store_listeners_.insert_or_assign(document, std::move(listener));
+  if (!listened) {
+    send_.Run(EncodeCookieStoreListen(document, /*listen=*/true));
+  }
 }
 
 bool SessionCookieJar::AnswerCookieStoreGet(PageCookieStoreCookies cookies) {
@@ -170,9 +173,10 @@ void SessionCookieJar::CookieStoreChanged(PageCookieStoreChange change) {
   main_thread_->PostTask(
       FROM_HERE, base::BindOnce(
                      [](SessionCookieJar* jar, PageCookieStoreChange change) {
-                       if (jar->cookie_store_listener_ &&
-                           change.document == jar->cookie_store_document_) {
-                         jar->cookie_store_listener_.Run(change);
+                       const auto found =
+                           jar->cookie_store_listeners_.find(change.document);
+                       if (found != jar->cookie_store_listeners_.end()) {
+                         found->second.Run(change);
                        }
                      },
                      base::Unretained(this), std::move(change)));

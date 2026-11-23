@@ -1,5 +1,5 @@
-// What the bindings keep for a Page's isolate: its features, its time origin,
-// the template of each interface, made once, the dictionaries being converted
+// What the bindings keep for a Page's isolate: its features, the template of
+// each interface, made once, the dictionaries being converted
 // and how to make a DOMException.
 //
 // Upstream: third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h
@@ -18,7 +18,6 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/time/time.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/wrapper_type_info.h"
 #include "v8/include/v8-exception.h"
@@ -29,6 +28,7 @@
 namespace mitto::bindings {
 
 struct ExposedConstructInfo;
+class ReceiverRealmScope;
 class ScriptWrappable;
 
 class PerIsolateData {
@@ -62,6 +62,12 @@ class PerIsolateData {
   // Tells the Session that a document reached a Known Gap, named as the
   // listing names it, such as "Navigator.prototype.getBattery".
   using KnownGapReporter = base::RepeatingCallback<void(std::string_view name)>;
+
+  // Adds a warning to the console of the current context, as Blink's bindings
+  // add one for a value set to an attribute of an enumeration that is none of
+  // its strings.
+  using ConsoleWarningReporter =
+      base::RepeatingCallback<void(std::string_view message)>;
 
   // How the bindings make an object of an interface without a C++ class whose
   // nearest ancestor with a class is EventTarget or Event: an object of that
@@ -112,13 +118,6 @@ class PerIsolateData {
 
   const RuntimeFeatureSet& features() const { return features_; }
 
-  // What DOMHighResTimeStamp counts from: when the Page started, or the start
-  // of the navigation that loaded its document.
-  base::TimeTicks time_origin() const { return time_origin_; }
-  void set_time_origin(base::TimeTicks time_origin) {
-    time_origin_ = time_origin;
-  }
-
   // Where ReportException() sends what it reports. Without one, it goes to
   // standard error.
   const ExceptionReporter& exception_reporter() const {
@@ -128,14 +127,20 @@ class PerIsolateData {
     exception_reporter_ = std::move(reporter);
   }
 
-  // Whether the Page's context is a secure context, which decides whether it
-  // gets the members that Web IDL's [SecureContext] puts behind one. Each
-  // document's origin decides it for the context made for that document, and
-  // a Session's Page's first, about:blank with an opaque origin, is none. The
-  // Page program's command line keeps it, as a file: page is one.
-  bool secure_context() const { return secure_context_; }
-  void set_secure_context(bool secure_context) {
-    secure_context_ = secure_context;
+  // Whether the isolate's current context is a secure context, which decides
+  // whether it gets the members that Web IDL's [SecureContext] puts behind
+  // one (IsSecureContext() in per_context_data.h).
+  bool secure_context() const;
+  // Whether the isolate's current context is cross-origin isolated
+  // (IsCrossOriginIsolated() in per_context_data.h).
+  bool cross_origin_isolated() const;
+
+  // The innermost ReceiverRealmScope, or null.
+  ReceiverRealmScope* receiver_realm_scope() const {
+    return receiver_realm_scope_;
+  }
+  void set_receiver_realm_scope(ReceiverRealmScope* scope) {
+    receiver_realm_scope_ = scope;
   }
 
   // Whether the isolate's contexts are a window's, as a Page's main thread
@@ -179,6 +184,17 @@ class PerIsolateData {
     known_gap_reporter_ = std::move(reporter);
   }
 
+  // Where the bindings add their warnings to the console. Without one, they
+  // add none.
+  void SetConsoleWarningReporter(ConsoleWarningReporter reporter) {
+    console_warning_reporter_ = std::move(reporter);
+  }
+  void ReportConsoleWarning(std::string_view message) const {
+    if (console_warning_reporter_) {
+      console_warning_reporter_.Run(message);
+    }
+  }
+
   // Whether the Known Gap of `number` is reached for the first time in this
   // document, which then remembers it, as Blink's UseCounter counts a feature
   // once for each document.
@@ -218,9 +234,8 @@ class PerIsolateData {
 
   const raw_ptr<v8::Isolate> isolate_;
   const RuntimeFeatureSet features_;
-  base::TimeTicks time_origin_;
   ExceptionReporter exception_reporter_;
-  bool secure_context_ = true;
+  raw_ptr<ReceiverRealmScope> receiver_realm_scope_ = nullptr;
   bool window_ = true;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::Template>> templates_;
   v8::Eternal<v8::ObjectTemplate> holder_template_;
@@ -228,6 +243,7 @@ class PerIsolateData {
       factory_function_templates_;
   DOMExceptionHooks dom_exception_hooks_;
   KnownGapReporter known_gap_reporter_;
+  ConsoleWarningReporter console_warning_reporter_;
   std::vector<bool> reported_known_gaps_;
   std::vector<v8::Eternal<v8::Private>> known_gap_privates_;
   ObjectHooks object_hooks_;

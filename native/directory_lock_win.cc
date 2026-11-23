@@ -36,7 +36,7 @@ DirectoryLock::Result DirectoryLock::Take(const base::FilePath& directory) {
     return Result::kFailed;
   }
   // In the global namespace, so that a process of another logon session sees it
-  // too, as flock() does elsewhere.
+  // too, as the lock file does elsewhere.
   const std::string name =
       base::StrCat({"Global\\mitto-directory-lock-",
                     base::NumberToString(id.VolumeSerialNumber), "-",

@@ -196,9 +196,8 @@ class Document : public Node {
   // The document's origin: the one that a document made by new Document() or
   // DOMImplementation takes from the document that made it, as Blink's
   // DocumentInit::WithExecutionContext() gives it, or else its URL's. An
-  // opaque one is the same each time while the URL stays, as Blink makes a
-  // document's SecurityOrigin once, so that what a context of it registers,
-  // such as a blob: URL, stays its own.
+  // opaque one stays the same, so the document is of its own origin, as each
+  // of Blink's documents has one SecurityOrigin.
   url::Origin GetOrigin() const;
   void SetOrigin(const url::Origin& origin) { origin_ = origin; }
   std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
@@ -480,8 +479,19 @@ class Document : public Node {
   // The text that Blink's KURL keeps of a `url` that does not resolve, empty
   // for one that does.
   std::string UnresolvedUrlSpec(std::u16string_view url) const;
-  // The document's URL, as no frame gives a document of a Page another.
-  GURL FallbackBaseUrl() const { return GURL(url_); }
+  // The HTML Standard's fallback base URL: the about base URL of a document
+  // whose URL matches about:blank and that has one, else the document's URL.
+  // A Page has no srcdoc document yet.
+  GURL FallbackBaseUrl() const;
+  // The HTML Standard's about base URL, which a frame's about:blank document
+  // takes from its creator or from the navigation's initiator, as Blink's
+  // fallback base URL is.
+  void SetAboutBaseUrl(GURL url);
+  // Blink's Document::CookieURL(): the URL whose cookies the document's
+  // CookieStore reads and writes, the document's own unless it took another,
+  // as a frame's about:blank takes its creator's.
+  GURL CookieUrl() const;
+  void SetCookieUrl(GURL url) { cookie_url_ = std::move(url); }
   // Blink's ValidBaseElementURL(): the URL that the first base element with
   // an href gives, if it is valid.
   GURL ValidBaseElementUrl() const {
@@ -511,6 +521,11 @@ class Document : public Node {
   // Chrome's console error for one that names none.
   void ParseAndSetReferrerPolicy(std::u16string_view policy,
                                  ReferrerPolicySource source);
+  // Whether a new entry of the document in the session history keeps its URL
+  // from other documents' Navigation API entries, as Chrome's browser takes
+  // it from the policy container: for a policy of no-referrer or origin that
+  // the response gave.
+  bool ProtectsUrlInNavigationApi() const;
 
   // What fetches the document's subresources, such as its images.
   ResourceFetcher& Fetcher();
@@ -549,6 +564,9 @@ class Document : public Node {
   // load event delay timer runs it.
   void IncrementLoadEventDelayCount() { ++load_event_delay_count_; }
   void DecrementLoadEventDelayCount();
+  // Blink's CheckLoadEventSoon(): CheckCompleted() from a task of the DOM
+  // manipulation task source, unless one waits.
+  void CheckLoadEventSoon();
   // The same, but checks the load event at once, from a task that a delay
   // held, such as an image's load event.
   void DecrementLoadEventDelayCountAndCheckLoadEvent();
@@ -623,6 +641,9 @@ class Document : public Node {
   void SetLoadEventProgress(LoadEventProgress progress) {
     load_event_progress_ = progress;
   }
+  // Whether no frame under the document's still loads, which its load event
+  // waits for, as Blink's AllDescendantsAreComplete() says.
+  bool AllDescendantsAreComplete() const;
   bool LoadEventFinished() const {
     return load_event_progress_ >= LoadEventProgress::kLoadEventCompleted;
   }
@@ -735,6 +756,9 @@ class Document : public Node {
   // CloneDocumentWithoutChildren() makes it.
   virtual Document* CloneDocumentWithoutChildren() const;
  private:
+  // The document's policy changed, which the entry it is at in the session
+  // history takes.
+  void DidChangeReferrerPolicy();
   std::u16string BodyAttribute(std::u16string_view name) const;
   // Blink's SetBodyAttribute(): nothing for a frameset, no body, or the value
   // it already has.
@@ -778,8 +802,8 @@ class Document : public Node {
   const bool is_html_;
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
-  // The opaque origin that GetOrigin() made for the URL it was made for.
-  mutable std::optional<std::pair<std::u16string, url::Origin>> opaque_origin_;
+  // The first opaque origin that its URL gave, which it keeps.
+  mutable std::optional<url::Origin> opaque_origin_;
   std::u16string content_type_;
   std::optional<std::u16string> xml_encoding_;
   std::optional<std::u16string> xml_version_;
@@ -836,9 +860,14 @@ class Document : public Node {
   // none, and the base URL that it gives, empty for one that is not valid.
   GURL base_element_url_;
   GURL base_url_ = GURL("about:blank");
+  GURL about_base_url_;
+  GURL cookie_url_;
   cppgc::Member<DocumentScriptRunner> script_runner_;
   cppgc::Member<ResourceFetcher> fetcher_;
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
+  // The response's policy, which the browser's policy container keeps.
+  FetchReferrerPolicy policy_container_referrer_policy_ =
+      FetchReferrerPolicy::kDefault;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;

@@ -117,6 +117,8 @@ class DOMTimerCoordinator::DOMTimer {
 
   ~DOMTimer() = default;
 
+  void Stop() { timer_.Stop(); }
+
  private:
   void Arm() {
     timer_.Start(FROM_HERE, next_fire_time_,
@@ -236,6 +238,15 @@ void DOMTimerCoordinator::Clear(int32_t id) {
   }
 }
 
+void DOMTimerCoordinator::Stop() {
+  for (const auto& [id, timer] : timers_) {
+    timer->Stop();
+  }
+  for (const std::unique_ptr<DOMTimer>& timer : clearing_) {
+    timer->Stop();
+  }
+}
+
 int32_t DOMTimerCoordinator::Install(std::unique_ptr<Action> action,
                                      int32_t timeout,
                                      bool single_shot) {
@@ -308,9 +319,16 @@ void DOMTimerCoordinator::Execute(const Action& action) {
       std::ignore = script->Run(context);
     }
   }
+  // A function's exception goes to the function's realm, and a string's to
+  // the timer's window.
   if (try_catch.HasCaught() && try_catch.CanContinue()) {
-    bindings::ReportException(isolate_, try_catch.Exception(),
-                              try_catch.Message());
+    if (!action.function.IsEmpty()) {
+      bindings::ReportExceptionInCallbackRealm(
+          isolate_, action.function.Get(isolate_), try_catch);
+    } else {
+      bindings::ReportException(isolate_, try_catch.Exception(),
+                                try_catch.Message());
+    }
   }
 }
 
