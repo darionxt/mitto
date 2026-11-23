@@ -32,6 +32,7 @@
 #include "mitto/dom/frame.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/history.h"
+#include "mitto/dom/history_item.h"
 #include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/idb_factory.h"
 #include "mitto/dom/idle_task_controller.h"
@@ -299,9 +300,13 @@ mitto::Location* Window::Location() {
   return location_.Get();
 }
 
+void Window::SetCurrentHistoryItem(const HistoryItem& item) {
+  current_history_item_ = std::make_unique<HistoryItem>(item);
+}
+
 mitto::History* Window::History() {
   if (!history_) {
-    history_ = History::Create();
+    history_ = History::Create(this);
   }
   return history_.Get();
 }

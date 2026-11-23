@@ -41,6 +41,7 @@ namespace mitto {
 class CacheStorageHost;
 class IndexedDbHost;
 class PageFrame;
+class SessionHistory;
 class PageRequests;
 class SessionCacheStorage;
 class SessionCookieJar;
@@ -112,6 +113,11 @@ class ScriptRunner final : public base::TaskObserver {
   void OnRequestBodyCredit(PageCredit credit);
   void OnIsolation(PageIsolation isolation);
 
+  // Runs `task` with a handle scope, in no context: what it runs enters the
+  // context it belongs to. What Blink does after each task follows once the
+  // task that runs this ends.
+  void RunTask(base::OnceClosure task);
+
   // What the Page's frames use, on the main thread.
   v8::Isolate* isolate() const { return isolate_; }
   const PageStart& start() const { return start_; }
@@ -123,6 +129,8 @@ class ScriptRunner final : public base::TaskObserver {
   PageReporter& reporter() { return *reporter_; }
   PageRequests& requests() { return *requests_; }
   SessionCookieJar& cookie_jar() { return *cookie_jar_; }
+  // The tab's session history, which the top-level frame keeps.
+  SessionHistory& session_history() { return *session_history_; }
   CacheStorageHost* cache_storage_host() const { return cache_storage_host_; }
   IndexedDbHost* indexed_db_host() const { return indexed_db_host_; }
   StorageBucketHost* storage_bucket_host() const {
@@ -171,10 +179,6 @@ class ScriptRunner final : public base::TaskObserver {
   void QueueRejectionReport();
   // Reports those of `rejections` that still have no handler.
   void ReportRejections(std::vector<PageReporter::Rejection> rejections);
-  // Runs `task` with a handle scope, in no context: what it runs enters the
-  // context it belongs to. What Blink does after each task follows once the
-  // task that runs this ends.
-  void RunTask(base::OnceClosure task);
 
   // Returns `value`, the result of `call`, as JSON, or why it cannot be.
   PageEvaluated ResultOf(uint64_t call,
@@ -215,6 +219,8 @@ class ScriptRunner final : public base::TaskObserver {
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   std::unique_ptr<PageRequests> requests_;
+  // The tab's session history, which outlives its documents.
+  std::unique_ptr<SessionHistory> session_history_;
   // The Page's top-level frame, which loads its documents.
   std::unique_ptr<PageFrame> frame_;
   // The frames removed in the current task, as KeepRemovedFrame() keeps them.

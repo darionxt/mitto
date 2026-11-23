@@ -20,8 +20,8 @@ NavigationHistoryEntry* NavigationHistoryEntry::Create(
     std::u16string key,
     std::u16string id,
     std::u16string url,
-    uint64_t document_sequence,
-    std::optional<SerializedScriptValue> state) {
+    int64_t document_sequence,
+    scoped_refptr<const SharedSerializedScriptValue> state) {
   return bindings::MakeGarbageCollected<NavigationHistoryEntry>(
       window, std::move(key), std::move(id), std::move(url), document_sequence,
       std::move(state));
@@ -37,7 +37,7 @@ bindings::ScriptWrappable* NavigationHistoryEntry::CreateForKnownGap(
     const bindings::WrapperTypeInfo& info) {
   return bindings::MakeForKnownGap<NavigationHistoryEntry>(
       info, bindings::V8NavigationHistoryEntry::kWrapperTypeInfo, nullptr,
-      std::u16string(), std::u16string(), std::u16string(), 0, std::nullopt);
+      std::u16string(), std::u16string(), std::u16string(), 0, nullptr);
 }
 
 NavigationHistoryEntry::NavigationHistoryEntry(
@@ -45,8 +45,8 @@ NavigationHistoryEntry::NavigationHistoryEntry(
     std::u16string key,
     std::u16string id,
     std::u16string url,
-    uint64_t document_sequence,
-    std::optional<SerializedScriptValue> state)
+    int64_t document_sequence,
+    scoped_refptr<const SharedSerializedScriptValue> state)
     : window_(window),
       key_(std::move(key)),
       id_(std::move(id)),
@@ -99,7 +99,7 @@ v8::Local<v8::Value> NavigationHistoryEntry::GetState() const {
   if (!Attached() || !state_) {
     return v8::Undefined(isolate);
   }
-  return state_->Deserialize(isolate);
+  return state_->data.Deserialize(isolate);
 }
 
 }  // namespace mitto

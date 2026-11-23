@@ -1489,6 +1489,38 @@ def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None
     assert 'v8::String::NewFromUtf8Literal(isolate, "value"), info[0]' in setter
 
 
+def test_an_attribute_setter_of_an_enumeration_ignores_another_string_with_blinks_warning() -> None:
+    # History's scrollRestoration: Web IDL's attribute setter returns for a string that is none of the enumeration's,
+    # and bind_gen's ReportInvalidEnumSetToAttribute() warns in the console.
+    mode = IdlType(TypeKind.ENUMERATION, "ScrollRestoration")
+    attribute = Attribute("scrollRestoration", mode, False, False, ExtendedAttributes(), ALWAYS)
+    thing = _interface(attributes=(attribute,))
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Thing", "Window"),
+        exposed=tuple(ExposedConstruct(name, "interface", name, ALWAYS) for name in ("Thing", "Window")),
+    )
+    definitions = Definitions(
+        {"Thing": thing, "Window": window}, {}, {}, {"ScrollRestoration": ("auto", "manual")}, frozenset()
+    )
+    implemented = [
+        ImplementedInterface("Thing", "mitto/dom/thing.h"),
+        ImplementedInterface("Window", "mitto/dom/window.h"),
+    ]
+    source = write_bindings(definitions, [], implemented)["v8_thing.cc"]
+
+    setter = source[source.index("void ScrollRestorationAttributeSetCallback") :]
+    setter = setter[: setter.index("\n}")]
+    assert 'u"auto", u"manual"' in setter
+    assert "FromV8EnumerationForSetter(isolate, info[0], " in setter
+    assert '"ScrollRestoration", &value)' in setter
+    assert "FromV8Enumeration(" not in setter
+    assert "impl->SetScrollRestoration(value);" in setter
+
+
 def test_a_factory_function_with_behaviour_calls_the_class_and_the_window_installs_it() -> None:
     # HTMLImageElement's [LegacyFactoryFunction=Image(optional unsigned long width, optional unsigned long height)].
     width = Argument("width", IdlType(TypeKind.INTEGER, "unsigned long"), True, False, None)
