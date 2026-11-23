@@ -734,70 +734,19 @@ bool PageFrame::IsSelfReferential(const GURL& url) const {
 void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
   StopAllLoaders();
   // Chrome's browser answers a frame's data: URL itself, as
-  // DataURLLoaderFactory does, with no request on the wire: an error page for
-  // one it cannot parse, no document for one that would be a download, as
-  // for a response, and otherwise a document of an opaque origin, which
-  // commits from a later task.
-  std::optional<DataUrlResponse> data = ParseDataUrl(request.url);
-  if (!data) {
-    LocalNavigation navigation;
-    navigation.url = GURL(kErrorPageUrl);
-    navigation.committed.source = PageDocumentSource::kErrorPage;
-    CommitWithoutNetworkSoon(std::move(navigation));
-    return;
-  }
-  if (!IsSupportedMimeType(data->mime_type) ||
-      MustDownloadMimeType(data->mime_type)) {
-    // A download, which keeps the frame loading until its answer's task, as
-    // the browser's navigation does until it decides.
-    auto answer = std::make_unique<DataUrlAnswer>();
-    answer->number = ++last_data_url_answer_;
-    answer->download = true;
-    pending_data_url_answer_ = std::move(answer);
-    EventLoop::Get()
-        ->TaskRunner(TaskType::kInternalLoading)
-        ->PostTask(FROM_HERE, base::BindOnce(&PageFrame::AnswerDataUrl,
-                                             weak_factory_.GetWeakPtr(),
-                                             pending_data_url_answer_->number));
-    return;
-  }
-  // The Session takes the initiator's policy container now, as Chrome's
-  // browser gives a local URL's document the initiator's as the navigation
-  // starts.
+  // DataURLLoaderFactory does, with no request on the wire, from a later
+  // task. It takes the initiator's policy container now, as Chrome's browser
+  // gives a local URL's document the initiator's as the navigation starts,
+  // and the navigation's start is now; the URL waits for that task, which
+  // decodes it only if no newer navigation took its place.
   runner_->send().Run(
       EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator));
-  provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
-  provisional_->AnswerByPage();
-  // Its document has the initiator's referrer policy too, and whether a
-  // header gave the initiator a Content-Security-Policy.
-  provisional_->SetInheritedReferrerPolicy(request.initiator_referrer_policy);
-  provisional_->SetInheritedHeaderCsp(request.initiator_has_header_csp);
   provisional_request_ = request;
   provisional_start_ = base::TimeTicks::Now();
   auto answer = std::make_unique<DataUrlAnswer>();
   answer->number = ++last_data_url_answer_;
-  answer->loader = provisional_->GetWeakPtr();
-  PageResponseStarted& response = answer->response;
-  response.status = 200;
-  response.url = request.url.spec();
-  response.headers = base::StrCat({"content-type: ", data->content_type, "\n"});
-  response.navigation_start =
-      (provisional_start_ - base::TimeTicks()).InMicroseconds();
-  // The network quality of no host, as a data: URL has none, not the old
-  // document's, which its host rounded.
-  response.connection = runner_->start().connection;
-  // The document's referrer, which the initiator's outgoing referrer gives a
-  // navigation to the URL under the navigation's referrer policy, as for a
-  // srcdoc or an about:blank.
-  response.referrer = GenerateReferrer(request.referrer_policy, request.url,
-                                       request.initiator_referrer)
-                          .spec();
-  answer->body = std::move(data->body);
-  // DataURLLoaderFactory::OnWrite(): the body's encoded size is the payload's.
-  answer->totals.encoded_body_size =
-      base::checked_cast<int64_t>(answer->body.size());
-  // The answer waits with the navigation, which a newer one takes the place
-  // of, and the task carries only its number.
+  answer->request = request;
+  answer->start = provisional_start_;
   pending_data_url_answer_ = std::move(answer);
   EventLoop::Get()
       ->TaskRunner(TaskType::kInternalLoading)
@@ -810,22 +759,57 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (!pending_data_url_answer_ || pending_data_url_answer_->number != number) {
     return;
   }
-  std::unique_ptr<DataUrlAnswer> answer = std::move(pending_data_url_answer_);
-  if (answer->download) {
+  const std::unique_ptr<DataUrlAnswer> answer =
+      std::move(pending_data_url_answer_);
+  const NavigationRequest& request = answer->request;
+  // An error page for a URL that does not parse, and no document for one
+  // that would be a download, as for a response.
+  std::optional<DataUrlResponse> data = ParseDataUrl(request.url);
+  if (!data) {
+    LocalNavigation navigation;
+    navigation.url = GURL(kErrorPageUrl);
+    navigation.committed.source = PageDocumentSource::kErrorPage;
+    CommitWithoutNetworkSoon(std::move(navigation));
+    return;
+  }
+  if (!IsSupportedMimeType(data->mime_type) ||
+      MustDownloadMimeType(data->mime_type)) {
     LetParentCheckCompleted();
     return;
   }
-  base::WeakPtr<DocumentLoader> loader = answer->loader;
-  if (!loader) {
-    return;
-  }
+  // Otherwise a document of an opaque origin, through a DocumentLoader as a
+  // response, which has the initiator's referrer policy too, and whether a
+  // header gave the initiator a Content-Security-Policy.
+  provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
+  provisional_->AnswerByPage();
+  provisional_->SetInheritedReferrerPolicy(request.initiator_referrer_policy);
+  provisional_->SetInheritedHeaderCsp(request.initiator_has_header_csp);
+  const base::WeakPtr<DocumentLoader> loader = provisional_->GetWeakPtr();
+  PageResponseStarted response;
+  response.status = 200;
+  response.url = request.url.spec();
+  response.headers = base::StrCat({"content-type: ", data->content_type, "\n"});
+  response.navigation_start =
+      (answer->start - base::TimeTicks()).InMicroseconds();
+  // The network quality of no host, as a data: URL has none, not the old
+  // document's, which its host rounded.
+  response.connection = runner_->start().connection;
+  // The document's referrer, which the initiator's outgoing referrer gives a
+  // navigation to the URL under the navigation's referrer policy, as for a
+  // srcdoc or an about:blank.
+  response.referrer = GenerateReferrer(request.referrer_policy, request.url,
+                                       request.initiator_referrer)
+                          .spec();
+  // DataURLLoaderFactory::OnWrite(): the body's encoded size is the payload's.
+  PageResponseEnded totals;
+  totals.encoded_body_size = base::checked_cast<int64_t>(data->body.size());
   const v8::HandleScope handle_scope(runner_->isolate());
-  loader->OnResponseStarted(answer->response);
-  if (loader && !answer->body.empty()) {
-    loader->OnResponseBody(std::move(answer->body));
+  loader->OnResponseStarted(response);
+  if (loader && !data->body.empty()) {
+    loader->OnResponseBody(std::move(data->body));
   }
   if (loader) {
-    loader->OnResponseTotals(answer->totals);
+    loader->OnResponseTotals(totals);
   }
   if (loader) {
     loader->OnResponseEnded(kNetOk);

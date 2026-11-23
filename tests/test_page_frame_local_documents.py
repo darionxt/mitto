@@ -1805,3 +1805,44 @@ def test_a_data_url_frame_s_document_hides_nonces_under_its_initiator_s_csp_head
       }})()
     """
     assert _evaluate(origin, script, "csp") == "hidden"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_of_a_feed_type_is_an_xml_document_of_it(origin: str) -> None:
+    # Chrome's network service shows a feed as text, but a data: URL never goes through it: its document is an XML
+    # document of the feed's type, whose XHTML script runs, as one of application/xml does.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        const add = (type, tag) => {{
+          const frame = document.createElement('iframe');
+          frame.src = 'data:' + type + ',<feed xmlns="http://www.w3.org/2005/Atom">'
+            + '<script xmlns="http://www.w3.org/1999/xhtml">fetch("' + location.origin + '/assets/feed-' + tag + '-"'
+            + ' + document.contentType.replace(/[^a-z]/g, "_") + "-" + document.documentElement.localName)'
+            + '<\\/script></feed>';
+          document.body.appendChild(frame);
+        }};
+        add('application/atom+xml', 'atom');
+        add('application/rss+xml', 'rss');
+        add('application/xml', 'xml');
+        for (let i = 0; i < 300 && (await seen('/assets/feed-xml-application_xml-feed')) === 'unseen'; i++) {{
+          await settle(10);
+        }}
+        await settle(200);
+        const outcomes = ['application_atom_xml-feed', 'application_rss_xml-feed', 'application_xml-feed',
+                          'text_plain-html', 'text_xml-feed'];
+        const found = async (tag) => {{
+          for (const outcome of outcomes) {{
+            if ((await seen('/assets/feed-' + tag + '-' + outcome)) !== 'unseen') return outcome;
+          }}
+          return null;
+        }};
+        return Promise.all(['atom', 'rss', 'xml'].map(found));
+      }})()
+    """
+    assert _evaluate(origin, script) == [
+        "application_atom_xml-feed",
+        "application_rss_xml-feed",
+        "application_xml-feed",
+    ]

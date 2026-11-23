@@ -247,16 +247,12 @@ class PageFrame final : public NavigationClient, public Frame {
   void CommitAboutBlankSynchronously(const GURL& url);
   // A navigation of the frame that commits without the network: to a srcdoc
   // or an about:blank.
-  // The response of a child frame's data: URL, which waits for a later task,
-  // with the navigation that a newer one takes the place of.
+  // A child frame's navigation to a data: URL, which waits for a later task,
+  // which a newer navigation takes the place of.
   struct DataUrlAnswer {
     uint64_t number = 0;
-    base::WeakPtr<DocumentLoader> loader;
-    PageResponseStarted response;
-    std::string body;
-    PageResponseEnded totals;
-    // A data: URL that Chrome downloads, which commits nothing.
-    bool download = false;
+    NavigationRequest request;
+    base::TimeTicks start;
   };
   struct LocalNavigation {
     LocalNavigation();

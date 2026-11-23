@@ -82,9 +82,10 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   std::string mime_type =
       content_type.mime_type.empty() ? "text/html" : content_type.mime_type;
   // URLLoader::StartReading(): Chrome's network service gives a feed's
-  // response as text/plain.
-  if (mime_type == "application/rss+xml" ||
-      mime_type == "application/atom+xml") {
+  // response as text/plain, which a data: URL's, which the browser answers
+  // itself, does not go through.
+  if (!answered_by_page_ && (mime_type == "application/rss+xml" ||
+                             mime_type == "application/atom+xml")) {
     mime_type = "text/plain";
   }
   const DocumentKind document_kind = DocumentKindOf(mime_type);
