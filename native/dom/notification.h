@@ -21,6 +21,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/dom/event_target.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-promise.h"
@@ -59,6 +60,11 @@ class Notification final : public EventTarget {
   // its own, which goes to the deprecated callback first.
   static v8::Local<v8::Promise> RequestPermission(
       std::optional<v8::Local<v8::Function>> deprecated_callback);
+
+ private:
+  // HasPendingActivity(): one that a page made is never closed, since it never
+  // shows, so it stays until its context goes.
+  cppgc::Persistent<Notification> keep_alive_;
 };
 
 }  // namespace mitto

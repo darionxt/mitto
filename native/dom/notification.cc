@@ -89,6 +89,14 @@ Notification* Notification::Create(const std::u16string& title,
     return nullptr;
   }
   Notification* const notification = Create();
+  notification->keep_alive_ = notification;
+  context->AddContextDestroyedCallback(base::BindOnce(
+      [](cppgc::WeakPersistent<Notification> notification) {
+        if (notification) {
+          notification->keep_alive_.Clear();
+        }
+      },
+      cppgc::WeakPersistent<Notification>(notification)));
   // SchedulePrepareShow() and PrepareShow(): a Page has no permission to show
   // it, so error fires from a task of its own.
   PostTaskInContext(context, TaskType::kMiscPlatformAPI,

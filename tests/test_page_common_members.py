@@ -396,6 +396,10 @@ _NOTIFICATION_AS_CHROME = {
         "const parts = []; parts.length = 536346625; return new Blob(parts)",
         "threw: RangeError: Failed to construct 'Blob': Array length exceeds supported limit.",
     ),
+    "new Notification with an encoded chunk as data": (
+        "return new Notification('t', {data: new EncodedVideoChunk({type: 'key', timestamp: 0, data: new Uint8Array(1)})})",
+        "threw: DataCloneError: Failed to construct 'Notification': Encoded chunks cannot be serialized for storage.",
+    ),
     "new Notification fires error": (
         "return new Promise((r) => { const n = new Notification('t', {data: {x: 1}}); n.onerror = (e) =>"
         " r([e.constructor.name, e.type].join()); n.onshow = () => r('show'); })",
@@ -636,6 +640,30 @@ def test_keyword_attributes_reflect_as_chrome_does(program: Path, script: str, e
 )
 def test_notification_does_what_chrome_does(program: Path, script: str, expected: str) -> None:
     assert _evaluate(program, script) == expected
+
+
+def test_a_notification_outlives_a_collection_after_its_error(program: Path) -> None:
+    # Blink's HasPendingActivity() keeps a notification that a page made until it is closed, which one that never
+    # shows never is, so a collection after its error event leaves it, and takes an object that nothing holds
+    # (Chrome for Testing 157 with --expose-gc).
+    script = """let ref;
+        let control;
+        let errors = 0;
+        await new Promise((resolve) => {
+            (() => {
+                const notification = new Notification('t');
+                notification.onerror = () => { errors++; resolve(); };
+                ref = new WeakRef(notification);
+                control = new WeakRef({});
+            })();
+        });
+        await new Promise((resolve) => setTimeout(resolve));
+        gc();
+        await new Promise((resolve) => setTimeout(resolve));
+        gc();
+        return [ref.deref() !== undefined, control.deref() === undefined, errors].join()"""
+
+    assert _evaluate(program, script, "--js-flags=--expose-gc") == "value: true,true,1"
 
 
 _NOTIFICATION_UNDER_FEATURES = {

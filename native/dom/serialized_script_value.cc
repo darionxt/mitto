@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -28,6 +29,8 @@
 #include "mitto/bindings/idl_member_installer.h"
 #include "mitto/bindings/interfaces_without_class.h"
 #include "mitto/bindings/per_isolate_data.h"
+#include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_blob.h"
 #include "mitto/bindings/v8_conversions.h"
@@ -108,6 +111,48 @@ const std::array<CopiedWithoutClass, 8>& CopiedWithoutClassInterfaces() {
       {&bindings::V8DOMQuad::kWrapperTypeInfo, 'T'},
       {&bindings::V8DOMMatrix::kWrapperTypeInfo, 'Y'},
       {&bindings::V8DOMMatrixReadOnly::kWrapperTypeInfo, 'U'},
+  }};
+  return interfaces;
+}
+
+// The interfaces whose objects Blink's V8ScriptValueSerializerForModules
+// refuses to serialize for storage with a message of its own, each behind the
+// feature that it checks first, if any. A Runtime has them without a class.
+struct RefusedForStorage {
+  // RAW_PTR_EXCLUSION: #global-scope, as WrapperTypeInfo's own.
+  RAW_PTR_EXCLUSION const bindings::WrapperTypeInfo* info;
+  std::optional<bindings::RuntimeFeature> feature;
+  const char* message;
+};
+const std::array<RefusedForStorage, 11>& RefusedForStorageInterfaces() {
+  using bindings::RuntimeFeature;
+  static const std::array<RefusedForStorage, 11> interfaces = {{
+      {&bindings::V8RTCEncodedAudioFrame::kWrapperTypeInfo, std::nullopt,
+       "An RTCEncodedAudioFrame cannot be serialized for storage."},
+      {&bindings::V8RTCEncodedVideoFrame::kWrapperTypeInfo, std::nullopt,
+       "An RTCEncodedVideoFrame cannot be serialized for storage."},
+      {&bindings::V8VideoFrame::kWrapperTypeInfo, std::nullopt,
+       "A VideoFrame cannot be serialized for storage."},
+      {&bindings::V8AudioData::kWrapperTypeInfo, std::nullopt,
+       "AudioData cannot be serialized for storage."},
+      {&bindings::V8EncodedAudioChunk::kWrapperTypeInfo, std::nullopt,
+       "Encoded chunks cannot be serialized for storage."},
+      {&bindings::V8EncodedVideoChunk::kWrapperTypeInfo, std::nullopt,
+       "Encoded chunks cannot be serialized for storage."},
+      {&bindings::V8MediaStreamTrack::kWrapperTypeInfo,
+       RuntimeFeature::kMediaStreamTrackTransfer,
+       "A MediaStreamTrack cannot be serialized for storage."},
+      {&bindings::V8RTCDataChannel::kWrapperTypeInfo,
+       RuntimeFeature::kTransferableRTCDataChannel,
+       "An RTCDataChannel cannot be serialized for storage."},
+      {&bindings::V8CropTarget::kWrapperTypeInfo,
+       RuntimeFeature::kRegionCapture,
+       "A CropTarget cannot be serialized for storage."},
+      {&bindings::V8RestrictionTarget::kWrapperTypeInfo,
+       RuntimeFeature::kElementCapture,
+       "A RestrictionTarget cannot be serialized for storage."},
+      {&bindings::V8MediaSourceHandle::kWrapperTypeInfo, std::nullopt,
+       "A MediaSourceHandle cannot be serialized for storage."},
   }};
   return interfaces;
 }
@@ -281,6 +326,9 @@ class Serializer final : public v8::ValueSerializer::Delegate {
       // An object of an interface without a class, with nothing behind it.
       if (WriteObjectWithoutClass(object)) {
         return v8::Just(true);
+      }
+      if (for_storage_ && ThrowIfRefusedForStorage(object)) {
+        return v8::Nothing<bool>();
       }
       std::u16string name;
       bindings::FromV8String(isolate_, object->GetConstructorName(), &name);
@@ -646,6 +694,21 @@ class Serializer final : public v8::ValueSerializer::Delegate {
     for (size_t i = 0; i < interfaces.size(); ++i) {
       if (data->HasInstance(isolate_, *interfaces[i].info, object)) {
         WriteObjectWithoutClass(i);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Whether `object` is of an interface that Blink refuses to serialize for
+  // storage with a message of its own, which it then threw.
+  bool ThrowIfRefusedForStorage(v8::Local<v8::Object> object) {
+    const bindings::PerIsolateData* const data =
+        bindings::PerIsolateData::From(isolate_);
+    for (const RefusedForStorage& refused : RefusedForStorageInterfaces()) {
+      if ((!refused.feature || data->features().IsEnabled(*refused.feature)) &&
+          data->HasInstance(isolate_, *refused.info, object)) {
+        mitto::ThrowDataCloneError(isolate_, refused.message);
         return true;
       }
     }
