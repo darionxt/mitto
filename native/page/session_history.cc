@@ -73,20 +73,38 @@ const FrameNavigationEntry& SessionHistory::CurrentRoot() const {
   return RootAt(current_);
 }
 
-std::optional<size_t> SessionHistory::IndexOfKey(
-    const std::u16string& key) const {
-  // Outwards from the current entry, so that the nearest of a key's entries
-  // wins.
-  for (size_t distance = 0; distance < entries_.size(); ++distance) {
-    for (const bool back : {true, false}) {
-      if (back ? distance > current_ : current_ + distance >= entries_.size()) {
-        continue;
-      }
-      const size_t index = back ? current_ - distance : current_ + distance;
-      if (!entries_[index].initial &&
-          entries_[index].root->item().navigation_api_key == key) {
-        return index;
-      }
+std::optional<size_t> SessionHistory::IndexOfKey(const std::u16string& key,
+                                                 size_t from) const {
+  // NavigateToNavigationApiKey(): back from `from` first, then forward, as
+  // far as the entries of the current entry's origin go, each as
+  // ShouldNavigateToEntryForNavigationApiKey() says.
+  const url::Origin origin =
+      url::Origin::Create(entries_[current_].root->item().url);
+  // Whether the entry at `index` has the key, or nullopt to stop looking.
+  const auto matches = [this, &key, &origin](size_t index) {
+    const Entry& entry = entries_[index];
+    if (entry.initial ||
+        !url::Origin::Create(entry.root->item().url).IsSameOriginWith(origin)) {
+      return std::optional<bool>();
+    }
+    return std::optional<bool>(entry.root->item().navigation_api_key == key);
+  };
+  for (size_t index = from; index-- > 0;) {
+    const std::optional<bool> found = matches(index);
+    if (!found) {
+      break;
+    }
+    if (*found) {
+      return index;
+    }
+  }
+  for (size_t index = from + 1; index < entries_.size(); ++index) {
+    const std::optional<bool> found = matches(index);
+    if (!found) {
+      break;
+    }
+    if (*found) {
+      return index;
     }
   }
   return std::nullopt;

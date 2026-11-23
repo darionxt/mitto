@@ -375,6 +375,37 @@ def test_canceling_the_navigate_event_of_a_traversal_keeps_the_entry(
         ]
 
 
+def test_a_traverse_to_the_entry_that_a_traversal_goes_to_finds_no_entry(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", "<title>Pending</title>")
+    script = """(async () => {
+      const r = [];
+      const settle = p => p.then(() => 'fulfilled', e => 'rejected ' + e.name);
+      history.pushState(null, '', '#a');
+      let inner;
+      navigation.addEventListener('navigate', e => {
+        r.push('navigate ' + e.navigationType + ' ' + new URL(e.destination.url).hash);
+        if (!inner) inner = navigation.traverseTo(e.destination.key);
+      });
+      history.back();
+      await new Promise(resolve => setTimeout(resolve, 100));
+      r.push(await settle(inner.committed), await settle(inner.finished), location.hash, navigation.currentEntry.index);
+      return r;
+    })()"""
+
+    with _open_page(session, url) as page:
+        # Chrome's controller looks for the key from the entry that the traversal goes to, which it leaves out, as
+        # it does the current entry, so the traverseTo() that its navigate event's listener calls finds none.
+        assert page.evaluate(script) == [
+            "navigate traverse ",
+            "rejected InvalidStateError",
+            "rejected InvalidStateError",
+            "",
+            0,
+        ]
+
+
 def test_a_traversal_whose_entry_a_listener_drops_goes_nowhere(session: mitto.Session, server: RecordingServer) -> None:
     url = server.page("/", "<title>Dropped</title>")
     script = """(async () => {

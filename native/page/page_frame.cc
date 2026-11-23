@@ -460,6 +460,18 @@ HistoryCounts PageFrame::GetHistoryCounts() const {
   return history().Counts();
 }
 
+size_t PageFrame::CurrentEntryIndex() const {
+  // GetCurrentEntryIndex(): the pending entry, which a traversal that waits,
+  // or one whose navigate event runs, goes to, or else the current one.
+  if (pending_traversal_index_) {
+    return *pending_traversal_index_;
+  }
+  if (committing_traversal_index_) {
+    return *committing_traversal_index_;
+  }
+  return static_cast<size_t>(history().Counts().index);
+}
+
 void PageFrame::NavigateBackForward(int offset) {
   // The joint session history moves, which only its top-level frame has
   // entries in so far.
@@ -470,10 +482,7 @@ void PageFrame::NavigateBackForward(int offset) {
   // GoToOffsetFromRenderer(): from the entry that a waiting traversal goes
   // to, or the current one, and nowhere past the entries.
   const HistoryCounts counts = history().Counts();
-  const int index =
-      (pending_traversal_index_ ? static_cast<int>(*pending_traversal_index_)
-                                : counts.index) +
-      offset;
+  const int index = static_cast<int>(CurrentEntryIndex()) + offset;
   if (index < 0 || index >= counts.length) {
     return;
   }
@@ -483,7 +492,7 @@ void PageFrame::NavigateBackForward(int offset) {
 void PageFrame::NavigateToNavigationApiKey(const std::u16string& key) {
   // A child frame's entries are none of the session history's yet.
   const std::optional<size_t> index =
-      parent_ ? std::nullopt : history().IndexOfKey(key);
+      parent_ ? std::nullopt : history().IndexOfKey(key, CurrentEntryIndex());
   if (!index) {
     PostHistoryTask(base::BindOnce(
         [](std::u16string key) {
@@ -541,6 +550,8 @@ void PageFrame::GoToItem(int64_t item_sequence_number,
     }
     return;
   }
+  const base::AutoReset<std::optional<size_t>> committing(
+      &committing_traversal_index_, *index);
   if (!GoToIndex(*index) && key) {
     // A traversal that went nowhere ends the traverseTo() that asked for it.
     Window::Current().Navigation()->TraverseCancelled(

@@ -178,6 +178,8 @@ class PageFrame final : public NavigationClient, public Frame {
   // whether it went there or to the document's navigate event, which may
   // cancel it.
   bool GoToIndex(size_t index);
+  // The index that Chrome's controller counts a renderer's traversal from.
+  size_t CurrentEntryIndex() const;
   // The tab's session history, which the top-level frame keeps entries in,
   // and the top-level frame, which a child's traversals go through until
   // frames have entries of their own.
@@ -297,6 +299,8 @@ class PageFrame final : public NavigationClient, public Frame {
   // as Chrome's pending entry, which the next go() counts from.
   std::optional<size_t> pending_traversal_index_;
   int waiting_traversals_ = 0;
+  // The entry that the traversal whose navigate event runs goes to.
+  std::optional<size_t> committing_traversal_index_;
   // Whether the old document's unload events run, as a new one commits.
   bool unloading_for_commit_ = false;
   NavigationRateLimiter navigation_rate_limiter_;

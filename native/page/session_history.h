@@ -87,8 +87,11 @@ class SessionHistory final {
   // The current entry's top-level frame entry.
   const FrameNavigationEntry& CurrentRoot() const;
   // The index of the entry whose top-level frame entry has the Navigation
-  // API key `key`, nearest the current one, as Chrome finds it.
-  std::optional<size_t> IndexOfKey(const std::u16string& key) const;
+  // API key `key`, as Chrome's controller finds it from the entry at `from`,
+  // its pending one or else the current one: the nearest before it, then the
+  // nearest after it, of the current entry's origin, and never that entry.
+  std::optional<size_t> IndexOfKey(const std::u16string& key,
+                                   size_t from) const;
   // The index of the entry whose top-level frame entry is the item of
   // sequence number `item_sequence_number`, if one still is.
   std::optional<size_t> IndexOfItem(int64_t item_sequence_number) const;
