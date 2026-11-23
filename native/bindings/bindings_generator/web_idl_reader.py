@@ -253,7 +253,10 @@ def group_condition(group: Any, global_names: list[str]) -> Condition:
         return conditions[0]
     return Condition(
         alternatives=tuple(dict.fromkeys(conditions)),
-        context_dependent=bool(group.exposure.is_context_dependent(global_names)),
+        context_dependent=bool(
+            group.exposure.is_context_dependent(global_names)
+            or any(condition.context_dependent for condition in conditions)
+        ),
     )
 
 
@@ -311,7 +314,12 @@ def condition_of(exposure: Any, global_names: list[str]) -> Condition:
     return Condition(
         features=tuple(features),
         other=tuple(other),
-        context_dependent=bool(exposure.is_context_dependent(global_names)),
+        # bind_gen's is_context_dependent() leaves out [CrossOriginIsolatedOrRuntimeEnabled], but Chrome decides it for
+        # each context: a frame that is not isolated in an isolated page lacks such a member, whichever realm made the
+        # interface's templates.
+        context_dependent=bool(
+            exposure.is_context_dependent(global_names) or exposure.only_in_coi_contexts_or_runtime_enabled_features
+        ),
     )
 
 
