@@ -2133,11 +2133,12 @@ std::string EncodeSameDocumentNavigation(uint64_t document,
 
 std::string EncodeTraversalRequest(uint64_t document,
                                    const PageTraversalRequest& traversal) {
-  const char flags = traversal.same_document_entry ? 1 : 0;
+  const char fixed[2] = {traversal.same_document_entry ? '\1' : '\0',
+                         static_cast<char>(traversal.referrer_policy)};
   return EncodeDocumentFrame(
       PageMessage::kTraversalRequest, document,
       base::StrCat({EncodeUint64(traversal.number),
-                    EncodeUint64(traversal.record), std::string_view(&flags, 1),
+                    EncodeUint64(traversal.record), std::string_view(fixed, 2),
                     traversal.url}));
 }
 
@@ -2554,7 +2555,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.same_document_url = std::move(payload);
       return frame;
     case PageMessage::kTraversalRequest: {
-      if (payload.size() < 18) {
+      if (payload.size() < 19) {
         return base::unexpected(WrongSize("traversal request", payload.size()));
       }
       const std::string_view bytes = payload;
@@ -2569,10 +2570,17 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
             {"a traversal request with flags ", base::NumberToString(flags)}));
       }
       frame.traversal.same_document_entry = flags == 1;
-      if (!IsText(bytes.substr(17))) {
+      const uint8_t policy = static_cast<uint8_t>(bytes[17]);
+      if (policy > kLastReferrerPolicy) {
+        return base::unexpected(
+            base::StrCat({"a traversal request with referrer policy ",
+                          base::NumberToString(policy)}));
+      }
+      frame.traversal.referrer_policy = static_cast<PageReferrerPolicy>(policy);
+      if (!IsText(bytes.substr(18))) {
         return base::unexpected("a traversal request whose URL is not UTF-8");
       }
-      frame.traversal.url = std::string(bytes.substr(17));
+      frame.traversal.url = std::string(bytes.substr(18));
       return frame;
     }
     case PageMessage::kRecordsReleased: {

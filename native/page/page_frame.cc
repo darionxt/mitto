@@ -57,8 +57,9 @@ namespace {
 constexpr base::TimeDelta kDuplicateWindow = base::Milliseconds(3000);
 
 // What a traversal request's payload holds beside its URL: the document's ID,
-// the number and the record, each a 64-bit number, and a byte of flags.
-constexpr size_t kTraversalOverhead = 3 * 8 + 1;
+// the number and the record, each a 64-bit number, a byte of flags and one of
+// the referrer policy.
+constexpr size_t kTraversalOverhead = 3 * 8 + 2;
 
 // A parser's client that gives it no body, for a document that has none, as
 // an about:blank that a frame commits synchronously has.
@@ -437,7 +438,15 @@ void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
   // own.
   if (!parent_) {
     const uint64_t document = window_->DocumentId();
-    history().DidCommitSameDocumentNavigation(item, type, document);
+    // The document's policy, Chrome's own where it has none, as the referrer
+    // of a same-document commit goes with it.
+    const FetchReferrerPolicy policy =
+        window_->GetDocument().GetReferrerPolicy();
+    history().DidCommitSameDocumentNavigation(
+        item, type, document,
+        policy == FetchReferrerPolicy::kDefault
+            ? PageReferrerPolicy::kStrictOriginWhenCrossOrigin
+            : ToPageReferrerPolicy(policy));
     ReleaseRecords(document);
     // A new entry discards the pending one, which a later go() no longer
     // counts from, as Chrome's controller discards it.
@@ -505,6 +514,11 @@ void PageFrame::NavigateBackForward(int offset) {
     Top().NavigateBackForward(offset);
     return;
   }
+  // Nothing traverses while a new document commits, as FrameLoader's
+  // FrameNavigationDisabler has it while the old document's frames unload.
+  if (unloading_for_commit_) {
+    return;
+  }
   // RenderFrameHostImpl::GoToEntryAtOffset(): ignored while a history
   // navigation waits, without the user's activation.
   if (TraversalWaits()) {
@@ -523,7 +537,7 @@ void PageFrame::NavigateBackForward(int offset) {
 void PageFrame::NavigateToNavigationApiKey(const std::u16string& key) {
   // RenderFrameHostImpl::NavigateToNavigationApiKey(): ignored while a
   // history navigation waits, without the user's activation.
-  if (Top().TraversalWaits()) {
+  if (Top().TraversalWaits() || Top().unloading_for_commit_) {
     return;
   }
   // A child frame's entries are none of the session history's yet.
@@ -622,6 +636,7 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   PageTraversalRequest traversal;
   traversal.record = entry.record();
   traversal.same_document_entry = entry.same_document_entry();
+  traversal.referrer_policy = entry.referrer_policy();
   traversal.url = target.url.spec();
   // The tab's initial entry holds no navigation, and no traversal goes there,
   // nor to a URL that a Page message cannot carry, which no Chrome would have.
@@ -646,7 +661,7 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   }
   // MaybeDispatchNavigateEventForCrossDocumentTraversal(): for an entry of
   // the document's origin only.
-  if (url::IsSameOriginWith(target.url, GURL(document.UrlForBinding()))) {
+  if (document.GetOrigin().IsSameOriginWith(url::Origin::Create(target.url))) {
     Navigation::NavigateParams params;
     params.url = target.url;
     params.load_type = FrameLoadType::kBackForward;

@@ -1186,3 +1186,97 @@ def test_a_traversal_to_an_entry_the_session_did_not_see_goes_nowhere(
         with pytest.raises(mitto.RequestError):
             _next_document(page)
         assert page.evaluate("[location.pathname, history.length]") == ["/b", 2]
+
+
+def test_an_entry_within_a_document_keeps_the_document_s_referrer_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/eb", "<title>EB</title>", _NO_STORE)
+    pushed = server.page("/ep", "<title>EP</title>", _NO_STORE)
+    third = server.page("/c", "<title>C</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/eb'; 0")
+        assert _next_document(page).url == second
+        page.evaluate(
+            "const m = document.createElement('meta'); m.name = 'referrer'; m.content = 'no-referrer';"
+            " document.head.append(m); history.pushState(null, '', '/ep'); location.href = '/c'; 0"
+        )
+        assert _next_document(page).url == third
+        page.evaluate("history.back()")
+        assert _next_document(page).url == pushed
+    # The entry that pushState() made goes with the document's policy then, which sends no Referer, as in Chrome.
+    (traversed,) = server.headers_of("/ep")
+    assert "Referer" not in dict(traversed)
+
+
+def test_a_frame_cannot_traverse_its_parent_while_the_parent_commits(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    third = server.page("/c", "<title>C</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate(
+            "const f = document.createElement('iframe'); document.body.append(f);"
+            " f.contentWindow.addEventListener('pagehide', () => { parent.history.back(); });"
+            " location.href = '/c'; 0"
+        )
+        assert _next_document(page).url == third
+        assert page.evaluate(
+            "new Promise(r => setTimeout(() => r([location.pathname, history.length, navigation.currentEntry.index]),"
+            " 300))"
+        ) == ["/c", 3, 2]
+
+
+def test_a_traversal_past_another_origin_fires_navigate_with_no_destination_entry(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    other = server.page("/b", "<title>B</title>").replace("127.0.0.1", "localhost")
+    third = server.page("/c", "<title>C</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(f"location.href = '{other}'; 0")
+        assert _next_document(page).url == other
+        page.evaluate(f"location.href = '{third}'; 0")
+        assert _next_document(page).url == third
+        assert (
+            page.evaluate(
+                "navigation.addEventListener('navigate', e => { sessionStorage.seen = JSON.stringify([e.navigationType,"
+                " e.destination.index, e.cancelable, e.canIntercept, new URL(e.destination.url).pathname]); });"
+                " history.go(-2); navigation.entries().length"
+            )
+            == 1
+        )
+        assert _next_document(page).url == first
+        assert page.evaluate("JSON.parse(sessionStorage.seen)") == ["traverse", -1, False, False, "/a"]
+
+
+def test_a_traversal_that_a_critical_client_hint_restarts_starts_its_entry_anew(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/tcc", "<title>TCC</title>", _NO_STORE)
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("history.replaceState({s: 1}, ''); location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        server.page(
+            "/tcc",
+            "<title>TCC</title>",
+            [
+                *_NO_STORE,
+                ("Accept-CH", "Sec-CH-UA-Full-Version-List"),
+                ("Critical-CH", "Sec-CH-UA-Full-Version-List"),
+            ],
+        )
+        page.evaluate("history.back()")
+        assert _next_document(page).url == first
+        # The restart for the hint counts as a redirect, which leaves nothing of the entry, as in Chrome.
+        assert page.evaluate("[location.pathname, history.state]") == ["/tcc", None]
+    assert len(server.headers_of("/tcc")) == 3

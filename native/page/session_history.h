@@ -34,6 +34,7 @@
 #include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
+#include "mitto/page_messages.h"
 #include "url/origin.h"
 
 namespace mitto {
@@ -43,10 +44,12 @@ namespace mitto {
 class FrameNavigationEntry final
     : public base::RefCounted<FrameNavigationEntry> {
  public:
-  FrameNavigationEntry(std::string unique_name,
-                       HistoryItem item,
-                       uint64_t record,
-                       bool same_document_entry);
+  FrameNavigationEntry(
+      std::string unique_name,
+      HistoryItem item,
+      uint64_t record,
+      bool same_document_entry,
+      PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument);
 
   FrameNavigationEntry(const FrameNavigationEntry&) = delete;
   FrameNavigationEntry& operator=(const FrameNavigationEntry&) = delete;
@@ -61,6 +64,9 @@ class FrameNavigationEntry final
   // Whether a navigation within that document made the entry, whose URL the
   // Session heard of then.
   bool same_document_entry() const { return same_document_entry_; }
+  // The policy that the record's Referer goes with for the entry: for one
+  // that a navigation within the document made, the document's policy then.
+  PageReferrerPolicy referrer_policy() const { return referrer_policy_; }
 
  private:
   friend class base::RefCounted<FrameNavigationEntry>;
@@ -70,6 +76,7 @@ class FrameNavigationEntry final
   HistoryItem item_;
   const uint64_t record_;
   const bool same_document_entry_;
+  const PageReferrerPolicy referrer_policy_;
 };
 
 class SessionHistory final {
@@ -120,7 +127,8 @@ class SessionHistory final {
   // kBackForward the entry of its item became the current one.
   void DidCommitSameDocumentNavigation(const HistoryItem& item,
                                        FrameLoadType type,
-                                       uint64_t record);
+                                       uint64_t record,
+                                       PageReferrerPolicy referrer_policy);
   // The current entry's item changed in place.
   void UpdateCurrentItem(const HistoryItem& item);
   // The Navigation API keys of the entries dropped past kMaxEntries since the

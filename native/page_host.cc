@@ -3023,6 +3023,10 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
     options.fetch->initiator = record.url;
     options.fetch->opaque_initiator.reset();
   }
+  if (traversal.referrer_policy != PageReferrerPolicy::kDocument) {
+    options.fetch->referrer_policy =
+        ToNetReferrerPolicy(traversal.referrer_policy);
+  }
   // The Referer that the navigation sent last, to which the policy of its
   // first request applies again, as Chrome's FrameNavigationEntry keeps the
   // committed referrer with the request's policy.

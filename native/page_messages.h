@@ -729,13 +729,18 @@ struct PageIsolation {
 // repeats an entry's own navigation, whose Initiator and Referer the Session
 // keeps. Its payload is the number, as a request's, the record, each a 64-bit
 // number, a byte of flags, 1 for an entry that a navigation within that
-// document made, and then the URL in UTF-8, which is the rest: the record's
-// URL for an entry of its navigation, or one that a navigation within it gave
-// it.
+// document made, a byte of the referrer policy, as a request's, and then the
+// URL in UTF-8, which is the rest: the record's URL for an entry of its
+// navigation, or one that a navigation within it gave it.
 struct PageTraversalRequest {
   uint64_t number = 0;
   uint64_t record = kNoDocument;
   bool same_document_entry = false;
+  // The policy that the record's Referer goes with: kDocument for the policy
+  // of the navigation's own request, and for an entry that a navigation
+  // within the document made, the document's policy when it made it, as
+  // Chrome's FrameNavigationEntry keeps the referrer of each commit.
+  PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument;
   std::string url;
 };
 

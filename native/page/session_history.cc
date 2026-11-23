@@ -34,11 +34,13 @@ Navigation::ApiEntry ToApiEntry(const HistoryItem& item,
 FrameNavigationEntry::FrameNavigationEntry(std::string unique_name,
                                            HistoryItem item,
                                            uint64_t record,
-                                           bool same_document_entry)
+                                           bool same_document_entry,
+                                           PageReferrerPolicy referrer_policy)
     : unique_name_(std::move(unique_name)),
       item_(std::move(item)),
       record_(record),
-      same_document_entry_(same_document_entry) {}
+      same_document_entry_(same_document_entry),
+      referrer_policy_(referrer_policy) {}
 
 FrameNavigationEntry::~FrameNavigationEntry() = default;
 
@@ -161,23 +163,27 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
   return arrays;
 }
 
-void SessionHistory::DidCommitSameDocumentNavigation(const HistoryItem& item,
-                                                     FrameLoadType type,
-                                                     uint64_t record) {
+void SessionHistory::DidCommitSameDocumentNavigation(
+    const HistoryItem& item,
+    FrameLoadType type,
+    uint64_t record,
+    PageReferrerPolicy referrer_policy) {
   // An entry within the document repeats the navigation that made the
   // document, with the document's origin as its Initiator.
   switch (type) {
     case FrameLoadType::kStandard: {
       Entry entry;
       entry.root = base::MakeRefCounted<FrameNavigationEntry>(
-          std::string(), item, record, /*same_document_entry=*/true);
+          std::string(), item, record, /*same_document_entry=*/true,
+          referrer_policy);
       PushEntry(std::move(entry));
       return;
     }
     case FrameLoadType::kReplaceCurrentItem:
     case FrameLoadType::kReload:
       entries_[current_].root = base::MakeRefCounted<FrameNavigationEntry>(
-          std::string(), item, record, /*same_document_entry=*/true);
+          std::string(), item, record, /*same_document_entry=*/true,
+          referrer_policy);
       return;
     case FrameLoadType::kBackForward:
       if (const std::optional<size_t> index =
