@@ -598,8 +598,11 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
               ? owner->FindAttribute(u"srcdoc")
               : nullptr;
       // A sandboxed frame's srcdoc would run with the flags that its sandbox
-      // withholds, which the Page cannot enforce yet, so it commits nothing.
+      // withholds, which the Page cannot enforce yet, so it commits nothing,
+      // and the parent, whose load event the document that the navigation
+      // aborted may have held back, checks again.
       if (IsSandboxed()) {
+        CheckParentLoadSoon();
         return;
       }
       navigation.body = srcdoc ? *srcdoc : std::u16string();
