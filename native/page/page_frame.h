@@ -238,8 +238,10 @@ class PageFrame final : public NavigationClient, public Frame {
     LocalNavigation& operator=(LocalNavigation&&);
     ~LocalNavigation();
 
-    // Its number among the frame's, which the newest takes.
+    // Its number among the frame's, which the newest takes, and when it
+    // started.
     uint64_t number = 0;
+    base::TimeTicks start;
     GURL url;
     // Its source, kSrcdoc or kAboutBlank, and an about:blank's initiator.
     PageDocumentCommitted committed;

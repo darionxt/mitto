@@ -312,21 +312,26 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   const bool reuse_window = old_document.IsInitialEmptyDocument() &&
                             old_document.GetOrigin().IsSameOriginWith(origin);
   {
-    const v8::Context::Scope old_scope(context());
-    if (current_) {
-      current_->StopLoading();
+    // DocumentLoader::CommitNavigation(): no script of the old document or
+    // of its frames starts a navigation of this frame meanwhile.
+    const FrameNavigationDisabler navigation_disabler(*this);
+    {
+      const v8::Context::Scope old_scope(context());
+      if (current_) {
+        current_->StopLoading();
+      }
+      old_document.DispatchUnloadEvents();
     }
-    old_document.DispatchUnloadEvents();
-  }
-  // A listener of the old document's unload events, or of its frames', that
-  // removed the frame's element took the frame away, which then commits
-  // nothing.
-  if (detaching_) {
-    return;
-  }
-  DetachChildren();
-  if (detaching_) {
-    return;
+    // A listener of the old document's unload events, or of its frames',
+    // that removed the frame's element took the frame away, which then
+    // commits nothing.
+    if (detaching_) {
+      return;
+    }
+    DetachChildren();
+    if (detaching_) {
+      return;
+    }
   }
   Document* document = nullptr;
   CookieStore* const cookie_store =
@@ -344,8 +349,10 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     const v8::Local<v8::Object> global_proxy = context()->Global();
     DetachWindow();
     context()->DetachGlobal();
+    // The new window's time origin is the navigation's start, as Blink's is,
+    // before the old document's unload events and the task that commits.
     const v8::Local<v8::Context> context =
-        NewContext(base::TimeTicks::Now(), origin,
+        NewContext(navigation.start, origin,
                    /*cross_origin_isolated=*/false, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
@@ -370,7 +377,11 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   document->SetReferrer(navigation.referrer);
   document->SetReferrerPolicy(navigation.referrer_policy);
   document->SetAboutBaseUrl(navigation.about_base_url);
-  document->SetCookieUrl(navigation.cookie_url);
+  // A srcdoc takes its parent's cookie URL as it commits, as Blink's
+  // DocumentInit does from its owner document, and as the Session does.
+  document->SetCookieUrl(url.IsAboutSrcdoc()
+                             ? parent_->window_->GetDocument().CookieUrl()
+                             : navigation.cookie_url);
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
@@ -553,9 +564,13 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     // are Known Gaps for now: it keeps its document.
     CancelLocalNavigation();
     if (!request.url.IsAboutSrcdoc() && !request.url.IsAboutBlank()) {
+      // The navigation aborted the document, which may have held the
+      // parent's load event back, and starts no loader in its place.
+      CheckParentLoadSoon();
       return;
     }
     LocalNavigation navigation;
+    navigation.start = base::TimeTicks::Now();
     navigation.url = request.url;
     navigation.reload = request.reload;
     // Its document's referrer is what the initiator's outgoing referrer gives
@@ -800,6 +815,9 @@ Document& PageFrame::CommitDocument(
           ? static_cast<Document*>(XMLDocument::Create(*xml_content_type))
           : Document::CreateHTML();
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
+  // Blink's Document::CookieURL() is the URL it was made at, which a
+  // navigation within it leaves, as the Session keeps it too.
+  document->SetCookieUrl(url);
   // Only a document that the Session loaded over HTTP or HTTPS has cookies
   // there; another's origin is opaque to them.
   if (url.SchemeIsHTTPOrHTTPS()) {

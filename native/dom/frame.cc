@@ -58,8 +58,13 @@ bool Frame::IsDescendantOf(const Frame& other) const {
 }
 
 bool Frame::IsSandboxed() const {
-  const HTMLFrameOwnerElement* const owner = Owner();
-  return owner && owner->FindAttribute(u"sandbox");
+  for (const Frame* frame = this; frame; frame = frame->Parent()) {
+    const HTMLFrameOwnerElement* const owner = frame->Owner();
+    if (owner && owner->FindAttribute(u"sandbox")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace mitto

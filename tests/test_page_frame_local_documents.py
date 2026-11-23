@@ -733,3 +733,133 @@ def test_a_top_level_document_that_a_frame_at_a_query_opens_takes_its_url(origin
     ):
         assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "about:blank?v=1"
         assert page.url == "about:blank?v=1"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_child_that_navigates_it_as_it_commits_starts_nothing(origin: str) -> None:
+    # The child's pagehide, as the frame's next srcdoc commits, sets the frame's location: nothing starts.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a<iframe></iframe>';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.contentWindow.frames[0].addEventListener(
+          'pagehide', () => {{ element.contentWindow.location.href = 'about:blank'; }});
+        element.srcdoc = '<p>b';
+        await settle(500);
+        return [element.contentDocument.URL, element.contentDocument.body.textContent];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["about:srcdoc", "b"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_frame_in_a_sandboxed_frame_runs_no_script(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        const sandboxed = document.createElement('iframe');
+        sandboxed.sandbox = 'allow-same-origin';
+        document.body.appendChild(sandboxed);
+        await settle(100);
+        const nested = sandboxed.contentDocument.createElement('iframe');
+        nested.srcdoc = '<script>top.ran = true<\\/script>';
+        sandboxed.contentDocument.body.appendChild(nested);
+        await settle(500);
+        return window.ran === true;
+      }})()
+    """
+    assert _evaluate(origin, script) is False
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_load_waits_no_more_for_a_srcdoc_that_its_navigation_aborts(origin: str) -> None:
+    # The inner srcdoc waits for a script, so the outer frame's load waits for it, until taking srcdoc away navigates
+    # the inner frame to its src, which aborts the srcdoc. Chrome loads the src; a frame's navigation through the
+    # Session is still a Known Gap, but the outer frame loads either way.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        const outer = document.createElement('iframe');
+        outer.srcdoc = '<iframe src="/other" srcdoc="<script src=/stall></script>"></iframe>';
+        let outerLoaded = false;
+        outer.addEventListener('load', () => {{ outerLoaded = true; }});
+        document.body.appendChild(outer);
+        for (let i = 0; i < 100; i++) {{
+          const inner = outer.contentDocument && outer.contentDocument.querySelector('iframe');
+          const d = inner && inner.contentDocument;
+          if (d && d.URL === 'about:srcdoc' && d.readyState === 'loading') break;
+          await settle(10);
+        }}
+        const before = outerLoaded;
+        outer.contentDocument.querySelector('iframe').removeAttribute('srcdoc');
+        await settle(1000);
+        return [before, outerLoaded];
+      }})()
+    """
+    assert _evaluate(origin, script) == [False, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_keeps_its_parent_s_cookie_url_after_the_parent_navigates_within_itself(origin: str) -> None:
+    # The parent navigates within itself to /app/sub/x while its frame's srcdoc waits: both keep the cookie URL that
+    # the parent was made at, so a cookie that either sets with no path is /app's. Each writes over a pipe of its own
+    # in Chrome, so the cookies' order is sorted.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const intercepted = (url) => {{
+          navigation.addEventListener('navigate', (e) => {{ if (e.canIntercept) e.intercept(); }}, {{once: true}});
+          return navigation.navigate(url).committed;
+        }};
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>c';
+        document.body.appendChild(element);
+        await intercepted('/app/sub/x');
+        await loaded(element);
+        element.contentDocument.cookie = 'q=1';
+        document.cookie = 'p=1';
+        const fromSrcdoc = await element.contentWindow.cookieStore.get({{name: 'c1', url: '/app/page'}})
+          .then((v) => v ? v.name : null, (e) => e.name);
+        const sorted = async (path) => {{
+          const [referrer, cookies] = (await (await fetch(path)).text()).split('|');
+          return referrer + '|' + cookies.split('; ').sort().join('; ');
+        }};
+        const result = [location.pathname, fromSrcdoc, await sorted('/app/echo'), await sorted('/app/sub/echo')];
+        await intercepted('/app/page');
+        return result;
+      }})()
+    """
+    assert _evaluate(origin, script) == [
+        "/app/sub/x",
+        "c1",
+        "ORIGIN/app/sub/x|c1=v1; p=1; q=1",
+        "ORIGIN/app/sub/x|c1=v1; p=1; q=1",
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_s_navigation_counts_from_its_start(origin: str) -> None:
+    # The old srcdoc's slow pagehide counts in the new one's navigation, whose time origin is the navigation's start;
+    # a srcdoc shows no unload times.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>t1';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.contentWindow.addEventListener('pagehide', () => {{
+          const end = Date.now() + 300;
+          while (Date.now() < end) {{}}
+        }});
+        element.srcdoc = '<p>t2';
+        await loaded(element);
+        const e = element.contentWindow.performance.getEntriesByType('navigation')[0];
+        return [e.domInteractive > 250, e.unloadEventStart, e.unloadEventEnd, e.startTime];
+      }})()
+    """
+    assert _evaluate(origin, script) == [True, 0, 0, 0]

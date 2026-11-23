@@ -2791,6 +2791,9 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         frame_navigation_responses_.erase(found);
       }
       context.origin = url::Origin::Create(context.url);
+      // Blink's Document::CookieURL() is the URL it was made at, which a
+      // navigation within it leaves, as the Page keeps it too.
+      context.cookie_url = context.url;
       break;
     case PageDocumentSource::kAboutBlank:
     case PageDocumentSource::kSrcdoc: {
@@ -2941,7 +2944,8 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
   GURL& document_url = context.url;
   const GURL new_url(url);
   if (!new_url.is_valid() ||
-      (!context.origin.IsSameOriginWith(new_url) &&
+      (!url::Origin::Create(document_url)
+            .IsSameOriginWith(url::Origin::Create(new_url)) &&
        document_url.GetWithoutRef() != new_url.GetWithoutRef() &&
        !(document_url.IsAboutBlank() && new_url.IsAboutBlank()) &&
        !(document_url.IsAboutSrcdoc() && new_url.IsAboutSrcdoc()))) {

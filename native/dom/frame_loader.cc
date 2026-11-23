@@ -249,8 +249,10 @@ void StartNavigation(Window& window,
     return;
   }
   // FrameNavigationDisabler and the page dismissal events: a navigation that
-  // beforeunload, pagehide or unload starts does not start.
-  if (document.PageDismissalEventBeingDispatched()) {
+  // beforeunload, pagehide or unload starts does not start, nor one of a
+  // frame whose document commits.
+  if (document.PageDismissalEventBeingDispatched() ||
+      (frame && !frame->IsNavigationAllowed())) {
     return;
   }
   // A navigation of the initial about:blank replaces it.
