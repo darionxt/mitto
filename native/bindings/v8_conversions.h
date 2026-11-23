@@ -307,6 +307,17 @@ bool FromV8Enumeration(v8::Isolate* isolate,
 // desktop, whose Oilpan compresses its pointers.
 size_t SequenceCapacity(IdlTypeKind item_kind, bool item_nullable);
 
+// bind_gen's setter of an attribute of an enumeration: converts `value` to a
+// DOMString, and returns true if it is one of `values`, the strings of the
+// enumeration named `type_name`. Another string adds Blink's warning to the
+// console, as ReportInvalidEnumSetToAttribute() does, and returns false, and
+// the setter then does nothing. Returns false too if anything threw.
+bool FromV8EnumerationForSetter(v8::Isolate* isolate,
+                                v8::Local<v8::Value> value,
+                                base::span<const std::u16string_view> values,
+                                std::string_view type_name,
+                                std::u16string* result);
+
 // Web IDL's conversion of `value` to a sequence: gets its @@iterator and calls
 // `each` with each item, until `each` returns false. An array is read by its
 // indices instead, as Blink reads one, after Blink's RangeError for more than

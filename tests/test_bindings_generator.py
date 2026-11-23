@@ -48,7 +48,7 @@ from bindings_generator.model import (
 from bindings_generator.runtime_features import read_features
 from bindings_generator.table_writer import Construct, KnownGapContext, write_tables
 from bindings_generator.type_tables import TypeTables
-from bindings_generator.web_idl_reader import Definitions
+from bindings_generator.web_idl_reader import Definitions, condition_of, group_condition
 
 BINDINGS = Path(__file__).resolve().parents[1] / "native" / "bindings"
 
@@ -127,6 +127,63 @@ def test_it_names_cpp_after_web_idl(name: str, file: str, function: str, member:
 def test_it_refuses_an_extended_attribute_it_does_not_know_and_names_it() -> None:
     with pytest.raises(UnhandledError, match=r"^attribute Thing\.on: .* \[Unheard\]$"):
         extended_attributes.check("attribute Thing.on", ["Measure", "Unheard"])
+
+
+def test_it_reads_and_writes_a_member_exposed_to_cross_origin_isolated_contexts() -> None:
+    # bind_gen installs such a member by the context's capability, which condition_test() reads of PerContextData, so
+    # neither the reader's check nor the writer's refuses the attributes.
+    keys = ["CrossOriginIsolated", "CrossOriginIsolatedOrRuntimeEnabled"]
+    extended_attributes.check("operation Thing.measure", keys)
+    cpp_writer._check_written("operation Thing.measure", _extended(*keys))  # pyright: ignore[reportPrivateUsage]
+
+
+class _Exposure:
+    """What condition_of() reads of Blink's web_idl.Exposure, which bind_gen counts as context dependent or not."""
+
+    def __init__(self, *, coi_or_features: tuple[str, ...] = (), context_dependent: bool = False) -> None:
+        self.only_in_coi_contexts = False
+        self.only_in_coi_contexts_or_runtime_enabled_features = coi_or_features
+        self.only_in_injection_mitigated_contexts = False
+        self.only_in_isolated_contexts = False
+        self.only_in_secure_contexts = False
+        self.global_names_and_features: tuple[object, ...] = ()
+        self.runtime_enabled_features: tuple[object, ...] = ()
+        self.context_enabled_features: tuple[str, ...] = ()
+        self._context_dependent = context_dependent
+
+    def is_context_dependent(self, global_names: list[str] | None = None) -> bool:
+        return self._context_dependent
+
+
+class _Overload:
+    def __init__(self, exposure: _Exposure) -> None:
+        self.exposure = exposure
+
+
+class _Group(list[_Overload]):
+    def __init__(self, overloads: list[_Overload], exposure: _Exposure) -> None:
+        super().__init__(overloads)
+        self.exposure = exposure
+
+
+def test_a_member_exposed_to_isolated_contexts_or_by_a_feature_is_installed_for_each_context() -> None:
+    # Performance.measureUserAgentSpecificMemory(): bind_gen's is_context_dependent() leaves the attribute out, but
+    # Chrome for Testing 157 gives it to an isolated window and not to a same-origin frame there that is not isolated,
+    # even once the window made Performance's templates. So it goes in the per-context phase, not the templates.
+    measure = condition_of(_Exposure(coi_or_features=("UnrestrictedMeasureUserAgentSpecificMemory",)), ["Window"])
+    plain = condition_of(_Exposure(), ["Window"])
+    group = group_condition(
+        _Group(
+            [_Overload(_Exposure(coi_or_features=("F",))), _Overload(_Exposure(coi_or_features=("G",)))], _Exposure()
+        ),
+        ["Window"],
+    )
+
+    assert measure.other == ("CrossOriginIsolatedOrRuntimeEnabled=UnrestrictedMeasureUserAgentSpecificMemory",)
+    assert measure.context_dependent
+    assert not plain.context_dependent
+    assert len(group.alternatives) == 2
+    assert group.context_dependent
 
 
 def test_it_knows_every_extended_attribute_with_a_reason() -> None:
@@ -703,12 +760,17 @@ def test_a_nullable_reflected_attribute_reads_its_keywords() -> None:
             "((data->is_window() && (features.IsEnabled(RuntimeFeature::kF))) || !data->is_window())",
         ),
         (Condition(other=("ContextEnabled=X",)), None),
-        (Condition(other=("CrossOriginIsolated",)), None),
+        (Condition(other=("CrossOriginIsolated",)), "data->cross_origin_isolated()"),
+        (
+            Condition(other=("CrossOriginIsolatedOrRuntimeEnabled=F,G",)),
+            "(data->cross_origin_isolated() || features.IsEnabled(RuntimeFeature::kF) || "
+            "features.IsEnabled(RuntimeFeature::kG))",
+        ),
     ],
 )
 def test_a_page_installs_what_its_conditions_allow(condition: Condition, test: str | None) -> None:
     # A Page is a secure top-level window with no origin trials and nothing a context enables, and so are its dedicated
-    # workers, each of whose isolates has only workers' contexts.
+    # workers, each of whose isolates has only workers' contexts. Each context is cross-origin isolated or not.
     assert condition_test(condition, "Thing.x") == test
 
 
@@ -1479,6 +1541,38 @@ def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None
     assert 'v8::String::NewFromUtf8Literal(isolate, "classList")' in setter
     assert '"The attribute value is not an object"' in setter
     assert 'v8::String::NewFromUtf8Literal(isolate, "value"), info[0]' in setter
+
+
+def test_an_attribute_setter_of_an_enumeration_ignores_another_string_with_blinks_warning() -> None:
+    # History's scrollRestoration: Web IDL's attribute setter returns for a string that is none of the enumeration's,
+    # and bind_gen's ReportInvalidEnumSetToAttribute() warns in the console.
+    mode = IdlType(TypeKind.ENUMERATION, "ScrollRestoration")
+    attribute = Attribute("scrollRestoration", mode, False, False, ExtendedAttributes(), ALWAYS)
+    thing = _interface(attributes=(attribute,))
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Thing", "Window"),
+        exposed=tuple(ExposedConstruct(name, "interface", name, ALWAYS) for name in ("Thing", "Window")),
+    )
+    definitions = Definitions(
+        {"Thing": thing, "Window": window}, {}, {}, {"ScrollRestoration": ("auto", "manual")}, frozenset()
+    )
+    implemented = [
+        ImplementedInterface("Thing", "mitto/dom/thing.h"),
+        ImplementedInterface("Window", "mitto/dom/window.h"),
+    ]
+    source = write_bindings(definitions, [], implemented)["v8_thing.cc"]
+
+    setter = source[source.index("void ScrollRestorationAttributeSetCallback") :]
+    setter = setter[: setter.index("\n}")]
+    assert 'u"auto", u"manual"' in setter
+    assert "FromV8EnumerationForSetter(isolate, info[0], " in setter
+    assert '"ScrollRestoration", &value)' in setter
+    assert "FromV8Enumeration(" not in setter
+    assert "impl->SetScrollRestoration(value);" in setter
 
 
 def test_a_factory_function_with_behaviour_calls_the_class_and_the_window_installs_it() -> None:

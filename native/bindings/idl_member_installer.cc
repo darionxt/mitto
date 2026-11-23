@@ -130,6 +130,10 @@ void ExposedConstructGetter(v8::Local<v8::Name> name,
   if (!info.Holder()->GetCreationContext(isolate).ToLocal(&context)) {
     context = isolate->GetCurrentContext();
   }
+  // Made in that context, as V8PerContextData::ConstructorForTypeSlowCase()
+  // enters it, so that what installs by the context, such as a member of an
+  // isolated context alone, reads that context and not the caller's.
+  const v8::Context::Scope context_scope(context);
   switch (construct.kind) {
     case ExposedConstructInfo::Kind::kInterfaceObject:
       info.GetReturnValue().Set(InterfaceObject(context, *construct.target));

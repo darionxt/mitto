@@ -44,6 +44,7 @@
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_factory.h"
 #include "mitto/dom/frame.h"
+#include "mitto/dom/history_item.h"
 #include "mitto/dom/html_all_collection.h"
 #include "mitto/dom/html_details_element.h"
 #include "mitto/dom/html_document.h"
@@ -1510,6 +1511,41 @@ void Document::UpdateBaseUrl() {
   }
 }
 
+namespace {
+
+// NavigationControllerImpl::ShouldProtectUrlInNavigationApi().
+bool ShouldProtectUrlInNavigationApi(FetchReferrerPolicy policy) {
+  return policy == FetchReferrerPolicy::kNoReferrer ||
+         policy == FetchReferrerPolicy::kOrigin;
+}
+
+}  // namespace
+
+bool Document::ProtectsUrlInNavigationApi() const {
+  return ShouldProtectUrlInNavigationApi(policy_container_referrer_policy_);
+}
+
+void Document::DidChangeReferrerPolicy() {
+  // NavigationControllerImpl::DidChangeReferrerPolicy(): the entry that the
+  // document is at keeps its URL from other documents' Navigation API entries
+  // as the policy says, and the entries before it stay as they were.
+  if (!window_ || &window_->GetDocument() != this) {
+    return;
+  }
+  HistoryItem* const item = window_->MutableCurrentHistoryItem();
+  if (!item) {
+    return;
+  }
+  const bool protect = ShouldProtectUrlInNavigationApi(referrer_policy_);
+  if (item->protect_url_in_navigation_api == protect) {
+    return;
+  }
+  item->protect_url_in_navigation_api = protect;
+  if (NavigationClient* const client = window_->GetNavigationClient()) {
+    client->DidUpdateCurrentHistoryItem(*item);
+  }
+}
+
 void Document::ParseAndSetReferrerPolicy(std::u16string_view policy,
                                          ReferrerPolicySource source) {
   FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
@@ -1538,6 +1574,10 @@ void Document::ParseAndSetReferrerPolicy(std::u16string_view policy,
   }
   if (policy_is_valid) {
     referrer_policy_ = referrer_policy;
+    if (source == ReferrerPolicySource::kHttpHeader) {
+      policy_container_referrer_policy_ = referrer_policy;
+    }
+    DidChangeReferrerPolicy();
     return;
   }
   // A header that names no policy leaves the document's, with no message.

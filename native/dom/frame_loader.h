@@ -11,24 +11,34 @@
 // Upstream: third_party/blink/renderer/core/frame/navigation_rate_limiter.cc
 // Upstream: third_party/blink/renderer/core/loader/frame_loader.cc
 // Upstream: third_party/blink/renderer/core/loader/document_loader.cc
+// Upstream: third_party/blink/renderer/core/frame/history.cc
 
 #ifndef MITTO_DOM_FRAME_LOADER_H_
 #define MITTO_DOM_FRAME_LOADER_H_
 
+#include <memory>
+#include <optional>
+#include <string>
+
 #include "base/memory/raw_ptr_exclusion.h"
+#include "mitto/bindings/exception_state.h"
+#include "mitto/dom/serialized_script_value.h"
 #include "url/gurl.h"
 
 namespace mitto {
 
 class Element;
+struct HistoryItem;
 class Window;
 
 // Blink's WebFrameLoadType, which the session history and the Navigation API
-// see: a new entry, the current one replaced, or the document reloaded.
+// see: a new entry, the current one replaced, the document reloaded, or a
+// traversal to an entry that the session history has.
 enum class FrameLoadType {
   kStandard,
   kReplaceCurrentItem,
   kReload,
+  kBackForward,
 };
 
 // Blink's ClientNavigationReason: what started a navigation.
@@ -70,6 +80,55 @@ void Navigate(Window& window,
 void StartNavigation(Window& window,
                      const FrameLoadRequest& request,
                      FrameLoadType type);
+
+// NavigationRateLimiter::CanProceed() for the window's frame: whether one more
+// navigation, pushState(), replaceState() or history.go() may go, at most 200
+// in 10 seconds, with a warning in the console for the first past that.
+bool CanProceedWithNavigation(Window& window);
+
+// History::StateObjectAdded(): the rest of pushState() and replaceState(),
+// once their data has been serialized as `state` and the window is known to be
+// fully active: the URL, `url` resolved against the document's base URL, or
+// the document's own for none, which the document must be able to take, or
+// this throws Blink's SecurityError; the rate limit; the navigate event; then
+// the URL and history update steps, with no popstate.
+void AddStateObject(Window& window,
+                    scoped_refptr<const SharedSerializedScriptValue> state,
+                    const std::optional<std::u16string>& url,
+                    FrameLoadType type,
+                    bindings::ExceptionState& exception_state);
+
+// Blink's mojom::SameDocumentNavigationType, as far as a Page has them.
+enum class SameDocumentNavigationType : uint8_t {
+  kFragment,
+  kHistoryApi,
+  kNavigationApiIntercept,
+};
+
+// DocumentLoader::UpdateForSameDocumentNavigation(): the document takes `url`
+// and an entry, `history_item` for a traversal, and otherwise a new one or one
+// in place of the current one, as HistoryItem::ForCommit() makes it, with
+// `state` for pushState() and replaceState(); the session history and the
+// Session hear of it, the Navigation API's entries change, and popstate fires
+// with the entry's state if `fire_popstate`.
+void UpdateForSameDocumentNavigation(
+    Window& window,
+    const GURL& url,
+    const HistoryItem* history_item,
+    SameDocumentNavigationType navigation_type,
+    scoped_refptr<const SharedSerializedScriptValue> state,
+    FrameLoadType type,
+    bool fire_popstate);
+
+// What a same-document traversal does with the window's document, as Blink's
+// DocumentLoader::CommitSameDocumentNavigation() has it for a kBackForward
+// load: nothing for the entry it is at already; otherwise the navigate event,
+// which may cancel it, then hashchange queued if the fragment changes, the
+// entry, its state and URL, currententrychange and the Navigation API's
+// promises, popstate, and the fragment's target. Returns false if the navigate
+// event canceled it, and the session history stays where it was.
+bool CommitSameDocumentHistoryNavigation(Window& window,
+                                         const HistoryItem& item);
 
 }  // namespace mitto
 
