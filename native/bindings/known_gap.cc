@@ -21,6 +21,7 @@
 #include "mitto/bindings/idl_member_installer.h"
 #include "mitto/bindings/interface_table.h"
 #include "mitto/bindings/pair_iterable.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
@@ -1013,6 +1014,11 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
   if (!asynchronous && !(member.flags & kMemberIteratorReturn)) {
     if (PairIterationSource* const source =
             PairIterationSourceOf(isolate, info.This(), &kind)) {
+      // The result is of the iterator's realm, whatever realm next() comes
+      // from, as Blink makes it with the receiver's ScriptState.
+      const ReceiverRealmScope receiver_realm(isolate, info.This());
+      const v8::Context::Scope context_scope(
+          ReceiverRealmScope::CreationContext(isolate));
       info.GetReturnValue().Set(source->Next(isolate, kind));
       return;
     }

@@ -700,8 +700,9 @@ class _InterfaceWriter:
         body = self._receiver()
         if member.name in ("entries", "keys", "values"):
             kind = {"entries": "kKeyValue", "keys": "kKey", "values": "kValue"}[member.name]
+            # The iterator is of the receiver's realm, as bind_gen makes it with the receiver's ScriptState.
             body += [
-                "const v8::Local<v8::Context> context = isolate->GetCurrentContext();",
+                "const v8::Local<v8::Context> context = ReceiverRealmScope::CreationContext(isolate);",
                 "v8::Local<v8::Value> iterator;",
                 f"if (NewPairIterator(context, V8{collection.iterator}::kWrapperTypeInfo,",
                 f"                    impl->CreateIterationSource(), PairIterationKind::{kind})",

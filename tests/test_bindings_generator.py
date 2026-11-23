@@ -1459,6 +1459,8 @@ def test_a_pair_iterable_with_behaviour_takes_its_source_from_the_class() -> Non
     assert '#include "mitto/bindings/pair_iterable.h"' in source
     for kind in ("kKeyValue", "kKey", "kValue"):
         assert f"impl->CreateIterationSource(), PairIterationKind::{kind})" in source
+    # The iterator is of the receiver's realm, as bind_gen makes it with the receiver's ScriptState.
+    assert "const v8::Local<v8::Context> context = ReceiverRealmScope::CreationContext(isolate);" in source
     assert "NewPairIterator(context, V8SyncIterator_Thing::kWrapperTypeInfo," in source
     assert "impl->CreateIterationSource()->ForEach(isolate, arg1_callback, info[1], info.This());" in source
     assert "v8::Symbol::GetIterator(isolate)" in source

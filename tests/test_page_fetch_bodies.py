@@ -7,11 +7,19 @@ value is what Chrome 157.0.8103.79 gave for the same script, in a page of its ow
 names the Page program, as tests/test_page_program.py does.
 """
 
+import http.server
 import os
 import subprocess
+import threading
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+import mitto
+from mitto import _native
+from tests.local_server import QuietServer
 
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
 _TIMEOUT_SECONDS = 120
@@ -304,3 +312,55 @@ def _evaluate(program: Path, script: str) -> str:
 @pytest.mark.parametrize(("script", "chrome"), BODIES.values(), ids=BODIES.keys())
 def test_form_bodies_and_iterators_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script) == chrome
+
+
+@pytest.fixture
+def page_url(native_library: Any) -> Iterator[str]:
+    """The URL of an empty page on 127.0.0.1, or skip if no Page program lies beside the library."""
+    library_path = _native.find_library()
+    assert library_path is not None
+    if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
+        pytest.skip("no Page program beside the library")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            body = b"<!doctype html><title>t</title><body>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
+
+    server = QuietServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}/"
+    server.shutdown()
+    server.server_close()
+
+
+def test_a_pair_iterator_and_its_results_are_of_the_receivers_realm(page_url: str) -> None:
+    # As Chrome 157 gave it: a frame's entries() called on the window's Headers gives the window's iterator, and a
+    # frame's next() called on that iterator gives a result of the window's realm.
+    script = """
+      (() => {
+        const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow;
+        const h = new Headers([['a', '1']]);
+        const it = w.Headers.prototype.entries.call(h);
+        const own = Object.getPrototypeOf(h.entries());
+        const theirs = Object.getPrototypeOf(new w.Headers().entries());
+        const step = w.Object.getPrototypeOf(it).next.call(it);
+        return [Object.getPrototypeOf(it) === own, Object.getPrototypeOf(it) === theirs,
+                Object.getPrototypeOf(step) === Object.prototype,
+                Object.getPrototypeOf(step) === w.Object.prototype].join();
+      })()
+    """
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "true,false,true,false"
