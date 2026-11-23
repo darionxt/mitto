@@ -52,6 +52,7 @@ def origin() -> Iterator[str]:
         def do_GET(self) -> None:
             path = urllib.parse.urlsplit(self.path)
             headers: dict[str, str] = {}
+            status = 200
             if path.path == "/app/page":
                 body, content_type = _PAGE, "text/html"
                 headers["Set-Cookie"] = "c1=v1; Path=/app"
@@ -60,6 +61,8 @@ def origin() -> Iterator[str]:
             elif path.path.startswith("/assets/"):
                 seen[path.path] = self.headers.get("Referer") or "none"
                 body, content_type = b"export default 1;", "text/javascript"
+                if path.path == "/assets/based-x":
+                    headers["Access-Control-Allow-Origin"] = "*"
             elif path.path == "/seen":
                 body = seen.get(urllib.parse.parse_qs(path.query)["path"][0], "unseen").encode()
                 content_type = "text/plain"
@@ -80,6 +83,43 @@ def origin() -> Iterator[str]:
             elif path.path == "/selfembed":
                 seen[path.path] = str(int(seen.get(path.path, "0")) + 1)
                 body, content_type = b"<!doctype html><p>s<iframe src=/selfembed></iframe>", "text/html"
+            elif path.path == "/late":
+                # Three seconds late: a 204 for ?204, else a document.
+                time.sleep(3)
+                body, content_type = b"<!doctype html><p>late", "text/html"
+                if path.query == "204":
+                    status, body = 204, b""
+            elif path.path == "/nest":
+                # A document that embeds /lsreport at 127.0.0.1.
+                body = (
+                    b"<!doctype html><script>const f = document.createElement('iframe');"
+                    b"f.src = 'http://127.0.0.1:' + location.port + '/lsreport'; document.documentElement.append(f)"
+                    b"</script>"
+                )
+                content_type = "text/html"
+            elif path.path == "/lsreport":
+                # Reports what localStorage and sessionStorage hold, then writes to both.
+                body = (
+                    b"<!doctype html><script>fetch('/assets/ls-' + localStorage.getItem('x') + '-'"
+                    b" + sessionStorage.getItem('x')).then(() => {"
+                    b" localStorage.setItem('x', 'inner'); sessionStorage.setItem('x', 'inner');"
+                    b" return fetch('/assets/ls-written'); })</script>"
+                )
+                content_type = "text/html"
+            elif path.path == "/slowworker":
+                time.sleep(1)
+                body, content_type = b"postMessage('w');", "text/javascript"
+            elif path.path == "/based":
+                # Half a second late, an inline module under a base element of localhost's /assets/based-x imports a
+                # module.
+                time.sleep(0.5)
+                body = (
+                    b"<!doctype html><script>const o = 'http://127.0.0.1:' + location.port;"
+                    b" document.write('<base href=\"http://localhost:' + location.port + '/assets/based-x\">"
+                    b"<script type=module>import \"' + o + '/assets/based-m\";"
+                    b' fetch(location.origin + "/assets/based-done")<\\/script>\')</script>'
+                )
+                content_type = "text/html"
             elif path.path == "/slow":
                 time.sleep(0.3)
                 body, content_type = b"<!doctype html><p>slow", "text/html"
@@ -92,7 +132,7 @@ def origin() -> Iterator[str]:
                 content_type = "text/plain"
             else:
                 body, content_type = b"<p>other", "text/html"
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", content_type)
             for name, value in headers.items():
                 self.send_header(name, value)
@@ -1166,3 +1206,101 @@ def test_a_frame_whose_url_two_ancestors_have_loads_nothing(origin: str) -> None
       }})()
     """
     assert _evaluate(origin, script) == ["ORIGIN/selfembed", "ORIGIN/selfembed", "about:blank", "2"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_a_loaded_frame_gains_holds_back_a_loading_ancestor_until_it_ends(origin: str) -> None:
+    # Each outer frame parses for two seconds behind a script after its srcdoc child has loaded, which then gains a
+    # frame that ends three seconds later, with a 204 or a document: the outer frame's load waits for it, and fires.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const outer = async (query) => {{
+          const element = document.createElement('iframe');
+          element.srcdoc = '<iframe srcdoc="<p>b"></iframe><script src="/stall"><\\/script>';
+          document.body.appendChild(element);
+          const outerLoaded = loaded(element);
+          let child = null;
+          for (let i = 0; i < 200; i++) {{
+            child = element.contentDocument && element.contentDocument.querySelector('iframe');
+            if (child && child.contentDocument && child.contentDocument.URL === 'about:srcdoc'
+                && child.contentDocument.readyState === 'complete') break;
+            await settle(10);
+          }}
+          const grandchild = child.contentDocument.createElement('iframe');
+          grandchild.src = '/late?' + query;
+          child.contentDocument.body.appendChild(grandchild);
+          return Promise.race([outerLoaded.then(() => true), settle(8000).then(() => false)]);
+        }};
+        return Promise.all([outer('204'), outer('document')]);
+      }})()
+    """
+    assert _evaluate(origin, script) == [True, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_of_the_top_level_origin_under_another_site_has_storage_of_its_own(origin: str) -> None:
+    # The frame at 127.0.0.1 under a frame of localhost has the storage key of 127.0.0.1 under a site with another site
+    # between, so neither storage holds what the top-level document wrote, and what it writes stays its own.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        localStorage.setItem('x', 'top');
+        sessionStorage.setItem('x', 'top');
+        const element = document.createElement('iframe');
+        element.src = location.origin.replace('127.0.0.1', 'localhost') + '/nest';
+        document.body.appendChild(element);
+        const seen = async (path) => (await fetch('/seen?path=' + path)).text();
+        for (let i = 0; i < 300 && (await seen('/assets/ls-written')) === 'unseen'; i++) await settle(10);
+        const reported = [];
+        for (const value of ['top-top', 'null-null']) {{
+          if ((await seen('/assets/ls-' + value)) !== 'unseen') reported.push(value);
+        }}
+        return [reported, localStorage.getItem('x'), sessionStorage.getItem('x')];
+      }})()
+    """
+    assert _evaluate(origin, script) == [["null-null"], "top", "top"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_a_frame_s_initial_about_blank_starts_ends_no_page_as_its_window_is_reused(origin: str) -> None:
+    # The worker's script comes after the frame's document of the same origin has taken the window.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = '/slow';
+        document.body.appendChild(element);
+        element.contentWindow.eval("new Worker('/slowworker')");
+        await loaded(element);
+        await settle(1500);
+        return element.contentDocument.body.textContent;
+      }})()
+    """
+    assert _evaluate(origin, script) == "slow"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_document_in_a_reused_window_imports_under_a_base_its_initial_about_blank_fetched(
+    origin: str,
+) -> None:
+    # The initial about:blank fetched the URL that the frame's document, which keeps its window, names in its base
+    # element, before that document came; the document's inline module still imports, and the Page goes on.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = '/based';
+        document.body.appendChild(element);
+        const base = location.origin.replace('127.0.0.1', 'localhost') + '/assets/based-x';
+        await element.contentWindow.fetch(base);
+        await loaded(element);
+        const seen = async (path) => (await fetch('/seen?path=' + path)).text();
+        for (let i = 0; i < 300 && (await seen('/assets/based-done')) === 'unseen'; i++) await settle(10);
+        return [(await seen('/assets/based-m')) !== 'unseen', (await seen('/assets/based-done')) !== 'unseen'];
+      }})()
+    """
+    assert _evaluate(origin, script) == [True, True]

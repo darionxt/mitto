@@ -182,7 +182,7 @@ def test_frames_that_navigate_through_the_session_are_chrome_s(page_url: str) ->
     # tests/frames_navigation_cases.js against tests/data/frames_navigation_cases.json, as Chrome for Testing 157 gave
     # it on a server that answers as answer() does.
     with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-        record = page.evaluate(_NAVIGATION_CASES)
+        record = page.evaluate(_NAVIGATION_CASES, timeout=_TIMEOUT_SECONDS)
     origin = page_url.rstrip("/")
     as_chrome = json.loads(json.dumps(_NAVIGATION_AS_CHROME["record"]).replace("ORIGIN", origin))
 

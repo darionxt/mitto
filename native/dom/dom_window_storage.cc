@@ -1,15 +1,19 @@
 #include "mitto/dom/dom_window_storage.h"
 
 #include <iterator>
+#include <vector>
 
 #include "base/no_destructor.h"
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/dom/cached_storage_area.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/storage.h"
 #include "mitto/dom/storage_backend.h"
 #include "mitto/dom/window.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -26,6 +30,41 @@ constexpr size_t kTotalCacheLimitInBytes = 5 * 1024 * 1024;
 // bind, where Chrome's browser takes any number. An area that goes loads
 // again from the Session when a window reaches it, so no script can tell.
 constexpr size_t kMaxCachedAreas = kMaxPageStorageAreas / 2;
+
+// net::SchemefulSite of `origin`: its scheme and registrable domain, or its
+// host where it has none, and an opaque origin its own.
+std::string SiteOf(const url::Origin& origin) {
+  if (origin.opaque()) {
+    return origin.GetDebugString();
+  }
+  const std::string domain =
+      net::registry_controlled_domains::GetDomainAndRegistry(
+          origin, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+  return base::StrCat(
+      {origin.scheme(), "://", domain.empty() ? origin.host() : domain});
+}
+
+// The storage key that the Session gives the window's document of `origin`,
+// as RenderFrameHostImpl::CalculateStorageKey() has it with third-party
+// storage partitioning: the origin, the site of the top-level document, and
+// whether a document from the window's up to it is of another site.
+std::string StorageKeyOf(const Window& window, const url::Origin& origin) {
+  std::vector<url::Origin> documents = {origin};
+  const Frame* const frame = window.GetFrame();
+  for (const Frame* ancestor = frame ? frame->Parent() : nullptr; ancestor;
+       ancestor = ancestor->Parent()) {
+    if (const Window* const ancestor_window = ancestor->DomWindow()) {
+      documents.push_back(ancestor_window->GetSecurityOrigin());
+    }
+  }
+  const std::string top_site = SiteOf(documents.back());
+  bool cross_site = false;
+  for (const url::Origin& document : documents) {
+    cross_site = cross_site || SiteOf(document) != top_site;
+  }
+  return base::StrCat({origin.Serialize(), " ", top_site,
+                       cross_site ? " cross-site" : " same-site"});
+}
 
 }  // namespace
 
@@ -51,11 +90,11 @@ Storage* WindowStorage(Window& window,
   if (!StorageBackend::Get()) {
     return nullptr;
   }
-  // Until frames have storage keys of their own, the key of the Page's only
-  // document is its origin, first party.
+  // Documents of one origin in two partitions, as a top-level document's and
+  // a frame's of the same origin under another site, have an area each.
   slot = Storage::Create(
-      window, StorageController::Get().GetCachedArea(kind, origin.Serialize(),
-                                                     window.DocumentId()));
+      window, StorageController::Get().GetCachedArea(
+                  kind, StorageKeyOf(window, origin), window.DocumentId()));
   return slot.Get();
 }
 

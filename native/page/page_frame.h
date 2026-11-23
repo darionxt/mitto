@@ -211,10 +211,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // The frame's children go, each as Detach() has it, when the frame goes or
   // its document goes and its elements with it.
   void DetachChildren();
-  // A frame that loaded held its parent's load event back, which checks
-  // again once the frame stops, as Blink's does: from a task, since the
-  // element's removal may still be under way, and not while the parent's own
-  // document goes.
+  // A frame that loaded held its parent's load event back, or an ancestor's,
+  // which checks again once the frame stops, as Blink's does: from a task,
+  // since the element's removal may still be under way, and not while the
+  // parent's own document goes.
   void CheckParentLoadSoon();
   // A srcdoc or an about:blank that waits commits nothing then, and the
   // parent, whose load event it held back, checks again.
@@ -222,6 +222,11 @@ class PageFrame final : public NavigationClient, public Frame {
   // A navigation through the Session that waits for its response ends, as a
   // newer one takes its place.
   void CancelProvisionalNavigation();
+  // The window that a frame's initial about:blank leaves to a document of
+  // its origin keeps it, as Blink's does, but the Session forgets the old
+  // document: its fetches end, and its dedicated workers, which Chrome keeps
+  // with the window, are terminated.
+  void EndOldDocumentInWindow();
   // Whether two of the frame's ancestors' documents are at `url`, but for the
   // fragment.
   bool IsSelfReferential(const GURL& url) const;

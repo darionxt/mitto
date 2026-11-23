@@ -361,6 +361,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     if (cookie_store) {
       cookie_store->DocumentWillChange();
     }
+    EndOldDocumentInWindow();
     window_->SetDocumentId(SendDocumentCommitted(committed));
     document = Document::CreateHTML();
     // A reused window keeps its time origin, while the new document's
@@ -471,12 +472,10 @@ void PageFrame::CheckParentLoadSoon() {
     return;
   }
   PageFrame& parent = *parent_;
+  // A parent that has loaded checks too, for an ancestor that waits for it.
   if (!parent.detaching_ && !parent.detaching_children_ && parent.window_ &&
       parent.window_->HasDocument()) {
-    Document& parent_document = parent.window_->GetDocument();
-    if (!parent_document.LoadEventFinished()) {
-      parent_document.CheckLoadEventSoon();
-    }
+    parent.window_->GetDocument().CheckLoadEventSoon();
   }
 }
 
@@ -910,6 +909,7 @@ Document& PageFrame::CommitDocument(
     if (cookie_store) {
       cookie_store->DocumentWillChange();
     }
+    EndOldDocumentInWindow();
     window_->SetDocumentId(SendDocumentCommitted(committed));
   } else {
     // The frame keeps its WindowProxy, which takes the new window, as
@@ -1126,6 +1126,17 @@ void PageFrame::AttachWindow(const PageConnection& connection,
         send.Run(EncodeConsole(message));
       },
       runner_->send()));
+}
+
+void PageFrame::EndOldDocumentInWindow() {
+  // Its fetches end, and the next document has had no response; the old
+  // fetcher goes from a later task, in case one of its clients runs below.
+  fetcher_->Stop();
+  base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+      FROM_HERE, std::move(fetcher_));
+  fetcher_ = std::make_unique<PageFetcher>(runner_->requests());
+  window_->SetFetcher(fetcher_.get());
+  worker_starter_->TerminateWorkers();
 }
 
 void PageFrame::DetachWindow() {

@@ -1840,8 +1840,9 @@ void Document::CheckCompleted() {
     http_refresh_scheduler_->MaybeStartTimer();
   }
   // FrameLoader::DidFinishNavigation(): once a frame has loaded, its parent
-  // checks whether all of its frames have.
-  if (load_event_runs && window_) {
+  // checks whether all of its frames have, each time, so that one whose load
+  // event ran before a frame under it started holds back no ancestor.
+  if (window_) {
     if (Frame* const frame = window_->GetFrame()) {
       if (Frame* const parent = frame->Parent()) {
         if (Window* const parent_window = parent->DomWindow();
