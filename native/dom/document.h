@@ -195,7 +195,9 @@ class Document : public Node {
   std::u16string Domain() const;
   // The document's origin: the one that a document made by new Document() or
   // DOMImplementation takes from the document that made it, as Blink's
-  // DocumentInit::WithExecutionContext() gives it, or else its URL's.
+  // DocumentInit::WithExecutionContext() gives it, or else its URL's. An
+  // opaque one stays the same, so the document is of its own origin, as each
+  // of Blink's documents has one SecurityOrigin.
   url::Origin GetOrigin() const;
   void SetOrigin(const url::Origin& origin) { origin_ = origin; }
   std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
@@ -792,6 +794,8 @@ class Document : public Node {
   const bool is_html_;
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
+  // The first opaque origin that its URL gave, which it keeps.
+  mutable std::optional<url::Origin> opaque_origin_;
   std::u16string content_type_;
   std::optional<std::u16string> xml_encoding_;
   std::optional<std::u16string> xml_version_;

@@ -302,3 +302,20 @@ def test_a_frame_s_cookie_store_and_its_parent_s_each_hear_of_changes(page_url: 
     """
     with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         assert page.evaluate(script) == ["frame from_frame", "frame from_top", "top from_frame", "top from_top"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_of_an_opaque_origin_is_of_its_own_origin() -> None:
+    # The top-level about:blank, whose origin is opaque, opens and writes its own document, and reaches the document of
+    # a frame that took its origin.
+    script = """
+      const element = document.createElement('iframe');
+      document.body.appendChild(element);
+      const reached = element.contentDocument !== null;
+      document.open();
+      document.write('<p>x');
+      document.close();
+      [reached, document.body.innerHTML]
+    """
+    with mitto.Session() as session, session._open_page("about:blank", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == [True, "<p>x</p>"]
