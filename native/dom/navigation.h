@@ -71,7 +71,7 @@ class Navigation final : public EventTarget {
     bool fragment = false;
     // pushState() and replaceState(), with the state they give.
     bool history_api = false;
-    std::shared_ptr<const SerializedScriptValue> state_object;
+    scoped_refptr<const SharedSerializedScriptValue> state_object;
     FrameLoadType load_type = FrameLoadType::kStandard;
     // The entry that a traversal goes to.
     // On the stack only.
@@ -180,7 +180,7 @@ class Navigation final : public EventTarget {
   void RunUrlAndHistoryUpdateSteps(
       const GURL& url,
       const HistoryItem* destination_item,
-      std::shared_ptr<const SerializedScriptValue> state_object,
+      scoped_refptr<const SharedSerializedScriptValue> state_object,
       FrameLoadType type,
       bool fire_popstate);
   // The ongoing navigation's end: it went well, or `reason` aborted it.

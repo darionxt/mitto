@@ -31,12 +31,12 @@ class PopStateEvent final : public Event {
   // The trusted popstate of `history`'s window, with `state`, none for null:
   // it does not bubble and cannot be canceled.
   static PopStateEvent* CreateForHistory(
-      std::shared_ptr<const SerializedScriptValue> state,
+      scoped_refptr<const SharedSerializedScriptValue> state,
       History* history);
 
   PopStateEvent(const std::u16string& type,
                 const bindings::PopStateEventInit& init);
-  PopStateEvent(std::shared_ptr<const SerializedScriptValue> state,
+  PopStateEvent(scoped_refptr<const SharedSerializedScriptValue> state,
                 History* history);
   ~PopStateEvent() override;
 
@@ -52,7 +52,7 @@ class PopStateEvent final : public Event {
  private:
   // A page's own event's state, and then the one that history's has given.
   v8::TracedReference<v8::Value> state_;
-  std::shared_ptr<const SerializedScriptValue> serialized_state_;
+  scoped_refptr<const SharedSerializedScriptValue> serialized_state_;
   cppgc::Member<History> history_;
   const bool has_ua_visual_transition_;
 };

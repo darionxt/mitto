@@ -25,6 +25,8 @@
 #include <optional>
 #include <vector>
 
+#include "base/memory/ref_counted.h"
+
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-forward.h"
@@ -129,6 +131,12 @@ class SerializedScriptValue {
   struct StreamChannels;
   std::shared_ptr<StreamChannels> streams_;
 };
+
+// A serialized value that several owners share and that keeps its identity,
+// such as the state of an entry of the session history, which history.state
+// gives as the same object while the entry keeps it, as Blink shares a
+// scoped_refptr<SerializedScriptValue>.
+using SharedSerializedScriptValue = base::RefCountedData<SerializedScriptValue>;
 
 }  // namespace mitto
 

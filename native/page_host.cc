@@ -76,6 +76,37 @@ bool IsStorageAsBlinkWrites(PageStorageKind kind,
   return local(key) && (!value || local(*value));
 }
 
+// CanChangeToUrlForHistoryApi(), as Chrome's browser checks a renderer's
+// same-document URL with what Blink checks it with: the same scheme, user,
+// password, host and port, any path, query and fragment for HTTP and HTTPS,
+// and for a document whose origin is opaque only another query or fragment.
+bool CanChangeToUrlForHistoryApi(const GURL& url, const GURL& document_url) {
+  if (!url.is_valid()) {
+    return false;
+  }
+  if (url.scheme() != document_url.scheme() ||
+      url.username() != document_url.username() ||
+      url.password() != document_url.password() ||
+      url.host() != document_url.host() || url.port() != document_url.port()) {
+    return false;
+  }
+  if (url.SchemeIsHTTPOrHTTPS()) {
+    return true;
+  }
+  const bool differ_in_path = url.path() != document_url.path();
+  const bool differ_in_query = url.query() != document_url.query();
+  if (url.SchemeIsFile() && differ_in_path) {
+    return false;
+  }
+  if (url::Origin::Create(document_url).opaque()) {
+    return !differ_in_path;
+  }
+  if (url.IsStandard()) {
+    return true;
+  }
+  return !differ_in_path && !differ_in_query;
+}
+
 constexpr std::string_view kVersionKey = "version";
 // What net::HttpConnectionInfoToString() and net::NextProtoToString() call a
 // protocol that is not known.
@@ -2746,15 +2777,13 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
 void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
   // The browser checks a renderer's same-document URL as
-  // CanChangeToUrlForHistoryApi() does: of the document's origin, or only its
-  // fragment changed, as about:blank's can.
+  // CanChangeToUrlForHistoryApi() does: of the document's origin, or, for an
+  // opaque one, as about:blank's is, the same URL but for its query and
+  // fragment.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
-  if (!new_url.is_valid() ||
-      (!url::Origin::Create(document_url)
-            .IsSameOriginWith(url::Origin::Create(new_url)) &&
-       document_url.GetWithoutRef() != new_url.GetWithoutRef())) {
+  if (!CanChangeToUrlForHistoryApi(new_url, document_url)) {
     Refuse("a same-document navigation to another origin");
     return;
   }

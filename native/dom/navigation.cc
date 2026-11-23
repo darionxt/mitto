@@ -31,6 +31,7 @@
 #include "url/url_constants.h"
 #include "url/url_util.h"
 #include "v8/include/cppgc/garbage-collected.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -578,8 +579,7 @@ v8::Local<v8::Object> Navigation::Forward(
 void Navigation::UpdateCurrentEntry(
     const bindings::NavigationUpdateCurrentEntryOptions& options,
     bindings::ExceptionState& exception_state) {
-  NavigationHistoryEntry* const current = CurrentEntry();
-  if (!current) {
+  if (!CurrentEntry()) {
     exception_state.ThrowDOMException(
         "InvalidStateError",
         "updateCurrent() cannot be called when navigation.current is null.");
@@ -593,7 +593,10 @@ void Navigation::UpdateCurrentEntry(
         isolate,
         options.state.value_or(v8::Undefined(isolate).As<v8::Value>()));
   }
-  if (!state) {
+  // A getter that the serializer ran may have moved the current entry, which
+  // takes the state on both sides, and which the event names.
+  NavigationHistoryEntry* const current = CurrentEntry();
+  if (!state || !current) {
     return;
   }
   // NavigationHistoryEntry::SetAndSaveState(): the session history keeps it
@@ -616,7 +619,9 @@ void Navigation::DisposeEntriesForSessionHistoryRemoval(
   MakeEntries();
   NavigationHistoryEntry* const current = CurrentEntry();
   std::vector<cppgc::Member<NavigationHistoryEntry>> kept;
-  std::vector<NavigationHistoryEntry*> disposed;
+  // Held until each has had its dispose event, as nothing else may hold
+  // them.
+  std::vector<cppgc::Persistent<NavigationHistoryEntry>> disposed;
   for (const cppgc::Member<NavigationHistoryEntry>& entry : entries_) {
     if (entry.Get() != current &&
         std::find(keys.begin(), keys.end(), entry->key()) != keys.end()) {
@@ -627,7 +632,7 @@ void Navigation::DisposeEntriesForSessionHistoryRemoval(
   }
   entries_ = std::move(kept);
   current_index_ = current ? GetIndexFor(current) : -1;
-  for (NavigationHistoryEntry* const entry : disposed) {
+  for (const cppgc::Persistent<NavigationHistoryEntry>& entry : disposed) {
     bindings::EventInit init;
     Event* const dispose = Event::Create(u"dispose", init);
     dispose->SetTrusted(true);
@@ -754,7 +759,9 @@ void Navigation::UpdateForNavigation(const HistoryItem& item,
     return;
   }
   NavigationHistoryEntry* const old_current = CurrentEntry();
-  std::vector<NavigationHistoryEntry*> disposed;
+  // Held until each has had its dispose event, as nothing else may hold
+  // them.
+  std::vector<cppgc::Persistent<NavigationHistoryEntry>> disposed;
   if (type == FrameLoadType::kBackForward) {
     // A traversal moves to the entry of its key, which is among them.
     const int64_t index = IndexOfKey(item.navigation_api_key);
@@ -799,7 +806,7 @@ void Navigation::UpdateForNavigation(const HistoryItem& item,
     if (ongoing) {
       ongoing->FinalizeNavigationActionPromisesList();
     }
-    for (NavigationHistoryEntry* const entry : disposed) {
+    for (const cppgc::Persistent<NavigationHistoryEntry>& entry : disposed) {
       bindings::EventInit init;
       Event* const dispose = Event::Create(u"dispose", init);
       dispose->SetTrusted(true);
@@ -817,7 +824,7 @@ void Navigation::UpdateForNavigation(const HistoryItem& item,
 void Navigation::RunUrlAndHistoryUpdateSteps(
     const GURL& url,
     const HistoryItem* destination_item,
-    std::shared_ptr<const SerializedScriptValue> state_object,
+    scoped_refptr<const SharedSerializedScriptValue> state_object,
     FrameLoadType type,
     bool fire_popstate) {
   UpdateForSameDocumentNavigation(

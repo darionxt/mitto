@@ -334,7 +334,7 @@ bool CanProceedWithNavigation(Window& window) {
 }
 
 void AddStateObject(Window& window,
-                    std::shared_ptr<const SerializedScriptValue> state,
+                    scoped_refptr<const SharedSerializedScriptValue> state,
                     const std::optional<std::u16string>& url,
                     FrameLoadType type,
                     bindings::ExceptionState& exception_state) {
@@ -383,7 +383,7 @@ void UpdateForSameDocumentNavigation(
     const GURL& url,
     const HistoryItem* history_item,
     SameDocumentNavigationType navigation_type,
-    std::shared_ptr<const SerializedScriptValue> state,
+    scoped_refptr<const SharedSerializedScriptValue> state,
     FrameLoadType type,
     bool fire_popstate) {
   Document& document = window.GetDocument();
@@ -395,12 +395,17 @@ void UpdateForSameDocumentNavigation(
   if (type == FrameLoadType::kBackForward && history_item) {
     item = *history_item;
   } else {
-    item = HistoryItem::ForCommit(
-        window.CurrentHistoryItem(), url, type,
-        navigation_type == SameDocumentNavigationType::kHistoryApi
-            ? HistoryNavigationType::kHistoryApi
-            : HistoryNavigationType::kFragment);
-    if (state) {
+    // As Blink's is_history_api_or_app_history_navigation: an intercepted
+    // navigation is one of the history API, whose entry takes no Navigation
+    // API state from the one before and has the classic state it gives, none
+    // but that of pushState() or replaceState().
+    const bool fragment =
+        navigation_type == SameDocumentNavigationType::kFragment;
+    item =
+        HistoryItem::ForCommit(window.CurrentHistoryItem(), url, type,
+                               fragment ? HistoryNavigationType::kFragment
+                                        : HistoryNavigationType::kHistoryApi);
+    if (!fragment) {
       item.state = std::move(state);
     }
   }

@@ -64,13 +64,13 @@ class History final : public bindings::ScriptWrappable {
 
   // What a PopStateEvent of the history reads, so that its state is the
   // object that history.state gives while the entry keeps the same state.
-  bool IsSameAsCurrentState(const SerializedScriptValue* state) const;
+  bool IsSameAsCurrentState(const SharedSerializedScriptValue* state) const;
   v8::Local<v8::Value> StateHelper(bindings::ExceptionState& exception_state);
 
  private:
   bool IsFullyActive() const;
   // The current entry's state, none for a window that is not fully active.
-  std::shared_ptr<const SerializedScriptValue> StateInternal() const;
+  scoped_refptr<const SharedSerializedScriptValue> StateInternal() const;
   void StateObjectAdded(v8::Local<v8::Value> data,
                         const std::optional<std::u16string>& url,
                         bool replace,
@@ -79,7 +79,7 @@ class History final : public bindings::ScriptWrappable {
   cppgc::Member<Window> window_;
   // What history.state gave last, and for which state, as Blink keeps it so
   // that each read gives the same object while the state stays.
-  std::shared_ptr<const SerializedScriptValue> last_state_object_requested_;
+  scoped_refptr<const SharedSerializedScriptValue> last_state_object_requested_;
   v8::TracedReference<v8::Value> cached_state_;
 };
 

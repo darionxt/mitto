@@ -90,7 +90,8 @@ void History::SetScrollRestoration(const std::u16string& value,
   }
 }
 
-std::shared_ptr<const SerializedScriptValue> History::StateInternal() const {
+scoped_refptr<const SharedSerializedScriptValue> History::StateInternal()
+    const {
   if (!IsFullyActive()) {
     return nullptr;
   }
@@ -98,7 +99,8 @@ std::shared_ptr<const SerializedScriptValue> History::StateInternal() const {
   return item ? item->state : nullptr;
 }
 
-bool History::IsSameAsCurrentState(const SerializedScriptValue* state) const {
+bool History::IsSameAsCurrentState(
+    const SharedSerializedScriptValue* state) const {
   return state == StateInternal().get();
 }
 
@@ -111,7 +113,7 @@ v8::Local<v8::Value> History::StateHelper(
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   // The same object until the entry's state changes, also the null that a
   // document read before it stopped being fully active, as Blink caches it.
-  std::shared_ptr<const SerializedScriptValue> current = StateInternal();
+  scoped_refptr<const SharedSerializedScriptValue> current = StateInternal();
   if (last_state_object_requested_ == current && !cached_state_.IsEmpty()) {
     return cached_state_.Get(isolate);
   }
@@ -122,7 +124,7 @@ v8::Local<v8::Value> History::StateHelper(
   } else if (!current) {
     state = v8::Null(isolate);
   } else {
-    state = current->Deserialize(isolate);
+    state = current->data.Deserialize(isolate);
   }
   last_state_object_requested_ = std::move(current);
   cached_state_.Reset(isolate, state);
@@ -209,7 +211,7 @@ void History::StateObjectAdded(v8::Local<v8::Value> data,
   }
   AddStateObject(
       *window_,
-      std::make_shared<const SerializedScriptValue>(std::move(*serialized)),
+      base::MakeRefCounted<SharedSerializedScriptValue>(std::move(*serialized)),
       url,
       replace ? FrameLoadType::kReplaceCurrentItem : FrameLoadType::kStandard,
       exception_state);

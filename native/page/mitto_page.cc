@@ -69,9 +69,11 @@
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/animation_frame_controller.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/history_item.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
@@ -86,6 +88,7 @@
 #include "mitto/page_messages.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
+#include "url/gurl.h"
 #include "v8/include/libplatform/libplatform.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-context.h"
@@ -438,6 +441,11 @@ bool RunScript(v8::Isolate* isolate,
     mitto::Window::Current().SetAnimationFrames(&animation_frames);
     mitto::Window::Current().SetDocumentLoadTiming(
         chrome_data.load_timing.Get());
+    // The window's document is its tab's one entry, whose history.state and
+    // scrollRestoration a script reads and sets.
+    mitto::Window& window = mitto::Window::Current();
+    window.SetCurrentHistoryItem(mitto::HistoryItem::Create(
+        GURL(base::UTF16ToUTF8(window.GetDocument().UrlForBinding()))));
   }
   isolate->AddMessageListenerWithErrorLevel(&OnMessage,
                                             v8::Isolate::kMessageError);

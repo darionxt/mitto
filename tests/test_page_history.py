@@ -14,7 +14,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page, PageNavigation
-from tests.page_server import TIMEOUT_SECONDS, RecordingServer, without_favicon
+from tests.page_server import TIMEOUT_SECONDS, RecordingServer, Route, without_favicon
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -359,3 +359,88 @@ def test_a_new_document_adds_an_entry_that_history_counts(session: mitto.Session
         page.evaluate("location.replace('/first'); 0")
         assert _next(page).url == first
         assert page.evaluate(entries) == [2, ["/first", "/first"], "replace", "/second"]
+
+
+def test_an_entry_takes_the_navigation_api_state_as_chrome_carries_it(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/a", "<title>State</title>")
+    script = """(async () => {
+      const r = [];
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+      navigation.updateCurrentEntry({state: {s: 1}});
+      navigation.addEventListener('navigate', (e) => e.intercept(), {once: true});
+      location.href = '/other';
+      await settle();
+      r.push(location.pathname, navigation.currentEntry.getState() === undefined, history.state);
+      navigation.updateCurrentEntry({state: {s: 2}});
+      navigation.addEventListener('navigate', (e) => e.intercept(), {once: true});
+      location.hash = 'f';
+      await settle();
+      r.push(location.hash, navigation.currentEntry.getState() === undefined);
+      navigation.updateCurrentEntry({state: {s: 3}});
+      location.hash = 'g';
+      await settle();
+      r.push(location.hash, JSON.stringify(navigation.currentEntry.getState()));
+      history.pushState({c: 1}, '', '/p');
+      navigation.addEventListener('navigate', (e) => e.intercept(), {once: true});
+      history.replaceState({c: 2}, '', '/q');
+      await settle();
+      r.push(location.pathname, JSON.stringify(history.state));
+      return r;
+    })()"""
+
+    with _open_page(session, url) as page:
+        # An intercepted navigation, to a path or a fragment, makes an entry of the history API, which takes no
+        # Navigation API state from the one before; a navigation to a fragment that nothing intercepts takes it. An
+        # intercepted replaceState() keeps its own state.
+        assert page.evaluate(script) == ["/other", True, None, "#f", True, "#g", '{"s":3}', "/q", '{"c":2}']
+
+
+def test_a_reload_that_a_redirect_takes_to_another_origin_keeps_nothing_of_the_entry(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/r", "<title>Reloaded</title>")
+    other = server.page("/b", "<title>Other</title>").replace("127.0.0.1", "localhost")
+    entry = (
+        "[location.href, navigation.currentEntry.getState() === undefined, navigation.activation.navigationType, "
+        "navigation.activation.from, history.length, performance.getEntriesByType('navigation')[0].type]"
+    )
+
+    with _open_page(session, url) as page:
+        page.evaluate("navigation.updateCurrentEntry({state: {s: 1}})")
+        server.routes["/r"] = Route(b"", 302, [("Location", other)])
+        page.evaluate("location.reload()")
+        assert _next(page).url == other
+        # The reload's entry starts anew in the other origin: no state, and no entry that it came from.
+        assert page.evaluate(entry) == [other, True, "reload", None, 1, "reload"]
+
+
+def test_the_initial_about_blank_takes_another_query_and_fragment(session: mitto.Session) -> None:
+    with _open_page(session, "about:blank") as page:
+        # A relative URL does not resolve against about:blank, and an absolute one of the same path may change only
+        # its query and fragment, which the Session takes.
+        assert page.evaluate(
+            "(() => { try { history.pushState(null, '', '?x'); return 'none'; } "
+            "catch (e) { return e.name + ': ' + e.message; } })()"
+        ) == (
+            "SecurityError: Failed to execute 'pushState' on 'History': A history state object with URL '' cannot "
+            "be created in a document with origin 'null' and URL 'about:blank'."
+        )
+        assert page.evaluate("history.replaceState(null, '', 'about:blank?y#z'); location.href") == "about:blank?y#z"
+        assert page.evaluate("history.length") == 1
+
+
+def test_a_value_of_an_enumeration_that_it_lacks_warns_in_the_console(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", "<title>Enumeration</title>")
+
+    with _open_page(session, url) as page:
+        # A Known Gap's setter warns as an implemented attribute's does, as every bind_gen setter does in Chrome.
+        assert page.evaluate("const h = new Highlight(); h.type = 'bogus'; h.type") == "highlight"
+        assert page.console_messages == [
+            _native.ConsoleMessage(
+                level="warning", text="The provided value 'bogus' is not a valid enum value of type HighlightType."
+            )
+        ]

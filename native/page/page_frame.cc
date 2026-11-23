@@ -181,23 +181,28 @@ void PageFrame::GoToItem(int64_t item_sequence_number,
     }
     return;
   }
-  GoToIndex(*index);
+  if (!GoToIndex(*index) && key) {
+    // A traversal that went nowhere ends the traverseTo() that asked for it.
+    Window::Current().Navigation()->TraverseCancelled(
+        *key, Navigation::TraverseCancelledReason::kAbortedBeforeCommit);
+  }
 }
 
-void PageFrame::GoToIndex(size_t index) {
+bool PageFrame::GoToIndex(size_t index) {
   Window& window = Window::Current();
   const HistoryItem* const current = window.CurrentHistoryItem();
   if (!current || !window.HasContext()) {
-    return;
+    return false;
   }
   const HistoryItem target = history_->RootAt(index).item();
   if (target.document_sequence_number == current->document_sequence_number) {
     // The document commits it, and the history hears of it then.
     CommitSameDocumentHistoryNavigation(window, target);
-    return;
+    return true;
   }
   // An entry of another document: a Known Gap until traversals reach the
   // Session.
+  return false;
 }
 
 bool PageFrame::HasProvisionalNavigation() const {
@@ -273,6 +278,9 @@ Document& PageFrame::CommitNavigation(
   Window& window = *document.DefaultView();
   Navigation::EntryArrays arrays =
       history_->DidCommitNavigation(item, type, window.DocumentId());
+  // The new document's entries come from the history as it is, without the
+  // entries that it dropped, which no other document shows.
+  history_->TakeRemovedKeys();
   window.SetCurrentHistoryItem(item);
   window.Navigation()->InitializeForNewWindow(std::move(arrays));
   return document;

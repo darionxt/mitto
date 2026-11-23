@@ -98,8 +98,10 @@ class PageFrame final : public NavigationClient {
   // entries that the session history dropped.
   void NotifyNavigationApiOfDisposedEntries();
   // NavigateToExistingPendingEntry() for the top-level frame: a traversal to
-  // entry `index`, within the document if it is of the document's.
-  void GoToIndex(size_t index);
+  // entry `index`, within the document if it is of the document's. Returns
+  // whether it went there or to the document's navigate event, which may
+  // cancel it.
+  bool GoToIndex(size_t index);
 
   const raw_ref<ScriptRunner> runner_;
   const raw_ref<PageRequests> requests_;

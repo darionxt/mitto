@@ -61,7 +61,7 @@ class NavigateEvent final : public Event {
     GURL url;
     bool fragment = false;
     FrameLoadType load_type = FrameLoadType::kStandard;
-    std::shared_ptr<const SerializedScriptValue> state_object;
+    scoped_refptr<const SharedSerializedScriptValue> state_object;
     std::optional<HistoryItem> destination_item;
   };
 
@@ -153,7 +153,7 @@ class NavigateEvent final : public Event {
   const GURL url_;
   const bool fragment_;
   const FrameLoadType load_type_;
-  const std::shared_ptr<const SerializedScriptValue> state_object_;
+  const scoped_refptr<const SharedSerializedScriptValue> state_object_;
   const std::optional<HistoryItem> destination_item_;
   v8::TracedReference<v8::Value> info_;
   cppgc::Member<AbortController> controller_;

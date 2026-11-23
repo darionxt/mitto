@@ -17,7 +17,7 @@ PopStateEvent* PopStateEvent::Create(const std::u16string& type,
 
 // static
 PopStateEvent* PopStateEvent::CreateForHistory(
-    std::shared_ptr<const SerializedScriptValue> state,
+    scoped_refptr<const SharedSerializedScriptValue> state,
     History* history) {
   PopStateEvent* const event =
       bindings::MakeGarbageCollected<PopStateEvent>(std::move(state), history);
@@ -31,8 +31,9 @@ PopStateEvent::PopStateEvent(const std::u16string& type,
       state_(v8::Isolate::GetCurrent(), init.state),
       has_ua_visual_transition_(init.has_ua_visual_transition) {}
 
-PopStateEvent::PopStateEvent(std::shared_ptr<const SerializedScriptValue> state,
-                             History* history)
+PopStateEvent::PopStateEvent(
+    scoped_refptr<const SharedSerializedScriptValue> state,
+    History* history)
     : Event(u"popstate", bindings::EventInit()),
       serialized_state_(std::move(state)),
       history_(history),
@@ -60,7 +61,7 @@ v8::Local<v8::Value> PopStateEvent::State(
   if (history_ && history_->IsSameAsCurrentState(serialized_state_.get())) {
     state = history_->StateHelper(exception_state);
   } else if (serialized_state_) {
-    state = serialized_state_->Deserialize(isolate);
+    state = serialized_state_->data.Deserialize(isolate);
   } else {
     state = v8::Null(isolate);
   }

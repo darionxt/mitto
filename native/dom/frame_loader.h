@@ -93,7 +93,7 @@ bool CanProceedWithNavigation(Window& window);
 // this throws Blink's SecurityError; the rate limit; the navigate event; then
 // the URL and history update steps, with no popstate.
 void AddStateObject(Window& window,
-                    std::shared_ptr<const SerializedScriptValue> state,
+                    scoped_refptr<const SharedSerializedScriptValue> state,
                     const std::optional<std::u16string>& url,
                     FrameLoadType type,
                     bindings::ExceptionState& exception_state);
@@ -116,7 +116,7 @@ void UpdateForSameDocumentNavigation(
     const GURL& url,
     const HistoryItem* history_item,
     SameDocumentNavigationType navigation_type,
-    std::shared_ptr<const SerializedScriptValue> state,
+    scoped_refptr<const SharedSerializedScriptValue> state,
     FrameLoadType type,
     bool fire_popstate);
 

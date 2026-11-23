@@ -71,7 +71,7 @@ struct HistoryItem {
   // What pushState() or replaceState() gave, none otherwise. A pointer, so
   // that history.state gives the same object while the entry keeps it, as
   // Blink compares SerializedScriptValue pointers.
-  std::shared_ptr<const SerializedScriptValue> state;
+  scoped_refptr<const SharedSerializedScriptValue> state;
   std::u16string navigation_api_key;
   std::u16string navigation_api_id;
   std::optional<SerializedScriptValue> navigation_api_state;

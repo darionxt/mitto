@@ -51,18 +51,22 @@ HistoryItem HistoryItem::ForCommit(const HistoryItem* old_item,
   const bool inert = type == FrameLoadType::kReplaceCurrentItem ||
                      type == FrameLoadType::kReload;
   const bool reload = type == FrameLoadType::kReload;
+  // Nothing of the old entry's goes to another origin, as a reload that a
+  // redirect takes there commits in another of Chrome's renderers.
+  const bool same_origin = url::Origin::Create(old_item->url)
+                               .IsSameOriginWith(url::Origin::Create(url));
   // The key stands for a slot of the list, which a replace within the origin
   // keeps.
-  if (inert && url::Origin::Create(old_item->url)
-                   .IsSameOriginWith(url::Origin::Create(url))) {
+  if (inert && same_origin) {
     item.navigation_api_key = old_item->navigation_api_key;
   }
   // The ID stands for the entry, which a reload keeps.
-  if (reload) {
+  if (reload && same_origin) {
     item.navigation_api_id = old_item->navigation_api_id;
   }
   // The Navigation API's state goes on to a fragment's entry and a reload.
-  if (navigation_type == HistoryNavigationType::kFragment || reload) {
+  if (navigation_type == HistoryNavigationType::kFragment ||
+      (reload && same_origin)) {
     item.navigation_api_state = old_item->navigation_api_state;
   }
   // A new document's entry takes nothing more, unless it reloads or replaces
