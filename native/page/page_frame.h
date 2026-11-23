@@ -131,6 +131,7 @@ class PageFrame final : public NavigationClient, public Frame {
   void NavigateBackForward(int offset) override;
   void NavigateToNavigationApiKey(const std::u16string& key) override;
   bool HasProvisionalNavigation() const override;
+  bool IsCommitting() const override;
   void StopAllLoaders() override;
 
   // What a loader of the frame calls.

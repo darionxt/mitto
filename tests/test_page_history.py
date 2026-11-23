@@ -1120,16 +1120,20 @@ def test_a_frame_cannot_navigate_its_parent_while_the_parent_commits(
 
     with _open_page(session, first) as page:
         page.evaluate(
-            "const f = document.createElement('iframe'); document.body.append(f);"
-            " f.contentWindow.addEventListener('pagehide', () => { parent.location.href = '/evil'; });"
+            "sessionStorage.n = 0; navigation.addEventListener('navigate', e => {"
+            " if (/evil|#h/.test(e.destination.url)) sessionStorage.n = Number(sessionStorage.n) + 1; });"
+            " const f = document.createElement('iframe'); document.body.append(f);"
+            " f.contentWindow.addEventListener('pagehide', () => {"
+            " parent.location.hash = 'h'; parent.location.href = '/evil'; });"
             " location.href = '/b'; 0"
         )
         assert _next_document(page).url == second
-        # The frame's pagehide runs while the new document commits, when nothing navigates the frame, as in Chrome.
-        assert page.evaluate("new Promise(r => setTimeout(() => r([location.pathname, history.length]), 300))") == [
-            "/b",
-            2,
-        ]
+        # The frame's pagehide runs while the new document commits, when nothing navigates the frame, before any
+        # navigate event, as in Chrome.
+        assert page.evaluate(
+            "new Promise(r => setTimeout(() => r([location.pathname + location.hash, history.length,"
+            " sessionStorage.n]), 300))"
+        ) == ["/b", 2, "0"]
     assert server.headers_of("/evil") == []
 
 
@@ -1326,3 +1330,28 @@ def test_window_chrome_says_a_traversal_is_back_forward(session: mitto.Session, 
         page.evaluate("history.back()")
         assert _next_document(page).url == first
         assert page.evaluate(kind) == ["BackForward", 6]
+
+
+def test_a_document_keeps_loading_while_its_traversal_waits(session: mitto.Session, server: RecordingServer) -> None:
+    first = server.page("/x", "<title>X</title>", _NO_STORE)
+    held = threading.Event()
+    server.routes["/held.js"] = Route(b"", headers=[("Content-Type", "text/javascript")], hold=held)
+    loading = server.page(
+        "/s", "<title>S</title><script>history.back();</script><script src='/held.js'></script><p id=late>late</p>"
+    )
+
+    with _open_page(session, first) as page:
+        server.routes["/x"] = Route(b"", 204, list(_NO_STORE))
+        page.evaluate("location.href = '/s'; 0")
+        assert _next_document(page).url == loading
+        # The traversal runs while the parser waits for the script, and its 204 leaves the document, which goes on
+        # parsing once the script comes, as in Chrome, whose browser tells the renderer nothing till a commit.
+        assert server.wait_for_path("/held.js")
+        deadline = time.monotonic() + TIMEOUT_SECONDS
+        while len(server.headers_of("/x")) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        held.set()
+        assert page.evaluate(
+            "new Promise(r => setTimeout(() => r([location.pathname, !!document.getElementById('late'),"
+            " document.readyState]), 300))"
+        ) == ["/s", True, "complete"]

@@ -75,6 +75,9 @@ class NavigationClient {
   // FrameLoader::HasProvisionalNavigation(): a navigation that a document
   // started waits for its response.
   virtual bool HasProvisionalNavigation() const = 0;
+  // Whether a new document commits in the frame now, while which nothing
+  // navigates it, as Blink's FrameNavigationDisabler has it.
+  virtual bool IsCommitting() const = 0;
   // The rest of FrameLoader::StopAllLoaders(), as document.open() runs it
   // once the document has cancelled its parsing: the document's loading
   // stops, and so does the navigation that waits, which ends with

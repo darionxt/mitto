@@ -659,9 +659,9 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   if (!document.DispatchBeforeUnloadEvent() || !window.HasContext()) {
     return false;
   }
-  document.Abort();
   // It takes the place of a navigation that waits, which ends with
-  // ERR_ABORTED.
+  // ERR_ABORTED. The document keeps loading until the response commits, as
+  // Chrome's browser tells its renderer nothing of the traversal till then.
   if (provisional_) {
     runner_->requests().Cancel(provisional_->number());
     provisional_.reset();
@@ -725,6 +725,10 @@ PageFrame& PageFrame::Top() {
     top = top->parent_;
   }
   return *top;
+}
+
+bool PageFrame::IsCommitting() const {
+  return unloading_for_commit_;
 }
 
 bool PageFrame::HasProvisionalNavigation() const {
