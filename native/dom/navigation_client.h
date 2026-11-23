@@ -14,6 +14,8 @@
 
 namespace mitto {
 
+class Window;
+
 // What a navigation to another document that a document starts says of
 // itself, as Blink's WebNavigationInfo does. Its Initiator is the document,
 // which the Session works out.
@@ -57,6 +59,10 @@ class NavigationClient {
   // The Session hears that a navigation within the window's document gave it
   // `url`, as Blink tells its browser with DidCommitSameDocumentNavigation().
   virtual void DidNavigateWithinDocument(const GURL& url) = 0;
+  // The Session hears that the document of `opener`, another window of the
+  // window's document's origin, opened that document with document.open(),
+  // as Blink tells its browser with DidOpenDocumentInputStream().
+  virtual void DidOpenDocument(const Window& opener) = 0;
 
   // FrameLoader::HasProvisionalNavigation(): a navigation that a document
   // started waits for its response.

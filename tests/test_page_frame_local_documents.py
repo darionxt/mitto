@@ -501,3 +501,119 @@ def test_a_frame_s_document_that_its_parent_opens_sends_the_parent_s_url_as_refe
       }})()
     """
     assert _evaluate(origin, script) == ["ORIGIN/app/page", "ORIGIN/app/page|none"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_its_beforeunload_listener_removes_starts_no_navigation(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>b';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.contentWindow.addEventListener('beforeunload', () => element.remove());
+        element.removeAttribute('srcdoc');
+        await settle(300);
+        return [element.isConnected, element.contentWindow === null];
+      }})()
+    """
+    assert _evaluate(origin, script) == [False, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_replaced_srcdoc_document_has_no_cookies(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>c1';
+        document.body.appendChild(element);
+        await loaded(element);
+        const old = element.contentDocument;
+        element.srcdoc = '<p>c2';
+        await loaded(element);
+        const read = old.cookie;
+        old.cookie = 'old=1';
+        return [read, document.cookie];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["", "c1=v1"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_document_that_an_about_blank_opens_takes_its_url(origin: str) -> None:
+    # The about:blank frame's own task opens its sibling's document, which takes about:blank and so sends no Referer.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        {_ECHO}
+        const target = document.createElement('iframe');
+        target.srcdoc = '<p>t';
+        document.body.appendChild(target);
+        await loaded(target);
+        const opener = document.createElement('iframe');
+        document.body.appendChild(opener);
+        opener.contentWindow.eval(
+          "setTimeout(() => {{ const d = parent.frames[0].document; d.open(); d.write('<p>o'); d.close(); }}, 0)");
+        await settle(300);
+        const d = target.contentDocument;
+        return [d.URL, d.body.textContent, await echo(target.contentWindow, '/echo')];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["about:blank", "o", "none|none"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_fragment_navigation_leaves_a_frame_s_srcdoc_that_waits(origin: str) -> None:
+    # Chrome commits the waiting srcdoc after the navigation within the document.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.srcdoc = '<p>queued';
+        element.contentWindow.location.hash = 'x';
+        await settle(500);
+        return [element.contentDocument.URL, element.contentDocument.body.textContent];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["about:srcdoc", "queued"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_srcdoc_and_about_blank_have_navigation_entries(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const entry = (w) => w.performance.getEntriesByType('navigation').map((e) => [
+          e.name, e.type, e.deliveryType, e.fetchStart, e.transferSize, e.responseEnd > 0, e.domComplete > 0,
+          e.encodedBodySize > 0,
+        ]);
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>s';
+        document.body.appendChild(element);
+        await loaded(element);
+        await settle(50);
+        const fromSrcdoc = entry(element.contentWindow);
+        element.removeAttribute('srcdoc');
+        await loaded(element);
+        await settle(50);
+        const fromBlank = entry(element.contentWindow);
+        const synchronous = document.createElement('iframe');
+        document.body.appendChild(synchronous);
+        await settle(50);
+        return [fromSrcdoc, fromBlank, entry(synchronous.contentWindow)];
+      }})()
+    """
+    assert _evaluate(origin, script) == [
+        [["about:srcdoc", "navigate", "cache", 0, 0, True, True, True]],
+        [["about:blank", "navigate", "cache", 0, 0, True, True, False]],
+        [["about:blank", "navigate", "cache", 0, 0, True, True, False]],
+    ]

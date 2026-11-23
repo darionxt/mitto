@@ -289,15 +289,21 @@ void StartNavigation(Window& window,
       Navigation::DispatchResult::kContinue) {
     return;
   }
-  NavigationClient* const client = window.GetNavigationClient();
-  if (!client || !window.HasContext()) {
+  if (!window.GetNavigationClient() || !window.HasContext()) {
     return;
   }
   // RenderFrameImpl::BeginNavigation(): beforeunload, which lets it go on,
   // then the document stops loading, as
   // CancelProvisionalLoaderForNewNavigation() aborts it, and the browser hears
-  // of the navigation.
+  // of the navigation. A beforeunload listener that removed the frame, or the
+  // initiator's, took the navigation with it.
   if (!document.DispatchBeforeUnloadEvent()) {
+    return;
+  }
+  NavigationClient* const client = window.GetNavigationClient();
+  const Window& origin_window =
+      request.origin_window ? *request.origin_window : window;
+  if (!client || !window.HasContext() || !origin_window.HasContext()) {
     return;
   }
   document.Abort();
@@ -305,8 +311,6 @@ void StartNavigation(Window& window,
   navigation.url = url;
   navigation.reload = type == FrameLoadType::kReload;
   navigation.replace = type == FrameLoadType::kReplaceCurrentItem;
-  const Window& origin_window =
-      request.origin_window ? *request.origin_window : window;
   navigation.initiator_referrer_policy =
       origin_window.GetDocument().GetReferrerPolicy();
   navigation.referrer_policy =

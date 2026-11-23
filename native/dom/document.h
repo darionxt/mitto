@@ -237,6 +237,9 @@ class Document : public Node {
   HTMLCollection* Anchors();
   HTMLCollection* Applets();
   HTMLAllCollection* All();
+  // A document that is not its window's current one, as one that a frame's
+  // next document replaced or whose frame went, has no browsing context, so
+  // its cookie reads empty and sets nothing, as in Chrome.
   std::u16string Cookie(bindings::ExceptionState& exception_state) const;
   void SetCookie(const std::u16string& value,
                  bindings::ExceptionState& exception_state);
@@ -765,6 +768,7 @@ class Document : public Node {
   friend class IgnoreOpensDuringUnloadCountIncrementer;
   friend class ThrowOnDynamicMarkupInsertionCountIncrementer;
 
+  bool IsCurrentDocumentOfItsWindow() const;
   void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
   // The document-open steps, from an `entered_window` that may be null, and
   // what they do once the checks have passed, as Blink splits them.

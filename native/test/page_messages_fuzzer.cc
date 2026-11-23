@@ -178,6 +178,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_NE(frame->about_blank_initiator, mitto::kNoDocument);
           CHECK_EQ(payload.size(), 16u);
           break;
+        case mitto::PageMessage::kDocumentOpened:
+          CHECK_NE(frame->opener, mitto::kNoDocument);
+          CHECK_EQ(payload.size(), 16u);
+          break;
         case mitto::PageMessage::kIndexedDb:
           CHECK_EQ(mitto::EncodeIndexedDbCall(frame->indexed_db_call),
                    std::string_view(payload).substr(8));

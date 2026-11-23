@@ -389,7 +389,7 @@ HTMLAllCollection* Document::All() {
 // Upstream: third_party/blink/renderer/core/dom/document.cc
 std::u16string Document::Cookie(
     bindings::ExceptionState& exception_state) const {
-  if (!window_) {
+  if (!IsCurrentDocumentOfItsWindow()) {
     return std::u16string();
   }
   if (!cookie_jar_) {
@@ -401,7 +401,7 @@ std::u16string Document::Cookie(
 
 void Document::SetCookie(const std::u16string& value,
                          bindings::ExceptionState& exception_state) {
-  if (!window_) {
+  if (!IsCurrentDocumentOfItsWindow()) {
     return;
   }
   if (!cookie_jar_) {
@@ -409,6 +409,11 @@ void Document::SetCookie(const std::u16string& value,
     return;
   }
   cookie_jar_->SetCookie(value);
+}
+
+bool Document::IsCurrentDocumentOfItsWindow() const {
+  return window_ && window_->HasContext() && window_->HasDocument() &&
+         &window_->GetDocument() == this;
 }
 
 void Document::ThrowCookiesDenied(
@@ -1996,11 +2001,12 @@ void Document::Open(Window* entered_window,
     const std::u16string spec = base::UTF8ToUTF16(url.possibly_invalid_spec());
     if (spec != url_) {
       SetUrl(spec);
-      // DidOpenDocumentInputStream(): the browser takes the URL, of the
-      // document's origin, as it takes one that a navigation within the
-      // document gave it.
+    }
+    // DidOpenDocumentInputStream(): the browser takes what the opener gave
+    // the document.
+    if (entered_window != window_) {
       if (NavigationClient* const client = window_->GetNavigationClient()) {
-        client->DidNavigateWithinDocument(url);
+        client->DidOpenDocument(*entered_window);
       }
     }
   }

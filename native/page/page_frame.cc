@@ -106,6 +106,27 @@ class TextBody final : public DocumentParser::Client {
   bool ended_ = false;
 };
 
+// DocumentLoader::CommitNavigation() for a document of no response, a
+// srcdoc's or an about:blank's: its entry of the Performance Timeline names
+// its URL, fetched nothing, came from the cache with the bytes of its body,
+// and ended as it committed, as Chrome 157 gives it.
+void TimeLocalCommit(DocumentLoadTiming& timing,
+                     const GURL& url,
+                     size_t body_size) {
+  const base::TimeTicks now = base::TimeTicks::Now();
+  timing.has_response = true;
+  timing.fetch_start = base::TimeTicks();
+  timing.response_end = now;
+  ResourceTimingInfo navigation;
+  navigation.name = base::UTF8ToUTF16(url.spec());
+  navigation.allow_timing_details = true;
+  navigation.cache_state = CacheState::kLocal;
+  navigation.response_end = now;
+  navigation.encoded_body_size = body_size;
+  navigation.decoded_body_size = body_size;
+  timing.navigation = std::move(navigation);
+}
+
 }  // namespace
 
 PageFrame::LocalNavigation::LocalNavigation() = default;
@@ -328,6 +349,8 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   current_.reset();
   const v8::Context::Scope context_scope(context());
   document->SetLoadTiming(&document_load_timing());
+  TimeLocalCommit(document_load_timing(), url,
+                  base::UTF16ToUTF8(navigation.body).size());
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
   // HTMLDocument's constructor: a srcdoc document stays in no-quirks mode,
   // whatever its doctype.
@@ -480,6 +503,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
     GiveStorage(*document);
   }
   document->SetLoadTiming(&document_load_timing());
+  TimeLocalCommit(document_load_timing(), url, /*body_size=*/0);
   // It keeps the initial document's about base URL, as Chrome 157 does, not
   // its initiator's base URL of the time, and its cookie URL.
   document->SetAboutBaseUrl(old_document.FallbackBaseUrl());
@@ -609,6 +633,11 @@ void PageFrame::DidNavigateWithinDocument(const GURL& url) {
     runner_->send().Run(
         EncodeSameDocumentNavigation(window_->DocumentId(), spec));
   }
+}
+
+void PageFrame::DidOpenDocument(const Window& opener) {
+  runner_->send().Run(
+      EncodeDocumentOpened(window_->DocumentId(), opener.DocumentId()));
 }
 
 bool PageFrame::HasProvisionalNavigation() const {

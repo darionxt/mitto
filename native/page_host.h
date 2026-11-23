@@ -409,6 +409,8 @@ class PageHost final : public PageChannel::Delegate {
   // A navigation of document `document`'s frame to about:blank that document
   // `initiator` started.
   void OnAboutBlankNavigation(uint64_t document, uint64_t initiator);
+  // Document `opener` of another window opened document `document`.
+  void OnDocumentOpened(uint64_t document, uint64_t opener);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
   // with `net_error`, and `status` for one that kept the document.
   void PushNavigated(std::string url, int32_t status, int32_t net_error);

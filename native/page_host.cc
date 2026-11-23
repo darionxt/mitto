@@ -2791,6 +2791,9 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         frame_navigation_responses_.erase(found);
       }
       context.origin = url::Origin::Create(context.url);
+      // Blink's Document::CookieURL() is the URL it was made at, which a
+      // navigation within it leaves.
+      context.cookie_url = context.url;
       break;
     case PageDocumentSource::kAboutBlank:
     case PageDocumentSource::kSrcdoc: {
@@ -2901,12 +2904,38 @@ void PageHost::OnAboutBlankNavigation(uint64_t document,
   started.cookie_url = CookieUrlOf(initiator->second);
 }
 
+void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
+  // DidOpenDocumentInputStream(): a document that one of another window and
+  // of its origin opened takes the opener's URL, without its fragment, as the
+  // browser takes it, and Blink's Document::open() its cookie URL, from the
+  // library's own record of the opener, never from what the Page says.
+  Context& context = contexts_.at(document);
+  const auto opener = contexts_.find(opener_id);
+  if (context.is_worker || opener == contexts_.end() ||
+      opener->second.is_worker || opener_id == document ||
+      opener->second.origin != context.origin) {
+    Refuse("a document that no document of its origin opened");
+    return;
+  }
+  const GURL url = opener->second.url.GetWithoutRef();
+  context.cookie_url = CookieUrlOf(opener->second);
+  const bool changed = url != context.url;
+  context.url = url;
+  // The Page's URL is its top-level document's.
+  if (!changed || context.parent != kNoDocument) {
+    return;
+  }
+  PageEvent event;
+  event.type = MITTO_PAGE_EVENT_URL_CHANGED;
+  event.url = url.spec();
+  Push(std::move(event));
+}
+
 void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
   // The browser checks a renderer's same-document URL as
-  // CanChangeToUrlForHistoryApi() does, and the URL that document.open()
-  // gave a document as DidOpenDocumentInputStream() does: of the document's
-  // origin, or only its fragment changed, as about:blank's can. A frame's
+  // CanChangeToUrlForHistoryApi() does: of the document's origin, or only its
+  // fragment changed, as about:blank's can. A frame's
   // about:blank or srcdoc may have committed at another such URL, such as
   // about:blank?v=1, which the library does not hear of, so one about:blank
   // or about:srcdoc URL may follow another: the document keeps its origin,
@@ -3361,6 +3390,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     case PageMessage::kAboutBlankNavigation:
       OnAboutBlankNavigation(frame->document, frame->about_blank_initiator);
+      return;
+    case PageMessage::kDocumentOpened:
+      OnDocumentOpened(frame->document, frame->opener);
       return;
     case PageMessage::kIndexedDb:
       OnIndexedDb(std::move(frame->indexed_db_call), frame->document,
