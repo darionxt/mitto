@@ -448,6 +448,33 @@ LOCAL_SCHEMES = {
         " await new Promise((r) => setTimeout(r, 50)); return performance.getEntriesByType('resource').length",
         "value: 0",
     ),
+    "a blob: URL's type without the spaces around it": (
+        "const u = blobUrl(['hi'], { type: ' text/plain ' }); const r = await fetch(u);"
+        " return JSON.stringify([r.headers.get('content-type'), (await fetch(u)).headers.get('content-length'),"
+        " new Blob([], { type: ' a/b ' }).type])",
+        'value: ["text/plain","2"," a/b "]',
+    ),
+    "a blob: URL of another origin fails at once in mode same-origin or cors": (
+        "const other = 'blob:https://example.test/0b4ef5e5-0000-4000-8000-000000000000'; const out = [];"
+        " for (const mode of ['same-origin', 'cors', 'no-cors']) { const c = new AbortController();"
+        " const p = fetch(other, { mode, signal: c.signal }); c.abort(); out.push(await settle(p)); }"
+        " return out.join(' // ')",
+        "value: rejected TypeError: Failed to fetch // rejected TypeError: Failed to fetch"
+        " // rejected DOMException: signal is aborted without reason",
+    ),
+    "an abort cancels a stream body": (
+        "const out = []; for (const url of ['data:,x', blobUrl(['hi'])]) { let cancelled = 'not cancelled';"
+        " const body = new ReadableStream({ cancel(reason) { cancelled = 'cancelled ' + reason; } });"
+        " const c = new AbortController();"
+        " const p = fetch(url, { method: 'POST', body, duplex: 'half', signal: c.signal });"
+        " c.abort('why'); out.push(await settle(p) + ', ' + cancelled); } return out.join(' // ')",
+        "value: rejected String: undefined, cancelled why // rejected String: undefined, cancelled why",
+    ),
+    "a blob: URL after a same-document navigation": (
+        "const u = blobUrl(['hi']); location.hash = 'moved'; await new Promise((r) => setTimeout(r, 0));"
+        " return settle(fetch(u).then((r) => r.text()))",
+        "value: fulfilled hi",
+    ),
     "a large blob: URL's body": (
         "const u = blobUrl([new Uint8Array(5 * 1024 * 1024)]); const r = await fetch(u);"
         " return [r.headers.get('content-length'), (await r.arrayBuffer()).byteLength].join()",

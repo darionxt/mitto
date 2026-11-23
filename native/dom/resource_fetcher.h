@@ -110,6 +110,11 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
 
   // The document's resource of `url`, its fragment aside, if it has one.
   Resource* CachedResource(const GURL& url) const;
+  // Lets the resources of `url`, its fragment aside, go from those a later
+  // request may take, as MemoryCache::RemoveURLFromCache() lets a revoked
+  // blob: URL's go: a load that has its resource goes on, and an unused
+  // preload, which Blink keeps apart, stays.
+  void RemoveUrlFromCache(const GURL& url);
 
   // Blink's MatchPreload() of a request whose response streams, as fetch()'s
   // does: the unused link preload of the URL and type, which the request now

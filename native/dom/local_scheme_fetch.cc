@@ -8,6 +8,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/event_loop.h"
@@ -30,9 +31,11 @@ constexpr int kRequestRangeNotSatisfiable = -328;
 constexpr size_t kMinDataPipeCapacity = 1024;
 constexpr size_t kDefaultDataPipeCapacity = 2 * 1024 * 1024;
 
-// A response's URL, which never has a fragment.
+// A response's URL: the request's, with its fragment, as the Fetch
+// Standard's URL list keeps it, which a module's import.meta.url gives.
+// Response's url getter leaves the fragment out.
 std::string ResponseUrlOf(const GURL& url) {
-  return url.GetWithoutRef().spec();
+  return url.spec();
 }
 
 }  // namespace
@@ -42,6 +45,16 @@ LocalSchemeFetch::Answer::Answer(Answer&&) = default;
 LocalSchemeFetch::Answer& LocalSchemeFetch::Answer::operator=(Answer&&) =
     default;
 LocalSchemeFetch::Answer::~Answer() = default;
+
+std::string LocalSchemeFetch::Answer::TakeBody() {
+  if (!blob) {
+    return std::move(body);
+  }
+  std::string bytes(
+      base::as_string_view(blob->Bytes().subspan(blob_offset, blob_length)));
+  blob = nullptr;
+  return bytes;
+}
 
 // static
 LocalSchemeFetch::Answer LocalSchemeFetch::AnswerDataUrl(
@@ -121,11 +134,17 @@ LocalSchemeFetch::Answer LocalSchemeFetch::AnswerBlobUrl(
                      base::NumberToString(byte_range.last_byte_position()), "/",
                      base::NumberToString(total_size), "\n"});
   }
-  base::StrAppend(&answer.head.headers,
-                  {"Content-Type: ", blob->GetType(), "\n"});
-  answer.body = std::string(base::as_string_view(blob->Bytes().subspan(
-      static_cast<size_t>(first),
-      static_cast<size_t>(std::max<int64_t>(length, 0)))));
+  // A header's value, which a blob's type may start or end with spaces in,
+  // as HttpResponseHeaders trims it.
+  base::StrAppend(
+      &answer.head.headers,
+      {"Content-Type: ",
+       base::TrimWhitespaceASCII(blob->GetType(), base::TRIM_ALL), "\n"});
+  // The blob's bytes stay where they are, and each piece is copied as it
+  // goes, as MojoBlobReader reads them into the pipe.
+  answer.blob = std::move(blob);
+  answer.blob_offset = static_cast<size_t>(first);
+  answer.blob_length = static_cast<size_t>(std::max<int64_t>(length, 0));
   return answer;
 }
 
@@ -145,9 +164,10 @@ void LocalSchemeFetch::Start(Answer answer,
       new LocalSchemeFetch(std::move(answer), std::move(client), context);
   fetch->client_->OnStarted(*fetch);
   // A navigation lets the context go before its fetches, whose clients go
-  // with no word.
-  context.AddContextDestroyedCallback(base::BindOnce(
-      &LocalSchemeFetch::Cancel, fetch->weak_factory_.GetWeakPtr()));
+  // with no word. A fetch that ends first takes its callback back.
+  fetch->context_destroyed_callback_ =
+      context.AddContextDestroyedCallback(base::BindOnce(
+          &LocalSchemeFetch::Cancel, fetch->weak_factory_.GetWeakPtr()));
   if (fetch->answer_.from_browser) {
     // The browser hears of the request from one task, and answers in another.
     fetch->Post(&LocalSchemeFetch::PostRespond);
@@ -163,7 +183,11 @@ LocalSchemeFetch::LocalSchemeFetch(Answer answer,
       client_(std::move(client)),
       context_(&context) {}
 
-LocalSchemeFetch::~LocalSchemeFetch() = default;
+LocalSchemeFetch::~LocalSchemeFetch() {
+  if (ExecutionContext* const context = context_.Get()) {
+    context->RemoveContextDestroyedCallback(context_destroyed_callback_);
+  }
+}
 
 void LocalSchemeFetch::Cancel() {
   delete this;
@@ -194,20 +218,42 @@ void LocalSchemeFetch::Respond() {
   SendResponseBody();
 }
 
+void LocalSchemeFetch::TookBody(size_t bytes) {
+  in_pipe_ -= std::min(in_pipe_, bytes);
+  // The pipe had no room for the next piece, which can come now.
+  if (waiting_for_room_ && in_pipe_ < answer_.pipe_capacity) {
+    waiting_for_room_ = false;
+    Post(&LocalSchemeFetch::SendResponseBody);
+  }
+}
+
 void LocalSchemeFetch::SendResponseBody() {
   const base::WeakPtr<LocalSchemeFetch> weak = weak_factory_.GetWeakPtr();
-  const size_t rest = answer_.body.size() - body_sent_;
+  const size_t size = BodySize();
+  const size_t rest = size - body_sent_;
   if (rest) {
-    // A data: URL's body comes whole; a blob's a pipe's worth at a time.
+    // A data: URL's body comes whole; a blob's a pipe's worth at a time, as
+    // much as the pipe has room for, which the client makes as it takes it.
+    if (answer_.blob && in_pipe_ >= answer_.pipe_capacity) {
+      waiting_for_room_ = true;
+      return;
+    }
     const size_t piece =
-        answer_.from_browser ? std::min(rest, answer_.pipe_capacity) : rest;
-    std::string bytes = answer_.body.substr(body_sent_, piece);
+        answer_.blob ? std::min(rest, answer_.pipe_capacity - in_pipe_) : rest;
+    std::string bytes;
+    if (answer_.blob) {
+      bytes = std::string(base::as_string_view(answer_.blob->Bytes().subspan(
+          answer_.blob_offset + body_sent_, piece)));
+      in_pipe_ += piece;
+    } else {
+      bytes = answer_.body.substr(body_sent_, piece);
+    }
     body_sent_ += piece;
     client_->OnResponseBody(std::move(bytes));
     if (!weak) {
       return;
     }
-    if (body_sent_ < answer_.body.size()) {
+    if (body_sent_ < size) {
       Post(&LocalSchemeFetch::SendResponseBody);
       return;
     }

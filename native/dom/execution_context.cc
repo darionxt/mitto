@@ -172,15 +172,22 @@ void ExecutionContext::SetTimers(DOMTimerCoordinator* timers) {
   for (auto& [id, cancel] : signal_timers) {
     std::move(cancel).Run();
   }
-  std::vector<base::OnceClosure> callbacks;
+  std::map<uint64_t, base::OnceClosure> callbacks;
   callbacks.swap(context_destroyed_callbacks_);
-  for (base::OnceClosure& callback : callbacks) {
+  for (auto& [id, callback] : callbacks) {
     std::move(callback).Run();
   }
 }
 
-void ExecutionContext::AddContextDestroyedCallback(base::OnceClosure callback) {
-  context_destroyed_callbacks_.push_back(std::move(callback));
+uint64_t ExecutionContext::AddContextDestroyedCallback(
+    base::OnceClosure callback) {
+  const uint64_t id = ++next_context_destroyed_callback_;
+  context_destroyed_callbacks_.emplace(id, std::move(callback));
+  return id;
+}
+
+void ExecutionContext::RemoveContextDestroyedCallback(uint64_t id) {
+  context_destroyed_callbacks_.erase(id);
 }
 
 uint64_t ExecutionContext::AddSignalTimer(base::OnceClosure cancel) {
@@ -265,19 +272,34 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   // as Blink's FetchManager::Loader::PerformSchemeFetch() fetches it.
   const GURL& url = request->url();
   if (url.SchemeIs(url::kDataScheme) || url.SchemeIs(url::kBlobScheme)) {
+    const bool readable = url.SchemeIs(url::kDataScheme) ||
+                          request->blob_url_origin()
+                              .value_or(url::Origin::Create(url))
+                              .IsSameOriginWith(GetSecurityOrigin());
+    // FetchLoaderBase::Start(): a blob: URL of another origin is a network
+    // error at once in mode same-origin, and in mode cors, whose scheme does
+    // not support the Fetch API, so an abort after fetch() returns changes
+    // nothing.
+    if (!readable && request->mode() != FetchMode::kNoCors) {
+      std::ignore = resolver->Reject(
+          context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                       isolate, "Failed to fetch")));
+      return resolver->GetPromise();
+    }
+    // A stream body goes nowhere, but an abort cancels it, as the Fetch
+    // Standard's abort steps cancel a request's body that is readable.
     auto loader = std::make_unique<FetchLoader>(
         isolate, context, resolver, /*credentials=*/false, signal,
-        /*upload_body=*/nullptr, /*upload_stream=*/nullptr);
+        /*upload_body=*/nullptr,
+        body && body->IsMadeFromReadableStream() ? body->Stream() : nullptr);
     LocalSchemeFetch::Answer answer;
     if (url.SchemeIs(url::kDataScheme)) {
       // A data: URL's content can always be read, whatever the mode.
       answer = LocalSchemeFetch::AnswerDataUrl(url, request->Method());
-    } else if (!request->blob_url_origin()
-                    .value_or(url::Origin::Create(url))
-                    .IsSameOriginWith(GetSecurityOrigin())) {
-      // A blob: URL of another origin: a network error in mode same-origin
-      // or cors, and one that the browser's partition check gives in mode
-      // no-cors, since another origin's blob is of another storage key.
+    } else if (!readable) {
+      // A blob: URL of another origin in mode no-cors: the network error
+      // that the browser's partition check gives, since another origin's
+      // blob is of another storage key.
       answer = LocalSchemeFetch::AnswerRefusedBlobUrl();
     } else {
       answer = LocalSchemeFetch::AnswerBlobUrl(

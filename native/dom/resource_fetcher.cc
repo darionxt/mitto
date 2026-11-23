@@ -285,6 +285,14 @@ Resource* ResourceFetcher::CachedResource(const GURL& url) const {
   return nullptr;
 }
 
+void ResourceFetcher::RemoveUrlFromCache(const GURL& url) {
+  const GURL key = WithoutFragment(url);
+  resources_.EraseIf([&key](Resource* resource) {
+    return !resource->IsUnusedPreload() &&
+           WithoutFragment(resource->Url()) == key;
+  });
+}
+
 Resource* ResourceFetcher::UnusedPreload(const GURL& url,
                                          ResourceType type) const {
   const GURL key = WithoutFragment(url);

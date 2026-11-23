@@ -152,6 +152,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
       bindings::PerIsolateData::From(v8::Isolate::GetCurrent());
   // GlobalScopeCreationParams: what the worker takes of its creator.
   params_.origin = context.GetSecurityOrigin();
+  params_.outside_origin = context.GetSecurityOrigin();
   params_.name = options.name;
   params_.script_url = url;
   params_.module = options.module;
@@ -227,7 +228,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
     response_.url = url;
     response_.status = answer.head.status;
     response_.headers = std::move(answer.head.headers);
-    response_.body = std::move(answer.body);
+    response_.body = answer.TakeBody();
     PageWorkerStarted started;
     started.creator = context.ContextId();
     started.source = PageWorkerSource::kBlob;

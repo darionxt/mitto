@@ -314,6 +314,7 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetObjectProxy(params_.object_proxy.get());
   scope_->SetModule(params_.module);
   scope_->SetOutsideReferrerPolicy(params_.referrer_policy);
+  scope_->SetOutsideOrigin(params_.outside_origin);
   scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.
@@ -656,7 +657,7 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
     script.url = url;
     script.status = answer.head.status;
     script.headers = std::move(answer.head.headers);
-    script.body = std::move(answer.body);
+    script.body = answer.TakeBody();
     return script;
   }
   if (!url.SchemeIsHTTPOrHTTPS()) {

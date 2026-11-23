@@ -778,8 +778,9 @@ class Document : public Node {
   const bool is_html_;
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
-  // The opaque origin that GetOrigin() made for the URL it was made for.
-  mutable std::optional<std::pair<std::u16string, url::Origin>> opaque_origin_;
+  // The opaque origin that GetOrigin() made, by the URL without its fragment
+  // that it made it for.
+  mutable std::optional<std::pair<std::string, url::Origin>> opaque_origin_;
   std::u16string content_type_;
   std::optional<std::u16string> xml_encoding_;
   std::optional<std::u16string> xml_version_;

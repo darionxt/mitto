@@ -221,13 +221,19 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
         /*opaque=*/false, std::move(response->body));
     return;
   }
-  // A worker's blob: URL is answered from the blob it names, of the worker's
-  // origin, as the browser's BlobURLLoader answers it, from later tasks.
+  // A worker's blob: URL is answered from the blob it names, of the origin of
+  // the fetch's settings, as the browser's BlobURLLoader answers it, from
+  // later tasks: the worker's, or for its top-level graph, which has the
+  // destination worker, its creator's, whose outside settings fetch it.
   if (request.url.SchemeIsBlob() && context && context->HasContext()) {
     std::optional<BlobUrlRegistry::Entry> entry =
         BlobUrlRegistry::Get().ResolveEntry(request.url);
+    const url::Origin& settings_origin =
+        request.destination == FetchDestination::kWorker
+            ? static_cast<WorkerGlobalScope*>(context)->OutsideOrigin()
+            : context->GetSecurityOrigin();
     LocalSchemeFetch::Answer answer =
-        entry && entry->origin.IsSameOriginWith(context->GetSecurityOrigin())
+        entry && entry->origin.IsSameOriginWith(settings_origin)
             ? LocalSchemeFetch::AnswerBlobUrl(
                   request.url, std::move(entry->blob), "GET", std::nullopt)
             : LocalSchemeFetch::AnswerRefusedBlobUrl();

@@ -267,12 +267,17 @@ url::Origin Document::GetOrigin() const {
   if (origin_) {
     return *origin_;
   }
-  if (opaque_origin_ && opaque_origin_->first == url_) {
+  // A same-document navigation, which changes only the fragment of a
+  // document of an opaque origin, keeps its origin, and so the blob: URLs
+  // that it made.
+  const GURL url(url_);
+  const std::string key = url.GetWithoutRef().spec();
+  if (opaque_origin_ && opaque_origin_->first == key) {
     return opaque_origin_->second;
   }
-  url::Origin origin = url::Origin::Create(GURL(url_));
+  url::Origin origin = url::Origin::Create(url);
   if (origin.opaque()) {
-    opaque_origin_.emplace(url_, origin);
+    opaque_origin_.emplace(key, origin);
   }
   return origin;
 }

@@ -44,7 +44,15 @@ class LocalSchemeFetch final : public FetchController {
     // 0 for a response, and otherwise why it fails.
     int net_error = 0;
     FetchResponseHead head;
+    // The body: bytes of its own, or `blob_length` bytes of `blob` from
+    // `blob_offset`, which are copied a piece at a time as they go.
     std::string body;
+    scoped_refptr<BlobDataHandle> blob;
+    size_t blob_offset = 0;
+    size_t blob_length = 0;
+
+    // All of the body at once, for a worker's script, which reads it whole.
+    std::string TakeBody();
     // Whether the browser answers it, after a hop there and back, in pieces
     // of at most `pipe_capacity` bytes, each from a task of its own.
     bool from_browser = false;
@@ -80,9 +88,8 @@ class LocalSchemeFetch final : public FetchController {
   LocalSchemeFetch& operator=(const LocalSchemeFetch&) = delete;
   ~LocalSchemeFetch() override;
 
-  // FetchController: the bytes are all here, so taking them lets nothing
-  // more come.
-  void TookBody(size_t bytes) override {}
+  // FetchController: taking a blob's bytes makes room in the pipe for more.
+  void TookBody(size_t bytes) override;
   void Cancel() override;
 
  private:
@@ -96,11 +103,19 @@ class LocalSchemeFetch final : public FetchController {
   void PostRespond();
   void Respond();
   void SendResponseBody();
+  size_t BodySize() const {
+    return answer_.blob ? answer_.blob_length : answer_.body.size();
+  }
 
   Answer answer_;
   std::unique_ptr<FetchClient> client_;
   cppgc::WeakPersistent<ExecutionContext> context_;
+  uint64_t context_destroyed_callback_ = 0;
   size_t body_sent_ = 0;
+  // The bytes of a blob that the client has been given and not taken, at most
+  // the pipe's capacity, and whether a piece waits for room.
+  size_t in_pipe_ = 0;
+  bool waiting_for_room_ = false;
   base::WeakPtrFactory<LocalSchemeFetch> weak_factory_{this};
 };
 
