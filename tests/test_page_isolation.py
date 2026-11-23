@@ -356,7 +356,18 @@ _CLOCKS = (
 )
 
 
-def test_an_isolated_window_reads_clocks_of_5_microseconds(session: mitto.Session, server: RecordingServer) -> None:
+@pytest.fixture
+def sixty_hertz_session(page_program: None) -> Iterator[mitto.Session]:
+    """A Session whose display runs at 60 Hz, whose vsyncs 16,667 microseconds apart walk across the grid of 100: at
+    100 Hz, of 10,000, every frame could fall on it, as the first one did."""
+    with mitto.Session(machine=mitto.Machine.draw(refresh_rate=60)) as session:
+        yield session
+
+
+def test_an_isolated_window_reads_clocks_of_5_microseconds(
+    sixty_hertz_session: mitto.Session, server: RecordingServer
+) -> None:
+    session = sixty_hertz_session
     url = server.page("/", _BLANK, _ISOLATING)
 
     # Whether one reading of the time origin falls on the coarse grid is chance: the workers' test reads several.
@@ -364,14 +375,16 @@ def test_an_isolated_window_reads_clocks_of_5_microseconds(session: mitto.Sessio
 
 
 def test_a_window_that_is_not_isolated_reads_clocks_of_100_microseconds(
-    session: mitto.Session, server: RecordingServer
+    sixty_hertz_session: mitto.Session, server: RecordingServer
 ) -> None:
+    session = sixty_hertz_session
     url = server.page("/", _BLANK)
 
     assert _evaluate(session, url, _CLOCKS) == [True, False] * 5 + [True, "undefined", True]
 
 
-# Eight workers each read performance.now() for 30 ms and give the rules of their readings and their time origin.
+# Eight workers each read performance.now() for 30 ms and give the rules of their readings, each worker's own, and
+# their time origins, of which some is off the coarse grid where they are isolated.
 _WORKERS_CLOCKS = (
     "(() => {"
     + _WHOLE
@@ -379,8 +392,8 @@ _WORKERS_CLOCKS = (
     return Promise.all(Array.from({length: 8}, () => new Promise((resolve) => {
         new Worker('/clock.js').onmessage = (e) => resolve(e.data);
     }))).then((results) => [
-        results.every(([fine]) => fine),
-        results.every(([, offCoarse]) => offCoarse),
+        results.map(([fine]) => fine),
+        results.map(([, offCoarse]) => offCoarse),
         results.every(([, , origin]) => whole(origin, 0.005)),
         results.some(([, , origin]) => !whole(origin, 0.1)),
         results.every(([, , , measure]) => measure === 'undefined'),
@@ -401,7 +414,7 @@ def test_an_isolated_worker_reads_clocks_of_5_microseconds(session: mitto.Sessio
     server.route("/clock.js", _CLOCK_WORKER, _JS, [_COEP])
 
     # measureUserAgentSpecificMemory() is exposed on a window, a service worker and a shared worker alone.
-    assert _evaluate(session, url, _WORKERS_CLOCKS) == [True] * 5
+    assert _evaluate(session, url, _WORKERS_CLOCKS) == [[True] * 8, [True] * 8, True, True, True]
 
 
 def test_a_worker_that_is_not_isolated_reads_clocks_of_100_microseconds(
@@ -410,4 +423,4 @@ def test_a_worker_that_is_not_isolated_reads_clocks_of_100_microseconds(
     url = server.page("/", _BLANK)
     server.route("/clock.js", _CLOCK_WORKER, _JS)
 
-    assert _evaluate(session, url, _WORKERS_CLOCKS) == [True, False, True, False, True]
+    assert _evaluate(session, url, _WORKERS_CLOCKS) == [[True] * 8, [False] * 8, True, False, True]
