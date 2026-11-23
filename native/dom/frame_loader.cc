@@ -324,6 +324,7 @@ void StartNavigation(Window& window,
   navigation.initiator_origin = origin_window.GetSecurityOrigin();
   navigation.initiator_url = GURL(origin_window.GetDocument().UrlForBinding());
   navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
+  navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
   client->BeginNavigation(navigation);
 }
 

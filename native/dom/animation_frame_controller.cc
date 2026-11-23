@@ -172,7 +172,7 @@ void AnimationFrameController::ServiceScriptedAnimations(
   const base::WeakPtr<AnimationFrameController> self =
       weak_factory_.GetWeakPtr();
   DispatchEvents();
-  // A listener may have ended the window's context, and this with it.
+  // A listener may have ended the window's context, which stopped this.
   if (!self) {
     return;
   }
@@ -259,7 +259,7 @@ void AnimationFrameController::ExecuteFrameCallbacks(
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
       bindings::ReportExceptionInCallbackRealm(isolate_, callback, try_catch);
     }
-    // The callback may have ended the window's context, and this with it.
+    // The callback may have ended the window's context, which stopped this.
     if (!self) {
       return;
     }

@@ -52,7 +52,8 @@ class SessionCookieJar final : public CookieJar {
   void SetCookie(const std::u16string& line) override;
   void GetForCookieStore(PageCookieStoreGet get, CookiesAnswer answer) override;
   void SetForCookieStore(PageCookieStoreSet set, StoredAnswer answer) override;
-  void ListenForCookieStore(ChangeListener listener) override;
+  void ListenForCookieStore(uint64_t document,
+                            ChangeListener listener) override;
 
   // On the I/O thread: the Session's answer to question `number`. Returns
   // false if no read waits for that answer, which the Page refuses.
@@ -81,8 +82,8 @@ class SessionCookieJar final : public CookieJar {
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
   std::map<uint64_t, CookiesAnswer> cookie_store_gets_;
   std::map<uint64_t, StoredAnswer> cookie_store_sets_;
-  ChangeListener cookie_store_listener_;
-  uint64_t cookie_store_document_ = kNoDocument;
+  // The listener of each document that listens, by the document's ID.
+  std::map<uint64_t, ChangeListener> cookie_store_listeners_;
   uint64_t last_cookie_store_question_ = 0;
   std::set<uint64_t> cookie_store_questions_ GUARDED_BY(lock_);
 };

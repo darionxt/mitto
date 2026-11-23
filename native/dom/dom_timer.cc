@@ -117,6 +117,8 @@ class DOMTimerCoordinator::DOMTimer {
 
   ~DOMTimer() = default;
 
+  void Stop() { timer_.Stop(); }
+
  private:
   void Arm() {
     timer_.Start(FROM_HERE, next_fire_time_,
@@ -233,6 +235,15 @@ void DOMTimerCoordinator::Clear(int32_t id) {
   // A repeating timer that clears itself goes once its action returns.
   if (timer && timer_nesting_level_ != 0) {
     clearing_.push_back(std::move(timer));
+  }
+}
+
+void DOMTimerCoordinator::Stop() {
+  for (const auto& [id, timer] : timers_) {
+    timer->Stop();
+  }
+  for (const std::unique_ptr<DOMTimer>& timer : clearing_) {
+    timer->Stop();
   }
 }
 

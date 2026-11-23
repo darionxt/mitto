@@ -195,7 +195,9 @@ class Document : public Node {
   std::u16string Domain() const;
   // The document's origin: the one that a document made by new Document() or
   // DOMImplementation takes from the document that made it, as Blink's
-  // DocumentInit::WithExecutionContext() gives it, or else its URL's.
+  // DocumentInit::WithExecutionContext() gives it, or else its URL's. An
+  // opaque one stays the same, so the document is of its own origin, as each
+  // of Blink's documents has one SecurityOrigin.
   url::Origin GetOrigin() const;
   void SetOrigin(const url::Origin& origin) { origin_ = origin; }
   std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
@@ -477,18 +479,19 @@ class Document : public Node {
   // The text that Blink's KURL keeps of a `url` that does not resolve, empty
   // for one that does.
   std::string UnresolvedUrlSpec(std::u16string_view url) const;
-  // The document's URL, as no frame gives a document of a Page another.
-  // Blink's Document::FallbackBaseURL(): the URL, or for a srcdoc or an
-  // about:blank of a frame the base URL that its parent or its initiator had
-  // when it committed.
-  GURL FallbackBaseUrl() const {
-    return fallback_base_url_.is_valid() ? fallback_base_url_ : GURL(url_);
-  }
-  void SetFallbackBaseUrl(const GURL& url) {
-    fallback_base_url_ = url;
-    ProcessBaseElement();
-    UpdateBaseUrl();
-  }
+  // The HTML Standard's fallback base URL: the about base URL of a srcdoc
+  // document, or of one whose URL matches about:blank, that has one, else the
+  // document's URL.
+  GURL FallbackBaseUrl() const;
+  // The HTML Standard's about base URL, which a frame's about:blank document
+  // takes from its creator or from the navigation's initiator, and a srcdoc
+  // document from its parent, as Blink's fallback base URL is.
+  void SetAboutBaseUrl(GURL url);
+  // Blink's Document::CookieURL(): the URL whose cookies the document's
+  // CookieStore reads and writes, the document's own unless it took another,
+  // as a frame's about:blank takes its creator's.
+  GURL CookieUrl() const;
+  void SetCookieUrl(GURL url) { cookie_url_ = std::move(url); }
   // Blink's ValidBaseElementURL(): the URL that the first base element with
   // an href gives, if it is valid.
   GURL ValidBaseElementUrl() const {
@@ -556,6 +559,9 @@ class Document : public Node {
   // load event delay timer runs it.
   void IncrementLoadEventDelayCount() { ++load_event_delay_count_; }
   void DecrementLoadEventDelayCount();
+  // Blink's CheckLoadEventSoon(): CheckCompleted() from a task of the DOM
+  // manipulation task source, unless one waits.
+  void CheckLoadEventSoon();
   // The same, but checks the load event at once, from a task that a delay
   // held, such as an image's load event.
   void DecrementLoadEventDelayCountAndCheckLoadEvent();
@@ -788,7 +794,8 @@ class Document : public Node {
   const bool is_html_;
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
-  GURL fallback_base_url_;
+  // The first opaque origin that its URL gave, which it keeps.
+  mutable std::optional<url::Origin> opaque_origin_;
   std::u16string content_type_;
   std::optional<std::u16string> xml_encoding_;
   std::optional<std::u16string> xml_version_;
@@ -845,6 +852,8 @@ class Document : public Node {
   // none, and the base URL that it gives, empty for one that is not valid.
   GURL base_element_url_;
   GURL base_url_ = GURL("about:blank");
+  GURL about_base_url_;
+  GURL cookie_url_;
   cppgc::Member<DocumentScriptRunner> script_runner_;
   cppgc::Member<ResourceFetcher> fetcher_;
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;

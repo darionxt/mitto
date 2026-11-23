@@ -188,7 +188,9 @@ class PageFrame final : public NavigationClient, public Frame {
   uint64_t SendDocumentCommitted(PageDocumentCommitted committed);
   // What goes with the current window's context: its timers, idle callbacks,
   // animation frames, fetches, tasks and workers, and the inspector's and
-  // window.chrome's hold on it.
+  // window.chrome's hold on it. What runs them stops, and goes with the frame
+  // or once the next window's takes its place, as one of them may be what
+  // ended the context.
   void DetachWindow();
   // The frame's Cache API, IndexedDB and Storage Buckets: its own for a child
   // frame, the runner's for the top-level frame.
@@ -197,11 +199,11 @@ class PageFrame final : public NavigationClient, public Frame {
   StorageBucketHost* storage_bucket_host() const;
   // Gives `document`, of an HTTP or HTTPS origin, the frame's storage.
   void GiveStorage(Document& document) const;
-  // The frame's children go, each as Detach() has it, when the frame's
-  // document goes and its elements with it. The Session forgets them with the
-  // document, so it hears of none of them going.
+  // The frame's children go, each as Detach() has it, when the frame goes or
+  // its document goes and its elements with it.
   void DetachChildren();
-  // The child frame `child` has gone: this lets go of it.
+  // The child frame `child` has gone: this hands it to the runner, which lets
+  // go of it once the task ends.
   void RemoveChild(PageFrame& child);
   // RenderFrameImpl::SynchronouslyCommitAboutBlankForBug778318(): the first
   // navigation of a frame's initial about:blank to about:blank, from a
@@ -227,9 +229,12 @@ class PageFrame final : public NavigationClient, public Frame {
     // srcdoc, and the initiator's for an about:blank.
     url::Origin origin;
     std::u16string referrer;
-    // Its document's fallback base URL: the parent document's base URL for a
-    // srcdoc, and the initiator's for an about:blank.
-    GURL fallback_base_url;
+    // Its document's about base URL, the parent document's base URL for a
+    // srcdoc and the initiator's for an about:blank, and its cookie URL, the
+    // parent document's or the initiator's, as Blink's DocumentInit takes it
+    // from the owner document.
+    GURL about_base_url;
+    GURL cookie_url;
     // A srcdoc's markup.
     std::u16string body;
   };
@@ -253,8 +258,14 @@ class PageFrame final : public NavigationClient, public Frame {
   // Whether a navigation of the frame has committed, or started, since its
   // initial about:blank, which only its first may replace synchronously.
   bool navigated_ = false;
-  // Whether Detach() runs, whose unload events may remove the element again.
+  // Whether Detach() has started, whose unload events may remove the element
+  // again, and whether the frame's children and window have started to go
+  // after them.
   bool detaching_ = false;
+  bool going_ = false;
+  // Whether DetachChildren() runs, whose children's going checks nothing of
+  // the parent's load.
+  bool detaching_children_ = false;
   // What the parser of a synchronously committed about:blank reads: nothing.
   std::unique_ptr<DocumentParser::Client> empty_body_;
   // What the parser of a document that the frame committed without the
@@ -264,7 +275,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // network, and that of the one that waits to commit, or 0.
   uint64_t last_local_navigation_ = 0;
   uint64_t pending_local_navigation_ = 0;
-  // What the current window runs in its context, which goes with it.
+  // What the current window runs in its context, which stops with it.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;
   std::unique_ptr<AnimationFrameController> animation_frames_;

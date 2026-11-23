@@ -266,7 +266,18 @@ WindowTasks* Document::GetTasks() const {
 }
 
 url::Origin Document::GetOrigin() const {
-  return origin_ ? *origin_ : url::Origin::Create(GURL(url_));
+  if (origin_) {
+    return *origin_;
+  }
+  // Each opaque origin made from a URL is new, and no other's.
+  url::Origin origin = url::Origin::Create(GURL(url_));
+  if (!origin.opaque()) {
+    return origin;
+  }
+  if (!opaque_origin_) {
+    opaque_origin_ = std::move(origin);
+  }
+  return *opaque_origin_;
 }
 
 // SecurityOrigin::Domain(): the host, which an opaque origin lacks.
@@ -564,12 +575,21 @@ void Document::DispatchUnloadEvents() {
       !window_) {
     return;
   }
+  // Blink stops once a listener has taken the frame away, as its document
+  // loses its window then.
+  const bool framed = window_->GetFrame() != nullptr;
+  const auto frame_went = [this, framed] {
+    return !window_ || (framed && !window_->GetFrame());
+  };
   load_event_progress_ = LoadEventProgress::kPageHideInProgress;
   window_->DispatchEventWithTarget(
       PageTransitionEvent::CreateTrusted(u"pagehide", /*persisted=*/false),
       this);
+  if (frame_went()) {
+    return;
+  }
   // The page is visible until this changes it, which Hidden() reads.
-  const bool page_visible = window_ && !Hidden();
+  const bool page_visible = !Hidden();
   load_event_progress_ = LoadEventProgress::kUnloadVisibilityChangeInProgress;
   if (page_visible) {
     for (const char16_t* type :
@@ -581,8 +601,11 @@ void Document::DispatchUnloadEvents() {
       DispatchEvent(event);
     }
   }
+  if (frame_went()) {
+    return;
+  }
   load_event_progress_ = LoadEventProgress::kUnloadEventInProgress;
-  if (window_) {
+  {
     bindings::EventInit init;
     Event* const event = Event::Create(u"unload", init);
     event->SetTrusted(true);
@@ -1403,6 +1426,25 @@ void Document::SetUrl(std::u16string url) {
   UpdateBaseUrl();
 }
 
+GURL Document::FallbackBaseUrl() const {
+  GURL url(url_);
+  if ((url.IsAboutSrcdoc() || url.IsAboutBlank()) &&
+      about_base_url_.is_valid()) {
+    return about_base_url_;
+  }
+  return url;
+}
+
+GURL Document::CookieUrl() const {
+  return cookie_url_.is_empty() ? GURL(url_) : cookie_url_;
+}
+
+void Document::SetAboutBaseUrl(GURL url) {
+  about_base_url_ = std::move(url);
+  ProcessBaseElement();
+  UpdateBaseUrl();
+}
+
 const GURL& Document::BaseUrl() const {
   static const base::NoDestructor<GURL> kBlank("about:blank");
   return base_url_.is_empty() ? *kBlank : base_url_;
@@ -1550,13 +1592,15 @@ void Document::PopCurrentScript(Element* element) {
 
 void Document::DecrementLoadEventDelayCount() {
   CHECK_GT(load_event_delay_count_, 0);
-  if (--load_event_delay_count_ > 0 || load_event_check_pending_) {
-    return;
+  if (--load_event_delay_count_ == 0) {
+    CheckLoadEventSoon();
   }
-  // CheckLoadEventSoon(): a timer of no delay on the DOM manipulation task
-  // source.
+}
+
+void Document::CheckLoadEventSoon() {
+  // A timer of no delay on the DOM manipulation task source.
   WindowTasks* const tasks = window_ ? window_->GetTasks() : nullptr;
-  if (!tasks) {
+  if (load_event_check_pending_ || !tasks) {
     return;
   }
   load_event_check_pending_ = true;
@@ -1940,13 +1984,16 @@ void Document::Open(Window* entered_window,
     return;
   }
   // A document of a window takes the entered window's URL, without its
-  // fragment if that is another window.
+  // fragment if that is another window, and its cookie URL then.
   if (window_ && entered_window && entered_window->Document()) {
     GURL url(entered_window->Document()->UrlForBinding());
-    if (entered_window != window_ && url.has_ref()) {
-      GURL::Replacements replacements;
-      replacements.ClearRef();
-      url = url.ReplaceComponents(replacements);
+    if (entered_window != window_) {
+      cookie_url_ = entered_window->Document()->CookieUrl();
+      if (url.has_ref()) {
+        GURL::Replacements replacements;
+        replacements.ClearRef();
+        url = url.ReplaceComponents(replacements);
+      }
     }
     const std::u16string spec = base::UTF8ToUTF16(url.possibly_invalid_spec());
     if (spec != url_) {

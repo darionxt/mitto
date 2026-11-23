@@ -34,9 +34,10 @@ struct NavigationRequest {
   uint64_t initiator = 0;
   url::Origin initiator_origin;
   GURL initiator_url;
-  // The initiator's base URL, which an about:blank that it commits takes as
-  // its fallback base URL.
+  // The initiator's base URL and cookie URL, which an about:blank that it
+  // commits takes as its about base URL and its cookie URL.
   GURL initiator_base_url;
+  GURL initiator_cookie_url;
 };
 
 class NavigationClient {
