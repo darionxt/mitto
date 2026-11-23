@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/task_observer.h"
@@ -28,6 +29,7 @@
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/modulator.h"
@@ -230,6 +232,11 @@ void DedicatedWorkerThread::Scope::Start() {
       base::BindRepeating(&Scope::ReportUncaught, base::Unretained(this)));
   data_->SetExceptionReporter(base::BindRepeating(
       &PageReporter::ReportException, base::Unretained(reporter_.get())));
+  data_->SetConsoleWarningReporter(
+      base::BindRepeating([](std::string_view message) {
+        ExecutionContext::Current().AddConsoleMessage(ConsoleLevel::kWarning,
+                                                      std::string(message));
+      }));
   data_->SetKnownGapReporter(base::BindRepeating(
       [](const SendFrame& send, std::string_view name) {
         send.Run(EncodeKnownGap(name));
@@ -307,7 +314,9 @@ void DedicatedWorkerThread::Scope::Start() {
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
         PageConsoleMessage message;
         message.level = level;
-        message.text = std::move(text);
+        // A message may hold what a page gave, such as the value that an
+        // enumeration lacks, and goes no further than a Page message can.
+        base::TruncateUTF8ToByteSize(text, kMaxConsoleTextSize, &message.text);
         send.Run(EncodeConsole(message));
       },
       send));

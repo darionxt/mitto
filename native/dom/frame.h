@@ -19,6 +19,7 @@
 namespace mitto {
 
 class HTMLFrameOwnerElement;
+class NavigationRateLimiter;
 class Window;
 
 class Frame {
@@ -59,6 +60,9 @@ class Frame {
   // of it that still runs, and so do its window's timers, callbacks and
   // fetches, which stop at once.
   virtual void Detach() = 0;
+  // What counts the navigations that the frame's documents start, which it
+  // keeps across them, as Blink's Frame::navigation_rate_limiter().
+  virtual NavigationRateLimiter& GetNavigationRateLimiter() = 0;
 
   // The top-level frame of this one's tree.
   Frame& Top();
