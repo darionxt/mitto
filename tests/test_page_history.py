@@ -7,6 +7,7 @@ beside it, as CI's native job installs it on every Host.
 """
 
 import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -1280,3 +1281,48 @@ def test_a_traversal_that_a_critical_client_hint_restarts_starts_its_entry_anew(
         # The restart for the hint counts as a redirect, which leaves nothing of the entry, as in Chrome.
         assert page.evaluate("[location.pathname, history.state]") == ["/tcc", None]
     assert len(server.headers_of("/tcc")) == 3
+
+
+def test_a_traversal_s_request_does_not_wait_for_its_navigate_listeners(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b2", "<title>B2</title>", _NO_STORE)
+    held = threading.Event()
+    server.routes["/sawb"] = Route(b"seen", headers=[("Content-Type", "text/plain"), *_NO_STORE], hold=held)
+    listen = """navigation.addEventListener('navigate', e => {
+      if (e.navigationType != 'traverse') return;
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', '/sawb', false);
+      xhr.send();
+    }); history.forward(); 0"""
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b2'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page).url == first
+        page.evaluate(listen)
+        # The listener waits for the server, which answers only once the traversal has asked for its page, as in
+        # Chrome, whose browser starts the traversal without waiting for the navigate event.
+        deadline = time.monotonic() + TIMEOUT_SECONDS
+        while len(server.headers_of("/b2")) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        asked = len(server.headers_of("/b2"))
+        held.set()
+        assert asked == 2
+        assert _next_document(page).url == second
+
+
+def test_window_chrome_says_a_traversal_is_back_forward(session: mitto.Session, server: RecordingServer) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    kind = "[chrome.loadTimes().navigationType, chrome.csi().tran]"
+
+    with _open_page(session, first) as page:
+        assert page.evaluate(kind) == ["Other", 15]
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page).url == first
+        assert page.evaluate(kind) == ["BackForward", 6]

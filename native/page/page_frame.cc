@@ -659,19 +659,6 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   if (!document.DispatchBeforeUnloadEvent() || !window.HasContext()) {
     return false;
   }
-  // MaybeDispatchNavigateEventForCrossDocumentTraversal(): for an entry of
-  // the document's origin only.
-  if (document.GetOrigin().IsSameOriginWith(url::Origin::Create(target.url))) {
-    Navigation::NavigateParams params;
-    params.url = target.url;
-    params.load_type = FrameLoadType::kBackForward;
-    params.destination_item = &target;
-    params.cross_document = true;
-    window.Navigation()->DispatchNavigateEvent(params);
-  }
-  if (!window.HasContext()) {
-    return false;
-  }
   document.Abort();
   // It takes the place of a navigation that waits, which ends with
   // ERR_ABORTED.
@@ -689,6 +676,17 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   traversal_record_ = traversal.record;
   provisional_->SetNumber(
       runner_->requests().StartTraversal(std::move(traversal), *provisional_));
+  // MaybeDispatchNavigateEventForCrossDocumentTraversal(): for an entry of
+  // the document's origin only, once the request has started, as Chrome's
+  // browser tells the renderer of the traversal without waiting for it.
+  if (document.GetOrigin().IsSameOriginWith(url::Origin::Create(target.url))) {
+    Navigation::NavigateParams params;
+    params.url = target.url;
+    params.load_type = FrameLoadType::kBackForward;
+    params.destination_item = &target;
+    params.cross_document = true;
+    window.Navigation()->DispatchNavigateEvent(params);
+  }
   return true;
 }
 

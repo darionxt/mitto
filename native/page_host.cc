@@ -2990,6 +2990,13 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
     Refuse("a traversal to a document that the library has no record of");
     return;
   }
+  // An entry of the navigation goes with the policy of its own request, which
+  // the record keeps, whatever document asks.
+  if (!traversal.same_document_entry &&
+      traversal.referrer_policy != PageReferrerPolicy::kDocument) {
+    Refuse("a referrer policy for a traversal to a navigation's entry");
+    return;
+  }
   const NavigationRecord& record = found->second;
   const GURL url(traversal.url);
   PageEvent started;
