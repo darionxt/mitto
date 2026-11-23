@@ -255,7 +255,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // window for a document of the initial about:blank's origin, as Blink's
   // DocumentLoader::CommitNavigation() reuses it, and otherwise in a new
   // context that the frame's WindowProxy takes.
-  void CommitWithoutNetwork(LocalNavigation navigation);
+  void CommitWithoutNetwork(uint64_t number);
 
   const raw_ref<ScriptRunner> runner_;
   const uint64_t id_;
@@ -285,9 +285,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // network reads.
   std::unique_ptr<DocumentParser::Client> local_body_;
   // The number of the last navigation of the frame that commits without the
-  // network, and that of the one that waits to commit, or 0.
+  // network, and the one that waits to commit, if any, which the newest
+  // takes the place of.
   uint64_t last_local_navigation_ = 0;
-  uint64_t pending_local_navigation_ = 0;
+  std::unique_ptr<LocalNavigation> pending_local_navigation_;
   // What the current window runs in its context, which stops with it.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;

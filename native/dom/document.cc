@@ -144,8 +144,7 @@ Window* EnteredWindow() {
   if (!isolate->InContext()) {
     return nullptr;
   }
-  return bindings::V8Window::ToWrappable(
-      isolate, isolate->GetEnteredOrMicrotaskContext()->Global());
+  return Window::From(isolate, isolate->GetEnteredOrMicrotaskContext());
 }
 
 bool IsAsciiWhitespace(char16_t c) {
@@ -182,8 +181,8 @@ Document* Document::Create() {
   if (!isolate || !isolate->InContext()) {
     return document;
   }
-  const Window* const window = bindings::V8Window::ToWrappable(
-      isolate, isolate->GetCurrentContext()->Global());
+  const Window* const window =
+      Window::From(isolate, isolate->GetCurrentContext());
   if (window && window->HasDocument()) {
     document->SetOrigin(window->GetDocument().GetOrigin());
   }
@@ -260,8 +259,7 @@ WindowTasks* Document::GetTasks() const {
   if (!isolate || !isolate->InContext()) {
     return nullptr;
   }
-  Window* const window = bindings::V8Window::ToWrappable(
-      isolate, isolate->GetCurrentContext()->Global());
+  Window* const window = Window::From(isolate, isolate->GetCurrentContext());
   return window ? window->GetTasks() : nullptr;
 }
 
@@ -1998,6 +1996,12 @@ void Document::Open(Window* entered_window,
     const std::u16string spec = base::UTF8ToUTF16(url.possibly_invalid_spec());
     if (spec != url_) {
       SetUrl(spec);
+      // DidOpenDocumentInputStream(): the browser takes the URL, of the
+      // document's origin, as it takes one that a navigation within the
+      // document gave it.
+      if (NavigationClient* const client = window_->GetNavigationClient()) {
+        client->DidNavigateWithinDocument(url);
+      }
     }
   }
   Open();

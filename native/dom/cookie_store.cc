@@ -86,8 +86,7 @@ void RunInContext(v8::Isolate* isolate,
                   Run run) {
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = context_handle.Get(isolate);
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
+  const Window* const window = Window::From(isolate, context);
   if (!window || !window->HasContext()) {
     return;
   }

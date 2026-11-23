@@ -226,6 +226,13 @@ enum class PageMessage : uint32_t {
   // navigation within it gave it, such as one to a fragment, which is of the
   // document's origin.
   kSameDocumentNavigation = 71,
+  // To the Session: the ID of a frame's document, and the ID of the document
+  // that has started a navigation of the frame to about:blank, which commits
+  // without the network from a later task. The about:blank takes the origin,
+  // embedder policy and cookie URL that its initiator has now, as the
+  // browser's NavigationRequest holds them from its start, whether or not the
+  // initiator is still there when it commits.
+  kAboutBlankNavigation = 72,
   // To the Session: a dedicated worker that a context of the Page has
   // started, as PageWorkerStarted says. Its ID is one of the documents', in
   // the same order.
@@ -1148,6 +1155,8 @@ struct FrameFromPage {
   PageRequestBodyEnded request_body_ended;
   // kSameDocumentNavigation: the document's new URL.
   std::string same_document_url;
+  // kAboutBlankNavigation: the document that started it.
+  uint64_t about_blank_initiator = kNoDocument;
   // kStorageBind.
   PageStorageBind storage_bind;
   // kStorageGetAll.
@@ -1295,6 +1304,7 @@ std::string EncodeContextGone(uint64_t context);
 // `url` is at most kMaxPayloadSize - 8 bytes.
 std::string EncodeSameDocumentNavigation(uint64_t document,
                                          std::string_view url);
+std::string EncodeAboutBlankNavigation(uint64_t document, uint64_t initiator);
 std::string EncodeStorageBind(uint64_t document, const PageStorageBind& bind);
 std::string EncodeStorageGetAll(const PageStorageGetAll& get_all);
 // Whether a mutation fits in a frame.

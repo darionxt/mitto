@@ -406,6 +406,9 @@ class PageHost final : public PageChannel::Delegate {
   void OnContextGone(uint64_t context_id);
   // A navigation within document `document` that gave it the URL `url`.
   void OnSameDocumentNavigation(uint64_t document, const std::string& url);
+  // A navigation of document `document`'s frame to about:blank that document
+  // `initiator` started.
+  void OnAboutBlankNavigation(uint64_t document, uint64_t initiator);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
   // with `net_error`, and `status` for one that kept the document.
   void PushNavigated(std::string url, int32_t status, int32_t net_error);
@@ -630,6 +633,17 @@ class PageHost final : public PageChannel::Delegate {
     uint64_t target = kNoDocument;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
+  // The navigations of frames to about:blank that have started and not
+  // committed yet, by the frame's document that the about:blank takes the
+  // place of: the document that started it, and what of it the about:blank
+  // takes.
+  struct AboutBlankNavigation {
+    uint64_t initiator = kNoDocument;
+    url::Origin origin;
+    CrossOriginEmbedderPolicy coep;
+    GURL cookie_url;
+  };
+  std::map<uint64_t, AboutBlankNavigation> about_blank_navigations_;
   // The responses of the scripts of workers that the Page has and has not
   // started yet, by number: the context that asked and the final URL.
   struct WorkerScript {

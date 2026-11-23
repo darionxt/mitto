@@ -86,6 +86,9 @@ class Frame {
   Frame* ScopedChild(std::u16string_view name) const;
   // Whether this frame is `other` or one of its descendants.
   bool IsDescendantOf(const Frame& other) const;
+  // Whether its element has a sandbox attribute, whose flags the Page does
+  // not enforce yet, so that what they would withhold runs nothing.
+  bool IsSandboxed() const;
 
   // Blink's Frame::NavigationRateLimiter(): each frame counts its own.
   NavigationRateLimiter& navigation_rate_limiter() {

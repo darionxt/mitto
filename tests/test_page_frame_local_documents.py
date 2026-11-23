@@ -10,7 +10,7 @@ import http.server
 import threading
 import urllib.parse
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -78,19 +78,19 @@ def _evaluate(origin: str, script: str, query: str = "") -> Any:
     """What `script` gives in a Page at /app/page, with the origin as ORIGIN in each string."""
     url = f"{origin}/app/page" + (f"?{query}" if query else "")
     with mitto.Session() as session, session._open_page(url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-        result = page.evaluate(script)
+        result: object = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
         # The Page goes on: nothing that the script did made the library refuse it.
-        assert page.evaluate("1 + 1") == 2
+        assert page.evaluate("1 + 1", timeout=_TIMEOUT_SECONDS) == 2
     return _anonymized(result, origin)
 
 
-def _anonymized(value: Any, origin: str) -> Any:
+def _anonymized(value: object, origin: str) -> object:
     if isinstance(value, str):
         return value.replace(origin, "ORIGIN")
     if isinstance(value, list):
-        return [_anonymized(item, origin) for item in value]
+        return [_anonymized(item, origin) for item in cast(list[object], value)]
     if isinstance(value, dict):
-        return {key: _anonymized(item, origin) for key, item in value.items()}
+        return {key: _anonymized(item, origin) for key, item in cast(dict[str, object], value).items()}
     return value
 
 
@@ -357,3 +357,147 @@ def test_each_frame_counts_its_own_navigations(origin: str) -> None:
       }})()
     """
     assert _evaluate(origin, script) == ["101", "101"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_sandboxed_frame_runs_no_javascript_url(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        const fromSrc = document.createElement('iframe');
+        fromSrc.sandbox = '';
+        fromSrc.src = 'javascript:parent.ranSrc = true; "x"';
+        document.body.appendChild(fromSrc);
+        await settle(300);
+        const fromLocation = document.createElement('iframe');
+        fromLocation.sandbox = '';
+        document.body.appendChild(fromLocation);
+        await settle(100);
+        try {{
+          fromLocation.contentWindow.location = 'javascript:parent.ranLocation = true; "y"';
+        }} catch (e) {{}}
+        await settle(300);
+        return [window.ranSrc === true, window.ranLocation === true];
+      }})()
+    """
+    assert _evaluate(origin, script) == [False, False]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_about_blank_whose_initiator_goes_first_still_takes_what_it_had(origin: str) -> None:
+    # A frame navigates its sibling to about:blank and is removed before that commits: the about:blank still takes the
+    # initiator's origin and cookie URL, as Chrome's browser took them when the navigation started.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const target = document.createElement('iframe');
+        target.srcdoc = '<p>t';
+        document.body.appendChild(target);
+        await loaded(target);
+        const starter = document.createElement('iframe');
+        document.body.appendChild(starter);
+        starter.contentWindow.eval("parent.frames[0].location.href = 'about:blank'");
+        starter.remove();
+        await loaded(target);
+        const d = target.contentDocument;
+        return [d.URL, d.referrer, d.cookie];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["about:blank", "", "c1=v1"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_at_a_url_with_a_query_navigates_within_itself(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>orig';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.contentWindow.location = 'about:srcdoc?x';
+        await loaded(element);
+        element.contentWindow.location.hash = 'h';
+        await settle(100);
+        return [element.contentDocument.URL, element.contentDocument.body.textContent];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["about:srcdoc?x#h", "orig"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_old_window_keeps_its_own_document(origin: str) -> None:
+    # The first srcdoc's Request, kept after the second srcdoc took the frame's WindowProxy, resolves against the first
+    # document's base URL.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<base href="/one/"><p>1';
+        document.body.appendChild(element);
+        await loaded(element);
+        const OldRequest = element.contentWindow.Request;
+        element.srcdoc = '<base href="/two/"><p>2';
+        await loaded(element);
+        return [new OldRequest('x').url, new element.contentWindow.Request('x').url];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["ORIGIN/one/x", "ORIGIN/two/x"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_navigation_cancels_a_frame_s_srcdoc_that_waits(origin: str) -> None:
+    # Chrome loads the data: URL; a frame's navigation to one is still a Known Gap, but the srcdoc that waited never runs.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = 'data:text/html,<p>d';
+        element.srcdoc = '<p>a';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.srcdoc = '<script>parent.ran = true<\\/script>';
+        element.removeAttribute('srcdoc');
+        await settle(1000);
+        return window.ran === true;
+      }})()
+    """
+    assert _evaluate(origin, script) is False
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_iframe_s_referrerpolicy_decides_its_srcdoc_s_referrer(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const referrers = [];
+        for (const policy of ['no-referrer', 'unsafe-url']) {{
+          const element = document.createElement('iframe');
+          element.referrerPolicy = policy;
+          element.srcdoc = '<p>p';
+          document.body.appendChild(element);
+          await loaded(element);
+          referrers.push(element.contentDocument.referrer);
+        }}
+        return referrers;
+      }})()
+    """
+    assert _evaluate(origin, script) == ["", "ORIGIN/app/page"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_document_that_its_parent_opens_sends_the_parent_s_url_as_referer(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_ECHO}
+        const element = document.createElement('iframe');
+        document.body.appendChild(element);
+        element.contentDocument.open();
+        element.contentDocument.write('<p>w');
+        element.contentDocument.close();
+        return [element.contentDocument.URL, await echo(element.contentWindow, '/echo')];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["ORIGIN/app/page", "ORIGIN/app/page|none"]

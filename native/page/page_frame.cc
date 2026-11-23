@@ -138,6 +138,7 @@ void PageFrame::Start(const PageConnection& connection) {
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
   context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
+  window_->BindToContext(isolate, context());
   if (parent_) {
     // The frame's own storage, which asks as each of its documents in turn.
     EventLoop* const event_loop = EventLoop::Get();
@@ -211,7 +212,7 @@ bool PageFrame::IsLoading() const {
   // Frame::IsLoading(): while a navigation waits or the document loads. A
   // frame's initial about:blank, whose load event never fires, holds nothing
   // back, as Blink's FrameLoader::Init() suppresses its finish.
-  if (provisional_ || pending_local_navigation_ != 0) {
+  if (provisional_ || pending_local_navigation_) {
     return true;
   }
   if (!window_ || !window_->HasDocument()) {
@@ -255,14 +256,24 @@ void PageFrame::NavigateFromOwner(const GURL& url) {
   FrameLoadRequest request;
   request.url = url;
   request.origin_window = parent_->window_.Get();
+  // HTMLFrameOwnerElement::ReferrerPolicyAttribute(): the iframe's
+  // referrerpolicy, for the navigation's referrer.
+  if (HTMLFrameOwnerElement* const owner = owner_.Get()) {
+    if (const std::u16string* const policy =
+            owner->FindAttribute(u"referrerpolicy")) {
+      request.referrer_policy = FetchReferrerPolicyFromString(*policy);
+    }
+  }
   Navigate(*window_, request, FrameLoadType::kStandard);
 }
 
-void PageFrame::CommitWithoutNetwork(LocalNavigation navigation) {
-  if (pending_local_navigation_ != navigation.number || !window_) {
+void PageFrame::CommitWithoutNetwork(uint64_t number) {
+  if (!pending_local_navigation_ ||
+      pending_local_navigation_->number != number || !window_) {
     return;
   }
-  pending_local_navigation_ = 0;
+  LocalNavigation navigation = std::move(*pending_local_navigation_);
+  pending_local_navigation_.reset();
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);
   const GURL& url = navigation.url;
@@ -308,6 +319,7 @@ void PageFrame::CommitWithoutNetwork(LocalNavigation navigation) {
                    /*cross_origin_isolated=*/false, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
+    window_->BindToContext(isolate, context);
     AttachWindow(parent_->window_->Connection(), committed);
     const v8::Context::Scope context_scope(context);
     document = Document::CreateHTML();
@@ -524,7 +536,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
               : nullptr;
       // A sandboxed frame's srcdoc would run with the flags that its sandbox
       // withholds, which the Page cannot enforce yet, so it commits nothing.
-      if (owner && owner->FindAttribute(u"sandbox")) {
+      if (IsSandboxed()) {
         return;
       }
       navigation.body = srcdoc ? *srcdoc : std::u16string();
@@ -536,19 +548,24 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     } else {
       navigation.committed.source = PageDocumentSource::kAboutBlank;
       navigation.committed.initiator = request.initiator;
+      // The Session takes what the about:blank inherits of its initiator now.
+      runner_->send().Run(
+          EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator));
       navigation.origin = request.initiator_origin;
-      navigation.referrer_policy = request.referrer_policy;
+      navigation.referrer_policy = request.initiator_referrer_policy;
       navigation.about_base_url = request.initiator_base_url;
       navigation.cookie_url = request.initiator_cookie_url;
     }
     StopAllLoaders();
     navigation.number = ++last_local_navigation_;
-    pending_local_navigation_ = navigation.number;
+    const uint64_t number = navigation.number;
+    pending_local_navigation_ =
+        std::make_unique<LocalNavigation>(std::move(navigation));
     EventLoop::Get()
         ->TaskRunner(TaskType::kInternalLoading)
-        ->PostTask(FROM_HERE, base::BindOnce(&PageFrame::CommitWithoutNetwork,
-                                             weak_factory_.GetWeakPtr(),
-                                             std::move(navigation)));
+        ->PostTask(FROM_HERE,
+                   base::BindOnce(&PageFrame::CommitWithoutNetwork,
+                                  weak_factory_.GetWeakPtr(), number));
     return;
   }
   const base::TimeTicks now = base::TimeTicks::Now();
@@ -590,14 +607,14 @@ void PageFrame::DidNavigateWithinDocument(const GURL& url) {
   // A URL too long for a frame stays the Page's, which no Chrome would have.
   if (spec.size() <= kMaxPayloadSize - 8) {
     runner_->send().Run(
-        EncodeSameDocumentNavigation(Window::Current().DocumentId(), spec));
+        EncodeSameDocumentNavigation(window_->DocumentId(), spec));
   }
 }
 
 bool PageFrame::HasProvisionalNavigation() const {
   // A srcdoc or an about:blank that waits to commit is the browser's
   // navigation that FrameLoader's client navigation stands for.
-  return provisional_ != nullptr || pending_local_navigation_ != 0;
+  return provisional_ != nullptr || pending_local_navigation_ != nullptr;
 }
 
 void PageFrame::StopAllLoaders() {
@@ -612,10 +629,10 @@ void PageFrame::StopAllLoaders() {
 }
 
 void PageFrame::CancelLocalNavigation() {
-  if (pending_local_navigation_ == 0) {
+  if (!pending_local_navigation_) {
     return;
   }
-  pending_local_navigation_ = 0;
+  pending_local_navigation_.reset();
   CheckParentLoadSoon();
 }
 
@@ -721,6 +738,7 @@ Document& PageFrame::CommitDocument(
                  global_proxy);
   context_.Reset(isolate, context);
   window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
+  window_->BindToContext(isolate, context);
   PageDocumentCommitted committed;
   committed.source = PageDocumentSource::kNavigationResponse;
   committed.navigation = navigation;

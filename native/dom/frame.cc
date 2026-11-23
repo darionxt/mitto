@@ -1,5 +1,6 @@
 #include "mitto/dom/frame.h"
 
+#include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/window.h"
 
 namespace mitto {
@@ -54,6 +55,11 @@ bool Frame::IsDescendantOf(const Frame& other) const {
     }
   }
   return false;
+}
+
+bool Frame::IsSandboxed() const {
+  const HTMLFrameOwnerElement* const owner = Owner();
+  return owner && owner->FindAttribute(u"sandbox");
 }
 
 }  // namespace mitto

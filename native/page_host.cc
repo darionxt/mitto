@@ -2808,19 +2808,19 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
       if (committed.source == PageDocumentSource::kAboutBlank) {
         // RenderFrameHostImpl::SetOriginDependentStateOfNewFrame() and
         // NavigationRequest::GetOriginToCommit(): about:blank takes the origin
-        // of the document that started its navigation.
-        const auto initiator = contexts_.find(committed.initiator);
-        if (initiator == contexts_.end() || initiator->second.is_worker) {
-          Refuse(
-              "an about:blank whose initiator is not one of the Page's "
-              "documents");
+        // of the document that started its navigation, and its policy
+        // container, with its embedder policy, and its cookie URL, as they
+        // were when the navigation started.
+        const auto started = about_blank_navigations_.find(committed.replaces);
+        if (started == about_blank_navigations_.end() ||
+            started->second.initiator != committed.initiator) {
+          Refuse("an about:blank whose navigation did not start");
           return;
         }
-        // Its policy container is its initiator's, with its embedder
-        // policy, and so is its cookie URL.
-        context.origin = initiator->second.origin;
-        context.coep = initiator->second.coep;
-        context.cookie_url = CookieUrlOf(initiator->second);
+        context.origin = started->second.origin;
+        context.coep = started->second.coep;
+        context.cookie_url = started->second.cookie_url;
+        about_blank_navigations_.erase(started);
         context.url = GURL(url::kAboutBlankURL);
       } else {
         // A srcdoc's are its parent's.
@@ -2850,6 +2850,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   LetKeepaliveRequestsGo(nullptr);
   contexts_.clear();
   frame_navigation_responses_.clear();
+  about_blank_navigations_.clear();
   worker_scripts_.clear();
   const GURL url = context.url;
   contexts_.emplace(committed.document, std::move(context));
@@ -2881,22 +2882,43 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   }
 }
 
+void PageHost::OnAboutBlankNavigation(uint64_t document,
+                                      uint64_t initiator_id) {
+  // The browser's NavigationRequest takes the initiator's origin and policy
+  // container as the navigation begins, so the about:blank has them though
+  // the initiator goes first. The newest navigation of the frame takes the
+  // place of one that waits.
+  const auto initiator = contexts_.find(initiator_id);
+  if (contexts_.at(document).is_worker || initiator == contexts_.end() ||
+      initiator->second.is_worker) {
+    Refuse("an about:blank whose initiator is not one of the Page's documents");
+    return;
+  }
+  AboutBlankNavigation& started = about_blank_navigations_[document];
+  started.initiator = initiator_id;
+  started.origin = initiator->second.origin;
+  started.coep = initiator->second.coep;
+  started.cookie_url = CookieUrlOf(initiator->second);
+}
+
 void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
   // The browser checks a renderer's same-document URL as
-  // CanChangeToUrlForHistoryApi() does: of the document's origin, or only its
-  // fragment changed, as about:blank's can. A frame's about:blank may have
-  // committed at another about:blank URL, such as about:blank?v=1, which the
-  // library does not hear of, so one about:blank URL may follow another: the
-  // document keeps its origin, and the Page holds it to its path and query.
+  // CanChangeToUrlForHistoryApi() does, and the URL that document.open()
+  // gave a document as DidOpenDocumentInputStream() does: of the document's
+  // origin, or only its fragment changed, as about:blank's can. A frame's
+  // about:blank or srcdoc may have committed at another such URL, such as
+  // about:blank?v=1, which the library does not hear of, so one about:blank
+  // or about:srcdoc URL may follow another: the document keeps its origin,
+  // and the Page holds it to its path and query.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
   if (!new_url.is_valid() ||
-      (!url::Origin::Create(document_url)
-            .IsSameOriginWith(url::Origin::Create(new_url)) &&
+      (!context.origin.IsSameOriginWith(new_url) &&
        document_url.GetWithoutRef() != new_url.GetWithoutRef() &&
-       !(document_url.IsAboutBlank() && new_url.IsAboutBlank()))) {
+       !(document_url.IsAboutBlank() && new_url.IsAboutBlank()) &&
+       !(document_url.IsAboutSrcdoc() && new_url.IsAboutSrcdoc()))) {
     Refuse("a same-document navigation to another origin");
     return;
   }
@@ -2966,6 +2988,8 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
     contexts_.erase(id);
     // Its CookieStore listened over a pipe that went with it.
     cookie_store_listeners_.erase(id);
+    // Its frame's about:blank that waits commits in the place of no document.
+    about_blank_navigations_.erase(id);
   }
   // Its Cache API's puts that wait for a body fail, and its caches and stored
   // bodies are let go, as its pipes go with it in Chrome, so that none holds
@@ -3334,6 +3358,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     case PageMessage::kSameDocumentNavigation:
       OnSameDocumentNavigation(frame->document, frame->same_document_url);
+      return;
+    case PageMessage::kAboutBlankNavigation:
+      OnAboutBlankNavigation(frame->document, frame->about_blank_initiator);
       return;
     case PageMessage::kIndexedDb:
       OnIndexedDb(std::move(frame->indexed_db_call), frame->document,

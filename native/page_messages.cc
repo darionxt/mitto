@@ -194,8 +194,7 @@ bool IsKnown(uint32_t type) {
          (type >= static_cast<uint32_t>(PageMessage::kCacheStorage) &&
           type <= static_cast<uint32_t>(PageMessage::kIndexedDbCallback)) ||
          (type >= static_cast<uint32_t>(PageMessage::kDocumentCommitted) &&
-          type <=
-              static_cast<uint32_t>(PageMessage::kSameDocumentNavigation)) ||
+          type <= static_cast<uint32_t>(PageMessage::kAboutBlankNavigation)) ||
          (type >= static_cast<uint32_t>(PageMessage::kWorkerStarted) &&
           type <= static_cast<uint32_t>(PageMessage::kContextGone)) ||
          (type >= static_cast<uint32_t>(PageMessage::kRequestBodyPart) &&
@@ -2163,9 +2162,15 @@ std::string EncodeSameDocumentNavigation(uint64_t document,
                              url);
 }
 
+std::string EncodeAboutBlankNavigation(uint64_t document, uint64_t initiator) {
+  return EncodeDocumentFrame(PageMessage::kAboutBlankNavigation, document,
+                             EncodeUint64(initiator));
+}
+
 bool NamesDocument(PageMessage type) {
   switch (type) {
     case PageMessage::kSameDocumentNavigation:
+    case PageMessage::kAboutBlankNavigation:
     case PageMessage::kRequest:
     case PageMessage::kGetCookies:
     case PageMessage::kSetCookie:
@@ -2566,6 +2571,16 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.same_document_url = std::move(payload);
       return frame;
+    case PageMessage::kAboutBlankNavigation:
+      if (payload.size() != 8) {
+        return base::unexpected(
+            WrongSize("about:blank navigation", payload.size()));
+      }
+      frame.about_blank_initiator = DecodeUint64(payload);
+      if (frame.about_blank_initiator == kNoDocument) {
+        return base::unexpected("an about:blank started by no document");
+      }
+      return frame;
     case PageMessage::kStorageBind: {
       base::expected<PageStorageBind, std::string> bind =
           ReadStorageBind(payload);
@@ -2867,6 +2882,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kStorageBuckets:
     case PageMessage::kDocumentCommitted:
     case PageMessage::kSameDocumentNavigation:
+    case PageMessage::kAboutBlankNavigation:
     case PageMessage::kWorkerStarted:
     case PageMessage::kContextGone:
     case PageMessage::kStorageBind:

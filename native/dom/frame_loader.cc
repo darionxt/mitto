@@ -237,8 +237,9 @@ void StartNavigation(Window& window,
     return;
   }
   // A top-level frame shows no data: URL that a page navigates it to, but one
-  // that would be a download.
-  if (url.SchemeIs(url::kDataScheme) &&
+  // that would be a download. A frame's goes on.
+  const Frame* const frame = window.GetFrame();
+  if (url.SchemeIs(url::kDataScheme) && (!frame || !frame->Parent()) &&
       request.reason != ClientNavigationReason::kReload &&
       IsDataUrlMimeTypeSupported(url)) {
     window.AddConsoleMessage(
@@ -263,6 +264,11 @@ void StartNavigation(Window& window,
     return;
   }
   if (url.SchemeIs(url::kJavaScriptScheme)) {
+    // A sandboxed frame's document runs no javascript: URL, as it would not
+    // without allow-scripts.
+    if (frame && frame->IsSandboxed()) {
+      return;
+    }
     ProcessJavaScriptUrl(window, url);
     return;
   }
@@ -301,7 +307,12 @@ void StartNavigation(Window& window,
   navigation.replace = type == FrameLoadType::kReplaceCurrentItem;
   const Window& origin_window =
       request.origin_window ? *request.origin_window : window;
-  navigation.referrer_policy = origin_window.GetDocument().GetReferrerPolicy();
+  navigation.initiator_referrer_policy =
+      origin_window.GetDocument().GetReferrerPolicy();
+  navigation.referrer_policy =
+      request.referrer_policy != FetchReferrerPolicy::kDefault
+          ? request.referrer_policy
+          : navigation.initiator_referrer_policy;
   navigation.initiator = origin_window.DocumentId();
   navigation.initiator_origin = origin_window.GetSecurityOrigin();
   navigation.initiator_url = GURL(origin_window.GetDocument().UrlForBinding());
