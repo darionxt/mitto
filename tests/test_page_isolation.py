@@ -315,8 +315,9 @@ _WHOLE = "const whole = (ms, step) => Math.abs(ms - Math.round(ms / step) * step
 # number of steps of 5 microseconds ("fine"), and whether some is not one of 100 ("offCoarse"), which a clock of 5
 # microseconds gives among so many readings and one of 100 never does, on a host whose own clock ticks finer than a
 # millisecond: one that ticks in milliseconds, as Chromium's fallback on some Windows hosts does, keeps every reading
-# of performance.now() on whole milliseconds ("hostCoarse"). An event's time comes from the same clock, so it leaves
-# the grid of 100 where now() does. A frame's time steps by the display's period and an idle deadline's time remaining
+# of performance.now() on whole milliseconds ("hostCoarse"), and may keep Temporal.Now and the time origins on the grid
+# of 100 with them. An event's time comes from the same clock, so it leaves the grid of 100 where now() does: the page
+# reads events until 50 of their times differ, so that a pause of the page's thread cannot leave it none. A frame's time steps by the display's period and an idle deadline's time remaining
 # from it, so they leave the grid on any host; only an idle callback's readings above zero count, since one that runs
 # past its deadline reads zeros. performance.timeOrigin is a single reading.
 _CLOCKS = (
@@ -335,9 +336,12 @@ _CLOCKS = (
         temporal.push(Temporal.Now.instant().epochNanoseconds);
     }
     const events = [];
-    const eventsEnd = performance.now() + 5;
-    while (performance.now() < eventsEnd) {
-        events.push(new Event('x').timeStamp);
+    const distinct = new Set();
+    const eventsEnd = performance.now() + 2000;
+    while (distinct.size < 50 && performance.now() < eventsEnd) {
+        const time = new Event('x').timeStamp;
+        events.push(time);
+        distinct.add(time);
     }
     const frames = [];
     for (let i = 0; i < 20; i++) {
@@ -391,11 +395,11 @@ def test_an_isolated_window_reads_clocks_of_5_microseconds(
     clocks = _evaluate(sixty_hertz_session, url, _CLOCKS)
 
     assert _all_fine(clocks), clocks
+    # Temporal.Now reads the host's wall clock, which ticks with its monotonic one.
     assert clocks["nowOffCoarse"] or clocks["hostCoarse"], clocks
+    assert clocks["temporalOffCoarse"] or clocks["hostCoarse"], clocks
     # Whether the one reading of the time origin falls on the coarse grid is chance: the workers' test reads several.
-    assert [clocks[name] for name in ("temporalOffCoarse", "eventsFollowNow", "framesOffCoarse", "idleOffCoarse")] == [
-        True
-    ] * 4, clocks
+    assert [clocks[name] for name in ("eventsFollowNow", "framesOffCoarse", "idleOffCoarse")] == [True] * 3, clocks
     assert clocks["measure"] == "function"
 
 
@@ -424,6 +428,7 @@ _WORKERS_CLOCKS = (
         fine: results.map(([fine]) => fine),
         offCoarseOrHostCoarse: results.map(([, offCoarse, hostCoarse]) => offCoarse || hostCoarse),
         offCoarse: results.map(([, offCoarse]) => offCoarse),
+        hostCoarse: results.every(([, , hostCoarse]) => hostCoarse),
         originsFine: results.every(([, , , origin]) => whole(origin, 0.005)),
         someOriginOffCoarse: results.some(([, , , origin]) => !whole(origin, 0.1)),
         measure: results.map(([, , , , measure]) => measure),
@@ -447,7 +452,9 @@ def test_an_isolated_worker_reads_clocks_of_5_microseconds(session: mitto.Sessio
 
     # measureUserAgentSpecificMemory() is exposed on a window, a service worker and a shared worker alone.
     assert clocks["fine"] == clocks["offCoarseOrHostCoarse"] == [True] * 8, clocks
-    assert [clocks["originsFine"], clocks["someOriginOffCoarse"]] == [True, True], clocks
+    # The time origins come from the host's wall clock, which a host whose clock ticks in milliseconds keeps coarse.
+    assert clocks["originsFine"], clocks
+    assert clocks["someOriginOffCoarse"] or clocks["hostCoarse"], clocks
     assert clocks["measure"] == ["undefined"] * 8
 
 
