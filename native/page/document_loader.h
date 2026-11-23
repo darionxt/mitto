@@ -23,6 +23,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "mitto/dom/document_parser.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/page/page_requests.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
@@ -54,6 +55,12 @@ class DocumentLoader final : public PageRequests::Client,
   // Makes this the loader of a response that the Page answers itself, a
   // data: URL's, of which the Session hears nothing: no credit and no cancel.
   void AnswerByPage() { answered_by_page_ = true; }
+  // The referrer policy of a local URL's document, which it takes from the
+  // initiator's policy container, as Chrome's browser gives it, unless its
+  // response says otherwise.
+  void SetInheritedReferrerPolicy(FetchReferrerPolicy policy) {
+    inherited_referrer_policy_ = policy;
+  }
   bool answered_by_page() const { return answered_by_page_; }
   base::WeakPtr<DocumentLoader> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
@@ -88,6 +95,8 @@ class DocumentLoader final : public PageRequests::Client,
   const raw_ref<PageFrame> frame_;
   uint64_t number_;
   bool answered_by_page_ = false;
+  FetchReferrerPolicy inherited_referrer_policy_ =
+      FetchReferrerPolicy::kDefault;
   bool response_started_ = false;
   // Whether the document of the response is cross-origin isolated, which
   // its window's agent is, as Blink's agent cluster key from the browser

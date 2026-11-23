@@ -1137,19 +1137,20 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     case static_cast<uint8_t>(PageDocumentSource::kNavigationResponse):
     case static_cast<uint8_t>(PageDocumentSource::kSrcdoc):
     case static_cast<uint8_t>(PageDocumentSource::kErrorPage):
-    case static_cast<uint8_t>(PageDocumentSource::kDataUrl):
       named = 1;
       break;
     case static_cast<uint8_t>(PageDocumentSource::kAboutBlank):
+    case static_cast<uint8_t>(PageDocumentSource::kDataUrl):
     case static_cast<uint8_t>(PageDocumentSource::kBlob):
       named = 2;
       break;
     default:
       return base::unexpected("a document that is not valid");
   }
-  // A blob: URL's document names its URL after its IDs, and no other has
-  // anything after them.
+  // A data: or blob: URL's document names its URL after its IDs, and no other
+  // has anything after them.
   const bool names_url =
+      source == static_cast<uint8_t>(PageDocumentSource::kDataUrl) ||
       source == static_cast<uint8_t>(PageDocumentSource::kBlob);
   if (names_url ? payload.size() <= kFixedSize + 8 * named
                 : payload.size() != kFixedSize + 8 * named) {
@@ -1173,6 +1174,7 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
       committed.initiator = DecodeUint64(payload.substr(17, 8));
       committed.replaces = DecodeUint64(payload.substr(25, 8));
       break;
+    case PageDocumentSource::kDataUrl:
     case PageDocumentSource::kBlob:
       committed.initiator = DecodeUint64(payload.substr(17, 8));
       committed.replaces = DecodeUint64(payload.substr(25, 8));
@@ -1183,7 +1185,6 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
       break;
     case PageDocumentSource::kSrcdoc:
     case PageDocumentSource::kErrorPage:
-    case PageDocumentSource::kDataUrl:
       committed.replaces = DecodeUint64(payload.substr(17, 8));
       break;
   }
@@ -2153,6 +2154,7 @@ std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
       payload += EncodeUint64(committed.initiator);
       payload += EncodeUint64(committed.replaces);
       break;
+    case PageDocumentSource::kDataUrl:
     case PageDocumentSource::kBlob:
       payload += EncodeUint64(committed.initiator);
       payload += EncodeUint64(committed.replaces);
@@ -2160,7 +2162,6 @@ std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
       break;
     case PageDocumentSource::kSrcdoc:
     case PageDocumentSource::kErrorPage:
-    case PageDocumentSource::kDataUrl:
       payload += EncodeUint64(committed.replaces);
       break;
   }

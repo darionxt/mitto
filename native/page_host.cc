@@ -2906,9 +2906,22 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         // opaque.
         context.url = GURL(kErrorPageUrl);
       } else {
-        // So is a data: URL's, whose URL the library has no need of: its
-        // requests send no Referer and no cookies.
-        context.url = GURL(base::StrCat({url::kDataScheme, ":"}));
+        // So is a data: URL's, whose requests send no Referer and no cookies.
+        // It takes the policy container, with the embedder policy, of the
+        // document that started its navigation, as it was when the navigation
+        // started, as a local URL's document does, and keeps its URL, which a
+        // navigation to a fragment then changes.
+        const auto started = about_blank_navigations_.find(committed.replaces);
+        const GURL url(committed.url);
+        if (started == about_blank_navigations_.end() ||
+            started->second.initiator != committed.initiator ||
+            !url.is_valid() || !url.SchemeIs(url::kDataScheme)) {
+          Refuse("a data: URL's document whose navigation did not start");
+          return;
+        }
+        context.coep = started->second.coep;
+        about_blank_navigations_.erase(started);
+        context.url = url;
       }
       replaced = committed.replaces;
       break;

@@ -752,54 +752,63 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
                                   weak_factory_.GetWeakPtr()));
     return;
   }
+  // The Session takes the initiator's policy container now, as Chrome's
+  // browser gives a local URL's document the initiator's as the navigation
+  // starts.
+  runner_->send().Run(
+      EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator));
   provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
   provisional_->AnswerByPage();
+  // Its document has the initiator's referrer policy too.
+  provisional_->SetInheritedReferrerPolicy(request.initiator_referrer_policy);
   provisional_request_ = request;
   provisional_start_ = base::TimeTicks::Now();
-  PageResponseStarted response;
+  auto answer = std::make_unique<DataUrlAnswer>();
+  answer->number = ++last_data_url_answer_;
+  answer->loader = provisional_->GetWeakPtr();
+  PageResponseStarted& response = answer->response;
   response.status = 200;
   response.url = request.url.spec();
   response.headers = base::StrCat({"content-type: ", data->content_type, "\n"});
   response.navigation_start =
       (provisional_start_ - base::TimeTicks()).InMicroseconds();
   response.connection = window_->Connection();
-  // The document's referrer, as the initiator's referrer policy gives it for
-  // a URL of an opaque origin: its origin, but for no-referrer and
-  // unsafe-url.
-  switch (request.referrer_policy) {
-    case FetchReferrerPolicy::kNoReferrer:
-      break;
-    case FetchReferrerPolicy::kUnsafeUrl:
-      response.referrer = request.initiator_url.spec();
-      break;
-    default:
-      if (!request.initiator_origin.opaque()) {
-        response.referrer = request.initiator_origin.GetURL().spec();
-      }
-      break;
-  }
+  // The document's referrer, which the initiator's outgoing referrer gives a
+  // navigation to the URL under the navigation's referrer policy, as for a
+  // srcdoc or an about:blank.
+  response.referrer = GenerateReferrer(request.referrer_policy, request.url,
+                                       request.initiator_referrer)
+                          .spec();
+  answer->body = std::move(data->body);
+  // DataURLLoaderFactory::OnWrite(): the body's encoded size is the payload's.
+  answer->totals.encoded_body_size =
+      base::checked_cast<int64_t>(answer->body.size());
+  // The answer waits with the navigation, which a newer one takes the place
+  // of, and the task carries only its number.
+  pending_data_url_answer_ = std::move(answer);
   EventLoop::Get()
       ->TaskRunner(TaskType::kInternalLoading)
-      ->PostTask(
-          FROM_HERE,
-          base::BindOnce(&PageFrame::AnswerDataUrl, weak_factory_.GetWeakPtr(),
-                         provisional_->GetWeakPtr(), std::move(response),
-                         std::move(data->body)));
+      ->PostTask(FROM_HERE, base::BindOnce(&PageFrame::AnswerDataUrl,
+                                           weak_factory_.GetWeakPtr(),
+                                           pending_data_url_answer_->number));
 }
 
-void PageFrame::AnswerDataUrl(base::WeakPtr<DocumentLoader> loader,
-                              PageResponseStarted response,
-                              std::string body) {
+void PageFrame::AnswerDataUrl(uint64_t number) {
+  if (!pending_data_url_answer_ || pending_data_url_answer_->number != number) {
+    return;
+  }
+  std::unique_ptr<DataUrlAnswer> answer = std::move(pending_data_url_answer_);
+  base::WeakPtr<DocumentLoader> loader = answer->loader;
   if (!loader) {
     return;
   }
   const v8::HandleScope handle_scope(runner_->isolate());
-  loader->OnResponseStarted(response);
-  if (loader && !body.empty()) {
-    loader->OnResponseBody(std::move(body));
+  loader->OnResponseStarted(answer->response);
+  if (loader && !answer->body.empty()) {
+    loader->OnResponseBody(std::move(answer->body));
   }
   if (loader) {
-    loader->OnResponseTotals(PageResponseEnded());
+    loader->OnResponseTotals(answer->totals);
   }
   if (loader) {
     loader->OnResponseEnded(kNetOk);
@@ -842,6 +851,7 @@ void PageFrame::StopAllLoaders() {
 }
 
 void PageFrame::CancelProvisionalNavigation() {
+  pending_data_url_answer_.reset();
   if (!provisional_) {
     return;
   }
@@ -872,7 +882,11 @@ Document* PageFrame::CommitNavigation(
   // of, with how the navigation went.
   Navigation::Carried carried =
       Window::Current().Navigation()->CarryForNextDocument();
-  if (committing->number() != kNavigationRequest) {
+  // The loader of the Page's opening navigation, which the library started,
+  // and not one of a data: URL, which the Page answered itself.
+  const bool opening = !committing->answered_by_page() &&
+                       committing->number() == kNavigationRequest;
+  if (!opening) {
     carried.navigation_type = provisional_request_.reload    ? u"reload"
                               : provisional_request_.replace ? u"replace"
                                                              : u"push";
@@ -906,7 +920,9 @@ Document* PageFrame::CommitNavigation(
       DetachChildren();
     }
     if (detaching_) {
-      runner_->requests().Cancel(committing->number());
+      if (!committing->answered_by_page()) {
+        runner_->requests().Cancel(committing->number());
+      }
       base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
           FROM_HERE, std::move(committing));
       return nullptr;
@@ -926,8 +942,7 @@ Document* PageFrame::CommitNavigation(
   timing.unload_event_end = unload_event_end;
   timing.has_same_origin_as_previous_document =
       url::IsSameOriginWith(old_url, url);
-  timing.is_reload =
-      current_->number() != kNavigationRequest && provisional_request_.reload;
+  timing.is_reload = !opening && provisional_request_.reload;
   // The isolate's current context is the old document's again here.
   document.DefaultView()->Navigation()->SetCarried(std::move(carried));
   return &document;
@@ -993,6 +1008,10 @@ Document& PageFrame::CommitDocument(
                          ? PageDocumentSource::kDataUrl
                          : PageDocumentSource::kNavigationResponse;
   committed.navigation = navigation;
+  if (committed.source == PageDocumentSource::kDataUrl) {
+    committed.initiator = provisional_request_.initiator;
+    committed.url = url.spec();
+  }
   if (parent_) {
     committed.replaces = window_->DocumentId();
   }

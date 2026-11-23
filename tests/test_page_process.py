@@ -457,10 +457,17 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
         ),
         pytest.param(
             "top-level-data-url",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 5, 0, 1))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQQQ', 2, 5, 0, 1, 1) + b'data:,a')",
             "the library refused a message from the Page: a document that does not take the place of its frame's"
             " document",
             id="top-level-data-url",
+        ),
+        pytest.param(
+            "data-url-of-no-navigation",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))"
+            f"\nsend(70, struct.pack('<QBQQQ', 3, 5, 1, 1, 2) + b'data:,a')",
+            "the library refused a message from the Page: a data: URL's document whose navigation did not start",
+            id="data-url-of-no-navigation",
         ),
         pytest.param(
             "blob-of-another-origin",

@@ -247,6 +247,15 @@ class PageFrame final : public NavigationClient, public Frame {
   void CommitAboutBlankSynchronously(const GURL& url);
   // A navigation of the frame that commits without the network: to a srcdoc
   // or an about:blank.
+  // The response of a child frame's data: URL, which waits for a later task,
+  // with the navigation that a newer one takes the place of.
+  struct DataUrlAnswer {
+    uint64_t number = 0;
+    base::WeakPtr<DocumentLoader> loader;
+    PageResponseStarted response;
+    std::string body;
+    PageResponseEnded totals;
+  };
   struct LocalNavigation {
     LocalNavigation();
     LocalNavigation(LocalNavigation&&);
@@ -284,10 +293,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // A child frame's navigation to a data: URL, which the Page answers itself
   // from a later task, through a DocumentLoader as a response.
   void BeginDataUrlNavigation(const NavigationRequest& request);
-  // Gives `loader`, if it is still there, the response of a data: URL.
-  void AnswerDataUrl(base::WeakPtr<DocumentLoader> loader,
-                     PageResponseStarted response,
-                     std::string body);
+  // Gives the loader of the data: URL's navigation numbered `number`, if it
+  // still waits, its response.
+  void AnswerDataUrl(uint64_t number);
   // Has the parent check whether all of its frames have loaded, once this
   // frame no longer loads.
   void LetParentCheckCompleted();
@@ -329,6 +337,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // takes the place of.
   uint64_t last_local_navigation_ = 0;
   std::unique_ptr<LocalNavigation> pending_local_navigation_;
+  // The number of the last data: URL that the frame answered itself, and the
+  // answer that waits, if any.
+  uint64_t last_data_url_answer_ = 0;
+  std::unique_ptr<DataUrlAnswer> pending_data_url_answer_;
   // What the current window runs in its context, which stops with it.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;

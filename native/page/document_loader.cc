@@ -238,7 +238,11 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
     }
   }
   // The response's Referrer-Policy, which the browser's policy container
-  // gives the document as it commits.
+  // gives the document as it commits, or else the initiator's for a local
+  // URL's document.
+  if (inherited_referrer_policy_ != FetchReferrerPolicy::kDefault) {
+    document_->SetReferrerPolicy(inherited_referrer_policy_);
+  }
   const std::string referrer_policy =
       HeaderField(response.headers, "referrer-policy");
   if (!referrer_policy.empty()) {

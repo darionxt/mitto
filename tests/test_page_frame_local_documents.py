@@ -58,6 +58,12 @@ def origin() -> Iterator[str]:
                 headers["Set-Cookie"] = "c1=v1; Path=/app"
                 if policy := urllib.parse.parse_qs(path.query).get("rp"):
                     headers["Referrer-Policy"] = policy[0]
+            elif path.path in ("/assets/importer.js", "/assets/imported.js"):
+                # A module of another origin than a data: URL's document's, which imports the other.
+                seen[path.path] = self.headers.get("Referer") or "none"
+                body = b'import "./imported.js";' if path.path == "/assets/importer.js" else b"export default 1;"
+                content_type = "text/javascript"
+                headers["Access-Control-Allow-Origin"] = "*"
             elif path.path.startswith("/assets/"):
                 seen[path.path] = self.headers.get("Referer") or "none"
                 body, content_type = b"export default 1;", "text/javascript"
@@ -104,6 +110,25 @@ def origin() -> Iterator[str]:
                 body, content_type = b"<!doctype html><p>dup", "text/html"
             elif path.path == "/sib":
                 body, content_type = b"<!doctype html><p>sibling", "text/html"
+            elif path.path == "/streamtop":
+                # Half the document, then the rest a second later: the first half navigates its srcdoc frame to a
+                # data: URL, and the srcdoc's pagehide removes the frame as the data: document commits.
+                first = (
+                    b"<!doctype html><iframe id=f srcdoc='<p>a'></iframe><script>"
+                    b"const f = document.getElementById('f'); f.addEventListener('load', () => {"
+                    b" f.contentWindow.addEventListener('pagehide', () => f.remove());"
+                    b" f.contentWindow.location.href = 'data:text/html,<p>d'; }, {once: true});</script>"
+                )
+                rest = b"<p id=tail>tail"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(first) + len(rest)))
+                self.end_headers()
+                self.wfile.write(first)
+                self.wfile.flush()
+                time.sleep(1)
+                self.wfile.write(rest)
+                return
             elif path.path == "/nocontent":
                 status, body, content_type = 204, b"", "text/html"
             elif path.path == "/late":
@@ -1576,3 +1601,155 @@ def test_a_storage_bucket_that_a_frame_s_initial_about_blank_opened_ends_no_page
       }})()
     """
     assert _evaluate(origin, script) == ["settled", "settled"]
+
+
+def _data_frame(script: str) -> str:
+    """JavaScript that adds a frame of a data: URL whose document runs `script`, which names the parent's origin O."""
+    return (
+        "const frame = document.createElement('iframe');"
+        "frame.src = 'data:text/html,<script>const O = \"' + location.origin + '\";' + " + script + " + '<\\/script>';"
+        "document.body.appendChild(frame);"
+    )
+
+
+_SEEN = "const seen = async (path) => (await fetch('/seen?path=' + path)).text();"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_navigates_to_a_fragment_within_its_document(origin: str) -> None:
+    # The frame's document of an opaque origin changes its fragment, and the Page goes on.
+    report = '\'location.hash = "x"; setTimeout(() => fetch(O + "/assets/hash-" + location.hash.slice(1)), 50);\''
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        {_data_frame(report)}
+        for (let i = 0; i < 300 && (await seen('/assets/hash-x')) === 'unseen'; i++) await settle(10);
+        return (await seen('/assets/hash-x')) !== 'unseen';
+      }})()
+    """
+    assert _evaluate(origin, script) is True
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_s_referrer_follows_its_element_s_referrer_policy(origin: str) -> None:
+    # The parent's URL has a fragment, which no referrer keeps; the data: URL's document is of another origin.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        location.hash = 'frag';
+        const full = location.href.split('#')[0];
+        const outcomes = ['none', 'full', 'origin', 'other'];
+        const add = (policy, tag) => {{
+          const frame = document.createElement('iframe');
+          if (policy) frame.referrerPolicy = policy;
+          frame.src = 'data:text/html,<script>const r = document.referrer; fetch("' + location.origin + '/assets/ref-'
+            + tag + '-" + (r === "" ? "none" : r === "' + full + '" ? "full" : r === "' + location.origin
+            + '/" ? "origin" : "other"))<\\/script>';
+          document.body.appendChild(frame);
+        }};
+        const tags = {{'': 'default', 'same-origin': 'same', 'unsafe-url': 'unsafe', 'no-referrer': 'none',
+                      'origin': 'origin'}};
+        for (const [policy, tag] of Object.entries(tags)) add(policy, tag);
+        const found = async (tag) => {{
+          for (const outcome of outcomes) {{
+            if ((await seen('/assets/ref-' + tag + '-' + outcome)) !== 'unseen') return outcome;
+          }}
+          return null;
+        }};
+        const results = {{}};
+        for (const tag of Object.values(tags)) {{
+          for (let i = 0; i < 300 && (await found(tag)) === null; i++) await settle(10);
+          results[tag] = await found(tag);
+        }}
+        return results;
+      }})()
+    """
+    assert _evaluate(origin, script) == {
+        "default": "origin",
+        "same": "none",
+        "unsafe": "full",
+        "none": "none",
+        "origin": "origin",
+    }
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_s_document_takes_its_initiator_s_referrer_policy(origin: str) -> None:
+    # The parent's referrer policy is no-referrer, which the data: URL's document takes, so its module's import
+    # sends no Referer.
+    load = "'<script type=module src=\"' + location.origin + '/assets/importer.js\"><\\/script><script>'"
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        const frame = document.createElement('iframe');
+        frame.src = 'data:text/html,' + {load} + '<\\/script>';
+        document.body.appendChild(frame);
+        for (let i = 0; i < 300 && (await seen('/assets/imported.js')) === 'unseen'; i++) await settle(10);
+        return await seen('/assets/imported.js');
+      }})()
+    """
+    assert _evaluate(origin, script, "rp=no-referrer") == "none"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_that_reloads_counts_as_a_reload(origin: str) -> None:
+    report = (
+        '\'fetch(O + "/assets/navtype-" + performance.getEntriesByType("navigation")[0].type + "-"'
+        ' + (name || "first")).catch(() => 0).then(() => {'
+        ' if (!name) { name = "reloaded"; location.reload(); } });\''
+    )
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        {_data_frame(report)}
+        const outcomes = ['navigate-first', 'reload-first', 'navigate-reloaded', 'reload-reloaded'];
+        const found = async () => {{
+          const all = [];
+          for (const outcome of outcomes) {{
+            if ((await seen('/assets/navtype-' + outcome)) !== 'unseen') all.push(outcome);
+          }}
+          return all;
+        }};
+        for (let i = 0; i < 300 && (await found()).length < 2; i++) await settle(10);
+        return found();
+      }})()
+    """
+    assert _evaluate(origin, script) == ["navigate-first", "reload-reloaded"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_s_navigation_entry_counts_its_body(origin: str) -> None:
+    report = (
+        '\'const e = performance.getEntriesByType("navigation")[0];'
+        ' fetch(O + "/assets/sizes-" + e.encodedBodySize + "-" + e.decodedBodySize);\''
+    )
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        {_data_frame(report)}
+        const size = decodeURIComponent(frame.src.slice(frame.src.indexOf(',') + 1)).length;
+        const path = '/assets/sizes-' + size + '-' + size;
+        for (let i = 0; i < 300 && (await seen(path)) === 'unseen'; i++) await settle(10);
+        return (await seen(path)) !== 'unseen';
+      }})()
+    """
+    assert _evaluate(origin, script) is True
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_its_pagehide_removes_as_a_data_url_commits_leaves_the_parent_s_response(origin: str) -> None:
+    # The data: URL's loader has no request of its own: the parent's document, which still loads, gets all of it.
+    with (
+        mitto.Session() as session,
+        session._open_page(f"{origin}/streamtop", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(
+            "(async () => { await new Promise((resolve) => setTimeout(resolve, 1500));"
+            " return [document.getElementById('f') === null, document.getElementById('tail') !== null]; })()",
+            timeout=_TIMEOUT_SECONDS,
+        ) == [True, True]

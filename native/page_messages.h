@@ -761,10 +761,10 @@ inline constexpr char kErrorPageUrl[] = "chrome-error://chromewebdata/";
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
 // source, a byte, the parent, a 64-bit number, then for a navigation's response
 // the navigation's number, for an about:blank the initiator and the document
-// that it replaces, and for a srcdoc document, an error page or a data: URL's
-// document the document that it replaces, each a 64-bit number, and for a
-// blob: URL's document the initiator and the document that it replaces, then
-// the URL, the rest of the payload.
+// that it replaces, and for a srcdoc document or an error page the document
+// that it replaces, each a 64-bit number, and for a data: or blob: URL's
+// document the initiator and the document that it replaces, then the URL, the
+// rest of the payload.
 struct PageDocumentCommitted {
   uint64_t document = kNoDocument;
   PageDocumentSource source = PageDocumentSource::kInitialEmpty;
@@ -773,12 +773,13 @@ struct PageDocumentCommitted {
   uint64_t parent = kNoDocument;
   // For kNavigationResponse.
   uint64_t navigation = kNavigationRequest;
-  // For kAboutBlank and kBlob: the document that started its navigation.
+  // For kAboutBlank, kDataUrl and kBlob: the document that started its
+  // navigation.
   uint64_t initiator = kNoDocument;
   // For kAboutBlank, kSrcdoc, kErrorPage, kDataUrl and kBlob: the frame's
   // document that it takes the place of.
   uint64_t replaces = kNoDocument;
-  // For kBlob: the blob: URL.
+  // For kDataUrl and kBlob: the URL.
   std::string url;
 };
 
