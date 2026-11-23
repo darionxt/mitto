@@ -315,6 +315,14 @@ void StartNavigation(Window& window,
     if (frame && frame->IsSandboxed()) {
       return;
     }
+    // Nor one that a document of another origin starts, as a parent's of a
+    // frame that has navigated elsewhere, as Blink's FrameLoader checks the
+    // origin window can reach the frame's.
+    if (request.origin_window &&
+        !request.origin_window->GetSecurityOrigin().IsSameOriginWith(
+            window.GetSecurityOrigin())) {
+      return;
+    }
     ProcessJavaScriptUrl(window, url);
     return;
   }

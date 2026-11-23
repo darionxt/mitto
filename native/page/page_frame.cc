@@ -11,6 +11,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
@@ -588,6 +589,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     CancelLocalNavigation();
     if (!request.url.IsAboutSrcdoc() && !request.url.IsAboutBlank() &&
         !request.url.SchemeIsHTTPOrHTTPS()) {
+      CancelProvisionalNavigation();
       CheckParentLoadSoon();
       return;
     }
@@ -619,6 +621,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       // withholds, which the Page cannot enforce yet, so it commits nothing,
       // and the parent checks its load event again.
       if (IsSandboxed()) {
+        CancelProvisionalNavigation();
         CheckParentLoadSoon();
         return;
       }
@@ -716,11 +719,15 @@ void PageFrame::StopAllLoaders() {
   if (current_) {
     current_->StopLoading();
   }
+  CancelProvisionalNavigation();
+  CancelLocalNavigation();
+}
+
+void PageFrame::CancelProvisionalNavigation() {
   if (provisional_) {
     runner_->requests().Cancel(provisional_->number());
     provisional_.reset();
   }
-  CancelLocalNavigation();
 }
 
 void PageFrame::CancelLocalNavigation() {
@@ -731,7 +738,7 @@ void PageFrame::CancelLocalNavigation() {
   CheckParentLoadSoon();
 }
 
-Document& PageFrame::CommitNavigation(
+Document* PageFrame::CommitNavigation(
     DocumentLoader& loader,
     const GURL& url,
     base::TimeTicks navigation_start,
@@ -749,20 +756,40 @@ Document& PageFrame::CommitNavigation(
                               : provisional_request_.replace ? u"replace"
                                                              : u"push";
   }
-  if (old_document.IsInitialEmptyDocument()) {
-    // FrameLoader::DetachDocument(), for a frame that has committed no
-    // navigation yet: the unload events first, then the loading stops.
-    old_document.DispatchUnloadEvents();
-    if (current_) {
-      current_->StopLoading();
+  {
+    // DocumentLoader::CommitNavigation(): no script of the old document or
+    // of its frames starts a navigation of this frame meanwhile.
+    const FrameNavigationDisabler navigation_disabler(*this);
+    if (old_document.IsInitialEmptyDocument()) {
+      // FrameLoader::DetachDocument(), for a frame that has committed no
+      // navigation yet: the unload events first, then the loading stops.
+      old_document.DispatchUnloadEvents();
+      if (current_) {
+        current_->StopLoading();
+      }
+    } else {
+      // LocalFrame::DetachImpl(), as RenderDocument swaps in a new frame for
+      // each later document: the loading stops first, then the unload
+      // events.
+      if (current_) {
+        current_->StopLoading();
+      }
+      old_document.DispatchUnloadEvents();
     }
-  } else {
-    // LocalFrame::DetachImpl(), as RenderDocument swaps in a new frame for
-    // each later document: the loading stops first, then the unload events.
-    if (current_) {
-      current_->StopLoading();
+    // The old document's frames go with it, and the Session forgets them
+    // with it. A listener of the old document's unload events, or of its
+    // frames', that removed the frame's element took the frame away, which
+    // then commits nothing: the response goes, and so does its loader, from
+    // a later task, since it is on the stack below this.
+    if (!detaching_) {
+      DetachChildren();
     }
-    old_document.DispatchUnloadEvents();
+    if (detaching_) {
+      runner_->requests().Cancel(committing->number());
+      base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+          FROM_HERE, std::move(committing));
+      return nullptr;
+    }
   }
   current_ = std::move(committing);
   const GURL old_url(old_document.UrlForBinding());
@@ -782,7 +809,7 @@ Document& PageFrame::CommitNavigation(
       current_->number() != kNavigationRequest && provisional_request_.reload;
   // The isolate's current context is the old document's again here.
   document.DefaultView()->Navigation()->SetCarried(std::move(carried));
-  return document;
+  return &document;
 }
 
 void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
@@ -844,9 +871,6 @@ Document& PageFrame::CommitDocument(
   const Document& old_document = window_->GetDocument();
   const bool reuse_window = old_document.IsInitialEmptyDocument() &&
                             old_document.GetOrigin().IsSameOriginWith(origin);
-  // The old document's frames go with it, and the Session forgets them with
-  // it.
-  DetachChildren();
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
   if (reuse_window) {
@@ -923,8 +947,12 @@ v8::Local<v8::Context> PageFrame::NewContext(
   chrome_object_data_ = &chrome_object_data;
   ContextInit init;
   init.time_origin = time_origin;
-  // A [SecureContext] member is installed when a context is made.
-  init.secure_context = IsOriginPotentiallyTrustworthy(origin);
+  // A [SecureContext] member is installed when a context is made. A frame's
+  // is a secure context only under one, as the HTML Standard's secure
+  // context takes each ancestor's.
+  init.secure_context =
+      IsOriginPotentiallyTrustworthy(origin) &&
+      (!parent_ || bindings::IsSecureContext(parent_->context()));
   init.cross_origin_isolated = cross_origin_isolated;
   PageReporter& reporter = runner_->reporter();
   const v8::Local<v8::Context> context = NewPageContext(

@@ -129,8 +129,11 @@ class PageFrame final : public NavigationClient, public Frame {
   // stops loading and unloads, and a new context's document at `url` takes
   // its place, which this returns: an XMLDocument of `xml_content_type`
   // where one is given, in a cross-origin isolated agent if
-  // `cross_origin_isolated`. `loader` becomes the document's.
-  Document& CommitNavigation(
+  // `cross_origin_isolated`. `loader` becomes the document's. Null if a
+  // listener of the old document's unload events, or of its frames', took
+  // the frame away: the response goes, and so does `loader`, from a later
+  // task.
+  Document* CommitNavigation(
       DocumentLoader& loader,
       const GURL& url,
       base::TimeTicks navigation_start,
@@ -216,6 +219,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // A srcdoc or an about:blank that waits commits nothing then, and the
   // parent, whose load event it held back, checks again.
   void CancelLocalNavigation();
+  // A navigation through the Session that waits for its response ends, as a
+  // newer one takes its place.
+  void CancelProvisionalNavigation();
   // The Session records a document that the frame commits without the network
   // at the bare about:blank or about:srcdoc, since message 70 names no URL,
   // so it hears the URL that the document committed at, such as

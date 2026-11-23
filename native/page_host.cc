@@ -1631,6 +1631,8 @@ void PageHost::OnCancel(uint64_t number) {
     PushNavigated(pending->second.url.spec(), 0, net::ERR_ABORTED);
     navigation_responses_.erase(pending);
   }
+  // So has a frame's, whose response the Page made no document of.
+  frame_navigation_responses_.erase(number);
   const auto found = requests_.find(number);
   if (found == requests_.end()) {
     // The request may have ended since the Page let it go.
@@ -1651,6 +1653,12 @@ void PageHost::OnCancel(uint64_t number) {
                    found->second->held_response()) {
       PushNavigated(held->url, 0, net::ERR_ABORTED);
     }
+  }
+  // A navigation that keeps its document has told the Page that it ended
+  // already, and its download goes on without the frame, as Chrome's
+  // download manager takes it over, so the cancel changes nothing.
+  if (found->second->keeps_document()) {
+    return;
   }
   // The Request abandons its job as it goes.
   requests_.erase(found);

@@ -2,7 +2,9 @@
 
 The page is at /app/page, which sets a cookie for /app and, with ?rp=..., sends that Referrer-Policy; /echo and /app/echo
 answer with the Referer and the Cookie of their request, or "none", and /stall with a script two seconds later. Each path
-under /assets/ answers with a module script and keeps its request's Referer, which /seen?path=... gives. Each test holds a frame's documents to what headless
+under /assets/ answers with a module script and keeps its request's Referer, which /seen?path=... gives. /sjis/page is
+in Shift_JIS with a frame of /sjis/child, which names no encoding; /secure-report's script asks for
+/assets/secure-<whether it is a secure context>; /slow answers after 300 ms. Each test holds a frame's documents to what headless
 Chrome for Testing 157.0.8103.79 gave for the same script on the same page, with the page's origin as ORIGIN: what they
 take from their parent or from the document that started them, what they send, and how their navigations go.
 """
@@ -18,6 +20,7 @@ import pytest
 
 import mitto
 from mitto import _native
+from mitto._native import PrivateSettings
 from tests.local_server import QuietServer
 
 _TIMEOUT_SECONDS = 60
@@ -60,6 +63,19 @@ def origin() -> Iterator[str]:
             elif path.path == "/seen":
                 body = seen.get(urllib.parse.parse_qs(path.query)["path"][0], "unseen").encode()
                 content_type = "text/plain"
+            elif path.path == "/sjis/page":
+                body, content_type = (
+                    b"<!doctype html><p>p<iframe src=/sjis/child></iframe>",
+                    "text/html; charset=shift_jis",
+                )
+            elif path.path == "/sjis/child":
+                body, content_type = b"<!doctype html><p>c", "text/html"
+            elif path.path == "/secure-report":
+                body = b"<!doctype html><script>fetch('/assets/secure-' + isSecureContext)</script>"
+                content_type = "text/html"
+            elif path.path == "/slow":
+                time.sleep(0.3)
+                body, content_type = b"<!doctype html><p>slow", "text/html"
             elif path.path == "/stall":
                 # A script that keeps its parser waiting a while.
                 time.sleep(2)
@@ -924,3 +940,135 @@ def test_a_srcdoc_s_module_sends_its_base_url_as_what_it_imports_referer(origin:
       }})()
     """
     assert _evaluate(origin, script) == [True, "ORIGIN/assets/"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_parent_runs_no_javascript_url_in_its_frame_of_another_origin(origin: str) -> None:
+    # The frame navigated to localhost, another origin than the parent's 127.0.0.1: the parent's javascript: URL runs
+    # nothing there.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = location.origin.replace('127.0.0.1', 'localhost') + '/other';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.src = 'javascript:fetch("/assets/javascript-ran")';
+        await settle(500);
+        return await (await fetch('/seen?path=/assets/javascript-ran')).text();
+      }})()
+    """
+    assert _evaluate(origin, script) == "unseen"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_its_pagehide_listener_removes_commits_no_network_document(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a';
+        element.src = '/other';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.contentWindow.addEventListener('pagehide', () => element.remove());
+        element.removeAttribute('srcdoc');
+        await settle(500);
+        return [element.isConnected, element.contentWindow === null];
+      }})()
+    """
+    assert _evaluate(origin, script) == [False, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_child_that_navigates_it_as_its_network_document_commits_starts_nothing(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a<iframe></iframe>';
+        element.src = '/other?network';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.contentWindow.frames[0].addEventListener(
+          'pagehide', () => {{ element.contentWindow.location.href = 'about:blank'; }});
+        element.removeAttribute('srcdoc');
+        await loaded(element);
+        await settle(300);
+        return element.contentDocument.URL.replace(location.origin, 'ORIGIN');
+      }})()
+    """
+    assert _evaluate(origin, script) == "ORIGIN/other?network"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_navigation_cancels_a_frame_s_network_navigation_that_waits(origin: str) -> None:
+    # Chrome shows the data: URL; a frame's navigation to one is still a Known Gap, but the slow response that the frame
+    # waited for never takes its place either.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a';
+        element.src = '/slow';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.removeAttribute('srcdoc');
+        await settle(50);
+        element.src = 'data:text/html,<p>d';
+        await settle(800);
+        return element.contentDocument === null || element.contentDocument.body.textContent !== 'slow';
+      }})()
+    """
+    assert _evaluate(origin, script) is True
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_same_origin_frame_takes_its_parent_s_encoding(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = '/sjis/page';
+        document.body.appendChild(element);
+        await loaded(element);
+        const inner = element.contentDocument.querySelector('iframe');
+        for (let i = 0; i < 100 && inner.contentDocument.URL === 'about:blank'; i++) await settle(10);
+        await settle(100);
+        return [element.contentDocument.characterSet, inner.contentDocument.characterSet];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["Shift_JIS", "Shift_JIS"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_under_an_insecure_parent_is_no_secure_context(origin: str) -> None:
+    # The parent is at insecure.test, which the Session resolves to 127.0.0.1, so it is no secure context, and neither
+    # is its frame at 127.0.0.1, whose own origin would be one.
+    port = origin.rsplit(":", 1)[1]
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = 'http://127.0.0.1:' + location.port + '/secure-report';
+        document.body.appendChild(element);
+        await loaded(element);
+        const seen = async (path) => (await fetch('/seen?path=' + path)).text();
+        for (let i = 0; i < 100 && (await seen('/assets/secure-false')) === 'unseen'
+            && (await seen('/assets/secure-true')) === 'unseen'; i++) await settle(10);
+        return [window.isSecureContext, await seen('/assets/secure-true'), await seen('/assets/secure-false')];
+      }})()
+    """
+    settings = PrivateSettings(host_resolver_rules="MAP * 127.0.0.1")
+    with (
+        mitto.Session(_settings=settings) as session,
+        session._open_page(f"http://insecure.test:{port}/app/page", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        result = _anonymized(page.evaluate(script, timeout=_TIMEOUT_SECONDS), origin)
+    assert result == [False, "unseen", "ORIGIN/secure-report"]
