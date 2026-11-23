@@ -55,7 +55,8 @@ class Frame {
   virtual void NavigateFromOwner(const GURL& url) = 0;
   // HTMLFrameOwnerElement::DisconnectContentFrame(): the frame's documents
   // unload, its window's context goes, and it leaves the frame tree, with
-  // its own children.
+  // its own children. The frame lives on until the task ends, for a script
+  // of it that still runs.
   virtual void Detach() = 0;
 
   // The top-level frame of this one's tree.

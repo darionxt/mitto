@@ -193,6 +193,10 @@ void ScriptRunner::KeepRemovedFrameStorage(
   removed_storage_buckets_.push_back(std::move(storage_buckets));
 }
 
+void ScriptRunner::KeepRemovedFrame(std::unique_ptr<PageFrame> frame) {
+  removed_frames_.push_back(std::move(frame));
+}
+
 size_t ScriptRunner::FrameCount() const {
   if (!frame_) {
     return 0;
@@ -222,6 +226,9 @@ void ScriptRunner::WillProcessTask(const base::PendingTask& pending_task,
 
 void ScriptRunner::DidProcessTask(const base::PendingTask& pending_task) {
   EndTask();
+  // No script runs now, so the frames that the task removed go.
+  std::vector<std::unique_ptr<PageFrame>> removed;
+  removed.swap(removed_frames_);
 }
 
 void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {

@@ -1,7 +1,9 @@
 #include "mitto/page/page_frame.h"
 
+#include <algorithm>
 #include <utility>
 
+#include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
@@ -115,6 +117,12 @@ void PageFrame::Start(const PageConnection& connection) {
     const v8::Context::Scope context_scope(context());
     Document& document = window_->GetDocument();
     document.SetOrigin(origin);
+    // Its about base URL is its creator's base URL, as Blink's
+    // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
+    // creator's too.
+    const Document& creator = parent_->window_->GetDocument();
+    document.SetAboutBaseUrl(creator.BaseUrl());
+    document.SetCookieUrl(creator.CookieUrl());
     // Its document.cookie and storage are its origin's, for one of an HTTP or
     // HTTPS origin.
     if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
@@ -202,20 +210,27 @@ void PageFrame::NavigateFromOwner(const GURL& url) {
 }
 
 void PageFrame::Detach() {
-  // An unload listener that removes the element again finds the frame going.
-  if (!parent_ || detaching_) {
+  if (!parent_ || going_) {
     return;
   }
-  detaching_ = true;
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);
   // LocalFrame::DetachImpl(): the loading stops, the document unloads, then
-  // the frame's children go, each in the same order.
-  StopAllLoaders();
-  if (window_ && window_->HasDocument()) {
-    const v8::Context::Scope context_scope(context());
-    window_->GetDocument().DispatchUnloadEvents();
+  // the frame's children go, each in the same order. An unload listener that
+  // removes the element again, or takes an ancestor away, has the frame go
+  // then, and this returns once the events have.
+  if (!detaching_) {
+    detaching_ = true;
+    StopAllLoaders();
+    if (window_ && window_->HasDocument()) {
+      const v8::Context::Scope context_scope(context());
+      window_->GetDocument().DispatchUnloadEvents();
+    }
+    if (going_) {
+      return;
+    }
   }
+  going_ = true;
   DetachChildren();
   const uint64_t document = window_ ? window_->DocumentId() : kNoDocument;
   if (window_) {
@@ -231,8 +246,19 @@ void PageFrame::Detach() {
   if (HTMLFrameOwnerElement* const owner = owner_.Get()) {
     owner->ClearContentFrame();
   }
-  // This goes now.
-  parent_->RemoveChild(*this);
+  PageFrame& parent = *parent_;
+  parent.RemoveChild(*this);
+  // A frame that still loaded held its parent's load event back, which checks
+  // again, as Blink's does once the frame's loading stops. It checks from a
+  // task, since the element's removal is still under way, and not while the
+  // parent's own document goes.
+  if (!parent.detaching_ && !parent.detaching_children_ && parent.window_ &&
+      parent.window_->HasDocument()) {
+    Document& parent_document = parent.window_->GetDocument();
+    if (!parent_document.LoadEventFinished()) {
+      parent_document.CheckLoadEventSoon();
+    }
+  }
 }
 
 CacheStorageHost* PageFrame::cache_storage_host() const {
@@ -254,29 +280,30 @@ void PageFrame::GiveStorage(Document& document) const {
 }
 
 void PageFrame::DetachChildren() {
-  // Each child takes itself out of `children_` as it goes.
-  while (!children_.empty()) {
-    PageFrame& child = *children_.back();
-    child.StopAllLoaders();
-    {
-      v8::Isolate* const isolate = runner_->isolate();
-      const v8::HandleScope handle_scope(isolate);
-      const v8::Context::Scope context_scope(child.context());
-      child.window_->GetDocument().DispatchUnloadEvents();
+  const base::AutoReset<bool> detaching_children(&detaching_children_, true);
+  // Each child takes itself out of `children_` as it goes. One whose children
+  // already go, as one of theirs took this frame away, finishes on its own.
+  for (;;) {
+    const auto child = std::find_if(
+        children_.rbegin(), children_.rend(),
+        [](const std::unique_ptr<PageFrame>& frame) { return !frame->going_; });
+    if (child == children_.rend()) {
+      return;
     }
-    child.DetachChildren();
-    child.DetachWindow();
-    if (HTMLFrameOwnerElement* const owner = child.owner_.Get()) {
-      owner->ClearContentFrame();
-    }
-    children_.pop_back();
+    (*child)->Detach();
   }
 }
 
 void PageFrame::RemoveChild(PageFrame& child) {
-  std::erase_if(children_, [&child](const std::unique_ptr<PageFrame>& frame) {
-    return frame.get() == &child;
-  });
+  const auto found = std::ranges::find_if(
+      children_, [&child](const std::unique_ptr<PageFrame>& frame) {
+        return frame.get() == &child;
+      });
+  CHECK(found != children_.end());
+  // A script of the child, or of a frame under it, may be what removed it,
+  // and still runs, so the child goes once the task ends.
+  runner_->KeepRemovedFrame(std::move(*found));
+  children_.erase(found);
 }
 
 void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
@@ -287,8 +314,12 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   Window& window = *window_;
   Document& old_document = window.GetDocument();
   // FrameLoader::DetachDocument(), for a frame that has committed no
-  // navigation yet: the unload events first.
+  // navigation yet: the unload events first. An unload listener that removed
+  // the frame's element took the frame away, which then commits nothing.
   old_document.DispatchUnloadEvents();
+  if (detaching_) {
+    return;
+  }
   // DocumentLoader::CommitNavigation() with the initial document's origin, in
   // the same window, which Blink keeps for a document of its origin.
   Document* const document = Document::CreateHTML();
@@ -300,6 +331,10 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
     GiveStorage(*document);
   }
   document->SetLoadTiming(&document_load_timing());
+  // It keeps the initial document's about base URL, as Chrome 157 does, not
+  // its initiator's base URL of the time, and its cookie URL.
+  document->SetAboutBaseUrl(old_document.FallbackBaseUrl());
+  document->SetCookieUrl(old_document.CookieUrl());
   // The referrer is the full URL of the document that started it, its
   // parent's, as RenderFrameImpl takes it from the initiator frame.
   if (parent_ && parent_->window_ && parent_->window_->HasDocument()) {

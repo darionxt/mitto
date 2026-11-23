@@ -189,11 +189,11 @@ class PageFrame final : public NavigationClient, public Frame {
   StorageBucketHost* storage_bucket_host() const;
   // Gives `document`, of an HTTP or HTTPS origin, the frame's storage.
   void GiveStorage(Document& document) const;
-  // The frame's children go, each as Detach() has it, when the frame's
-  // document goes and its elements with it. The Session forgets them with the
-  // document, so it hears of none of them going.
+  // The frame's children go, each as Detach() has it, when the frame goes or
+  // its document goes and its elements with it.
   void DetachChildren();
-  // The child frame `child` has gone: this lets go of it.
+  // The child frame `child` has gone: this hands it to the runner, which lets
+  // go of it once the task ends.
   void RemoveChild(PageFrame& child);
   // RenderFrameImpl::SynchronouslyCommitAboutBlankForBug778318(): the first
   // navigation of a frame's initial about:blank to about:blank, from a
@@ -217,8 +217,14 @@ class PageFrame final : public NavigationClient, public Frame {
   // Whether a navigation of the frame has committed, or started, since its
   // initial about:blank, which only its first may replace synchronously.
   bool navigated_ = false;
-  // Whether Detach() runs, whose unload events may remove the element again.
+  // Whether Detach() has started, whose unload events may remove the element
+  // again, and whether the frame's children and window have started to go
+  // after them.
   bool detaching_ = false;
+  bool going_ = false;
+  // Whether DetachChildren() runs, whose children's going checks nothing of
+  // the parent's load.
+  bool detaching_children_ = false;
   // What the parser of a synchronously committed about:blank reads: nothing.
   std::unique_ptr<DocumentParser::Client> empty_body_;
   // What the current window runs in its context, which goes with it.
