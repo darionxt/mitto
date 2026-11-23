@@ -2119,6 +2119,7 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             inner = types.from_v8(
                 sequence.members[0], "item", "element", Site(fail="return false;"), f"union {union.syntax}"
             )
+            capacity = types.sequence_capacity(sequence.members[0], f"union {union.syntax}")
             convert_items = [
                 *["            " + line for line in inner],
                 "            items.push_back(std::move(element));",
@@ -2128,7 +2129,8 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             source += [
                 "    if (value->IsArray()) {",
                 f"      std::vector<{element_type}> items;",
-                "      if (!IterateSequence(isolate, value, exception_state, [&](v8::Local<v8::Value> item) {",
+                f"      if (!IterateSequence(isolate, value, exception_state, {capacity},",
+                "                           [&](v8::Local<v8::Value> item) {",
                 *convert_items,
                 "          })) {",
                 "        return false;",

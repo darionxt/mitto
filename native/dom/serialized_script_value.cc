@@ -89,8 +89,8 @@ struct CopiedWithoutClass {
   RAW_PTR_EXCLUSION const bindings::WrapperTypeInfo* info;
   uint8_t blink_tag;
 };
-const std::array<CopiedWithoutClass, 10>& CopiedWithoutClassInterfaces() {
-  static const std::array<CopiedWithoutClass, 10> interfaces = {{
+const std::array<CopiedWithoutClass, 12>& CopiedWithoutClassInterfaces() {
+  static const std::array<CopiedWithoutClass, 12> interfaces = {{
       {&bindings::V8File::kWrapperTypeInfo, 'f'},
       {&bindings::V8Blob::kWrapperTypeInfo, 'b'},
       {&bindings::V8FileList::kWrapperTypeInfo, 'l'},
@@ -101,6 +101,9 @@ const std::array<CopiedWithoutClass, 10>& CopiedWithoutClassInterfaces() {
       {&bindings::V8DOMQuad::kWrapperTypeInfo, 'T'},
       {&bindings::V8DOMMatrix::kWrapperTypeInfo, 'Y'},
       {&bindings::V8DOMMatrixReadOnly::kWrapperTypeInfo, 'U'},
+      // V8ScriptValueSerializerForModules writes a handle for storage too.
+      {&bindings::V8FileSystemFileHandle::kWrapperTypeInfo, 'n'},
+      {&bindings::V8FileSystemDirectoryHandle::kWrapperTypeInfo, 'N'},
   }};
   return interfaces;
 }

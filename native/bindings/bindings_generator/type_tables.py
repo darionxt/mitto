@@ -15,7 +15,7 @@ from collections.abc import Callable
 from bindings_generator.errors import UnhandledError
 from bindings_generator.model import Attribute, Condition, Dictionary, IdlType, OperationGroup, TypeKind
 
-__all__ = ["HEADER", "SOURCE", "ConditionFunctions", "TypeTables", "union_name_in_idl"]
+__all__ = ["HEADER", "SOURCE", "ConditionFunctions", "TypeTables", "idl_type_kind", "union_name_in_idl"]
 
 HEADER = "idl_types.h"
 SOURCE = "idl_types.cc"
@@ -93,6 +93,17 @@ _ANNOTATIONS: dict[str, str | None] = {
     "BufferSourceTypeNoSizeLimit": "kIdlTypeAllowResizable",
     "PassAsSpan": "kIdlTypeAllowResizable",
 }
+
+
+def idl_type_kind(idl_type: IdlType) -> str | None:
+    """The type's IdlTypeKind, as idl_type_info.h names it, or None for a type that has none."""
+    if idl_type.kind in _SIMPLE_KINDS:
+        return _SIMPLE_KINDS[idl_type.kind]
+    if idl_type.name in _NAMED_KINDS:
+        return _NAMED_KINDS[idl_type.name]
+    if idl_type.kind is TypeKind.BUFFER_SOURCE and idl_type.name in _TYPED_ARRAYS:
+        return "kTypedArray"
+    return None
 
 
 def union_name_in_idl(union: IdlType) -> str:
@@ -180,13 +191,8 @@ class TypeTables:
             if flag is not None:
                 flags.append(flag)
         kind = idl_type.kind
-        if kind in _SIMPLE_KINDS:
-            cpp_kind = _SIMPLE_KINDS[kind]
-        elif idl_type.name in _NAMED_KINDS:
-            cpp_kind = _NAMED_KINDS[idl_type.name]
-        elif kind is TypeKind.BUFFER_SOURCE and idl_type.name in _TYPED_ARRAYS:
-            cpp_kind = "kTypedArray"
-        else:
+        cpp_kind = idl_type_kind(idl_type)
+        if cpp_kind is None:
             raise UnhandledError(f"{where}: Known Gaps do not handle the type {idl_type.syntax}")
         if kind is TypeKind.CALLBACK_FUNCTION and idl_type.name in self._non_object_as_null:
             flags.append("kIdlTypeLegacyTreatNonObjectAsNull")

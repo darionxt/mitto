@@ -419,8 +419,25 @@ def test_a_union_takes_an_array_by_its_indices_before_any_iterator() -> None:
     text = "\n".join(source)
 
     assert text.index("if (value->IsArray()) {") < text.index("GetIteratorMethod(")
-    assert "IterateSequence(isolate, value, exception_state," in text
+    assert (
+        "IterateSequence(isolate, value, exception_state, SequenceCapacity(IdlTypeKind::kUnsignedLong, false)," in text
+    )
     assert text.count("items.push_back(std::move(element));") == 2
+
+
+def test_a_sequence_names_the_kind_of_its_items_for_blinks_capacity() -> None:
+    # CreateIDLSequenceFromV8ArraySlow() refuses an array longer than its Vector of items holds, whose size the
+    # Page works out from the item's IdlTypeKind and whether it is nullable.
+    types = TypeMapper(frozenset({"Node"}), frozenset())
+    node = IdlType(TypeKind.INTERFACE, "Node")
+    string = IdlType(TypeKind.STRING, "DOMString", nullable=True)
+
+    assert types.sequence_capacity(node, "a") == "SequenceCapacity(IdlTypeKind::kInterface, false)"
+    assert types.sequence_capacity(string, "a") == "SequenceCapacity(IdlTypeKind::kDOMString, true)"
+    lines = types.from_v8(
+        IdlType(TypeKind.SEQUENCE, "sequence<Node>", members=(node,)), "value", "nodes", Site(fail="return;"), "a"
+    )
+    assert "SequenceCapacity(IdlTypeKind::kInterface, false)," in "\n".join(lines)
 
 
 def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -> None:

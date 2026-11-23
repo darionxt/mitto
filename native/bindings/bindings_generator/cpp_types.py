@@ -19,6 +19,7 @@ import dataclasses
 from bindings_generator.cpp_names import file_name
 from bindings_generator.errors import UnhandledError
 from bindings_generator.model import IdlType, TypeKind
+from bindings_generator.type_tables import idl_type_kind
 
 __all__ = ["Site", "TypeMapper", "header_of", "union_name"]
 
@@ -556,6 +557,14 @@ class TypeMapper:
             return self.value_type(member, "a union")
         return member.name
 
+    def sequence_capacity(self, item: IdlType, where: str) -> str:
+        """The expression of the most items that Blink's Vector of a sequence of `item` holds, which an array of
+        more fails with Blink's RangeError before any item converts."""
+        kind = idl_type_kind(item)
+        if kind is None:
+            raise self._refuse(item, where, "an item")
+        return f"SequenceCapacity(IdlTypeKind::{kind}, {'true' if item.nullable else 'false'})"
+
     def from_v8(self, idl_type: IdlType, value: str, target: str, site: Site, where: str) -> list[str]:
         """The statements that convert `value` to a new variable `target`, and leave with site.fail if that throws."""
         idl_type = self.reduce(idl_type)
@@ -648,7 +657,8 @@ class TypeMapper:
                 f"{cpp_type} {target};",
                 f"if (!{value}->IsNullOrUndefined()) {{",
                 f"  {cpp_type.removeprefix('std::optional<').removesuffix('>')} {items};",
-                f"  if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value> {item}) {{",
+                f"  if (!IterateSequence(isolate, {value}, exception_state, {self.sequence_capacity(element_type, where)},",
+                f"                       [&](v8::Local<v8::Value> {item}) {{",
                 *["        " + line for line in inner],
                 f"        {items}.push_back(std::move({element}));",
                 "        return true;",
@@ -667,7 +677,8 @@ class TypeMapper:
                 not_of_type = Site(fail="", element=True).not_of_type(self.reduce(element_type).name)
                 return [
                     f"{cpp_type} {target};",
-                    f"if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value>) {{",
+                    f"if (!IterateSequence(isolate, {value}, exception_state, {self.sequence_capacity(element_type, where)},",
+                    "                     [&](v8::Local<v8::Value>) {",
                     f"      exception_state.ThrowTypeError({not_of_type});",
                     "      return false;",
                     "    })) {",
@@ -679,7 +690,8 @@ class TypeMapper:
             inner = self.from_v8(element_type, item, element, Site(fail="return false;", element=True), where)
             return [
                 f"{cpp_type} {target};",
-                f"if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value> {item}) {{",
+                f"if (!IterateSequence(isolate, {value}, exception_state, {self.sequence_capacity(element_type, where)},",
+                f"                     [&](v8::Local<v8::Value> {item}) {{",
                 *["      " + line for line in inner],
                 f"      {target}.push_back(std::move({element}));",
                 "      return true;",
