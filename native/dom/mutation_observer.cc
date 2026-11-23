@@ -312,8 +312,7 @@ void MutationObserver::Deliver() {
   const v8::TryCatch try_catch(isolate);
   if (callback->Call(context, observer, 2, arguments).IsEmpty() &&
       try_catch.HasCaught() && try_catch.CanContinue()) {
-    bindings::ReportException(isolate, try_catch.Exception(),
-                              try_catch.Message());
+    bindings::ReportExceptionInCallbackRealm(isolate, callback, try_catch);
   }
 }
 

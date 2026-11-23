@@ -725,6 +725,17 @@ void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception) {
   Report(isolate, exception, message, MessageText(isolate, message));
 }
 
+void ReportExceptionInCallbackRealm(v8::Isolate* isolate,
+                                    v8::Local<v8::Object> callback,
+                                    const v8::TryCatch& try_catch) {
+  v8::Local<v8::Context> context;
+  if (!callback->GetCreationContext(isolate).ToLocal(&context)) {
+    context = isolate->GetCurrentContext();
+  }
+  const v8::Context::Scope context_scope(context);
+  ReportException(isolate, try_catch.Exception(), try_catch.Message());
+}
+
 void ReportException(v8::Isolate* isolate,
                      v8::Local<v8::Value> exception,
                      v8::Local<v8::Message> message) {

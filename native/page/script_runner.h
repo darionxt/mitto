@@ -42,7 +42,10 @@ class CacheStorageHost;
 class IndexedDbHost;
 class PageFrame;
 class PageRequests;
+class SessionCacheStorage;
 class SessionCookieJar;
+class SessionIndexedDb;
+class SessionStorageBuckets;
 class StorageBucketHost;
 
 // Fills `buffer` from the system's random source, which needs no file, for
@@ -132,6 +135,20 @@ class ScriptRunner final : public base::TaskObserver {
   // The top-level frame's window loses its context: the calls that wait for
   // a promise of it fail, as DevTools' do when a page navigates.
   void TopLevelContextGoes();
+  // The ID of the Page's next frame, larger than each before it.
+  uint64_t NextFrameId() { return ++last_frame_id_; }
+  // How many frames the Page has, its top-level one among them.
+  size_t FrameCount() const;
+  // Keeps a removed frame's Cache API, IndexedDB and Storage Buckets until the
+  // Page ends: what the frame's scripts made of them may still call them,
+  // though the Session hears nothing more of a document that has gone.
+  void KeepRemovedFrameStorage(
+      std::unique_ptr<SessionCacheStorage> cache_storage,
+      std::unique_ptr<SessionIndexedDb> indexed_db,
+      std::unique_ptr<SessionStorageBuckets> storage_buckets);
+  // Keeps a removed frame until the task ends: a script of the frame, or of a
+  // frame under it, may be what removed it, and still runs.
+  void KeepRemovedFrame(std::unique_ptr<PageFrame> frame);
 
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,
@@ -200,13 +217,21 @@ class ScriptRunner final : public base::TaskObserver {
   std::unique_ptr<PageRequests> requests_;
   // The Page's top-level frame, which loads its documents.
   std::unique_ptr<PageFrame> frame_;
+  // The frames removed in the current task, as KeepRemovedFrame() keeps them.
+  std::vector<std::unique_ptr<PageFrame>> removed_frames_;
   // What window.chrome of each window that the Page has made reads. They live
   // as long as the Page, for a callback of a window that has gone.
   std::vector<std::unique_ptr<ChromeObjectData>> chrome_object_data_;
+  // Removed frames' storage, as KeepRemovedFrameStorage() keeps it.
+  std::vector<std::unique_ptr<SessionCacheStorage>> removed_cache_storage_;
+  std::vector<std::unique_ptr<SessionIndexedDb>> removed_indexed_db_;
+  std::vector<std::unique_ptr<SessionStorageBuckets>> removed_storage_buckets_;
   // How many tasks that report rejections wait to run.
   int reports_queued_ = 0;
   // Whether Start() made the top-level frame's first window.
   bool started_ = false;
+  // The ID of the Page's last frame: 1 is the top-level frame's.
+  uint64_t last_frame_id_ = 1;
 };
 
 }  // namespace mitto

@@ -796,16 +796,6 @@ bool EventTarget::FireEventListeners(Event* event) {
   if (entries.empty()) {
     return false;
   }
-  const v8::Local<v8::Value> current_target = ToV8(isolate);
-  const v8::Local<v8::Value> event_wrapper = event->ToV8(isolate);
-  // JSBasedEventListener::Invoke(): while a listener runs, its window's
-  // current event is the event, which window.event gives, unless the listener
-  // is in a shadow tree, and then what it was before.
-  Window* const window =
-      isolate->InContext()
-          ? bindings::V8Window::ToWrappable(
-                isolate, isolate->GetCurrentContext()->Global())
-          : nullptr;
   bool fired = false;
   for (const cppgc::Persistent<EventListenerEntry>& entry : entries) {
     if (event->ImmediatePropagationStopped()) {
@@ -817,6 +807,24 @@ bool EventTarget::FireEventListeners(Event* event) {
     if (entry->once()) {
       RemoveEntry(entry.Get());
     }
+    // JSBasedEventListener::Invoke(): the listener runs in its own realm,
+    // where the event gets its wrapper if it has none yet, whose window's
+    // current event is the event while it runs, which window.event gives,
+    // unless the listener is in a shadow tree, and then what it was before.
+    const v8::Local<v8::Value> listener = entry->attribute_handler()
+                                              ? HandlerOf(isolate, *entry)
+                                              : entry->callback(isolate);
+    v8::Local<v8::Context> listener_context;
+    if (!listener->IsObject() ||
+        !listener.As<v8::Object>()->GetCreationContext(isolate).ToLocal(
+            &listener_context)) {
+      listener_context = isolate->GetCurrentContext();
+    }
+    const v8::Context::Scope listener_scope(listener_context);
+    const v8::Local<v8::Value> current_target = ToV8(isolate);
+    const v8::Local<v8::Value> event_wrapper = event->ToV8(isolate);
+    Window* const window =
+        bindings::V8Window::ToWrappable(isolate, listener_context->Global());
     event->SetHandlingPassive(PassiveModeOf(*entry));
     const cppgc::Persistent<Event> previous_event(
         window ? window->CurrentEvent() : nullptr);
@@ -824,13 +832,12 @@ bool EventTarget::FireEventListeners(Event* event) {
       window->SetCurrentEvent(event);
     }
     if (entry->attribute_handler()) {
-      const v8::Local<v8::Value> handler = HandlerOf(isolate, *entry);
-      if (handler->IsObject()) {
-        CallAttributeHandler(isolate, handler.As<v8::Object>(), *this,
+      if (listener->IsObject()) {
+        CallAttributeHandler(isolate, listener.As<v8::Object>(), *this,
                              current_target, event_wrapper, event);
       }
     } else {
-      CallListener(isolate, entry->callback(isolate), current_target,
+      CallListener(isolate, listener.As<v8::Object>(), current_target,
                    event_wrapper, event);
     }
     fired = true;

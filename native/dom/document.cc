@@ -43,11 +43,13 @@
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_factory.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/html_all_collection.h"
 #include "mitto/dom/html_details_element.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/html_element_factory.h"
+#include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
@@ -267,19 +269,15 @@ url::Origin Document::GetOrigin() const {
   if (origin_) {
     return *origin_;
   }
-  // A same-document navigation, which changes only the fragment of a
-  // document of an opaque origin, keeps its origin, and so the blob: URLs
-  // that it made.
-  const GURL url(url_);
-  const std::string key = url.GetWithoutRef().spec();
-  if (opaque_origin_ && opaque_origin_->first == key) {
-    return opaque_origin_->second;
+  // Each opaque origin made from a URL is new, and no other's.
+  url::Origin origin = url::Origin::Create(GURL(url_));
+  if (!origin.opaque()) {
+    return origin;
   }
-  url::Origin origin = url::Origin::Create(url);
-  if (origin.opaque()) {
-    opaque_origin_.emplace(key, origin);
+  if (!opaque_origin_) {
+    opaque_origin_ = std::move(origin);
   }
-  return origin;
+  return *opaque_origin_;
 }
 
 // SecurityOrigin::Domain(): the host, which an opaque origin lacks.
@@ -577,12 +575,21 @@ void Document::DispatchUnloadEvents() {
       !window_) {
     return;
   }
+  // Blink stops once a listener has taken the frame away, as its document
+  // loses its window then.
+  const bool framed = window_->GetFrame() != nullptr;
+  const auto frame_went = [this, framed] {
+    return !window_ || (framed && !window_->GetFrame());
+  };
   load_event_progress_ = LoadEventProgress::kPageHideInProgress;
   window_->DispatchEventWithTarget(
       PageTransitionEvent::CreateTrusted(u"pagehide", /*persisted=*/false),
       this);
+  if (frame_went()) {
+    return;
+  }
   // The page is visible until this changes it, which Hidden() reads.
-  const bool page_visible = window_ && !Hidden();
+  const bool page_visible = !Hidden();
   load_event_progress_ = LoadEventProgress::kUnloadVisibilityChangeInProgress;
   if (page_visible) {
     for (const char16_t* type :
@@ -594,8 +601,11 @@ void Document::DispatchUnloadEvents() {
       DispatchEvent(event);
     }
   }
+  if (frame_went()) {
+    return;
+  }
   load_event_progress_ = LoadEventProgress::kUnloadEventInProgress;
-  if (window_) {
+  {
     bindings::EventInit init;
     Event* const event = Event::Create(u"unload", init);
     event->SetTrusted(true);
@@ -1416,6 +1426,23 @@ void Document::SetUrl(std::u16string url) {
   UpdateBaseUrl();
 }
 
+GURL Document::FallbackBaseUrl() const {
+  GURL url(url_);
+  if (url.IsAboutBlank() && about_base_url_.is_valid()) {
+    return about_base_url_;
+  }
+  return url;
+}
+
+GURL Document::CookieUrl() const {
+  return cookie_url_.is_empty() ? GURL(url_) : cookie_url_;
+}
+
+void Document::SetAboutBaseUrl(GURL url) {
+  about_base_url_ = std::move(url);
+  UpdateBaseUrl();
+}
+
 const GURL& Document::BaseUrl() const {
   static const base::NoDestructor<GURL> kBlank("about:blank");
   return base_url_.is_empty() ? *kBlank : base_url_;
@@ -1563,13 +1590,15 @@ void Document::PopCurrentScript(Element* element) {
 
 void Document::DecrementLoadEventDelayCount() {
   CHECK_GT(load_event_delay_count_, 0);
-  if (--load_event_delay_count_ > 0 || load_event_check_pending_) {
-    return;
+  if (--load_event_delay_count_ == 0) {
+    CheckLoadEventSoon();
   }
-  // CheckLoadEventSoon(): a timer of no delay on the DOM manipulation task
-  // source.
+}
+
+void Document::CheckLoadEventSoon() {
+  // A timer of no delay on the DOM manipulation task source.
   WindowTasks* const tasks = window_ ? window_->GetTasks() : nullptr;
-  if (!tasks) {
+  if (load_event_check_pending_ || !tasks) {
     return;
   }
   load_event_check_pending_ = true;
@@ -1796,20 +1825,59 @@ void Document::BeginLifecycleUpdatesIfRenderingReady() {
 
 void Document::CheckCompleted() {
   // Document::ShouldComplete(), with what a Page's documents hold back: the
-  // async and in-order scripts.
+  // async and in-order scripts, and the frames under the document's that
+  // still load (AllDescendantsAreComplete()).
   if (parsing_state_ != ParsingState::kFinishedParsing ||
       IsDelayingLoadEvent() ||
-      load_event_progress_ == LoadEventProgress::kLoadEventInProgress) {
+      load_event_progress_ == LoadEventProgress::kLoadEventInProgress ||
+      !AllDescendantsAreComplete()) {
     return;
   }
   SetReadiness(Readiness::kComplete);
-  if (load_event_progress_ == LoadEventProgress::kLoadEventNotRun) {
+  const bool load_event_runs =
+      load_event_progress_ == LoadEventProgress::kLoadEventNotRun;
+  if (load_event_runs) {
     DispatchLoadEventAndFinalize();
   }
   // The refresh's delay starts once the load event has finished.
   if (window_ && http_refresh_scheduler_) {
     http_refresh_scheduler_->MaybeStartTimer();
   }
+  // FrameLoader::DidFinishNavigation(): once a frame has loaded, its parent
+  // checks whether all of its frames have.
+  if (load_event_runs && window_) {
+    if (Frame* const frame = window_->GetFrame()) {
+      if (Frame* const parent = frame->Parent()) {
+        if (Window* const parent_window = parent->DomWindow();
+            parent_window && parent_window->HasDocument()) {
+          parent_window->GetDocument().CheckCompleted();
+        }
+      }
+    }
+  }
+}
+
+bool Document::AllDescendantsAreComplete() const {
+  Frame* const frame = window_ ? window_->GetFrame() : nullptr;
+  if (!frame) {
+    return true;
+  }
+  // FrameTree::TraverseNext() over the frame's descendants.
+  std::vector<Frame*> pending;
+  for (size_t index = frame->ChildCount(); index > 0; --index) {
+    pending.push_back(frame->ChildAt(index - 1));
+  }
+  while (!pending.empty()) {
+    Frame* const child = pending.back();
+    pending.pop_back();
+    if (child->IsLoading()) {
+      return false;
+    }
+    for (size_t index = child->ChildCount(); index > 0; --index) {
+      pending.push_back(child->ChildAt(index - 1));
+    }
+  }
+  return true;
 }
 
 void Document::DispatchLoadEventAndFinalize() {
@@ -1832,6 +1900,13 @@ void Document::DispatchLoadEventAndFinalize() {
       timing->load_event_end = base::TimeTicks::Now();
     } else {
       window->DispatchEventWithTarget(event, this);
+    }
+    // Then the load event of the element that holds the window's frame,
+    // which only that element gets.
+    if (Frame* const frame = window->GetFrame()) {
+      if (HTMLFrameOwnerElement* const owner = frame->Owner()) {
+        owner->DispatchLoad();
+      }
     }
     // LocalDOMWindow::DispatchLoadAndPageshowEvents(): pageshow right after
     // load, at the window with the document as its target.
@@ -1887,9 +1962,16 @@ void Document::Open(Window* entered_window,
         "Custom Element constructor should not use open().");
     return;
   }
-  // A Page's documents all have its one window's origin, so the check that
-  // the entered window's is the same always passes.
   if (entered_window && !entered_window->HasContext()) {
+    return;
+  }
+  // The document's origin must be the entered window's, as a frame's parent
+  // has it when it opens the frame's document.
+  if (entered_window && window_ &&
+      !window_->GetSecurityOrigin().IsSameOriginWith(
+          entered_window->GetSecurityOrigin())) {
+    exception_state.ThrowDOMException(
+        "SecurityError", "Can only call open() on same-origin documents.");
     return;
   }
   // A parser that runs a script it reached keeps the document.
@@ -1900,13 +1982,16 @@ void Document::Open(Window* entered_window,
     return;
   }
   // A document of a window takes the entered window's URL, without its
-  // fragment if that is another window.
+  // fragment if that is another window, and its cookie URL then.
   if (window_ && entered_window && entered_window->Document()) {
     GURL url(entered_window->Document()->UrlForBinding());
-    if (entered_window != window_ && url.has_ref()) {
-      GURL::Replacements replacements;
-      replacements.ClearRef();
-      url = url.ReplaceComponents(replacements);
+    if (entered_window != window_) {
+      cookie_url_ = entered_window->Document()->CookieUrl();
+      if (url.has_ref()) {
+        GURL::Replacements replacements;
+        replacements.ClearRef();
+        url = url.ReplaceComponents(replacements);
+      }
     }
     const std::u16string spec = base::UTF8ToUTF16(url.possibly_invalid_spec());
     if (spec != url_) {
@@ -1937,6 +2022,10 @@ void Document::Open() {
   // script-created parser loads the document anew.
   RemoveAllEventListenersRecursively();
   ImplicitOpen(nullptr);
+  // Calling document.open() counts as committing the first real document
+  // load, so a frame's document that a script opens holds back its parent's
+  // load until its own.
+  initial_empty_ = false;
 }
 
 void Document::Close(bindings::ExceptionState& exception_state) {
@@ -2019,6 +2108,13 @@ void Document::Write(const std::u16string& text,
     return;
   }
   if (entered_window && !entered_window->HasContext()) {
+    return;
+  }
+  if (entered_window && window_ &&
+      !window_->GetSecurityOrigin().IsSameOriginWith(
+          entered_window->GetSecurityOrigin())) {
+    exception_state.ThrowDOMException(
+        "SecurityError", "Can only call write() on same-origin documents.");
     return;
   }
   if (ignore_opens_and_writes_for_abort_) {

@@ -58,7 +58,9 @@ class Crypto;
 class CustomElementRegistry;
 class Document;
 class DocumentLoadTiming;
+class Element;
 class Event;
+class Frame;
 class History;
 class IDBFactory;
 class IdleTaskController;
@@ -116,11 +118,32 @@ class Window final : public WindowProperties, public ExecutionContext {
   int32_t OuterHeight() const { return Start().window_height; }
   double DevicePixelRatio() const { return Start().scale; }
   MediaQueryList* MatchMedia(const std::u16string& query);
-  // A top-level window of a tab that a Session opened: its own top, parent
-  // and frames, with no opener.
+  // The window's place in its frame's tree, as Blink's DOMWindow gives it:
+  // itself for frames, its top-level frame's window, its parent frame's, or
+  // its own for a top-level window, which has no opener. A window that has
+  // lost its frame, as one whose document a navigation replaced, has neither
+  // top nor parent, and no children. The Page program given a script has no
+  // frame, and its window is a top-level one.
   Window* Frames() { return this; }
-  Window* Top() { return this; }
-  Window* Parent() { return this; }
+  uint32_t Length() const;
+  Window* Top();
+  Window* Parent();
+  // DOMWindow::AnonymousIndexedGetter(): window[index], the window of the
+  // frame's child of that index, in the order the children were made.
+  Window* AnonymousIndexedGetter(uint32_t index);
+  // LocalDOMWindow::frameElement(): the element that holds the window's frame
+  // in its parent's document, or null for a top-level window, and for a caller
+  // of another origin than that document, as [CheckSecurity=ReturnValue]
+  // checks it.
+  Element* FrameElement() const;
+  // DOMWindow::closed(): whether the window has lost its frame, as one whose
+  // frame went or whose document a navigation replaced. The Page program's own
+  // window, which has no frame, is open.
+  bool Closed() const { return !frame_ && !HasContext(); }
+  // The name of the window's browsing context, which it keeps across its
+  // documents, and which a window without a frame does not have.
+  std::u16string Name() const;
+  void SetName(const std::u16string& name);
   v8::Local<v8::Value> OpenerForBindings() const;
   void SetOpenerForBindings(v8::Local<v8::Value> opener,
                             bindings::ExceptionState& exception_state);
@@ -220,6 +243,10 @@ class Window final : public WindowProperties, public ExecutionContext {
   // LocalWindowProxy::SetupWindowPrototypeChain() does.
   void AssociateWithContext(v8::Isolate* isolate,
                             v8::Local<v8::Context> context);
+  // The window's frame, which the Page sets while the window is its frame's,
+  // and clears once another window takes its place.
+  void SetFrame(mitto::Frame* frame) { frame_ = frame; }
+  mitto::Frame* GetFrame() const { return frame_; }
   // What a navigation of the window's frame to another document asks the
   // Session through. Without one, as in the Page program given a script or
   // once the context is gone, such a navigation does not start.
@@ -310,6 +337,9 @@ class Window final : public WindowProperties, public ExecutionContext {
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   cppgc::Member<mitto::Event> current_event_;
   raw_ptr<NavigationClient> navigation_client_ = nullptr;
+  raw_ptr<mitto::Frame> frame_ = nullptr;
+  // The name of the Page program's own window, which has no frame to keep it.
+  std::u16string frameless_name_;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
   raw_ptr<AnimationFrameController> animation_frames_ = nullptr;
 };
