@@ -651,5 +651,10 @@ def test_data_and_blob_urls_load_in_a_page_as_in_chrome(page_url: str, script: s
             return "threw: " + error;
         }}
     }})()"""
-    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+    # At a device pixel ratio of 1, Chrome's, which srcset's choice goes by: a Session draws its Machine's otherwise.
+    machine = mitto.Machine.draw(seed=1, display_width=1920, display_height=1080, scale=1.0)
+    with (
+        mitto.Session(machine=machine) as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
         assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == chrome
