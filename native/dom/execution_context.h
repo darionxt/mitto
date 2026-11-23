@@ -44,6 +44,8 @@ class Modulator;
 class StorageBucketHost;
 class DOMTimerCoordinator;
 class Performance;
+class Request;
+class Resource;
 class EventTarget;
 class Fetcher;
 class WindowTasks;
@@ -259,6 +261,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   ExecutionContext();
 
  private:
+  // The resource that a link preloaded as fetch which `request` takes, if
+  // any, as Blink's MatchPreload() gives it.
+  Resource* MatchFetchPreload(const Request& request);
+
   // Runs a callback that queueMicrotask() queued, from its microtask.
   static void RunQueuedMicrotask(void* data);
 

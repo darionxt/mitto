@@ -341,6 +341,14 @@ bool ResourceFetcher::CanUse(const Resource& existing,
   if (existing.Url().SchemeIs(url::kDataScheme)) {
     return true;
   }
+  // A blob: URL that a context revoked, which Blink's revokeObjectURL()
+  // drops from the memory cache that every document of the renderer shares,
+  // as it does for the revoking document's own resources: only a preload,
+  // which Blink keeps apart, serves a later request of it.
+  if (existing.Url().SchemeIsBlob() && !existing.IsUnusedPreload() &&
+      !BlobUrlRegistry::Get().ResolveEntry(existing.Url())) {
+    return false;
+  }
   // Resource::CanReuse(): the same mode and credentials mode.
   if (existing.Mode() != params.mode ||
       existing.Credentials() != params.credentials) {

@@ -245,6 +245,12 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     const bindings::RequestOrUSVString& input,
     const bindings::RequestInit& init,
     bindings::ExceptionState& exception_state) {
+  // GlobalFetch's ScopedFetcher: a context that the Page has let go, such as
+  // a detached frame's window, whose fetch() a script kept, fetches nothing.
+  if (!HasContext()) {
+    exception_state.ThrowTypeError("The global scope is shutting down.");
+    return v8::Local<v8::Promise>();
+  }
   Request* const request = Request::Create(input, init, exception_state);
   if (!request) {
     return v8::Local<v8::Promise>();
@@ -292,6 +298,10 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
         isolate, context, resolver, /*credentials=*/false, signal,
         /*upload_body=*/nullptr,
         body && body->IsMadeFromReadableStream() ? body->Stream() : nullptr);
+    if (Resource* const preload = MatchFetchPreload(*request)) {
+      PreloadedFetch::Start(*preload, std::move(loader), *this);
+      return resolver->GetPromise();
+    }
     LocalSchemeFetch::Answer answer;
     if (url.SchemeIs(url::kDataScheme)) {
       // A data: URL's content can always be read, whatever the mode.
@@ -365,35 +375,40 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
       isolate, context, resolver,
       /*credentials=*/request->credentials() == FetchCredentialsMode::kInclude,
       signal, upload_body, upload_body ? body->Stream() : nullptr);
+  if (Resource* const preload = MatchFetchPreload(*request)) {
+    PreloadedFetch::Start(*preload, std::move(loader), *this);
+    return resolver->GetPromise();
+  }
+  fetcher->Fetch(std::move(data), std::move(loader));
+  return resolver->GetPromise();
+}
+
+Resource* ExecutionContext::MatchFetchPreload(const Request& request) {
   // A window's GET takes what a link preloaded as fetch, as Blink's
   // ThreadableLoader asks the document's ResourceFetcher for a resource of
   // type kRaw, with what Resource::CanReuse() wants of the request beside its
   // mode and credentials mode: no keepalive, and no header of a conditional
-  // request.
-  WindowTasks* const tasks = GetTasks();
-  const Headers& headers = *request->GetHeaders();
-  if (IsWindow() && tasks && data.method == "GET" && !data.keepalive &&
-      std::ranges::none_of(
-          std::to_array<std::string_view>({"if-match", "if-modified-since",
-                                           "if-none-match", "if-range",
-                                           "if-unmodified-since"}),
-          [&headers](std::string_view name) {
-            return headers.GetValue(name).has_value();
-          })) {
-    FetchParameters params;
-    params.url = request->url();
-    params.type = ResourceType::kRaw;
-    params.mode = request->mode();
-    params.credentials = request->credentials();
-    if (Resource* const preload =
-            static_cast<Window*>(this)->GetDocument().Fetcher().MatchPreload(
-                params)) {
-      PreloadedFetch::Start(*preload, std::move(loader), *this);
-      return resolver->GetPromise();
-    }
+  // request. A data: or a blob: URL's too, which Blink fetches through the
+  // same, so a preload of a blob: URL serves a fetch after the URL is
+  // revoked.
+  const Headers& headers = *request.GetHeaders();
+  if (!IsWindow() || !GetTasks() || request.Method() != "GET" ||
+      request.keepalive() ||
+      std::ranges::any_of(std::to_array<std::string_view>(
+                              {"if-match", "if-modified-since", "if-none-match",
+                               "if-range", "if-unmodified-since"}),
+                          [&headers](std::string_view name) {
+                            return headers.GetValue(name).has_value();
+                          })) {
+    return nullptr;
   }
-  fetcher->Fetch(std::move(data), std::move(loader));
-  return resolver->GetPromise();
+  FetchParameters params;
+  params.url = request.url();
+  params.type = ResourceType::kRaw;
+  params.mode = request.mode();
+  params.credentials = request.credentials();
+  return static_cast<Window*>(this)->GetDocument().Fetcher().MatchPreload(
+      params);
 }
 
 // Upstream: third_party/blink/renderer/platform/wtf/text/base64.cc

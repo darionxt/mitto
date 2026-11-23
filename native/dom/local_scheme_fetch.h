@@ -97,6 +97,12 @@ class LocalSchemeFetch final : public FetchController {
                    std::unique_ptr<FetchClient> client,
                    ExecutionContext& context);
 
+  // The context's going, which cancels the fetch, once any call to the
+  // client has returned.
+  void OnContextDestroyed();
+  // After a call to the client: whether the fetch goes on, or the context
+  // went under the call, which cancelled it.
+  bool ReturnedFromClient();
   // Posts `step` to run from a later task of the context.
   void Post(void (LocalSchemeFetch::*step)());
   // The browser's answer, from the task after this one's.
@@ -116,6 +122,10 @@ class LocalSchemeFetch final : public FetchController {
   // the pipe's capacity, and whether a piece waits for room.
   size_t in_pipe_ = 0;
   bool waiting_for_room_ = false;
+  // Whether the client is being called, and whether the context went under
+  // the call.
+  bool calling_client_ = false;
+  bool context_gone_ = false;
   base::WeakPtrFactory<LocalSchemeFetch> weak_factory_{this};
 };
 

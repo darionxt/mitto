@@ -165,9 +165,9 @@ void LocalSchemeFetch::Start(Answer answer,
   fetch->client_->OnStarted(*fetch);
   // A navigation lets the context go before its fetches, whose clients go
   // with no word. A fetch that ends first takes its callback back.
-  fetch->context_destroyed_callback_ =
-      context.AddContextDestroyedCallback(base::BindOnce(
-          &LocalSchemeFetch::Cancel, fetch->weak_factory_.GetWeakPtr()));
+  fetch->context_destroyed_callback_ = context.AddContextDestroyedCallback(
+      base::BindOnce(&LocalSchemeFetch::OnContextDestroyed,
+                     fetch->weak_factory_.GetWeakPtr()));
   if (fetch->answer_.from_browser) {
     // The browser hears of the request from one task, and answers in another.
     fetch->Post(&LocalSchemeFetch::PostRespond);
@@ -193,6 +193,26 @@ void LocalSchemeFetch::Cancel() {
   delete this;
 }
 
+void LocalSchemeFetch::OnContextDestroyed() {
+  // The context goes under a call to the client, as when a getter that
+  // resolving the fetch's promise runs detaches the frame: the client goes
+  // once the call has returned, not under it.
+  if (calling_client_) {
+    context_gone_ = true;
+    return;
+  }
+  Cancel();
+}
+
+bool LocalSchemeFetch::ReturnedFromClient() {
+  calling_client_ = false;
+  if (context_gone_) {
+    Cancel();
+    return false;
+  }
+  return true;
+}
+
 void LocalSchemeFetch::Post(void (LocalSchemeFetch::*step)()) {
   PostTaskInContext(context_.Get(), TaskType::kNetworking,
                     base::BindOnce(step, weak_factory_.GetWeakPtr()));
@@ -211,8 +231,10 @@ void LocalSchemeFetch::Respond() {
     return;
   }
   const base::WeakPtr<LocalSchemeFetch> weak = weak_factory_.GetWeakPtr();
+  calling_client_ = true;
   client_->OnResponseStarted(answer_.head);
-  if (!weak) {
+  // The client may have cancelled the fetch, which destroyed it.
+  if (!weak || !ReturnedFromClient()) {
     return;
   }
   SendResponseBody();
@@ -249,8 +271,9 @@ void LocalSchemeFetch::SendResponseBody() {
       bytes = answer_.body.substr(body_sent_, piece);
     }
     body_sent_ += piece;
+    calling_client_ = true;
     client_->OnResponseBody(std::move(bytes));
-    if (!weak) {
+    if (!weak || !ReturnedFromClient()) {
       return;
     }
     if (body_sent_ < size) {
