@@ -9,6 +9,8 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mitto/bindings/per_context_data.h"
@@ -975,6 +977,25 @@ Document& PageFrame::CommitDocument(
 }
 
 bool PageFrame::IsolatedLikeParent(const url::Origin& origin) const {
+  // A sandbox without allow-same-origin, the frame's element's or an
+  // ancestor's, gives Chrome's documents of the frame an opaque origin, which
+  // the default allowlist does not take, though the Page does not make that
+  // origin yet.
+  for (const Frame* frame = this; frame; frame = frame->Parent()) {
+    const HTMLFrameOwnerElement* const owner = frame->Owner();
+    const std::u16string* const sandbox =
+        owner ? owner->FindAttribute(u"sandbox") : nullptr;
+    if (sandbox &&
+        std::ranges::none_of(base::SplitStringPiece(*sandbox, u"\t\n\f\r ",
+                                                    base::KEEP_WHITESPACE,
+                                                    base::SPLIT_WANT_NONEMPTY),
+                             [](std::u16string_view token) {
+                               return base::EqualsCaseInsensitiveASCII(
+                                   token, u"allow-same-origin");
+                             })) {
+      return false;
+    }
+  }
   return parent_ && parent_->window_->CrossOriginIsolatedCapability() &&
          parent_->window_->GetDocument().GetOrigin().IsSameOriginWith(origin);
 }

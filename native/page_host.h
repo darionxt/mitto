@@ -466,6 +466,18 @@ class PageHost final : public PageChannel::Delegate {
   // the feature, which need the container policy.
   bool FrameIsCrossOriginIsolated(uint64_t parent,
                                   const url::Origin& origin) const;
+  // The embedder policy of a frame's document under document `parent` that
+  // the response that `event` describes makes.
+  CrossOriginEmbedderPolicy FrameEmbedderPolicyOf(
+      uint64_t parent,
+      const RequestEvent& event) const;
+  // Whether a frame's navigation, whose response that `event` describes makes
+  // a document of embedder policy `coep`, is blocked by its parent's.
+  static bool BlocksFrameNavigation(const Request& request,
+                                    const RequestEvent& event,
+                                    const CrossOriginEmbedderPolicy& coep);
+  // Ends a frame's navigation that its parent's embedder policy blocks.
+  void BlockFrameNavigation(Request& request);
   // What the document's Cache API asks, which PageCacheStorage serves,
   // with the storage key of the document that asks.
   void OnCacheStorage(PageCacheStorageCall call,

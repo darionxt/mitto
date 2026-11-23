@@ -35,6 +35,7 @@
 #include "mitto/storage/storage_context.h"
 #include "mitto/storage_quota.h"
 #include "net/base/io_buffer.h"
+#include "net/base/is_potentially_trustworthy.h"
 #include "net/base/isolation_info.h"
 #include "net/base/mime_sniffer.h"
 #include "net/base/net_errors.h"
@@ -774,31 +775,13 @@ class PageHost::ResponseChecks {
             checks_.embedder_policy)) {
       return net::ERR_BLOCKED_BY_RESPONSE;
     }
-    // NavigationRequest::EnforceCOEP(), on each redirect and response of a
-    // frame's navigation: Cross-Origin-Resource-Policy of mode navigate from
-    // the parent's origin, under the parent's embedder policy. A blob: or
-    // data: URL is never held to it.
-    if (checks_.parent_embedder_policy) {
-      const GURL url(event.url);
-      if (!url.SchemeIsBlob() && !url.SchemeIs(url::kDataScheme) &&
-          IsBlockedByResourcePolicy(
-              url, checks_.parent_origin,
-              HeaderValue(event.headers, "Cross-Origin-Resource-Policy"),
-              ResourcePolicyMode::kNavigate, event.included_credentials,
-              *checks_.parent_embedder_policy)) {
-        return net::ERR_BLOCKED_BY_RESPONSE;
-      }
-      // CheckResponseAdherenceToCoep(), on the response: under a parent whose
-      // embedder policy is compatible with cross-origin isolation, the frame's
-      // document needs one that is too, with
-      // kCoepFrameResourceNeedsCoepHeader.
-      if (event.type == MITTO_EVENT_RESPONSE_STARTED &&
-          CompatibleWithCrossOriginIsolated(
-              checks_.parent_embedder_policy->value) &&
-          !CompatibleWithCrossOriginIsolated(
-              EmbedderPolicyOf(PolicyHeadersOf(event.headers)).value)) {
-        return net::ERR_BLOCKED_BY_RESPONSE;
-      }
+    // NavigationRequest::OnRequestRedirected(): EnforceCOEP() on each redirect
+    // of a frame's navigation. Its response is held to it, and to its parent's
+    // embedder policy, once it is known to make a document
+    // (BlocksFrameNavigation()).
+    if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
+        BlockedByParentResourcePolicy(event)) {
+      return net::ERR_BLOCKED_BY_RESPONSE;
     }
     // DedicatedWorkerHost::DidStartScriptLoad(): a worker's script whose
     // embedder policy is not compatible with its creator's fails, with
@@ -811,6 +794,28 @@ class PageHost::ResponseChecks {
       return net::ERR_BLOCKED_BY_RESPONSE;
     }
     return net::OK;
+  }
+
+  // NavigationRequest::EnforceCOEP(): whether Cross-Origin-Resource-Policy of
+  // mode navigate, from the parent's origin and under the parent's embedder
+  // policy, blocks a frame navigation's redirect or response that `event`
+  // describes. A parent whose policy is none blocks nothing, as
+  // IsBlockedInternalWithReporting() returns early for a navigation, and a
+  // blob: or data: URL is never held to it.
+  bool BlockedByParentResourcePolicy(const RequestEvent& event) const {
+    if (!checks_.parent_embedder_policy ||
+        checks_.parent_embedder_policy->value ==
+            CrossOriginEmbedderPolicyValue::kNone) {
+      return false;
+    }
+    const GURL url(event.url);
+    return !url.SchemeIsBlob() && !url.SchemeIs(url::kDataScheme) &&
+           IsBlockedByResourcePolicy(
+               url, checks_.parent_origin,
+               HeaderValue(event.headers, "Cross-Origin-Resource-Policy"),
+               ResourcePolicyMode::kNavigate, event.included_credentials,
+               *checks_.parent_embedder_policy)
+               .has_value();
   }
 
  private:
@@ -977,6 +982,8 @@ class PageHost::Request final : public RequestClient {
   }
   const FetchChecks& checks() const { return response_checks_.checks(); }
   bool cors() const { return response_checks_.cors(); }
+  // The checks that its redirects and response are held to.
+  const ResponseChecks& response_checks() const { return response_checks_; }
   base::TimeTicks start() const { return start_; }
   bool started() const { return started_; }
   uint32_t credit() const { return credit_; }
@@ -1845,6 +1852,48 @@ void PageHost::FinishSniffing(Request& request) {
   }
 }
 
+bool PageHost::BlocksFrameNavigation(const Request& request,
+                                     const RequestEvent& event,
+                                     const CrossOriginEmbedderPolicy& coep) {
+  const FetchChecks& checks = request.response_checks().checks();
+  if (!checks.parent_embedder_policy) {
+    return false;
+  }
+  // NavigationRequest::OnResponseStarted(), once the response is known to
+  // make a document: EnforceCOEP(), and then
+  // CheckResponseAdherenceToCoep(), which under a parent whose embedder policy
+  // is compatible with cross-origin isolation needs the frame's to be too,
+  // with kCoepFrameResourceNeedsCoepHeader.
+  return request.response_checks().BlockedByParentResourcePolicy(event) ||
+         (CompatibleWithCrossOriginIsolated(
+              checks.parent_embedder_policy->value) &&
+          !CompatibleWithCrossOriginIsolated(coep.value));
+}
+
+void PageHost::BlockFrameNavigation(Request& request) {
+  // OnRequestFailedInternal() with ERR_BLOCKED_BY_RESPONSE: the request goes,
+  // and the frame commits Chrome's error page, which the Page makes once it
+  // hears that the navigation ended so. The Page has heard the end then, so
+  // nothing more of the request reaches it, and the Request goes from a later
+  // task, as this runs within its own event.
+  frame_navigation_responses_.erase(request.number());
+  request.set_keeps_document();
+  if (channel_) {
+    PageResponseEnded ended;
+    ended.number = request.number();
+    ended.net_error = net::ERR_BLOCKED_BY_RESPONSE;
+    channel_->Send(EncodeResponseEnded(ended));
+  }
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(
+                     [](base::WeakPtr<PageHost> host, uint64_t number) {
+                       if (host) {
+                         host->requests_.erase(number);
+                       }
+                     },
+                     weak_factory_.GetWeakPtr(), request.number()));
+}
+
 void PageHost::StartResponse(Request& request, const RequestEvent& event) {
   // What Chrome's browser makes of a top-level navigation's COOP and COEP.
   std::optional<TopLevelDocumentPolicies> policies;
@@ -1869,8 +1918,14 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
   std::optional<PageCrossOriginIsolation> frame_isolation;
   if (const auto frame = frame_navigation_responses_.find(request.number());
       frame != frame_navigation_responses_.end()) {
+    const CrossOriginEmbedderPolicy coep =
+        FrameEmbedderPolicyOf(frame->second.parent, event);
+    if (BlocksFrameNavigation(request, event, coep)) {
+      BlockFrameNavigation(request);
+      return;
+    }
     frame->second.url = GURL(event.url);
-    frame->second.coep = EmbedderPolicyOf(PolicyHeadersOf(event.headers));
+    frame->second.coep = coep;
     frame->second.cross_origin_isolated = FrameIsCrossOriginIsolated(
         frame->second.parent, url::Origin::Create(frame->second.url));
     frame_isolation = frame->second.cross_origin_isolated
@@ -3171,6 +3226,26 @@ void PageHost::LetKeepaliveRequestsGo(const std::set<uint64_t>* ids) {
     channel_->Send(EncodeResponseEnded(ended));
     it = requests_.erase(it);
   }
+}
+
+CrossOriginEmbedderPolicy PageHost::FrameEmbedderPolicyOf(
+    uint64_t parent,
+    const RequestEvent& event) const {
+  // NavigationRequest::ComputeCrossOriginEmbedderPolicy(): the response's,
+  // where the top-level document's URL, the "top-level creation URL", is
+  // potentially trustworthy, and none elsewhere.
+  uint64_t top = parent;
+  for (auto found = contexts_.find(top);
+       found != contexts_.end() && found->second.parent != kNoDocument;
+       found = contexts_.find(top)) {
+    top = found->second.parent;
+  }
+  const auto top_context = contexts_.find(top);
+  if (top_context == contexts_.end() ||
+      !net::IsUrlPotentiallyTrustworthy(ContextUrl(top_context->second))) {
+    return CrossOriginEmbedderPolicy();
+  }
+  return EmbedderPolicyOf(PolicyHeadersOf(event.headers));
 }
 
 bool PageHost::FrameIsCrossOriginIsolated(uint64_t parent,

@@ -307,9 +307,9 @@ def test_a_shared_array_buffer_that_a_broadcast_channel_carries_arrives_as_null(
     assert _evaluate(session, url, script) == [["message", "[object Null]"]] * 2
 
 
-# A frame's document that asks for /seen and its own path once it runs, so that whether a frame of another origin,
-# which the page cannot read, committed its response shows on the server.
-_FRAME = b"<!doctype html><title>f</title><script>fetch('/seen' + location.pathname);</script>"
+# A frame's document that asks for /seen/, its host and its own path once it runs, so that whether a frame of another
+# origin, which the page cannot read, committed its response shows on the server.
+_FRAME = b"<!doctype html><title>f</title><script>fetch('/seen/' + location.hostname + location.pathname);</script>"
 _CREDENTIALLESS: _Header = ("Cross-Origin-Embedder-Policy", "credentialless")
 _FRAMES: dict[str, list[_Header]] = {
     "/f-none": [],
@@ -359,10 +359,17 @@ def test_a_frame_navigation_is_held_to_its_parent_s_embedder_policy(
         f"{other}/f-none",
     ]
     url = server.page("/", _BLANK, parent)
-
-    frames = _evaluate(session, url, _FRAMES_SCRIPT.replace("SOURCES", json.dumps(sources)))
-
     isolated = bool(parent)
+    # The frames whose documents run, by host and path.
+    committed = {"/seen/localhost/f-coep-corp", "/seen/127.0.0.1/f-coep", "/seen/127.0.0.1/f-cl"}
+    committed |= {"/seen/127.0.0.1/f-coep-corp"}
+    if not isolated:
+        committed |= {"/seen/127.0.0.1/f-none", "/seen/localhost/f-coep", "/seen/localhost/f-none"}
+
+    with _open_page(session, url) as page:
+        frames = page.evaluate(_FRAMES_SCRIPT.replace("SOURCES", json.dumps(sources)), timeout=TIMEOUT_SECONDS)
+        assert all(server.wait_for_path(path) for path in committed), server.paths()
+
     same_origin = [True, isolated, "function" if isolated else "undefined"]
     blocked = [False]
     assert frames == {
@@ -374,14 +381,7 @@ def test_a_frame_navigation_is_held_to_its_parent_s_embedder_policy(
         f"{other}/f-coep-corp": blocked,
         f"{other}/f-none": blocked,
     }
-    # The frames of another origin that committed asked for their /seen.
-    committed: set[str] = {"/seen/f-coep-corp"} | ({"/seen/f-coep", "/seen/f-none"} if not isolated else set[str]())
-    assert server.wait_for_path("/seen/f-coep-corp")
-    seen = {path for path in server.paths() if path.startswith("/seen/")}
-    same_origin_seen: set[str] = {"/seen/f-coep", "/seen/f-cl", "/seen/f-coep-corp"} | (
-        set[str]() if isolated else {"/seen/f-none"}
-    )
-    assert seen == same_origin_seen | committed
+    assert {path for path in server.paths() if path.startswith("/seen/")} == committed
 
 
 def test_frames_made_without_the_network_take_their_parent_s_isolation(
@@ -428,3 +428,24 @@ def test_a_frame_s_requests_are_held_to_its_own_embedder_policy(
     })()"""
 
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == "TypeError"
+
+
+def test_a_sandboxed_frame_is_isolated_only_where_it_keeps_its_origin(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A sandbox with allow-same-origin keeps a frame's origin and so its isolation (Chrome for Testing 157). Without it
+    # Chrome's frame has an opaque origin, which the default allowlist does not take: the Page does not make that
+    # origin yet (#285), but gives such a frame no isolation either.
+    script = """(() => {
+        const frame = (sandbox) => {
+            const element = document.createElement('iframe');
+            element.setAttribute('sandbox', sandbox);
+            document.documentElement.appendChild(element);
+            return element.contentWindow;
+        };
+        return [frame('allow-same-origin').crossOriginIsolated,
+                frame('allow-scripts allow-same-origin').crossOriginIsolated,
+                frame('allow-scripts').crossOriginIsolated];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, False]
