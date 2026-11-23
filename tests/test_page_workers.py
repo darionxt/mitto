@@ -80,6 +80,14 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"new BroadcastChannel('news').postMessage('last words'); close();",
     ),
+    # A worker that posts to channels after it has called close(), from one made before and one made after, and to its
+    # Worker.
+    "/broadcast-after-close.js": (
+        "text/javascript",
+        b"const before = new BroadcastChannel('late'); before.postMessage('before close'); close();"
+        b" before.postMessage('after close'); new BroadcastChannel('late').postMessage('made after close');"
+        b" postMessage('to the worker');",
+    ),
     # A worker that fetches without end, with a worker of its own that does too, and that is busy for a while from
     # when it says so, past its creator's document being replaced, before it fetches again.
     "/busy.js": (
@@ -705,6 +713,22 @@ def test_a_module_worker_of_a_data_url_imports_through_its_creator(server: str) 
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_module_worker_of_a_data_url_imports_its_creators_blob_url_statically_only(server: str) -> None:
+    # As in Chrome 157: its top-level graph is fetched through its creator's settings, which may read the creator's
+    # blob: URL, and an import() through its own, of an opaque origin, which may not.
+    script = """new Promise((resolve) => {
+        const module = () => URL.createObjectURL(new Blob(['export const v = 42;'], {type: 'text/javascript'}));
+        const src = "import { v } from '" + module() + "';" +
+            "import('" + module() + "').then(() => 'loaded', (e) => e.name).then((d) => postMessage([v, d]));";
+        const worker = new Worker('data:text/javascript,' + encodeURIComponent(src), {type: 'module'});
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == [42, "TypeError"]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_module_workers_static_imports_are_in_its_creators_timeline(server: str) -> None:
     # As Chrome 157 times them: what its top-level graph imports through its creator's settings in the creator's
     # timeline, and an import() in its own, each of the initiator type script.
@@ -901,6 +925,22 @@ def test_a_broadcast_reaches_the_window_from_a_worker_that_closes_at_once(server
     })"""
 
     assert _evaluate(server, script) == "last words"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_that_has_closed_broadcasts_nothing_more(server: str) -> None:
+    # As in Chrome 157: the message posted before close() arrives, those posted after it do not, whether their channel
+    # was made before or after, and the worker's postMessage() to its Worker still goes.
+    script = """new Promise((resolve) => {
+        const heard = [];
+        const channel = new BroadcastChannel('late');
+        channel.onmessage = (e) => heard.push('channel: ' + e.data);
+        const worker = new Worker('/broadcast-after-close.js');
+        worker.onmessage = (e) => heard.push('worker: ' + e.data);
+        setTimeout(() => resolve(heard.sort()), 1000);
+    })"""
+
+    assert _evaluate(server, script) == ["channel: before close", "worker: to the worker"]
 
 
 @pytest.mark.usefixtures("page_program")
