@@ -8,6 +8,8 @@
 #ifndef MITTO_DOM_COOKIE_JAR_H_
 #define MITTO_DOM_COOKIE_JAR_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
@@ -35,11 +37,14 @@ class CookieJar {
   using StoredAnswer = base::OnceCallback<void(bool stored)>;
   virtual void SetForCookieStore(PageCookieStoreSet set,
                                  StoredAnswer answer) = 0;
-  // Has the Session tell `listener` of each change to the document's cookies,
-  // each from a task of its own, or stop, for a null one.
+  // Has the Session tell `listener` of each change to the cookies of the
+  // document `document`, each from a task of its own, or stop, for a null
+  // one. Each document listens on its own, as each of Blink's CookieStores
+  // subscribes on its own.
   using ChangeListener =
       base::RepeatingCallback<void(const PageCookieStoreChange&)>;
-  virtual void ListenForCookieStore(ChangeListener listener) = 0;
+  virtual void ListenForCookieStore(uint64_t document,
+                                    ChangeListener listener) = 0;
 
  protected:
   virtual ~CookieJar() = default;

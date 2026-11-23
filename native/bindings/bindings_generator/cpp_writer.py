@@ -94,6 +94,9 @@ WRITTEN = frozenset(
         "CEReactions",
         "CachedAccessor",
         "CachedAttribute",
+        # A class's getter that returns a window's document or frame element gives null to a caller of another origin,
+        # as contentDocument and frameElement do.
+        "CheckSecurity",
         "ContextEnabled",
         "CrossOrigin",
         "Exposed",
@@ -1356,7 +1359,9 @@ class _InterfaceWriter:
             raise UnhandledError(f"interface {interface.name}: a named setter or deleter needs the named getter")
         if indexed is None and named is None:
             return False
-        if "Global" in interface.extended_attributes or interface.name == "WindowProperties":
+        # A global object's named properties are its named properties object's (WindowProperties). Its indexed ones,
+        # Window's child frames, are on the global object's template, as bind_gen puts them on its instance template.
+        if ("Global" in interface.extended_attributes and named is not None) or interface.name == "WindowProperties":
             raise UnhandledError(
                 f"interface {interface.name}: the C++ writer does not handle the named properties of a global object"
             )

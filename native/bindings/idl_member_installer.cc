@@ -122,7 +122,14 @@ void ExposedConstructGetter(v8::Local<v8::Name> name,
   v8::Isolate* const isolate = info.GetIsolate();
   const auto& construct = *static_cast<const ExposedConstructInfo*>(
       info.Data().As<v8::External>()->Value(kExposedConstructInfoTag));
-  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  // The construct of the global object's own context, as Blink's
+  // ExposedConstructCallback() takes it from the holder's creation context:
+  // a frame's `w.Document` is the frame's Document, whichever context reads
+  // it.
+  v8::Local<v8::Context> context;
+  if (!info.Holder()->GetCreationContext(isolate).ToLocal(&context)) {
+    context = isolate->GetCurrentContext();
+  }
   switch (construct.kind) {
     case ExposedConstructInfo::Kind::kInterfaceObject:
       info.GetReturnValue().Set(InterfaceObject(context, *construct.target));

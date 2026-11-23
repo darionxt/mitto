@@ -1103,6 +1103,26 @@ def _collection(*specials: str, unenumerable: bool = True) -> Interface:
     )
 
 
+def test_a_global_object_s_indexed_getter_is_on_its_template_and_its_named_ones_are_refused() -> None:
+    # Window's `getter Window (unsigned long index)`, its child frames, which bind_gen puts on the global object's
+    # instance template; its named properties are its named properties object's, WindowProperties.
+    implemented = ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("length", "item", "indexed getter"))
+    indexed = dataclasses.replace(_collection("indexed getter"), extended_attributes=_extended("Global"))
+
+    source = _bindings_of(indexed, implemented)
+
+    assert "HolderOf(isolate, holder)->Item(index)" in source
+    assert "InstallIndexedAndNamedProperties(isolate, instance_template, kIndexedAndNamedProperties);" in source
+    named = dataclasses.replace(_collection("indexed getter", "named getter"), extended_attributes=_extended("Global"))
+    with pytest.raises(UnhandledError, match=r"does not handle the named properties of a global object$"):
+        _bindings_of(
+            named,
+            ImplementedInterface(
+                "Thing", "mitto/dom/thing.h", implemented=("length", "item", "indexed getter", "named getter")
+            ),
+        )
+
+
 def _bindings_of(
     interface: Interface, implemented: ImplementedInterface, dictionaries: dict[str, Dictionary] | None = None
 ) -> str:

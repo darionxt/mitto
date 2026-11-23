@@ -445,6 +445,14 @@ bool FromV8Promise(v8::Isolate* isolate,
 // message from the exception, which says where an error was made, and what V8
 // reads of it.
 void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception);
+// The same for what `callback`, a page's function, threw, which `try_catch`
+// caught, in the callback's own realm, whose window's error event fires, as
+// Blink's CallbackFunctionBase::InvokeAndReportException() reports it with
+// the callback's relevant ScriptState: a frame's callback that another
+// frame's requestAnimationFrame() or timer runs reports in its own frame.
+void ReportExceptionInCallbackRealm(v8::Isolate* isolate,
+                                    v8::Local<v8::Object> callback,
+                                    const v8::TryCatch& try_catch);
 void ReportException(v8::Isolate* isolate,
                      v8::Local<v8::Value> exception,
                      v8::Local<v8::Message> message);
