@@ -192,6 +192,10 @@ class Window final : public WindowProperties, public ExecutionContext {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // The window's CookieStore, if a script has asked for it.
+  mitto::CookieStore* GetCookieStoreIfExists() const {
+    return cookie_store_.Get();
+  }
   // GlobalCacheStorage::caches(): the window's CacheStorage, made the first
   // time, or null after throwing a SecurityError for a document whose origin
   // may not reach caches.

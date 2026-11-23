@@ -215,6 +215,11 @@ class PageFrame final : public NavigationClient, public Frame {
   // A srcdoc or an about:blank that waits commits nothing then, and the
   // parent, whose load event it held back, checks again.
   void CancelLocalNavigation();
+  // The Session records a document that the frame commits without the network
+  // at the bare about:blank or about:srcdoc, since message 70 names no URL,
+  // so it hears the URL that the document committed at, such as
+  // about:blank?v=1, as Chrome's browser knows it.
+  void TellOfLocalUrl(const GURL& url);
   // The child frame `child` has gone: this hands it to the runner, which lets
   // go of it once the task ends.
   void RemoveChild(PageFrame& child);
@@ -251,6 +256,8 @@ class PageFrame final : public NavigationClient, public Frame {
     GURL cookie_url;
     // A srcdoc's markup.
     std::u16string body;
+    // Whether it reloads the frame's document, as location.reload() does.
+    bool reload = false;
   };
   // Commits `navigation`, unless another has taken its place: in the same
   // window for a document of the initial about:blank's origin, as Blink's

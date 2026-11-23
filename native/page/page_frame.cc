@@ -14,6 +14,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
+#include "mitto/dom/cookie_store.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/dom_timer.h"
@@ -43,6 +44,7 @@
 #include "mitto/page/session_sender.h"
 #include "mitto/page/session_storage_buckets.h"
 #include "url/origin.h"
+#include "url/url_constants.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
 
@@ -112,9 +114,11 @@ class TextBody final : public DocumentParser::Client {
 // and ended as it committed, as Chrome 157 gives it.
 void TimeLocalCommit(DocumentLoadTiming& timing,
                      const GURL& url,
-                     size_t body_size) {
+                     size_t body_size,
+                     bool reload) {
   const base::TimeTicks now = base::TimeTicks::Now();
   timing.has_response = true;
+  timing.is_reload = reload;
   timing.fetch_start = base::TimeTicks();
   timing.response_end = now;
   ResourceTimingInfo navigation;
@@ -325,8 +329,13 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     return;
   }
   Document* document = nullptr;
+  CookieStore* const cookie_store =
+      reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
   if (reuse_window) {
     const v8::Context::Scope context_scope(context());
+    if (cookie_store) {
+      cookie_store->DocumentWillChange();
+    }
     window_->SetDocumentId(SendDocumentCommitted(committed));
     document = Document::CreateHTML();
     window_->SetDocument(document);
@@ -350,7 +359,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   const v8::Context::Scope context_scope(context());
   document->SetLoadTiming(&document_load_timing());
   TimeLocalCommit(document_load_timing(), url,
-                  base::UTF16ToUTF8(navigation.body).size());
+                  base::UTF16ToUTF8(navigation.body).size(), navigation.reload);
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
   // HTMLDocument's constructor: a srcdoc document stays in no-quirks mode,
   // whatever its doctype.
@@ -366,6 +375,10 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
   }
+  if (cookie_store) {
+    cookie_store->DocumentChanged();
+  }
+  TellOfLocalUrl(url);
   // The body, the srcdoc or nothing, goes to the parser as a response's would.
   local_body_ =
       std::make_unique<TextBody>(*document, std::move(navigation.body));
@@ -503,7 +516,8 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
     GiveStorage(*document);
   }
   document->SetLoadTiming(&document_load_timing());
-  TimeLocalCommit(document_load_timing(), url, /*body_size=*/0);
+  TimeLocalCommit(document_load_timing(), url, /*body_size=*/0,
+                  /*reload=*/false);
   // It keeps the initial document's about base URL, as Chrome 157 does, not
   // its initiator's base URL of the time, and its cookie URL.
   document->SetAboutBaseUrl(old_document.FallbackBaseUrl());
@@ -515,6 +529,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
     document->SetReferrer(parent_->window_->GetDocument().UrlForBinding());
   }
   window.SetDocument(document);
+  TellOfLocalUrl(url);
   // An empty body, which the parser ends at once, so that DOMContentLoaded,
   // the window's load and the element's load fire before this returns.
   empty_body_ = std::make_unique<EmptyBody>(*document);
@@ -542,6 +557,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     }
     LocalNavigation navigation;
     navigation.url = request.url;
+    navigation.reload = request.reload;
     // Its document's referrer is what the initiator's outgoing referrer gives
     // a navigation to its URL under the initiator's referrer policy, as
     // Chrome's browser takes it from the navigation's request.
@@ -632,6 +648,12 @@ void PageFrame::DidNavigateWithinDocument(const GURL& url) {
   if (spec.size() <= kMaxPayloadSize - 8) {
     runner_->send().Run(
         EncodeSameDocumentNavigation(window_->DocumentId(), spec));
+  }
+}
+
+void PageFrame::TellOfLocalUrl(const GURL& url) {
+  if (url != GURL(url::kAboutBlankURL) && url != GURL(url::kAboutSrcdocURL)) {
+    DidNavigateWithinDocument(url);
   }
 }
 

@@ -2791,9 +2791,6 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         frame_navigation_responses_.erase(found);
       }
       context.origin = url::Origin::Create(context.url);
-      // Blink's Document::CookieURL() is the URL it was made at, which a
-      // navigation within it leaves.
-      context.cookie_url = context.url;
       break;
     case PageDocumentSource::kAboutBlank:
     case PageDocumentSource::kSrcdoc: {

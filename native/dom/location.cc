@@ -7,6 +7,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_location.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
 #include "url/gurl.h"
@@ -154,8 +155,12 @@ void Location::SetLocation(const std::u16string& url,
   FrameLoadRequest request;
   request.url = completed;
   request.reason = ClientNavigationReason::kFrameNavigation;
+  // A frame's navigation is the caller's, as an about:blank that it commits
+  // takes the caller's origin and URL. A top-level one stays its own
+  // document's, whose ID its request carries to the Session.
   Window* const incumbent = Window::Incumbent();
-  if (incumbent && incumbent->HasDocument()) {
+  const Frame* const frame = window_->GetFrame();
+  if (incumbent && incumbent->HasDocument() && frame && frame->Parent()) {
     request.origin_window = incumbent;
   }
   Navigate(*window_, request, type);

@@ -1,13 +1,14 @@
 """Tests of the documents that a Page's frame commits without the network, its srcdocs and about:blanks, on a local server.
 
 The page is at /app/page, which sets a cookie for /app and, with ?rp=..., sends that Referrer-Policy; /echo and /app/echo
-answer with the Referer and the Cookie of their request, or "none". Each test holds a frame's documents to what headless
+answer with the Referer and the Cookie of their request, or "none", and /stall with a script two seconds later. Each test holds a frame's documents to what headless
 Chrome for Testing 157.0.8103.79 gave for the same script on the same page, with the page's origin as ORIGIN: what they
 take from their parent or from the document that started them, what they send, and how their navigations go.
 """
 
 import http.server
 import threading
+import time
 import urllib.parse
 from collections.abc import Iterator
 from typing import Any, cast
@@ -51,6 +52,10 @@ def origin() -> Iterator[str]:
                 headers["Set-Cookie"] = "c1=v1; Path=/app"
                 if policy := urllib.parse.parse_qs(path.query).get("rp"):
                     headers["Referrer-Policy"] = policy[0]
+            elif path.path == "/stall":
+                # A script that keeps its parser waiting a while.
+                time.sleep(2)
+                body, content_type = b"parent.stalled = true;", "text/javascript"
             elif path.path.endswith("/echo"):
                 body = f"{self.headers.get('Referer') or 'none'}|{self.headers.get('Cookie') or 'none'}".encode()
                 content_type = "text/plain"
@@ -617,3 +622,114 @@ def test_a_frame_s_srcdoc_and_about_blank_have_navigation_entries(origin: str) -
         [["about:blank", "navigate", "cache", 0, 0, True, True, False]],
         [["about:blank", "navigate", "cache", 0, 0, True, True, False]],
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_its_readystatechange_listener_removes_as_it_aborts_starts_no_navigation(origin: str) -> None:
+    # Taking srcdoc away while the srcdoc's parser waits for a script aborts its document, whose readystatechange
+    # listener removes the frame.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<script>document.onreadystatechange = () => {{ if (document.readyState === "complete") {{ '
+          + 'parent.ranReady = true; frameElement.remove(); }} }};<\\/script><script src="/stall"><\\/script>';
+        document.body.appendChild(element);
+        for (let i = 0; i < 100; i++) {{
+          const d = element.contentDocument;
+          if (d && d.URL === 'about:srcdoc' && d.readyState === 'loading') break;
+          await settle(10);
+        }}
+        element.removeAttribute('srcdoc');
+        await settle(300);
+        return [window.ranReady === true, element.isConnected];
+      }})()
+    """
+    assert _evaluate(origin, script) == [True, False]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_replaced_srcdoc_s_cookie_store_asks_nothing(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const outcome = (p) => Promise.race([
+          p.then(() => 'resolved', (e) => e.name), settle(1000).then(() => 'pending'),
+        ]);
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>c1';
+        document.body.appendChild(element);
+        await loaded(element);
+        const old = element.contentWindow.cookieStore;
+        element.srcdoc = '<p>c2';
+        await loaded(element);
+        return [await outcome(old.get('c1')), await outcome(old.set('old', '1')), document.cookie];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["pending", "pending", "c1=v1"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_cookie_listener_of_the_initial_window_hears_after_its_srcdoc_commits(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>l';
+        document.body.appendChild(element);
+        const changes = [];
+        element.contentWindow.cookieStore.addEventListener(
+          'change', (e) => changes.push(e.changed.map((c) => c.name).join(',')));
+        await loaded(element);
+        await cookieStore.set({{name: 'seen', value: '1', path: '/app'}});
+        await settle(500);
+        return changes;
+      }})()
+    """
+    assert _evaluate(origin, script) == ["seen"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_that_reloads_counts_as_a_reload(origin: str) -> None:
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>r';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.contentWindow.location.reload();
+        await loaded(element);
+        const w = element.contentWindow;
+        return [
+          w.performance.getEntriesByType('navigation').map((e) => e.type), w.performance.navigation.type,
+          element.contentDocument.body.textContent,
+        ];
+      }})()
+    """
+    assert _evaluate(origin, script) == [["reload"], 1, "r"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_top_level_document_that_a_frame_at_a_query_opens_takes_its_url(origin: str) -> None:
+    # The frame committed at about:blank?v=1 at once; its own task opens the top-level document, which takes that URL,
+    # and so does the Page.
+    script = """
+      (async () => {
+        const element = document.createElement('iframe');
+        element.src = 'about:blank?v=1';
+        document.body.appendChild(element);
+        element.contentWindow.eval(
+          "setTimeout(() => { top.document.open(); top.document.write('<p>o'); top.document.close(); }, 0)");
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return document.URL;
+      })()
+    """
+    with (
+        mitto.Session() as session,
+        session._open_page(f"{origin}/app/page", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "about:blank?v=1"
+        assert page.url == "about:blank?v=1"

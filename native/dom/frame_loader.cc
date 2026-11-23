@@ -306,7 +306,13 @@ void StartNavigation(Window& window,
   if (!client || !window.HasContext() || !origin_window.HasContext()) {
     return;
   }
+  // Aborting the document fires its readystatechange, whose listener may do
+  // the same.
   document.Abort();
+  if (window.GetNavigationClient() != client || !window.HasContext() ||
+      !origin_window.HasContext()) {
+    return;
+  }
   NavigationRequest navigation;
   navigation.url = url;
   navigation.reload = type == FrameLoadType::kReload;
