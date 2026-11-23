@@ -2188,9 +2188,13 @@ std::string EncodeSameDocumentNavigation(uint64_t document,
                              url);
 }
 
-std::string EncodeAboutBlankNavigation(uint64_t document, uint64_t initiator) {
+std::string EncodeAboutBlankNavigation(uint64_t document,
+                                       uint64_t initiator,
+                                       PageLocalNavigationKind kind) {
+  std::string payload = EncodeUint64(initiator);
+  payload += static_cast<char>(kind);
   return EncodeDocumentFrame(PageMessage::kAboutBlankNavigation, document,
-                             EncodeUint64(initiator));
+                             payload);
 }
 
 std::string EncodeDocumentOpened(uint64_t document, uint64_t opener) {
@@ -2603,16 +2607,24 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.same_document_url = std::move(payload);
       return frame;
-    case PageMessage::kAboutBlankNavigation:
-      if (payload.size() != 8) {
+    case PageMessage::kAboutBlankNavigation: {
+      if (payload.size() != 9) {
         return base::unexpected(
             WrongSize("about:blank navigation", payload.size()));
       }
-      frame.about_blank_initiator = DecodeUint64(payload);
-      if (frame.about_blank_initiator == kNoDocument) {
+      frame.about_blank_initiator = DecodeUint64(payload.substr(0, 8));
+      const uint8_t kind = static_cast<uint8_t>(payload[8]);
+      if (kind > static_cast<uint8_t>(PageLocalNavigationKind::kEnded)) {
+        return base::unexpected("a local navigation of no kind");
+      }
+      frame.local_navigation_kind = static_cast<PageLocalNavigationKind>(kind);
+      // One that ended names no initiator, and any other one.
+      if ((frame.local_navigation_kind == PageLocalNavigationKind::kEnded) !=
+          (frame.about_blank_initiator == kNoDocument)) {
         return base::unexpected("an about:blank started by no document");
       }
       return frame;
+    }
     case PageMessage::kDocumentOpened:
       if (payload.size() != 8) {
         return base::unexpected(WrongSize("document opened", payload.size()));

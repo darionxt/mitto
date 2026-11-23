@@ -227,6 +227,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // document: its fetches fail, as Chrome's do, and its dedicated workers,
   // which Chrome keeps with the window, are terminated.
   void EndOldDocumentInWindow();
+  // The about:blank or data: URL of type 72 that waited ends with no
+  // document: the Session forgets what it took of the initiator for it.
+  void EndLocalNavigation();
   // Whether two of the frame's ancestors' documents are at `url`, but for the
   // fragment.
   bool IsSelfReferential(const GURL& url) const;
@@ -251,7 +254,6 @@ class PageFrame final : public NavigationClient, public Frame {
   // which a newer navigation takes the place of.
   struct DataUrlAnswer {
     uint64_t number = 0;
-    NavigationRequest request;
     base::TimeTicks start;
   };
   struct LocalNavigation {
@@ -363,6 +365,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // and what RenderFrameImpl compares a new one with to drop it as the same.
   std::unique_ptr<DocumentLoader> provisional_;
   NavigationRequest provisional_request_;
+  // Counts the requests that have waited, so that a data: URL's navigation
+  // lets its request go only while it is still the one that waits.
+  uint64_t provisional_request_serial_ = 0;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};

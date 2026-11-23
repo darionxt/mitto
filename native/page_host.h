@@ -408,7 +408,9 @@ class PageHost final : public PageChannel::Delegate {
   void OnSameDocumentNavigation(uint64_t document, const std::string& url);
   // A navigation of document `document`'s frame to about:blank that document
   // `initiator` started.
-  void OnAboutBlankNavigation(uint64_t document, uint64_t initiator);
+  void OnAboutBlankNavigation(uint64_t document,
+                              uint64_t initiator,
+                              PageLocalNavigationKind kind);
   // Document `opener` of another window opened document `document`.
   void OnDocumentOpened(uint64_t document, uint64_t opener);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
@@ -646,6 +648,7 @@ class PageHost final : public PageChannel::Delegate {
   // place of: the document that started it, and what of it the about:blank
   // takes.
   struct AboutBlankNavigation {
+    PageLocalNavigationKind kind = PageLocalNavigationKind::kAboutBlank;
     uint64_t initiator = kNoDocument;
     url::Origin origin;
     CrossOriginEmbedderPolicy coep;

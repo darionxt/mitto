@@ -226,12 +226,15 @@ enum class PageMessage : uint32_t {
   // navigation within it gave it, such as one to a fragment, which is of the
   // document's origin.
   kSameDocumentNavigation = 71,
-  // To the Session: the ID of a frame's document, and the ID of the document
-  // that has started a navigation of the frame to about:blank, which commits
-  // without the network from a later task. The about:blank takes the origin,
-  // embedder policy and cookie URL that its initiator has now, as the
-  // browser's NavigationRequest holds them from its start, whether or not the
-  // initiator is still there when it commits.
+  // To the Session: the ID of a frame's document, the ID of the document that
+  // has started a navigation of the frame to about:blank or to a data: URL,
+  // which commits without the network from a later task, and a byte for which
+  // (PageLocalNavigationKind). The about:blank takes the origin, embedder
+  // policy and cookie URL that its initiator has now, and the data: URL's
+  // document the embedder policy, as the browser's NavigationRequest holds
+  // them from its start, whether or not the initiator is still there when it
+  // commits. Kind 2, with no initiator, says that the one that waited ended
+  // with no document.
   kAboutBlankNavigation = 72,
   // To the Session: the ID of a document, and the ID of the document of
   // another window, of its origin, that has opened it with document.open(),
@@ -755,6 +758,17 @@ enum class PageDocumentSource : uint8_t {
   kBlob = 6,
 };
 
+// What a navigation of type 72 is.
+enum class PageLocalNavigationKind : uint8_t {
+  // An about:blank, which commits as a document of source 2.
+  kAboutBlank = 0,
+  // A frame's data: URL, which commits as a document of source 5.
+  kDataUrl = 1,
+  // The frame's about:blank or data: URL that waited ended with no document:
+  // a download, or one that a newer navigation or document.open() canceled.
+  kEnded = 2,
+};
+
 // The URL of Chrome's error page, kUnreachableWebDataURL.
 inline constexpr char kErrorPageUrl[] = "chrome-error://chromewebdata/";
 
@@ -1178,8 +1192,10 @@ struct FrameFromPage {
   PageRequestBodyEnded request_body_ended;
   // kSameDocumentNavigation: the document's new URL.
   std::string same_document_url;
-  // kAboutBlankNavigation: the document that started it.
+  // kAboutBlankNavigation: the document that started it, and what it is.
   uint64_t about_blank_initiator = kNoDocument;
+  PageLocalNavigationKind local_navigation_kind =
+      PageLocalNavigationKind::kAboutBlank;
   // kDocumentOpened: the document that opened it.
   uint64_t opener = kNoDocument;
   // kStorageBind.
@@ -1329,7 +1345,9 @@ std::string EncodeContextGone(uint64_t context);
 // `url` is at most kMaxPayloadSize - 8 bytes.
 std::string EncodeSameDocumentNavigation(uint64_t document,
                                          std::string_view url);
-std::string EncodeAboutBlankNavigation(uint64_t document, uint64_t initiator);
+std::string EncodeAboutBlankNavigation(uint64_t document,
+                                       uint64_t initiator,
+                                       PageLocalNavigationKind kind);
 std::string EncodeDocumentOpened(uint64_t document, uint64_t opener);
 std::string EncodeStorageBind(uint64_t document, const PageStorageBind& bind);
 std::string EncodeStorageGetAll(const PageStorageGetAll& get_all);

@@ -639,7 +639,8 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       navigation.committed.initiator = request.initiator;
       // The Session takes what the about:blank inherits of its initiator now.
       runner_->send().Run(
-          EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator));
+          EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator,
+                                     PageLocalNavigationKind::kAboutBlank));
       navigation.origin = request.initiator_origin;
       navigation.referrer_policy = request.initiator_referrer_policy;
       navigation.about_base_url = request.initiator_base_url;
@@ -694,6 +695,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   CancelProvisionalNavigation();
   provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
   provisional_request_ = request;
+  ++provisional_request_serial_;
   provisional_start_ = now;
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
@@ -740,12 +742,13 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
   // and the navigation's start is now; the URL waits for that task, which
   // decodes it only if no newer navigation took its place.
   runner_->send().Run(
-      EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator));
+      EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator,
+                                 PageLocalNavigationKind::kDataUrl));
   provisional_request_ = request;
+  ++provisional_request_serial_;
   provisional_start_ = base::TimeTicks::Now();
   auto answer = std::make_unique<DataUrlAnswer>();
   answer->number = ++last_data_url_answer_;
-  answer->request = request;
   answer->start = provisional_start_;
   pending_data_url_answer_ = std::move(answer);
   EventLoop::Get()
@@ -761,11 +764,22 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   }
   const std::unique_ptr<DataUrlAnswer> answer =
       std::move(pending_data_url_answer_);
-  const NavigationRequest& request = answer->request;
+  // The navigation that waits is this one, which no newer one has taken the
+  // place of, and its request, with the URL, goes once it ends.
+  const uint64_t serial = provisional_request_serial_;
+  const auto forget_request = [this, serial] {
+    if (provisional_request_serial_ == serial) {
+      provisional_request_ = NavigationRequest();
+    }
+  };
+  const NavigationRequest& request = provisional_request_;
   // An error page for a URL that does not parse, and no document for one
-  // that would be a download, as for a response.
+  // that would be a download, as for a response: no document of the data:
+  // URL commits, so the Session forgets what it took of the initiator.
   std::optional<DataUrlResponse> data = ParseDataUrl(request.url);
   if (!data) {
+    EndLocalNavigation();
+    forget_request();
     LocalNavigation navigation;
     navigation.url = GURL(kErrorPageUrl);
     navigation.committed.source = PageDocumentSource::kErrorPage;
@@ -774,6 +788,8 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   }
   if (!IsSupportedMimeType(data->mime_type) ||
       MustDownloadMimeType(data->mime_type)) {
+    EndLocalNavigation();
+    forget_request();
     LetParentCheckCompleted();
     return;
   }
@@ -814,6 +830,16 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (loader) {
     loader->OnResponseEnded(kNetOk);
   }
+  forget_request();
+}
+
+void PageFrame::EndLocalNavigation() {
+  // From the document's context, which goes nowhere once the Session has
+  // forgotten the document.
+  runner_->sender()->SendFromContext(
+      window_->DocumentId(),
+      EncodeAboutBlankNavigation(window_->DocumentId(), kNoDocument,
+                                 PageLocalNavigationKind::kEnded));
 }
 
 void PageFrame::DidNavigateWithinDocument(const GURL& url) {
@@ -854,7 +880,11 @@ void PageFrame::StopAllLoaders() {
 }
 
 void PageFrame::CancelProvisionalNavigation() {
-  pending_data_url_answer_.reset();
+  // A data: URL that waits for its task ends with no document.
+  if (pending_data_url_answer_) {
+    pending_data_url_answer_.reset();
+    EndLocalNavigation();
+  }
   if (!provisional_) {
     return;
   }
@@ -867,6 +897,12 @@ void PageFrame::CancelProvisionalNavigation() {
 void PageFrame::CancelLocalNavigation() {
   if (!pending_local_navigation_) {
     return;
+  }
+  // An about:blank that the Session took its initiator's state for ends with
+  // no document.
+  if (pending_local_navigation_->committed.source ==
+      PageDocumentSource::kAboutBlank) {
+    EndLocalNavigation();
   }
   pending_local_navigation_.reset();
   CheckParentLoadSoon();

@@ -175,8 +175,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_EQ(frame->same_document_url.size() + 8, payload.size());
           break;
         case mitto::PageMessage::kAboutBlankNavigation:
-          CHECK_NE(frame->about_blank_initiator, mitto::kNoDocument);
-          CHECK_EQ(payload.size(), 16u);
+          CHECK_EQ(frame->about_blank_initiator == mitto::kNoDocument,
+                   frame->local_navigation_kind ==
+                       mitto::PageLocalNavigationKind::kEnded);
+          CHECK_EQ(payload.size(), 17u);
           break;
         case mitto::PageMessage::kDocumentOpened:
           CHECK_NE(frame->opener, mitto::kNoDocument);
