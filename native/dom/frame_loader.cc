@@ -10,6 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
+#include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -20,11 +21,13 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/history.h"
 #include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
+#include "mitto/dom/navigation_rate_limiter.h"
 #include "mitto/dom/pop_state_event.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
@@ -44,45 +47,14 @@
 namespace mitto {
 namespace {
 
-// NavigationRateLimiter: at most 200 navigations of a frame in 10 seconds,
-// and a warning in the console for the first one past that in each period. A
-// Page has one frame, so this is the process's.
-class NavigationRateLimiter {
- public:
-  bool CanProceed(Window& window) {
-    const base::TimeTicks now = base::TimeTicks::Now();
-    if (now - period_start_ > kPeriod) {
-      period_start_ = now;
-      count_ = 0;
-    }
-    if (count_ < kStateUpdateLimit) {
-      ++count_;
-      return true;
-    }
-    if (!warned_period_start_ || *warned_period_start_ != period_start_) {
-      warned_period_start_ = period_start_;
-      window.AddConsoleMessage(
-          ConsoleLevel::kWarning,
-          "Throttling navigation to prevent the browser from hanging. See "
-          "https://crbug.com/1038223. Command line switch "
-          "--disable-ipc-flooding-protection can be used to bypass the "
-          "protection");
-    }
-    return false;
+// The rate limiter of `window`'s frame, or of the Page program's own window,
+// which has no frame.
+NavigationRateLimiter& RateLimiterOf(Window& window) {
+  if (Frame* const frame = window.GetFrame()) {
+    return frame->GetNavigationRateLimiter();
   }
-
- private:
-  static constexpr base::TimeDelta kPeriod = base::Seconds(10);
-  static constexpr int kStateUpdateLimit = 200;
-
-  base::TimeTicks period_start_;
-  int count_ = 0;
-  std::optional<base::TimeTicks> warned_period_start_;
-};
-
-NavigationRateLimiter& RateLimiter() {
-  static NavigationRateLimiter limiter;
-  return limiter;
+  static base::NoDestructor<NavigationRateLimiter> frameless;
+  return *frameless;
 }
 
 // Whether `a` and `b` are the same but for their fragments.
@@ -330,7 +302,7 @@ void StartNavigation(Window& window,
 }
 
 bool CanProceedWithNavigation(Window& window) {
-  return RateLimiter().CanProceed(window);
+  return RateLimiterOf(window).CanProceed(window);
 }
 
 void AddStateObject(Window& window,
@@ -351,7 +323,8 @@ void AddStateObject(Window& window,
     shown = base::UTF16ToUTF8(resolved.GetString());
     full_url = GURL(shown);
   }
-  if (!CanChangeToUrlForHistoryApi(full_url, document_url)) {
+  if (!CanChangeToUrlForHistoryApi(full_url, document.GetOrigin(),
+                                   document_url)) {
     exception_state.ThrowDOMException(
         "SecurityError",
         base::StrCat({"A history state object with URL '", Elided(shown),
@@ -394,6 +367,13 @@ void UpdateForSameDocumentNavigation(
   HistoryItem item;
   if (type == FrameLoadType::kBackForward && history_item) {
     item = *history_item;
+    // The entry's state comes anew, as Blink reads the entry's state from the
+    // browser's PageState for each traversal, so that history.state gives an
+    // object of its own, not one that a script changed before it left.
+    if (item.state) {
+      item.state =
+          base::MakeRefCounted<SharedSerializedScriptValue>(item.state->data);
+    }
   } else {
     // As Blink's is_history_api_or_app_history_navigation: an intercepted
     // navigation is one of the history API, whose entry takes no Navigation
@@ -408,6 +388,9 @@ void UpdateForSameDocumentNavigation(
     if (!fragment) {
       item.state = std::move(state);
     }
+    // A new entry protects its URL as the document's policy did when it
+    // committed, which a meta element's later policy does not change.
+    item.protect_url_in_navigation_api = document.ProtectsUrlInNavigationApi();
   }
   window.SetCurrentHistoryItem(item);
   document.SetUrl(base::UTF8ToUTF16(url.spec()));

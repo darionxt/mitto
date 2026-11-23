@@ -38,6 +38,7 @@
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/navigation_client.h"
+#include "mitto/dom/navigation_rate_limiter.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -116,6 +117,7 @@ class PageFrame final : public NavigationClient, public Frame {
                           std::u16string name) override;
   void NavigateFromOwner(const GURL& url) override;
   void Detach() override;
+  NavigationRateLimiter& GetNavigationRateLimiter() override;
 
   // NavigationClient:
   void BeginNavigation(const NavigationRequest& request) override;
@@ -295,6 +297,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // as Chrome's pending entry, which the next go() counts from.
   std::optional<size_t> pending_traversal_index_;
   int waiting_traversals_ = 0;
+  NavigationRateLimiter navigation_rate_limiter_;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };
 

@@ -77,8 +77,8 @@ struct HistoryItem {
   scoped_refptr<const SharedSerializedScriptValue> navigation_api_state;
   ScrollRestorationType scroll_restoration = ScrollRestorationType::kAuto;
   // Whether another document's Navigation API entries leave out its URL, as
-  // Chrome's FrameNavigationEntry::protect_url_in_navigation_api() does for a
-  // document whose referrer policy is no-referrer or origin.
+  // Chrome's FrameNavigationEntry::protect_url_in_navigation_api() does for an
+  // entry made under a referrer policy of no-referrer or origin.
   bool protect_url_in_navigation_api = false;
 };
 

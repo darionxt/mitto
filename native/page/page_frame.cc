@@ -561,6 +561,10 @@ bool PageFrame::GoToIndex(size_t index) {
   return false;
 }
 
+NavigationRateLimiter& PageFrame::GetNavigationRateLimiter() {
+  return navigation_rate_limiter_;
+}
+
 SessionHistory& PageFrame::history() const {
   return runner_->session_history();
 }
@@ -605,8 +609,6 @@ Document& PageFrame::CommitNavigation(
                                           : FrameLoadType::kStandard;
   }
   pending_traversal_index_.reset();
-  const FetchReferrerPolicy old_referrer_policy =
-      old_document.GetReferrerPolicy();
   const HistoryItem* const old_item = Window::Current().CurrentHistoryItem();
   const std::optional<HistoryItem> old_history_item =
       old_item ? std::optional<HistoryItem>(*old_item) : std::nullopt;
@@ -647,13 +649,6 @@ Document& PageFrame::CommitNavigation(
   const HistoryItem item = HistoryItem::ForCommit(
       old_history_item ? &*old_history_item : nullptr, url, type,
       HistoryNavigationType::kDifferentDocument);
-  // ProtectUrlInNavigationApi(): the old document's referrer policy keeps its
-  // URLs from the documents after it.
-  if (old_history_item &&
-      (old_referrer_policy == FetchReferrerPolicy::kNoReferrer ||
-       old_referrer_policy == FetchReferrerPolicy::kOrigin)) {
-    history().ProtectUrlsOfDocument(old_history_item->document_sequence_number);
-  }
   Window& window = *document.DefaultView();
   Navigation::EntryArrays arrays =
       history().DidCommitNavigation(item, type, window.DocumentId());

@@ -157,17 +157,6 @@ void SessionHistory::DidCommitSameDocumentNavigation(const HistoryItem& item,
   }
 }
 
-void SessionHistory::ProtectUrlsOfDocument(int64_t document_sequence_number) {
-  for (const Entry& entry : entries_) {
-    if (entry.root->item().document_sequence_number ==
-        document_sequence_number) {
-      HistoryItem item = entry.root->item();
-      item.protect_url_in_navigation_api = true;
-      entry.root->set_item(std::move(item));
-    }
-  }
-}
-
 void SessionHistory::UpdateCurrentItem(const HistoryItem& item) {
   entries_[current_].root->set_item(item);
 }

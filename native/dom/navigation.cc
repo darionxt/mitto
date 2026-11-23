@@ -159,7 +159,9 @@ v8::Local<v8::Value> NewDOMException(v8::Isolate* isolate,
 
 }  // namespace
 
-bool CanChangeToUrlForHistoryApi(const GURL& url, const GURL& document_url) {
+bool CanChangeToUrlForHistoryApi(const GURL& url,
+                                 const url::Origin& document_origin,
+                                 const GURL& document_url) {
   if (!url.is_valid()) {
     return false;
   }
@@ -177,7 +179,7 @@ bool CanChangeToUrlForHistoryApi(const GURL& url, const GURL& document_url) {
   if (url.SchemeIsFile() && differ_in_path) {
     return false;
   }
-  if (url::Origin::Create(document_url).opaque()) {
+  if (document_origin.opaque()) {
     return !differ_in_path;
   }
   if (url.IsStandard()) {
@@ -732,7 +734,8 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
       NavigationDestination::Create(base::UTF8ToUTF16(params.url.spec()),
                                     params.fragment || params.history_api,
                                     destination_state, destination_entry);
-  fields.can_intercept = CanChangeToUrlForHistoryApi(params.url, document_url);
+  fields.can_intercept = CanChangeToUrlForHistoryApi(
+      params.url, window_->GetDocument().GetOrigin(), document_url);
   fields.hash_change = params.fragment && params.url != document_url &&
                        EqualIgnoringFragment(params.url, document_url);
   fields.source_element = params.source_element;

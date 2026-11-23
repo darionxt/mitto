@@ -497,6 +497,35 @@ def test_a_document_whose_referrer_policy_hides_its_url_leaves_it_out_of_later_e
         assert page.evaluate(entries) == [[None, None, second, third], False, server.url("/b2")]
 
 
+def test_a_meta_referrer_policy_changes_only_the_current_entry(session: mitto.Session, server: RecordingServer) -> None:
+    hidden = server.page("/norefer?q=1", "<title>No referrer</title>", [("Referrer-Policy", "no-referrer")])
+    shown = server.page("/a", "<title>Shown</title>")
+    later = server.page("/b", "<title>B</title>")
+    meta = """(policy => {
+      const meta = document.createElement('meta');
+      meta.name = 'referrer';
+      meta.content = policy;
+      document.head.append(meta);
+      return 0;
+    })"""
+
+    with _open_page(session, hidden) as page:
+        # The entry that the document is at when its meta element changes the policy takes it, and the one before
+        # keeps what the response's policy gave it.
+        page.evaluate(f"history.pushState(null, '', '/norefer?q=2'); {meta}('unsafe-url')")
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == later
+        assert page.evaluate("navigation.entries().map(e => e.url)") == [None, server.url("/norefer?q=2"), later]
+    with _open_page(session, shown) as page:
+        # An entry that the document makes after its meta element's policy takes the response's policy again.
+        page.evaluate(
+            f"history.pushState(null, '', '/a?2'); {meta}('no-referrer'); history.pushState(null, '', '/a?3')"
+        )
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == later
+        assert page.evaluate("navigation.entries().map(e => e.url)") == [shown, None, server.url("/a?3"), later]
+
+
 def test_an_entry_takes_the_navigation_api_state_as_chrome_carries_it(
     session: mitto.Session, server: RecordingServer
 ) -> None:
@@ -565,6 +594,92 @@ def test_the_initial_about_blank_takes_another_query_and_fragment(session: mitto
         )
         assert page.evaluate("history.replaceState(null, '', 'about:blank?y#z'); location.href") == "about:blank?y#z"
         assert page.evaluate("history.length") == 1
+
+
+def test_a_traversal_gives_the_state_of_its_entry_anew(session: mitto.Session, server: RecordingServer) -> None:
+    url = server.page("/", "<title>Anew</title>")
+    script = """(async () => {
+      history.replaceState({n: 1}, '');
+      const changed = history.state;
+      changed.n = 2;
+      history.pushState({n: 3}, '', '#b');
+      let popped;
+      await new Promise(resolve => {
+        addEventListener('popstate', e => { popped = e.state; resolve(); }, {once: true});
+        history.back();
+      });
+      return [history.state, history.state === changed, popped === history.state, history.state === history.state];
+    })()"""
+
+    with _open_page(session, url) as page:
+        # The entry's state as it was stored, not the object that the script changed before it left, and then the
+        # same object for popstate and each read.
+        assert page.evaluate(script) == [{"n": 1}, False, True, True]
+
+
+def test_a_frame_has_the_history_of_its_tab(session: mitto.Session, server: RecordingServer) -> None:
+    url = server.page("/a", "<title>Frames</title>")
+    opened = """(() => {
+      const frame = document.createElement('iframe');
+      document.body.append(frame);
+      const child = frame.contentWindow;
+      frame.contentDocument.open();
+      frame.contentDocument.write('<p>x</p>');
+      frame.contentDocument.close();
+      const r = [child.location.href];
+      child.history.replaceState(null, '');
+      r.push(child.location.href);
+      child.history.replaceState(null, '', '?y');
+      r.push(child.location.href, child.history.length);
+      return r;
+    })()"""
+    blank = """(() => {
+      const frame = document.createElement('iframe');
+      document.body.append(frame);
+      try {
+        frame.contentWindow.history.replaceState(null, '', 'about:blank?x');
+        return 'none';
+      } catch (e) {
+        return [e.name + ': ' + e.message, frame.contentWindow.location.href];
+      }
+    })()"""
+
+    with _open_page(session, url) as page:
+        # document.open() gives the frame's about:blank the URL of the document that opens it, which the history
+        # API may then change as that document's.
+        assert page.evaluate(opened) == [url, url, url + "?y", 1]
+        # An about:blank of its parent's origin, which is not opaque, keeps its query.
+        assert page.evaluate(blank) == [
+            "SecurityError: Failed to execute 'replaceState' on 'History': A history state object with URL "
+            f"'about:blank?x' cannot be created in a document with origin '{server.origin}' and URL 'about:blank'.",
+            "about:blank",
+        ]
+
+
+def test_each_frame_has_its_own_rate_limit(session: mitto.Session, server: RecordingServer) -> None:
+    url = server.page("/a", "<title>Limit</title>")
+    script = """(() => {
+      const frame = document.createElement('iframe');
+      document.body.append(frame);
+      const child = frame.contentWindow;
+      for (let i = 0; i < 200; i++) child.history.replaceState(i, '');
+      history.pushState(null, '', '#after');
+      const r = [location.hash, history.length, child.history.state];
+      child.history.replaceState('late', '');
+      r.push(child.history.state);
+      return r;
+    })()"""
+
+    with _open_page(session, url) as page:
+        # The frame's 200 calls leave the top-level frame's allowance whole, and its own 201st does nothing but warn.
+        assert page.evaluate(script) == ["#after", 2, 199, 199]
+        assert page.console_messages == [
+            _native.ConsoleMessage(
+                level="warning",
+                text="Throttling navigation to prevent the browser from hanging. See https://crbug.com/1038223. Command "
+                "line switch --disable-ipc-flooding-protection can be used to bypass the protection",
+            )
+        ]
 
 
 def test_a_value_of_an_enumeration_that_it_lacks_warns_in_the_console(

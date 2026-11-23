@@ -109,10 +109,6 @@ class SessionHistory final {
                                        FrameLoadType type);
   // The current entry's item changed in place.
   void UpdateCurrentItem(const HistoryItem& item);
-  // The entries of the document of `document_sequence_number`, which goes,
-  // leave out their URLs in other documents' Navigation API entries, as its
-  // referrer policy asks.
-  void ProtectUrlsOfDocument(int64_t document_sequence_number);
   // The Navigation API keys of the entries dropped past kMaxEntries since the
   // last call, which no entry has any more, for the documents that still show
   // them, as RemovedEntriesTracker collects them.

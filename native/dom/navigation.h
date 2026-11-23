@@ -31,6 +31,7 @@
 #include "mitto/dom/frame_loader.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
 #include "v8/include/v8-local-handle.h"
@@ -49,10 +50,14 @@ class NavigationTransition;
 class Window;
 
 // Blink's CanChangeToUrlForHistoryApi(): whether a history API may give a
-// document at `document_url` the URL `url` with no navigation to another
-// document: the same scheme, credentials, host and port, and for a URL that is
-// not standard or a document of an opaque origin, the same path.
-bool CanChangeToUrlForHistoryApi(const GURL& url, const GURL& document_url);
+// document at `document_url` of `document_origin` the URL `url` with no
+// navigation to another document: the same scheme, credentials, host and
+// port, and for a URL that is not standard or a document of an opaque origin,
+// the same path. An about:blank of an origin that is not opaque, as a frame's
+// takes its parent's, keeps its query too.
+bool CanChangeToUrlForHistoryApi(const GURL& url,
+                                 const url::Origin& document_origin,
+                                 const GURL& document_url);
 
 class Navigation final : public EventTarget {
  public:

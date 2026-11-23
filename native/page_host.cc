@@ -77,11 +77,13 @@ bool IsStorageAsBlinkWrites(PageStorageKind kind,
   return local(key) && (!value || local(*value));
 }
 
-// CanChangeToUrlForHistoryApi(), as Chrome's browser checks a renderer's
-// same-document URL with what Blink checks it with: the same scheme, user,
-// password, host and port, any path, query and fragment for HTTP and HTTPS,
-// and for a document whose origin is opaque only another query or fragment.
-bool CanChangeToUrlForHistoryApi(const GURL& url, const GURL& document_url) {
+// Blink's CanChangeToUrlForHistoryApi() for a document at `document_url` of
+// `document_origin`: the same scheme, user, password, host and port, any
+// path, query and fragment for HTTP and HTTPS, and for a document whose origin
+// is opaque only another query or fragment.
+bool CanChangeToUrlForHistoryApi(const GURL& url,
+                                 const url::Origin& document_origin,
+                                 const GURL& document_url) {
   if (!url.is_valid()) {
     return false;
   }
@@ -99,7 +101,7 @@ bool CanChangeToUrlForHistoryApi(const GURL& url, const GURL& document_url) {
   if (url.SchemeIsFile() && differ_in_path) {
     return false;
   }
-  if (url::Origin::Create(document_url).opaque()) {
+  if (document_origin.opaque()) {
     return !differ_in_path;
   }
   if (url.IsStandard()) {
@@ -2870,14 +2872,17 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
 
 void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
-  // The browser checks a renderer's same-document URL as
-  // CanChangeToUrlForHistoryApi() does: of the document's origin, or, for an
-  // opaque one, as about:blank's is, the same URL but for its query and
-  // fragment.
+  // RenderFrameHostImpl::ValidateURLAndOrigin() for a same-document URL: one
+  // that the history API gives the document, as CanChangeToUrlForHistoryApi()
+  // lets it, or, for an origin that is not opaque, any URL of that origin, as
+  // document.open() gives a frame's about:blank the URL of the document that
+  // opens it.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
-  if (!CanChangeToUrlForHistoryApi(new_url, document_url)) {
+  if (!CanChangeToUrlForHistoryApi(new_url, context.origin, document_url) &&
+      (!new_url.is_valid() || context.origin.opaque() ||
+       !context.origin.IsSameOriginWith(url::Origin::Create(new_url)))) {
     Refuse("a same-document navigation to another origin");
     return;
   }
