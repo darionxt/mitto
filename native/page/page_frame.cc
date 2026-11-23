@@ -854,9 +854,11 @@ void PageFrame::DidOpenDocument(const Window& opener) {
 }
 
 bool PageFrame::HasProvisionalNavigation() const {
-  // A srcdoc or an about:blank that waits to commit is the browser's
-  // navigation that FrameLoader's client navigation stands for.
-  return provisional_ != nullptr || pending_local_navigation_ != nullptr;
+  // A srcdoc, an about:blank or a data: URL that waits to commit, or to end
+  // as a download, is the browser's navigation that FrameLoader's client
+  // navigation stands for.
+  return provisional_ != nullptr || pending_local_navigation_ != nullptr ||
+         pending_data_url_answer_ != nullptr;
 }
 
 void PageFrame::StopAllLoaders() {
