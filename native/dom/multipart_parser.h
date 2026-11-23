@@ -151,6 +151,12 @@ class MultipartParser final : public cppgc::GarbageCollected<MultipartParser> {
 
   Matcher matcher_;
   std::vector<char> buffered_header_bytes_;
+  // Where LocateEndOfAdditionalHeaders()'s scan of the held header bytes has
+  // got to, with the state it carries, so that a header block that comes in
+  // pieces is scanned once.
+  size_t header_scan_position_ = 0;
+  char header_scan_last_c_ = '\n';
+  bool header_scan_was_lf_ = true;
   const cppgc::Member<Client> client_;
   // "\r\n--" and the boundary.
   const std::string delimiter_;

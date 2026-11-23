@@ -344,8 +344,8 @@ def page_url(native_library: Any) -> Iterator[str]:
 
 
 def test_a_pair_iterator_and_its_results_are_of_the_receivers_realm(page_url: str) -> None:
-    # As Chrome 157 gave it: a frame's entries() called on the window's Headers gives the window's iterator, and a
-    # frame's next() called on that iterator gives a result of the window's realm.
+    # As Chrome 157 gave it: a frame's entries() called on the window's Headers gives the window's iterator, and the
+    # frame's next() called on that iterator gives a result of the window's realm, whose pair is of the frame's.
     script = """
       (() => {
         const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow;
@@ -353,10 +353,30 @@ def test_a_pair_iterator_and_its_results_are_of_the_receivers_realm(page_url: st
         const it = w.Headers.prototype.entries.call(h);
         const own = Object.getPrototypeOf(h.entries());
         const theirs = Object.getPrototypeOf(new w.Headers().entries());
-        const step = w.Object.getPrototypeOf(it).next.call(it);
+        const step = theirs.next.call(it);
         return [Object.getPrototypeOf(it) === own, Object.getPrototypeOf(it) === theirs,
-                Object.getPrototypeOf(step) === Object.prototype,
-                Object.getPrototypeOf(step) === w.Object.prototype].join();
+                Object.getPrototypeOf(step) === Object.prototype, Object.getPrototypeOf(step) === w.Object.prototype,
+                Object.getPrototypeOf(step.value) === Array.prototype,
+                Object.getPrototypeOf(step.value) === w.Array.prototype].join();
+      })()
+    """
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "true,false,true,false,false,true"
+
+
+def test_form_datas_get_all_gives_an_array_of_the_receivers_realm(page_url: str) -> None:
+    # As Chrome 157 gave it: a frame's getAll() called on the window's FormData gives an array and Files of the window.
+    script = """
+      (() => {
+        const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow;
+        const fd = new FormData(); fd.append('a', new Blob(['x']));
+        const all = w.FormData.prototype.getAll.call(fd, 'a');
+        return [Object.getPrototypeOf(all) === Array.prototype, Object.getPrototypeOf(all) === w.Array.prototype,
+                Object.getPrototypeOf(all[0]) === File.prototype,
+                Object.getPrototypeOf(all[0]) === w.File.prototype].join();
       })()
     """
     with (

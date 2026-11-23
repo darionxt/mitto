@@ -130,9 +130,12 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
     if (kind_ == Kind::kFormData) {
       // An application/x-www-form-urlencoded body, as the URL Standard
       // parses it.
+      // The URLSearchParams stays alive while its entries are copied, as
+      // Blink's BodyFormDataConsumer holds it: Append() may collect garbage.
       FormData* const form_data = FormData::Create();
-      for (const auto& [name, value] :
-           URLSearchParams::Create(string, /*url_object=*/nullptr)->params()) {
+      const cppgc::Persistent<URLSearchParams> params =
+          URLSearchParams::Create(string, /*url_object=*/nullptr);
+      for (const auto& [name, value] : params->params()) {
         form_data->Append(name, value);
       }
       DidFetchDataLoadedFormData(form_data);

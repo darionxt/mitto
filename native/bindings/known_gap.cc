@@ -1017,9 +1017,8 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
       // The result is of the iterator's realm, whatever realm next() comes
       // from, as Blink makes it with the receiver's ScriptState.
       const ReceiverRealmScope receiver_realm(isolate, info.This());
-      const v8::Context::Scope context_scope(
-          ReceiverRealmScope::CreationContext(isolate));
-      info.GetReturnValue().Set(source->Next(isolate, kind));
+      info.GetReturnValue().Set(source->Next(
+          isolate, kind, ReceiverRealmScope::CreationContext(isolate)));
       return;
     }
   }

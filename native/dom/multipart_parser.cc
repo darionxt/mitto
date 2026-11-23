@@ -455,7 +455,10 @@ void MultipartParser::ParseDelimiter(base::span<const char>& bytes) {
 
 std::optional<MultipartPartHeaders> MultipartParser::ParseHeaderFields(
     base::span<const char>& bytes) {
+  // Blink's limit, which a chunk past it fails rather than waits on, as the
+  // loop of AppendData() would offer it again.
   if (bytes.size() > std::numeric_limits<uint32_t>::max()) {
+    state_ = State::kCancelled;
     return std::nullopt;
   }
   // The bytes after those held from before, if any.
@@ -465,6 +468,33 @@ std::optional<MultipartPartHeaders> MultipartParser::ParseHeaderFields(
                                   header_bytes.begin(), header_bytes.end());
     header_bytes = buffered_header_bytes_;
   }
+  // LocateEndOfAdditionalHeaders()'s scan, from where it got to in the bytes
+  // held before: until the empty line that ends the header fields has come,
+  // nothing is parsed.
+  bool found_end = false;
+  for (; header_scan_position_ < header_bytes.size(); ++header_scan_position_) {
+    const char c = header_bytes[header_scan_position_];
+    if (c == '\n') {
+      if (header_scan_was_lf_) {
+        found_end = true;
+        break;
+      }
+      header_scan_was_lf_ = true;
+    } else if (c != '\r' || header_scan_last_c_ != '\n') {
+      header_scan_was_lf_ = false;
+    }
+    header_scan_last_c_ = c;
+  }
+  if (!found_end) {
+    if (buffered_header_bytes_.empty()) {
+      buffered_header_bytes_.assign(header_bytes.begin(), header_bytes.end());
+    }
+    bytes = {};
+    return std::nullopt;
+  }
+  header_scan_position_ = 0;
+  header_scan_last_c_ = '\n';
+  header_scan_was_lf_ = true;
   size_t end = 0u;
   std::optional<MultipartPartHeaders> header_fields =
       MultipartPartHeaders::Parse(header_bytes, &end);

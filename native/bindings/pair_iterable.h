@@ -49,7 +49,12 @@ class PairIterationSource
 
   // The iterator's next(): {done, value} of the next pair, as `kind` has it,
   // or of undefined once there is none.
-  v8::Local<v8::Object> Next(v8::Isolate* isolate, PairIterationKind kind);
+  // The pair of an entries() iterator is an array of the realm of the next()
+  // that asks, and the result an object of `result_context`, the iterator's
+  // realm, as Blink's ESCreateIterResultObject() makes them.
+  v8::Local<v8::Object> Next(v8::Isolate* isolate,
+                             PairIterationKind kind,
+                             v8::Local<v8::Context> result_context);
   // forEach(): calls `callback` with each value, its key and `object`, and
   // `this_arg` as this, until there is no pair left. Returns false if a call
   // threw, which leaves the exception for the caller.
