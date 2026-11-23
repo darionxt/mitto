@@ -185,6 +185,13 @@ class PageFrame final : public NavigationClient, public Frame {
   // The security token of a context of the Page whose document has
   // `origin`, an opaque one, or an empty handle if no frame's document has it.
   v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
+  // Whether a document of `origin` that the frame makes without the network,
+  // as its initial about:blank, an about:blank or srcdoc, is cross-origin
+  // isolated, as the library works it out for one that the network gives:
+  // the parent's document is, and of the same origin, the default allowlist
+  // 'self' of the cross-origin-isolated feature. The top-level frame's
+  // initial about:blank is not.
+  bool IsolatedLikeParent(const url::Origin& origin) const;
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells

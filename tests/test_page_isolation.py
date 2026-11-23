@@ -5,6 +5,7 @@ that Chrome does not isolate is not: what each page sees is held to what Chrome 
 (docs/runtime.md, "Cross-origin isolation").
 """
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -304,3 +305,126 @@ def test_a_shared_array_buffer_that_a_broadcast_channel_carries_arrives_as_null(
     ])"""
 
     assert _evaluate(session, url, script) == [["message", "[object Null]"]] * 2
+
+
+# A frame's document that asks for /seen and its own path once it runs, so that whether a frame of another origin,
+# which the page cannot read, committed its response shows on the server.
+_FRAME = b"<!doctype html><title>f</title><script>fetch('/seen' + location.pathname);</script>"
+_CREDENTIALLESS: _Header = ("Cross-Origin-Embedder-Policy", "credentialless")
+_FRAMES: dict[str, list[_Header]] = {
+    "/f-none": [],
+    "/f-coep": [_COEP],
+    "/f-cl": [_CREDENTIALLESS],
+    "/f-coep-corp": [_COEP, ("Cross-Origin-Resource-Policy", "cross-origin")],
+}
+# For each frame's URL, the page reads whether its document is the page's to read, and then whether it is isolated
+# and has SharedArrayBuffer. Another origin's never is, and neither is Chrome's error page.
+_FRAMES_SCRIPT = """(async () => {
+    const one = (src) => new Promise((resolve) => {
+        const frame = document.createElement('iframe');
+        frame.onload = () => resolve(frame.contentDocument
+            ? [true, frame.contentWindow.crossOriginIsolated, typeof frame.contentWindow.SharedArrayBuffer]
+            : [false]);
+        frame.src = src;
+        document.documentElement.appendChild(frame);
+    });
+    const out = {};
+    for (const src of SOURCES) {
+        out[src] = await one(src);
+    }
+    return out;
+})()"""
+
+
+@pytest.mark.parametrize(
+    "parent", [[_COOP, _COEP], [_COOP, _CREDENTIALLESS], []], ids=["require-corp", "credentialless", "plain"]
+)
+def test_a_frame_navigation_is_held_to_its_parent_s_embedder_policy(
+    session: mitto.Session, server: RecordingServer, parent: list[_Header]
+) -> None:
+    # NavigationRequest::CheckResponseAdherenceToCoep() and EnforceCOEP(): under require-corp or credentialless, a
+    # frame's response needs a compatible embedder policy, and one of another origin also needs
+    # Cross-Origin-Resource-Policy, else the frame commits Chrome's error page. A same-origin frame of an isolated
+    # page is isolated; one of another origin is not (Chrome for Testing 157, localhost being another origin here).
+    for path, headers in _FRAMES.items():
+        server.route(path, _FRAME, "text/html", headers)
+    other = server.origin.replace("127.0.0.1", "localhost")
+    sources = [
+        "/f-none",
+        "/f-coep",
+        "/f-cl",
+        "/f-coep-corp",
+        f"{other}/f-coep",
+        f"{other}/f-coep-corp",
+        f"{other}/f-none",
+    ]
+    url = server.page("/", _BLANK, parent)
+
+    frames = _evaluate(session, url, _FRAMES_SCRIPT.replace("SOURCES", json.dumps(sources)))
+
+    isolated = bool(parent)
+    same_origin = [True, isolated, "function" if isolated else "undefined"]
+    blocked = [False]
+    assert frames == {
+        "/f-none": blocked if isolated else same_origin,
+        "/f-coep": same_origin,
+        "/f-cl": same_origin,
+        "/f-coep-corp": same_origin,
+        f"{other}/f-coep": blocked,
+        f"{other}/f-coep-corp": blocked,
+        f"{other}/f-none": blocked,
+    }
+    # The frames of another origin that committed asked for their /seen.
+    committed: set[str] = {"/seen/f-coep-corp"} | ({"/seen/f-coep", "/seen/f-none"} if not isolated else set[str]())
+    assert server.wait_for_path("/seen/f-coep-corp")
+    seen = {path for path in server.paths() if path.startswith("/seen/")}
+    same_origin_seen: set[str] = {"/seen/f-coep", "/seen/f-cl", "/seen/f-coep-corp"} | (
+        set[str]() if isolated else {"/seen/f-none"}
+    )
+    assert seen == same_origin_seen | committed
+
+
+def test_frames_made_without_the_network_take_their_parent_s_isolation(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame's initial about:blank, a frame nested in it and a srcdoc have their parent's origin, and so its
+    # isolation, as the cross-origin-isolated feature's default allowlist 'self' has it (Chrome for Testing 157).
+    script = """(async () => {
+        const blank = document.createElement('iframe');
+        document.documentElement.appendChild(blank);
+        const nested = blank.contentDocument.createElement('iframe');
+        blank.contentDocument.documentElement.appendChild(nested);
+        const srcdoc = document.createElement('iframe');
+        srcdoc.srcdoc = '<p>x';
+        document.documentElement.appendChild(srcdoc);
+        await new Promise((resolve) => srcdoc.onload = resolve);
+        return [crossOriginIsolated, blank.contentWindow.crossOriginIsolated, typeof blank.contentWindow.SharedArrayBuffer,
+                nested.contentWindow.crossOriginIsolated, srcdoc.contentWindow.crossOriginIsolated];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, "function", True, True]
+    assert _evaluate(session, server.page("/plain", _BLANK), script) == [False, False, "undefined", False, False]
+
+
+def test_a_frame_s_requests_are_held_to_its_own_embedder_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame's document has its response's embedder policy, so its no-cors fetch() of another origin without
+    # Cross-Origin-Resource-Policy fails under require-corp (Chrome for Testing 157).
+    server.route(
+        "/f-fetch",
+        b"<!doctype html><title>f</title><script>window.fetched = fetch('http://localhost:' + location.port +"
+        b" '/no-corp', {mode: 'no-cors'}).then(() => 'ok', (e) => e.name);</script>",
+        "text/html",
+        [_COEP],
+    )
+    server.route("/no-corp", b"x", "text/plain")
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/f-fetch';
+        document.documentElement.appendChild(frame);
+        await new Promise((resolve) => frame.onload = resolve);
+        return await frame.contentWindow.fetched;
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == "TypeError"

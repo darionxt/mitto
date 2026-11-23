@@ -167,7 +167,8 @@ void PageFrame::Start(const PageConnection& connection) {
   // gives it. Its time origin is when its context was made.
   const url::Origin origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
-  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin));
+  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin,
+                                     IsolatedLikeParent(origin)));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   window_->BindToContext(isolate, context());
   if (parent_) {
@@ -375,9 +376,8 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     context()->DetachGlobal();
     // The new window's time origin is the navigation's start, as Blink's is,
     // before the old document's unload events and the task that commits.
-    const v8::Local<v8::Context> context =
-        NewContext(navigation.start, origin,
-                   /*cross_origin_isolated=*/false, global_proxy);
+    const v8::Local<v8::Context> context = NewContext(
+        navigation.start, origin, IsolatedLikeParent(origin), global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
@@ -972,6 +972,11 @@ Document& PageFrame::CommitDocument(
     cookie_store->DocumentChanged();
   }
   return *document;
+}
+
+bool PageFrame::IsolatedLikeParent(const url::Origin& origin) const {
+  return parent_ && parent_->window_->CrossOriginIsolatedCapability() &&
+         parent_->window_->GetDocument().GetOrigin().IsSameOriginWith(origin);
 }
 
 v8::Local<v8::Context> PageFrame::NewContext(

@@ -723,7 +723,8 @@ enum class PageCrossOriginIsolation : uint8_t {
 
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
-// opened the Page.
+// opened the Page: a top-level document's agent cluster's, and a frame's
+// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;

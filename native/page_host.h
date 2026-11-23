@@ -345,6 +345,12 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
+    // Whether a document is cross-origin isolated, as
+    // CrossOriginIsolatedCapability() says: the top-level document's
+    // isolation, and for a frame's that, and its parent's, and the same origin
+    // as its parent's, the default allowlist 'self' of the
+    // cross-origin-isolated feature (FrameIsCrossOriginIsolated()).
+    bool cross_origin_isolated = false;
     // The URL whose cookies a document's cookie calls read and write, as
     // Blink's Document::CookieURL(): for a frame's about:blank or srcdoc its
     // creator's or its initiator's, and empty for a document's own URL, as
@@ -453,6 +459,13 @@ class PageHost final : public PageChannel::Delegate {
     bool cross_origin = false;
   };
   FrameTree FrameTreeOf(uint64_t id) const;
+  // Whether a frame's document of `origin` under document `parent` is
+  // cross-origin isolated: the parent is, and they are of the same origin, as
+  // the cross-origin-isolated feature's default allowlist 'self' has it. Known
+  // Gap: a frame's allow attribute and a document's Permissions-Policy for
+  // the feature, which need the container policy.
+  bool FrameIsCrossOriginIsolated(uint64_t parent,
+                                  const url::Origin& origin) const;
   // What the document's Cache API asks, which PageCacheStorage serves,
   // with the storage key of the document that asks.
   void OnCacheStorage(PageCacheStorageCall call,
@@ -526,6 +539,11 @@ class PageHost final : public PageChannel::Delegate {
     // A frame's navigation: the URLs of the frame's ancestors' documents, from
     // its parent's up, as they were when it started.
     std::vector<GURL> frame_ancestor_urls;
+    // A frame's navigation: its parent's embedder policy and origin, which
+    // NavigationRequest::EnforceCOEP() and CheckResponseAdherenceToCoep()
+    // hold each of its responses to.
+    std::optional<CrossOriginEmbedderPolicy> parent_embedder_policy;
+    url::Origin parent_origin;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
@@ -639,6 +657,10 @@ class PageHost final : public PageChannel::Delegate {
     GURL url;
     uint64_t parent = kNoDocument;
     uint64_t target = kNoDocument;
+    // The embedder policy and the isolation of the document that the response
+    // makes.
+    CrossOriginEmbedderPolicy coep;
+    bool cross_origin_isolated = false;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
   // The navigations of frames to about:blank that have started and not
@@ -669,6 +691,7 @@ class PageHost final : public PageChannel::Delegate {
     GURL url;
     int32_t status = 0;
     CrossOriginEmbedderPolicy coep;
+    bool cross_origin_isolated = false;
     int coop_ignored = 0;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
