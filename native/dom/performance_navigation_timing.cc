@@ -11,11 +11,13 @@ namespace mitto {
 PerformanceNavigationTiming::PerformanceNavigationTiming(
     DocumentLoadTiming* timing,
     base::TimeTicks time_origin,
-    uint64_t navigation_id)
+    uint64_t navigation_id,
+    bool cross_origin_isolated_capability)
     : PerformanceResourceTiming(timing->navigation,
                                 u"navigation",
                                 time_origin,
-                                navigation_id),
+                                navigation_id,
+                                cross_origin_isolated_capability),
       timing_(timing) {}
 
 PerformanceNavigationTiming::~PerformanceNavigationTiming() = default;

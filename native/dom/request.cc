@@ -18,6 +18,7 @@
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/blob.h"
 #include "mitto/dom/blob_bytes_consumer.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/bytes_consumer.h"
 #include "mitto/dom/document.h"
@@ -157,6 +158,8 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     request->referrer_policy_ = input_request->referrer_policy_;
     request->priority_ = input_request->priority_;
     request->keepalive_ = input_request->keepalive_;
+    request->blob_url_handle_ = input_request->blob_url_handle_;
+    request->blob_url_origin_ = input_request->blob_url_origin_;
     signal = input_request->signal_.Get();
   } else {
     // The API base URL: the document's base URL, against which the input
@@ -178,6 +181,15 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
       return nullptr;
     }
     request->url_ = parsed;
+    // Parsing resolves a blob: URL, so that fetching it works after it is
+    // revoked, as long as it named a blob when the Request was made.
+    if (parsed.SchemeIsBlob()) {
+      if (std::optional<BlobUrlRegistry::Entry> entry =
+              BlobUrlRegistry::Get().ResolveEntry(parsed)) {
+        request->blob_url_handle_ = std::move(entry->blob);
+        request->blob_url_origin_ = std::move(entry->origin);
+      }
+    }
   }
   // The document's, or the worker's.
   ExecutionContext& document = ExecutionContext::Current();
@@ -197,13 +209,13 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
         return nullptr;
       }
       // about:client, or a URL of another origin than the document's, leaves
-      // the document's URL.
+      // the document's URL. The origin is the context's, which a frame's
+      // about:blank takes from its parent or initiator.
       const bool is_client = parsed.SchemeIs(url::kAboutScheme) &&
                              parsed.host().empty() &&
                              parsed.path() == "client";
       request->referrer_ =
-          is_client || !url::Origin::Create(GURL(document.Url()))
-                            .IsSameOriginWith(parsed)
+          is_client || !document.GetSecurityOrigin().IsSameOriginWith(parsed)
               ? std::string(kClientReferrer)
               : parsed.spec();
     }

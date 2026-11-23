@@ -229,10 +229,12 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
     const net::ReferrerPolicy policy =
         params_.referrer_policy.value_or(kDefaultReferrerPolicy);
     request.set_referrer_policy(policy);
-    request.SetReferrer(net::URLRequestJob::ComputeReferrerForPolicy(
-                            policy, params_.referrer_source.value_or(page_),
-                            url)
-                            .spec());
+    request.SetReferrer(
+        params_.no_referrer_source
+            ? std::string()
+            : net::URLRequestJob::ComputeReferrerForPolicy(
+                  policy, params_.referrer_source.value_or(page_), url)
+                  .spec());
   }
 }
 

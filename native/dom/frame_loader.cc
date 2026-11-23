@@ -62,6 +62,26 @@ bool EqualIgnoringFragment(const GURL& a, const GURL& b) {
   return a.GetWithoutRef() == b.GetWithoutRef();
 }
 
+// Document::OutgoingReferrer(): none for a document of an opaque origin, and
+// otherwise the URL of the window's document, or for a srcdoc document of its
+// parent's, up to one that is none, stripped for use as a referrer.
+GURL OutgoingReferrer(const Window& window) {
+  if (window.GetSecurityOrigin().opaque()) {
+    return GURL();
+  }
+  const Window* source = &window;
+  while (GURL(source->GetDocument().UrlForBinding()).IsAboutSrcdoc()) {
+    const Frame* const frame = source->GetFrame();
+    const Frame* const parent = frame ? frame->Parent() : nullptr;
+    if (!parent || !parent->DomWindow() ||
+        !parent->DomWindow()->HasDocument()) {
+      break;
+    }
+    source = parent->DomWindow();
+  }
+  return GURL(source->GetDocument().UrlForBinding()).GetAsReferrer();
+}
+
 // KURL::ElidedString(): a URL longer than 1024 characters keeps its first
 // 511 and its last 510, with "..." between them.
 std::string Elided(std::string_view spec) {
@@ -235,8 +255,9 @@ void StartNavigation(Window& window,
     return;
   }
   // A top-level frame shows no data: URL that a page navigates it to, but one
-  // that would be a download.
-  if (url.SchemeIs(url::kDataScheme) &&
+  // that would be a download. A frame's goes on.
+  const Frame* const frame = window.GetFrame();
+  if (url.SchemeIs(url::kDataScheme) && (!frame || !frame->Parent()) &&
       request.reason != ClientNavigationReason::kReload &&
       IsDataUrlMimeTypeSupported(url)) {
     window.AddConsoleMessage(
@@ -247,12 +268,9 @@ void StartNavigation(Window& window,
   }
   // FrameNavigationDisabler and the page dismissal events: a navigation that
   // beforeunload, pagehide or unload starts does not start, nor one of a
-  // frame while a new document commits in it, before any event.
-  if (document.PageDismissalEventBeingDispatched()) {
-    return;
-  }
-  if (const NavigationClient* const client = window.GetNavigationClient();
-      client && client->IsCommitting()) {
+  // frame whose document commits.
+  if (document.PageDismissalEventBeingDispatched() ||
+      (frame && !frame->IsNavigationAllowed())) {
     return;
   }
   // A navigation of the initial about:blank replaces it.
@@ -266,6 +284,11 @@ void StartNavigation(Window& window,
     return;
   }
   if (url.SchemeIs(url::kJavaScriptScheme)) {
+    // A sandboxed frame's document runs no javascript: URL, as it would not
+    // without allow-scripts.
+    if (frame && frame->IsSandboxed()) {
+      return;
+    }
     ProcessJavaScriptUrl(window, url);
     return;
   }
@@ -286,23 +309,46 @@ void StartNavigation(Window& window,
       Navigation::DispatchResult::kContinue) {
     return;
   }
-  NavigationClient* const client = window.GetNavigationClient();
-  if (!client || !window.HasContext()) {
+  if (!window.GetNavigationClient() || !window.HasContext()) {
     return;
   }
   // RenderFrameImpl::BeginNavigation(): beforeunload, which lets it go on,
   // then the document stops loading, as
   // CancelProvisionalLoaderForNewNavigation() aborts it, and the browser hears
-  // of the navigation.
+  // of the navigation. A beforeunload listener that removed the frame, or the
+  // initiator's, took the navigation with it.
   if (!document.DispatchBeforeUnloadEvent()) {
     return;
   }
+  NavigationClient* const client = window.GetNavigationClient();
+  const Window& origin_window =
+      request.origin_window ? *request.origin_window : window;
+  if (!client || !window.HasContext() || !origin_window.HasContext()) {
+    return;
+  }
+  // Aborting the document fires its readystatechange, whose listener may do
+  // the same.
   document.Abort();
+  if (window.GetNavigationClient() != client || !window.HasContext() ||
+      !origin_window.HasContext()) {
+    return;
+  }
   NavigationRequest navigation;
   navigation.url = url;
   navigation.reload = type == FrameLoadType::kReload;
   navigation.replace = type == FrameLoadType::kReplaceCurrentItem;
-  navigation.referrer_policy = document.GetReferrerPolicy();
+  navigation.initiator_referrer_policy =
+      origin_window.GetDocument().GetReferrerPolicy();
+  navigation.referrer_policy =
+      request.referrer_policy != FetchReferrerPolicy::kDefault
+          ? request.referrer_policy
+          : navigation.initiator_referrer_policy;
+  navigation.initiator = origin_window.DocumentId();
+  navigation.initiator_origin = origin_window.GetSecurityOrigin();
+  navigation.initiator_url = GURL(origin_window.GetDocument().UrlForBinding());
+  navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
+  navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
+  navigation.initiator_referrer = OutgoingReferrer(origin_window);
   client->BeginNavigation(navigation);
 }
 

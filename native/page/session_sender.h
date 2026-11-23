@@ -94,6 +94,17 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   uint64_t SendContext(uint64_t parent,
                        base::FunctionRef<std::string(uint64_t id)> encode);
 
+  // Takes the ID of the next context, a frame's document under `parent` that
+  // takes the place of the frame's document `replaced`, sends the frame that
+  // `encode` makes of it, and returns it. The Session forgets `replaced` and
+  // the contexts under it, and so does this. One under a context that the
+  // Session has forgotten goes unannounced, and is forgotten too. Any
+  // thread.
+  uint64_t SendFrameDocument(
+      uint64_t parent,
+      uint64_t replaced,
+      base::FunctionRef<std::string(uint64_t id)> encode);
+
   // Says that `context` has gone, unless the Session has forgotten it, and
   // forgets it and the contexts under it, which the Session forgets with it.
   // Any thread.

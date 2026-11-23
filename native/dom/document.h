@@ -237,6 +237,9 @@ class Document : public Node {
   HTMLCollection* Anchors();
   HTMLCollection* Applets();
   HTMLAllCollection* All();
+  // A document that is not its window's current one, as one that a frame's
+  // next document replaced or whose frame went, has no browsing context, so
+  // its cookie reads empty and sets nothing, as in Chrome.
   std::u16string Cookie(bindings::ExceptionState& exception_state) const;
   void SetCookie(const std::u16string& value,
                  bindings::ExceptionState& exception_state);
@@ -479,13 +482,13 @@ class Document : public Node {
   // The text that Blink's KURL keeps of a `url` that does not resolve, empty
   // for one that does.
   std::string UnresolvedUrlSpec(std::u16string_view url) const;
-  // The HTML Standard's fallback base URL: the about base URL of a document
-  // whose URL matches about:blank and that has one, else the document's URL.
-  // A Page has no srcdoc document yet.
+  // The HTML Standard's fallback base URL: the about base URL of a srcdoc
+  // document, or of one whose URL matches about:blank, that has one, else the
+  // document's URL.
   GURL FallbackBaseUrl() const;
   // The HTML Standard's about base URL, which a frame's about:blank document
-  // takes from its creator or from the navigation's initiator, as Blink's
-  // fallback base URL is.
+  // takes from its creator or from the navigation's initiator, and a srcdoc
+  // document from its parent, as Blink's fallback base URL is.
   void SetAboutBaseUrl(GURL url);
   // Blink's Document::CookieURL(): the URL whose cookies the document's
   // CookieStore reads and writes, the document's own unless it took another,
@@ -521,6 +524,13 @@ class Document : public Node {
   // Chrome's console error for one that names none.
   void ParseAndSetReferrerPolicy(std::u16string_view policy,
                                  ReferrerPolicySource source);
+  // The policy that a frame's about:blank or srcdoc document takes with the
+  // policy container of its creator, its parent or its navigation's
+  // initiator, as Chrome's browser hands it over.
+  void SetReferrerPolicy(FetchReferrerPolicy policy) {
+    referrer_policy_ = policy;
+    policy_container_referrer_policy_ = policy;
+  }
   // Whether a new entry of the document in the session history keeps its URL
   // from other documents' Navigation API entries, as Chrome's browser takes
   // it from the policy container: for a policy of no-referrer or origin that
@@ -767,6 +777,7 @@ class Document : public Node {
   friend class IgnoreOpensDuringUnloadCountIncrementer;
   friend class ThrowOnDynamicMarkupInsertionCountIncrementer;
 
+  bool IsCurrentDocumentOfItsWindow() const;
   void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
   // The document-open steps, from an `entered_window` that may be null, and
   // what they do once the checks have passed, as Blink splits them.

@@ -44,6 +44,8 @@ class Modulator;
 class StorageBucketHost;
 class DOMTimerCoordinator;
 class Performance;
+class Request;
+class Resource;
 class EventTarget;
 class Fetcher;
 class WindowTasks;
@@ -54,9 +56,13 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // The execution context of the isolate's current context.
   static ExecutionContext& Current();
   // The execution context of `context`, whose global object it is, or null
-  // for a context of none.
+  // for a context of none: the one bound to it, or else its global proxy's.
   static ExecutionContext* From(v8::Isolate* isolate,
                                 v8::Local<v8::Context> context);
+  // Binds this to `context`, its global object's, so that From() finds it
+  // there even once a frame's next window has taken the global proxy over,
+  // as each of Blink's ScriptStates knows its own ExecutionContext.
+  void BindToContext(v8::Isolate* isolate, v8::Local<v8::Context> context);
 
   ExecutionContext(const ExecutionContext&) = delete;
   ExecutionContext& operator=(const ExecutionContext&) = delete;
@@ -178,8 +184,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // What else goes with the context, such as the locks of a LockManager:
   // `callback` runs once the Page lets the context go, as Blink's
   // ExecutionContextLifecycleObserver::ContextDestroyed() does. It counts
-  // among no timers.
-  void AddContextDestroyedCallback(base::OnceClosure callback);
+  // among no timers. What it returns lets RemoveContextDestroyedCallback()
+  // drop it, for an observer that goes first.
+  uint64_t AddContextDestroyedCallback(base::OnceClosure callback);
+  void RemoveContextDestroyedCallback(uint64_t id);
 
   // What starts the context's dedicated workers. Without one, as in the Page
   // program given a script, a worker's script never comes.
@@ -257,6 +265,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   ExecutionContext();
 
  private:
+  // The resource that a link preloaded as fetch which `request` takes, if
+  // any, as Blink's MatchPreload() gives it.
+  Resource* MatchFetchPreload(const Request& request);
+
   // Runs a callback that queueMicrotask() queued, from its microtask.
   static void RunQueuedMicrotask(void* data);
 
@@ -275,8 +287,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   raw_ptr<WindowTasks> tasks_ = nullptr;
   raw_ptr<WorkerStarter> worker_starter_ = nullptr;
   std::map<uint64_t, base::OnceClosure> signal_timers_;
-  std::vector<base::OnceClosure> context_destroyed_callbacks_;
+  // In the order they were added.
+  std::map<uint64_t, base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;
+  uint64_t next_context_destroyed_callback_ = 0;
 };
 
 }  // namespace mitto

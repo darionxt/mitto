@@ -22,6 +22,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_dedicated_worker_global_scope.h"
 #include "mitto/dom/animation_frame_controller.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/dedicated_worker_global_scope.h"
@@ -29,6 +30,7 @@
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/modulator.h"
 #include "mitto/dom/module_script.h"
@@ -321,6 +323,7 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetObjectProxy(params_.object_proxy.get());
   scope_->SetModule(params_.module);
   scope_->SetOutsideReferrerPolicy(params_.referrer_policy);
+  scope_->SetOutsideOrigin(params_.outside_origin);
   scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.
@@ -645,7 +648,27 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
     script.body = std::move(data->body);
     return script;
   }
-  // A blob: URL's is a Known Gap.
+  // A blob: URL's comes from the blob it names, of the worker's origin, as
+  // the browser's BlobURLLoader reads it.
+  if (url.SchemeIsBlob()) {
+    std::optional<BlobUrlRegistry::Entry> entry =
+        BlobUrlRegistry::Get().ResolveEntry(url);
+    if (!entry ||
+        !entry->origin.IsSameOriginWith(scope_->GetSecurityOrigin())) {
+      return std::nullopt;
+    }
+    LocalSchemeFetch::Answer answer = LocalSchemeFetch::AnswerBlobUrl(
+        url, std::move(entry->blob), "GET", std::nullopt);
+    if (answer.net_error) {
+      return std::nullopt;
+    }
+    ImportedScript script;
+    script.url = url;
+    script.status = answer.head.status;
+    script.headers = std::move(answer.head.headers);
+    script.body = answer.TakeBody();
+    return script;
+  }
   if (!url.SchemeIsHTTPOrHTTPS()) {
     return std::nullopt;
   }

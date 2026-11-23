@@ -142,9 +142,13 @@ class DocumentLoadTiming final
   base::TimeTicks dom_content_loaded_event_end;
   base::TimeTicks dom_complete;
 
-  // The navigation's response, which a window that the Session navigated has,
-  // and about:blank's has not.
+  // The navigation's entry, which a window that the Session navigated has,
+  // and so does a frame's srcdoc or about:blank, of no response, but not a
+  // Page's or a frame's initial about:blank.
   bool has_response = false;
+  // Whether the window that takes these times is cross-origin isolated, as
+  // PerformanceTiming reads its window's capability.
+  bool cross_origin_isolated_capability = false;
   // What the navigation's entry is made from.
   ResourceTimingInfo navigation;
   // Of its connection, as net::HttpResponseInfo has it, for window.chrome.

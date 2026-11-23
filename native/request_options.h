@@ -74,6 +74,12 @@ struct FetchParams {
   // to again for the request's URL. Always valid.
   std::optional<GURL> referrer_source;
 
+  // A request of a context whose outgoing referrer is none, as an
+  // about:blank document's or a worker's of a blob: or data: URL is, which
+  // sends no Referer under any referrer policy, as Blink's
+  // SecurityPolicy::GenerateReferrer() gives none for an empty one.
+  bool no_referrer_source = false;
+
   // For a request of a Page's frame, or a frame's navigation, whose top-level
   // frame is not the initiator: the top-level frame's origin, which
   // partitions the request and gives it its site for cookies, as Chrome's

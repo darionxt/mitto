@@ -86,8 +86,7 @@ void RunInContext(v8::Isolate* isolate,
                   Run run) {
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = context_handle.Get(isolate);
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
+  const Window* const window = Window::From(isolate, context);
   if (!window || !window->HasContext()) {
     return;
   }
@@ -298,6 +297,12 @@ v8::Local<v8::Promise> CookieStore::DoRead(
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return {};
   }
+  // A store whose window has gone asks nothing, and its promise never
+  // settles, as Blink's resolvers settle nothing once their execution context
+  // is destroyed.
+  if (!window_ || !window_->HasContext()) {
+    return resolver->GetPromise();
+  }
   jar->GetForCookieStore(
       std::move(get),
       base::BindOnce(
@@ -348,6 +353,12 @@ v8::Local<v8::Promise> CookieStore::DoWrite(
   v8::Local<v8::Promise::Resolver> resolver;
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return {};
+  }
+  // A store whose window has gone asks nothing, and its promise never
+  // settles, as Blink's resolvers settle nothing once their execution context
+  // is destroyed.
+  if (!window_ || !window_->HasContext()) {
+    return resolver->GetPromise();
   }
   jar->SetForCookieStore(
       *std::move(set),
@@ -490,6 +501,16 @@ void CookieStore::ListenersChanged(std::u16string_view type) {
     StartObserving();
   } else {
     StopObserving();
+  }
+}
+
+void CookieStore::DocumentWillChange() {
+  StopObserving();
+}
+
+void CookieStore::DocumentChanged() {
+  if (HasEventListeners(u"change")) {
+    StartObserving();
   }
 }
 

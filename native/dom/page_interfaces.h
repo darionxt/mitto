@@ -44,6 +44,14 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
                                       const ContextInit& init,
                                       std::u16string_view markup,
                                       DidCreateScriptContext did_create);
+// The same with `global_proxy`, the global proxy of a context that has let it
+// go (v8::Context::DetachGlobal()), which the new context takes, as a frame's
+// WindowProxy stays the frame's across its documents.
+v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
+                                      const ContextInit& init,
+                                      std::u16string_view markup,
+                                      v8::Local<v8::Object> global_proxy,
+                                      DidCreateScriptContext did_create);
 
 // Makes a context whose global object is a DedicatedWorkerGlobalScope named
 // `name`, made from its template as Blink's WorkerOrWorkletScriptController

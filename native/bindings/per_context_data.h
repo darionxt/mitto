@@ -29,6 +29,15 @@ void SetSecureContext(v8::Local<v8::Context> context, bool secure);
 // program's command line makes, is one, as a file: page is.
 bool IsSecureContext(v8::Local<v8::Context> context);
 
+// Says whether `context` is cross-origin isolated, which decides whether it
+// gets the members that [CrossOriginIsolated] and
+// [CrossOriginIsolatedOrRuntimeEnabled] put behind its capability. Set before
+// the context installs what it decides.
+void SetCrossOriginIsolated(v8::Local<v8::Context> context, bool isolated);
+
+// Whether `context` is cross-origin isolated. One that was never told is not.
+bool IsCrossOriginIsolated(v8::Local<v8::Context> context);
+
 // The relevant realm of a binding call's receiver, where the call makes the
 // wrappers that it returns, as Blink's bindings convert a return value with
 // the receiver's ScriptState (ScriptState::ForRelevantRealm()). While one is

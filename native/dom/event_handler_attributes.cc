@@ -235,8 +235,7 @@ Window* ContextWindowOf(Element& element) {
   if (!isolate || !isolate->InContext()) {
     return nullptr;
   }
-  return bindings::V8Window::ToWrappable(
-      isolate, isolate->GetCurrentContext()->Global());
+  return Window::From(isolate, isolate->GetCurrentContext());
 }
 
 // JSEventHandlerForContentAttribute::Create(): none for a removed attribute,

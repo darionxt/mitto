@@ -38,9 +38,6 @@
 namespace mitto {
 namespace {
 
-// A Page is never cross-origin isolated.
-constexpr bool kCrossOriginIsolated = false;
-
 // Blink's kDefaultResourceTimingBufferSize.
 constexpr uint32_t kDefaultResourceTimingBufferSize = 250;
 
@@ -134,18 +131,25 @@ std::string Utf8(const std::u16string& text) {
 
 // static
 Performance* Performance::Create(base::TimeTicks time_origin,
-                                 DocumentLoadTiming* timing) {
-  return bindings::MakeGarbageCollected<Performance>(time_origin, timing);
+                                 DocumentLoadTiming* timing,
+                                 bool cross_origin_isolated_capability) {
+  return bindings::MakeGarbageCollected<Performance>(
+      time_origin, timing, cross_origin_isolated_capability);
 }
 
 // static
-Performance* Performance::CreateForWorker(base::TimeTicks time_origin) {
-  return bindings::MakeGarbageCollected<Performance>(time_origin, nullptr);
+Performance* Performance::CreateForWorker(
+    base::TimeTicks time_origin,
+    bool cross_origin_isolated_capability) {
+  return bindings::MakeGarbageCollected<Performance>(
+      time_origin, nullptr, cross_origin_isolated_capability);
 }
 
 Performance::Performance(base::TimeTicks time_origin,
-                         DocumentLoadTiming* timing)
+                         DocumentLoadTiming* timing,
+                         bool cross_origin_isolated_capability)
     : time_origin_(time_origin),
+      cross_origin_isolated_capability_(cross_origin_isolated_capability),
       unix_at_zero_monotonic_(UnixAtZeroMonotonic()),
       document_timing_(timing),
       navigation_id_(static_cast<uint64_t>(
@@ -180,14 +184,15 @@ void Performance::Trace(cppgc::Visitor* visitor) const {
 }
 
 double Performance::Now() const {
-  return MonotonicTimeToDOMHighResTimeStamp(time_origin_,
-                                            base::TimeTicks::Now());
+  return MonotonicTimeToDOMHighResTimeStamp(
+      time_origin_, base::TimeTicks::Now(), cross_origin_isolated_capability_);
 }
 
 double Performance::TimeOrigin() const {
   return ClampTimeResolution(
       (unix_at_zero_monotonic_ - base::Time::UnixEpoch()) +
-      (time_origin_ - base::TimeTicks()));
+          (time_origin_ - base::TimeTicks()),
+      cross_origin_isolated_capability_);
 }
 
 PerformanceNavigationTiming* Performance::NavigationTiming() {
@@ -197,7 +202,8 @@ PerformanceNavigationTiming* Performance::NavigationTiming() {
       document_timing_->has_response) {
     navigation_timing_ =
         bindings::MakeGarbageCollected<PerformanceNavigationTiming>(
-            document_timing_.Get(), time_origin_, navigation_id_);
+            document_timing_.Get(), time_origin_, navigation_id_,
+            cross_origin_isolated_capability_);
   }
   return navigation_timing_.Get();
 }
@@ -507,7 +513,8 @@ void Performance::AddResourceTiming(ResourceTimingInfo info,
                                     const std::u16string& initiator_type) {
   PerformanceResourceTiming* const entry =
       bindings::MakeGarbageCollected<PerformanceResourceTiming>(
-          std::move(info), initiator_type, time_origin_, navigation_id_);
+          std::move(info), initiator_type, time_origin_, navigation_id_,
+          cross_origin_isolated_capability_);
   // https://w3c.github.io/resource-timing/#dfn-add-a-performanceresourcetiming-entry
   if (CanAddResourceTimingEntry() &&
       !resource_timing_buffer_full_event_pending_) {
@@ -572,23 +579,28 @@ void Performance::FireResourceTimingBufferFull() {
 }
 
 // static
-double Performance::ClampTimeResolution(base::TimeDelta time) {
+double Performance::ClampTimeResolution(base::TimeDelta time,
+                                        bool cross_origin_isolated_capability) {
   // One secret for the process, as Blink keeps one static clamper.
   static const base::NoDestructor<TimeClamper> clamper;
-  return clamper->ClampTimeResolution(time, kCrossOriginIsolated)
+  return clamper->ClampTimeResolution(time, cross_origin_isolated_capability)
       .InMillisecondsF();
 }
 
 // static
 double Performance::MonotonicTimeToDOMHighResTimeStamp(
     base::TimeTicks time_origin,
-    base::TimeTicks time) {
+    base::TimeTicks time,
+    bool cross_origin_isolated_capability) {
   // No raw timestamp of the platform's goes out.
   if (time.is_null() || time_origin.is_null()) {
     return 0.0;
   }
-  const double clamped_time = ClampTimeResolution(time.since_origin()) -
-                              ClampTimeResolution(time_origin.since_origin());
+  const double clamped_time =
+      ClampTimeResolution(time.since_origin(),
+                          cross_origin_isolated_capability) -
+      ClampTimeResolution(time_origin.since_origin(),
+                          cross_origin_isolated_capability);
   return clamped_time < 0 ? 0.0 : clamped_time;
 }
 

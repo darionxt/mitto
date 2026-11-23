@@ -194,8 +194,7 @@ bool IsKnown(uint32_t type) {
          (type >= static_cast<uint32_t>(PageMessage::kCacheStorage) &&
           type <= static_cast<uint32_t>(PageMessage::kIndexedDbCallback)) ||
          (type >= static_cast<uint32_t>(PageMessage::kDocumentCommitted) &&
-          type <=
-              static_cast<uint32_t>(PageMessage::kSameDocumentNavigation)) ||
+          type <= static_cast<uint32_t>(PageMessage::kDocumentOpened)) ||
          (type >= static_cast<uint32_t>(PageMessage::kWorkerStarted) &&
           type <= static_cast<uint32_t>(PageMessage::kContextGone)) ||
          (type >= static_cast<uint32_t>(PageMessage::kRequestBodyPart) &&
@@ -1125,17 +1124,29 @@ base::expected<PageBroadcast, std::string> ReadBroadcast(
 // parent, and for a navigation's response the navigation's number.
 base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     std::string_view payload) {
-  if (payload.size() != 17 && payload.size() != 25) {
+  // The ID, the source and the parent, then what the source names.
+  constexpr size_t kFixedSize = 8 + 1 + 8;
+  if (payload.size() < kFixedSize) {
     return base::unexpected(WrongSize("document", payload.size()));
   }
   PageDocumentCommitted committed;
   committed.document = DecodeUint64(payload.substr(0, 8));
   const uint8_t source = static_cast<uint8_t>(payload[8]);
-  const bool from_response =
-      source == static_cast<uint8_t>(PageDocumentSource::kNavigationResponse);
-  if ((source != static_cast<uint8_t>(PageDocumentSource::kInitialEmpty) &&
-       !from_response) ||
-      (payload.size() == 25) != from_response) {
+  size_t named = 0;
+  switch (source) {
+    case static_cast<uint8_t>(PageDocumentSource::kInitialEmpty):
+      break;
+    case static_cast<uint8_t>(PageDocumentSource::kNavigationResponse):
+    case static_cast<uint8_t>(PageDocumentSource::kSrcdoc):
+      named = 1;
+      break;
+    case static_cast<uint8_t>(PageDocumentSource::kAboutBlank):
+      named = 2;
+      break;
+    default:
+      return base::unexpected("a document that is not valid");
+  }
+  if (payload.size() != kFixedSize + 8 * named) {
     return base::unexpected("a document that is not valid");
   }
   if (committed.document == kNoDocument) {
@@ -1146,8 +1157,19 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
   if (committed.parent == committed.document) {
     return base::unexpected("a document that is its own parent");
   }
-  if (from_response) {
-    committed.navigation = DecodeUint64(payload.substr(17, 8));
+  switch (committed.source) {
+    case PageDocumentSource::kInitialEmpty:
+      break;
+    case PageDocumentSource::kNavigationResponse:
+      committed.navigation = DecodeUint64(payload.substr(17, 8));
+      break;
+    case PageDocumentSource::kAboutBlank:
+      committed.initiator = DecodeUint64(payload.substr(17, 8));
+      committed.replaces = DecodeUint64(payload.substr(25, 8));
+      break;
+    case PageDocumentSource::kSrcdoc:
+      committed.replaces = DecodeUint64(payload.substr(17, 8));
+      break;
   }
   return committed;
 }
@@ -2105,8 +2127,19 @@ std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
   std::string payload = base::StrCat({EncodeUint64(committed.document),
                                       std::string_view(&source, 1),
                                       EncodeUint64(committed.parent)});
-  if (committed.source == PageDocumentSource::kNavigationResponse) {
-    payload += EncodeUint64(committed.navigation);
+  switch (committed.source) {
+    case PageDocumentSource::kInitialEmpty:
+      break;
+    case PageDocumentSource::kNavigationResponse:
+      payload += EncodeUint64(committed.navigation);
+      break;
+    case PageDocumentSource::kAboutBlank:
+      payload += EncodeUint64(committed.initiator);
+      payload += EncodeUint64(committed.replaces);
+      break;
+    case PageDocumentSource::kSrcdoc:
+      payload += EncodeUint64(committed.replaces);
+      break;
   }
   return EncodeFrame(PageMessage::kDocumentCommitted, payload);
 }
@@ -2131,6 +2164,16 @@ std::string EncodeSameDocumentNavigation(uint64_t document,
                              url);
 }
 
+std::string EncodeAboutBlankNavigation(uint64_t document, uint64_t initiator) {
+  return EncodeDocumentFrame(PageMessage::kAboutBlankNavigation, document,
+                             EncodeUint64(initiator));
+}
+
+std::string EncodeDocumentOpened(uint64_t document, uint64_t opener) {
+  return EncodeDocumentFrame(PageMessage::kDocumentOpened, document,
+                             EncodeUint64(opener));
+}
+
 std::string EncodeTraversalRequest(uint64_t document,
                                    const PageTraversalRequest& traversal) {
   const char fixed[2] = {traversal.same_document_entry ? '\1' : '\0',
@@ -2153,6 +2196,8 @@ std::string EncodeRecordsReleased(const std::vector<uint64_t>& records) {
 bool NamesDocument(PageMessage type) {
   switch (type) {
     case PageMessage::kSameDocumentNavigation:
+    case PageMessage::kAboutBlankNavigation:
+    case PageMessage::kDocumentOpened:
     case PageMessage::kTraversalRequest:
     case PageMessage::kRequest:
     case PageMessage::kGetCookies:
@@ -2554,6 +2599,25 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.same_document_url = std::move(payload);
       return frame;
+    case PageMessage::kAboutBlankNavigation:
+      if (payload.size() != 8) {
+        return base::unexpected(
+            WrongSize("about:blank navigation", payload.size()));
+      }
+      frame.about_blank_initiator = DecodeUint64(payload);
+      if (frame.about_blank_initiator == kNoDocument) {
+        return base::unexpected("an about:blank started by no document");
+      }
+      return frame;
+    case PageMessage::kDocumentOpened:
+      if (payload.size() != 8) {
+        return base::unexpected(WrongSize("document opened", payload.size()));
+      }
+      frame.opener = DecodeUint64(payload);
+      if (frame.opener == kNoDocument) {
+        return base::unexpected("a document opened by no document");
+      }
+      return frame;
     case PageMessage::kTraversalRequest: {
       if (payload.size() < 19) {
         return base::unexpected(WrongSize("traversal request", payload.size()));
@@ -2898,6 +2962,8 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kStorageBuckets:
     case PageMessage::kDocumentCommitted:
     case PageMessage::kSameDocumentNavigation:
+    case PageMessage::kAboutBlankNavigation:
+    case PageMessage::kDocumentOpened:
     case PageMessage::kWorkerStarted:
     case PageMessage::kContextGone:
     case PageMessage::kStorageBind:

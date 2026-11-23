@@ -1599,6 +1599,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   }
   if (!asked.referrer.empty()) {
     options.fetch->referrer_source = referrer;
+    options.fetch->no_referrer_source = false;
   }
   if (has_body && !std::ranges::any_of(lines, [](const auto& entry) {
         return base::EqualsCaseInsensitiveASCII(
@@ -2810,10 +2811,12 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           return;
         }
       } else {
-        // A frame's first document, which has its parent's origin and
-        // embedder policy.
-        context.origin = contexts_.at(committed.parent).origin;
-        context.coep = contexts_.at(committed.parent).coep;
+        // A frame's first document, which has its parent's origin,
+        // embedder policy and cookie URL.
+        const Context& parent = contexts_.at(committed.parent);
+        context.origin = parent.origin;
+        context.coep = parent.coep;
+        context.cookie_url = CookieUrlOf(parent);
       }
       context.url = GURL(url::kAboutBlankURL);
       break;
@@ -2854,7 +2857,51 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         frame_navigation_responses_.erase(found);
       }
       context.origin = url::Origin::Create(context.url);
+      // Blink's Document::CookieURL() is the URL it was made at, which a
+      // navigation within it leaves, as the Page keeps it too.
+      context.cookie_url = context.url;
       break;
+    case PageDocumentSource::kAboutBlank:
+    case PageDocumentSource::kSrcdoc: {
+      // A document that a frame commits without the network takes the place
+      // of the frame's document, under the same parent, as Chrome's browser
+      // commits it in that frame. srcdoc is only a frame's.
+      const auto replaces = contexts_.find(committed.replaces);
+      if (replaces == contexts_.end() || replaces->second.is_worker ||
+          replaces->second.parent != committed.parent ||
+          (top_level && committed.source == PageDocumentSource::kSrcdoc)) {
+        Refuse(
+            "a document that does not take the place of its frame's document");
+        return;
+      }
+      if (committed.source == PageDocumentSource::kAboutBlank) {
+        // RenderFrameHostImpl::SetOriginDependentStateOfNewFrame() and
+        // NavigationRequest::GetOriginToCommit(): about:blank takes the origin
+        // of the document that started its navigation, and its policy
+        // container, with its embedder policy, and its cookie URL, as they
+        // were when the navigation started.
+        const auto started = about_blank_navigations_.find(committed.replaces);
+        if (started == about_blank_navigations_.end() ||
+            started->second.initiator != committed.initiator) {
+          Refuse("an about:blank whose navigation did not start");
+          return;
+        }
+        context.origin = started->second.origin;
+        context.coep = started->second.coep;
+        context.cookie_url = started->second.cookie_url;
+        about_blank_navigations_.erase(started);
+        context.url = GURL(url::kAboutBlankURL);
+      } else {
+        // A srcdoc's are its parent's.
+        const Context& parent = contexts_.at(committed.parent);
+        context.origin = parent.origin;
+        context.coep = parent.coep;
+        context.cookie_url = CookieUrlOf(parent);
+        context.url = GURL(url::kAboutSrcdocURL);
+      }
+      replaced = committed.replaces;
+      break;
+    }
   }
   last_context_id_ = committed.document;
   if (!top_level) {
@@ -2872,6 +2919,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   LetKeepaliveRequestsGo(nullptr);
   contexts_.clear();
   frame_navigation_responses_.clear();
+  about_blank_navigations_.clear();
   worker_scripts_.clear();
   const GURL url = context.url;
   contexts_.emplace(committed.document, std::move(context));
@@ -2911,29 +2959,68 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   }
 }
 
+void PageHost::OnAboutBlankNavigation(uint64_t document,
+                                      uint64_t initiator_id) {
+  // The browser's NavigationRequest takes the initiator's origin and policy
+  // container as the navigation begins, so the about:blank has them though
+  // the initiator goes first. The newest navigation of the frame takes the
+  // place of one that waits.
+  const auto initiator = contexts_.find(initiator_id);
+  if (contexts_.at(document).is_worker || initiator == contexts_.end() ||
+      initiator->second.is_worker) {
+    Refuse("an about:blank whose initiator is not one of the Page's documents");
+    return;
+  }
+  AboutBlankNavigation& started = about_blank_navigations_[document];
+  started.initiator = initiator_id;
+  started.origin = initiator->second.origin;
+  started.coep = initiator->second.coep;
+  started.cookie_url = CookieUrlOf(initiator->second);
+}
+
+void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
+  // DidOpenDocumentInputStream(): a document that one of another window and
+  // of its origin opened takes the opener's URL, without its fragment, as the
+  // browser takes it, and Blink's Document::open() its cookie URL, from the
+  // library's own record of the opener, never from what the Page says.
+  Context& context = contexts_.at(document);
+  const auto opener = contexts_.find(opener_id);
+  if (context.is_worker || opener == contexts_.end() ||
+      opener->second.is_worker || opener_id == document ||
+      opener->second.origin != context.origin) {
+    Refuse("a document that no document of its origin opened");
+    return;
+  }
+  const GURL url = opener->second.url.GetWithoutRef();
+  context.cookie_url = CookieUrlOf(opener->second);
+  const bool changed = url != context.url;
+  context.url = url;
+  // The Page's URL is its top-level document's.
+  if (!changed || context.parent != kNoDocument) {
+    return;
+  }
+  PageEvent event;
+  event.type = MITTO_PAGE_EVENT_URL_CHANGED;
+  event.url = url.spec();
+  Push(std::move(event));
+}
+
 void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
   // RenderFrameHostImpl::ValidateURLAndOrigin() for a same-document URL: one
   // that the history API gives the document, as CanChangeToUrlForHistoryApi()
-  // lets it, or one that document.open() may have given it: about:blank, or
-  // for an origin that is not opaque any URL of that origin, as a frame's
-  // about:blank takes the URL of the document that opens it, and that
-  // document the about:blank's.
+  // lets it. A frame's about:blank or srcdoc may have committed at another
+  // such URL, such as about:blank?v=1, which the library does not hear of, so
+  // one about:blank or about:srcdoc URL may follow another: the document
+  // keeps its origin, and the Page holds it to its path and query. A URL that
+  // document.open() gives a document, the library hears of with type 73.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
-  const auto opened_url = [&context, &new_url] {
-    // about:blank and about:srcdoc take the origin of the document whose URL
-    // they are, as document.open() gives them to a document of that origin.
-    if (new_url.IsAboutBlank() || new_url.IsAboutSrcdoc()) {
-      return true;
-    }
-    return !context.origin.opaque() &&
-           context.origin.IsSameOriginWith(url::Origin::Create(new_url));
-  };
   if (!new_url.is_valid() ||
       (!CanChangeToUrlForHistoryApi(new_url, context.origin, document_url) &&
-       !opened_url())) {
+       !(document_url.IsAboutBlank() && new_url.IsAboutBlank()) &&
+       !(document_url.IsAboutSrcdoc() && new_url.IsAboutSrcdoc()))) {
     Refuse("a same-document navigation to another origin");
     return;
   }
@@ -3076,6 +3163,12 @@ GURL PageHost::ContextUrl(const Context& context) {
   return context.origin.GetURL();
 }
 
+// static
+GURL PageHost::CookieUrlOf(const Context& context) {
+  return context.cookie_url.is_valid() ? context.cookie_url
+                                       : ContextUrl(context);
+}
+
 const PageHost::Context* PageHost::ContextOf(uint64_t id, uint32_t type) {
   const auto found = contexts_.find(id);
   if (found == contexts_.end()) {
@@ -3104,6 +3197,8 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
     contexts_.erase(id);
     // Its CookieStore listened over a pipe that went with it.
     cookie_store_listeners_.erase(id);
+    // Its frame's about:blank that waits commits in the place of no document.
+    about_blank_navigations_.erase(id);
   }
   // Its Cache API's puts that wait for a body fail, and its caches and stored
   // bodies are let go, as its pipes go with it in Chrome, so that none holds
@@ -3183,16 +3278,16 @@ void PageHost::FillContextFetch(uint64_t id,
                           ? context.url
                           : context.origin.GetURL();
   }
-  // Blink's OutgoingReferrer(): an about:blank document's is its parent's,
-  // and a worker's is its script's URL, of which a blob: or data: one gives
-  // none.
+  // Blink's OutgoingReferrer(): a srcdoc document's is its parent's, and a
+  // worker's is its script's URL, of which a blob: or data: one gives none,
+  // as about:blank gives none.
   const Context* source = &context;
   while (!source->is_worker && source->parent != kNoDocument &&
-         source->url.IsAboutBlank()) {
+         source->url.IsAboutSrcdoc()) {
     source = &contexts_.at(source->parent);
   }
   if (!source->url.SchemeIsHTTPOrHTTPS()) {
-    fetch.referrer_policy = net::ReferrerPolicy::NO_REFERRER;
+    fetch.no_referrer_source = true;
   } else if (fetch.initiator && source->url != *fetch.initiator) {
     fetch.referrer_source = source->url;
   }
@@ -3241,7 +3336,7 @@ PageHost::CookieContext PageHost::CookieContextOf(uint64_t id) const {
   const Context& context = contexts_.at(id);
   const FrameTree tree = FrameTreeOf(id);
   CookieContext cookies;
-  cookies.url = ContextUrl(context);
+  cookies.url = CookieUrlOf(context);
   cookies.site_for_cookies =
       tree.cross_site ? net::SiteForCookies()
                       : net::SiteForCookies::FromOrigin(tree.top_frame_origin);
@@ -3472,6 +3567,12 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     case PageMessage::kSameDocumentNavigation:
       OnSameDocumentNavigation(frame->document, frame->same_document_url);
+      return;
+    case PageMessage::kAboutBlankNavigation:
+      OnAboutBlankNavigation(frame->document, frame->about_blank_initiator);
+      return;
+    case PageMessage::kDocumentOpened:
+      OnDocumentOpened(frame->document, frame->opener);
       return;
     case PageMessage::kTraversalRequest:
       OnTraversalRequest(frame->traversal, frame->document);

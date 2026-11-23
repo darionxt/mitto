@@ -355,6 +355,70 @@ _NOTIFICATION_AS_CHROME = {
         "return Promise.race([Notification.requestPermission.call({}), new Promise(r => setTimeout(() => r('pending'), 300))])",
         "value: pending",
     ),
+    "new Notification with actions": (
+        "return new Notification('t', {silent: true, vibrate: [], actions: [{action: 'a', title: 'b'}]})",
+        "threw: TypeError: Failed to construct 'Notification': Actions are only supported for persistent notifications"
+        " shown using ServiceWorkerRegistration.showNotification().",
+    ),
+    "new Notification silent with a vibration pattern": (
+        "return new Notification('t', {silent: true, vibrate: 200})",
+        "threw: TypeError: Failed to construct 'Notification': Silent notifications must not specify vibration patterns.",
+    ),
+    "new Notification that renotifies without a tag": (
+        "return new Notification('t', {renotify: true})",
+        "threw: TypeError: Failed to construct 'Notification': Notifications which set the renotify flag must specify a"
+        " non-empty tag.",
+    ),
+    "new Notification with a function as data": (
+        "return new Notification('t', {data: () => 1})",
+        "threw: DataCloneError: Failed to construct 'Notification': () => 1 could not be cloned.",
+    ),
+    "new Notification with a shared buffer as data": (
+        "return new Notification('t', {data: new WebAssembly.Memory({shared: true, initial: 1, maximum: 1}).buffer})",
+        "threw: DataCloneError: Failed to construct 'Notification': A SharedArrayBuffer can not be serialized for storage.",
+    ),
+    "new Notification with an array whose iterator is not callable": (
+        "const pattern = [200]; pattern[Symbol.iterator] = 5; return new Notification('t', {vibrate: pattern})",
+        "value: [object Notification]",
+    ),
+    "new Notification with a vibration pattern longer than Blink's Vector holds": (
+        "const pattern = []; pattern.length = 536346625; return new Notification('t', {vibrate: pattern})",
+        "threw: RangeError: Failed to construct 'Notification': Failed to read the 'vibrate' property from"
+        " 'NotificationOptions': Array length exceeds supported limit.",
+    ),
+    "new Notification with as long a vibration pattern as Blink's Vector holds": (
+        "const pattern = []; pattern.length = 536346624;"
+        " Object.defineProperty(pattern, 0, {get() { throw new Error('read 0'); }});"
+        " return new Notification('t', {vibrate: pattern})",
+        "threw: Error: read 0",
+    ),
+    "new Blob with more parts than Blink's Vector holds": (
+        "const parts = []; parts.length = 536346625; return new Blob(parts)",
+        "threw: RangeError: Failed to construct 'Blob': Array length exceeds supported limit.",
+    ),
+    "new Notification with an encoded chunk as data": (
+        "return new Notification('t', {data: new EncodedVideoChunk({type: 'key', timestamp: 0, data: new Uint8Array(1)})})",
+        "threw: DataCloneError: Failed to construct 'Notification': Encoded chunks cannot be serialized for storage.",
+    ),
+    "new Notification with a data channel as data": (
+        "return new Notification('t', {data: new RTCPeerConnection().createDataChannel('x')})",
+        "threw: DataCloneError: Failed to construct 'Notification': An RTCDataChannel cannot be serialized for storage.",
+    ),
+    "new Notification with an offscreen canvas as data": (
+        "return new Notification('t', {data: new OffscreenCanvas(1, 1)})",
+        "threw: DataCloneError: Failed to construct 'Notification': An OffscreenCanvas could not be cloned because it was"
+        " not transferred.",
+    ),
+    "structuredClone of an offscreen canvas it does not transfer": (
+        "return structuredClone({canvas: new OffscreenCanvas(1, 1)})",
+        "threw: DataCloneError: Failed to execute 'structuredClone' on 'Window': An OffscreenCanvas could not be cloned"
+        " because it was not transferred.",
+    ),
+    "new Notification fires error": (
+        "return new Promise((r) => { const n = new Notification('t', {data: {x: 1}}); n.onerror = (e) =>"
+        " r([e.constructor.name, e.type].join()); n.onshow = () => r('show'); })",
+        "value: Event,error",
+    ),
 }
 
 
@@ -490,8 +554,9 @@ def program() -> Path:
     return Path(path)
 
 
-def _evaluate(program: Path, script: str) -> str:
-    # The outcome of the script as a string, or what it threw, as tests/test_page_known_gaps.py writes one.
+def _evaluate(program: Path, script: str, *options: str) -> str:
+    # The outcome of the script as a string, or what it threw, as tests/test_page_known_gaps.py writes one. `options`
+    # go to the program before the script, such as its feature switches.
     wrapped = f"""(async () => {{
         try {{
             const value = await (async () => {{ {script} }})();
@@ -502,7 +567,12 @@ def _evaluate(program: Path, script: str) -> str:
         }}
     }})()"""
     result = subprocess.run(
-        [program, "-"], input=wrapped, capture_output=True, encoding="utf-8", timeout=_TIMEOUT_SECONDS, check=False
+        [program, *options, "-"],
+        input=wrapped,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
     )
     assert (result.returncode, result.stderr) == (0, "")
     return result.stdout.removesuffix("\n")
@@ -584,6 +654,71 @@ def test_keyword_attributes_reflect_as_chrome_does(program: Path, script: str, e
 )
 def test_notification_does_what_chrome_does(program: Path, script: str, expected: str) -> None:
     assert _evaluate(program, script) == expected
+
+
+def test_a_notification_outlives_a_collection_after_its_error(program: Path) -> None:
+    # Blink's HasPendingActivity() keeps a notification that a page made until it is closed, which one that never
+    # shows never is, so a collection after its error event leaves it, and takes an object that nothing holds
+    # (Chrome for Testing 157 with --expose-gc).
+    script = """let ref;
+        let control;
+        let errors = 0;
+        await new Promise((resolve) => {
+            (() => {
+                const notification = new Notification('t');
+                notification.onerror = () => { errors++; resolve(); };
+                ref = new WeakRef(notification);
+                control = new WeakRef({});
+            })();
+        });
+        await new Promise((resolve) => setTimeout(resolve));
+        gc();
+        await new Promise((resolve) => setTimeout(resolve));
+        gc();
+        return [ref.deref() !== undefined, control.deref() === undefined, errors].join()"""
+
+    assert _evaluate(program, script, "--js-flags=--expose-gc") == "value: true,true,1"
+
+
+_NOTIFICATION_UNDER_FEATURES = {
+    "new Notification without NotificationConstructor": (
+        "--disable-blink-features=NotificationConstructor",
+        "return new Notification('t')",
+        "threw: TypeError: Failed to construct 'Notification': Illegal constructor. Use"
+        " ServiceWorkerRegistration.showNotification() instead.",
+    ),
+    "new Notification with a showTrigger": (
+        "--enable-blink-features=NotificationTriggers",
+        "return new Notification('t', {showTrigger: new TimestampTrigger(100), silent: true, vibrate: 1})",
+        "threw: TypeError: Failed to construct 'Notification': ShowTrigger is only supported for persistent"
+        " notifications shown using ServiceWorkerRegistration.showNotification().",
+    ),
+    "new Notification with actions before a showTrigger": (
+        "--enable-blink-features=NotificationTriggers",
+        "return new Notification('t', {showTrigger: new TimestampTrigger(100), actions: [{action: 'a', title: 'b'}]})",
+        "threw: TypeError: Failed to construct 'Notification': Actions are only supported for persistent notifications"
+        " shown using ServiceWorkerRegistration.showNotification().",
+    ),
+    "new Notification with a showTrigger that is no TimestampTrigger": (
+        "--enable-blink-features=NotificationTriggers",
+        "return new Notification('t', {showTrigger: 5})",
+        "threw: TypeError: Failed to construct 'Notification': Failed to read the 'showTrigger' property from"
+        " 'NotificationOptions': Failed to convert value to 'TimestampTrigger'.",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("option", "script", "expected"),
+    list(_NOTIFICATION_UNDER_FEATURES.values()),
+    ids=list(_NOTIFICATION_UNDER_FEATURES),
+)
+def test_notification_follows_its_features_as_chrome_does(
+    program: Path, option: str, script: str, expected: str
+) -> None:
+    # Blink checks NotificationConstructor first, then actions, then showTrigger, which the dictionary reads only
+    # with NotificationTriggers on (Chrome for Testing 157 with each switch).
+    assert _evaluate(program, script, option) == expected
 
 
 def test_request_permission_waits_at_the_prompt_on_a_secure_page(program: Path) -> None:

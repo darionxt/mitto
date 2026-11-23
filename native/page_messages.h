@@ -226,6 +226,18 @@ enum class PageMessage : uint32_t {
   // navigation within it gave it, such as one to a fragment, which is of the
   // document's origin.
   kSameDocumentNavigation = 71,
+  // To the Session: the ID of a frame's document, and the ID of the document
+  // that has started a navigation of the frame to about:blank, which commits
+  // without the network from a later task. The about:blank takes the origin,
+  // embedder policy and cookie URL that its initiator has now, as the
+  // browser's NavigationRequest holds them from its start, whether or not the
+  // initiator is still there when it commits.
+  kAboutBlankNavigation = 72,
+  // To the Session: the ID of a document, and the ID of the document of
+  // another window, of its origin, that has opened it with document.open(),
+  // whose URL, without its fragment, and cookie URL it takes, as the browser
+  // takes the URL with DidOpenDocumentInputStream().
+  kDocumentOpened = 73,
   // To the Session: a dedicated worker that a context of the Page has
   // started, as PageWorkerStarted says. Its ID is one of the documents', in
   // the same order.
@@ -746,16 +758,25 @@ struct PageTraversalRequest {
 
 // What a document that the Page has made is made of.
 enum class PageDocumentSource : uint8_t {
-  // The Page's first document, about:blank, whose origin is opaque.
+  // A frame's first document, about:blank: the Page's, whose origin is
+  // opaque, or a child frame's, of its parent's origin.
   kInitialEmpty = 0,
   // The response of a navigation, whose URL after its redirects is the
   // document's.
   kNavigationResponse = 1,
+  // An about:blank that a navigation of a frame commits, of the origin of the
+  // document that started it, its initiator.
+  kAboutBlank = 2,
+  // A frame's srcdoc document, about:srcdoc, of its parent's origin, whose
+  // requests' referrer is its parent's.
+  kSrcdoc = 3,
 };
 
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
-// source, a byte, the parent, a 64-bit number, and for a navigation's response
-// the navigation's number, a 64-bit number.
+// source, a byte, the parent, a 64-bit number, then for a navigation's response
+// the navigation's number, for an about:blank the initiator and the document
+// that it replaces, and for a srcdoc document the document that it replaces,
+// each a 64-bit number.
 struct PageDocumentCommitted {
   uint64_t document = kNoDocument;
   PageDocumentSource source = PageDocumentSource::kInitialEmpty;
@@ -764,6 +785,11 @@ struct PageDocumentCommitted {
   uint64_t parent = kNoDocument;
   // For kNavigationResponse.
   uint64_t navigation = kNavigationRequest;
+  // For kAboutBlank: the document that started its navigation.
+  uint64_t initiator = kNoDocument;
+  // For kAboutBlank and kSrcdoc: the frame's document that it takes the
+  // place of.
+  uint64_t replaces = kNoDocument;
 };
 
 // Where a dedicated worker's script comes from.
@@ -1161,6 +1187,10 @@ struct FrameFromPage {
   PageRequestBodyEnded request_body_ended;
   // kSameDocumentNavigation: the document's new URL.
   std::string same_document_url;
+  // kAboutBlankNavigation: the document that started it.
+  uint64_t about_blank_initiator = kNoDocument;
+  // kDocumentOpened: the document that opened it.
+  uint64_t opener = kNoDocument;
   // kStorageBind.
   PageStorageBind storage_bind;
   // kStorageGetAll.
@@ -1312,11 +1342,13 @@ std::string EncodeContextGone(uint64_t context);
 // `url` is at most kMaxPayloadSize - 8 bytes.
 std::string EncodeSameDocumentNavigation(uint64_t document,
                                          std::string_view url);
-// `traversal.url` is at most kMaxPayloadSize - 25 bytes.
+// `traversal.url` is at most kMaxPayloadSize - 26 bytes.
 std::string EncodeTraversalRequest(uint64_t document,
                                    const PageTraversalRequest& traversal);
 // `records` holds one at least, and at most kMaxPayloadSize / 8.
 std::string EncodeRecordsReleased(const std::vector<uint64_t>& records);
+std::string EncodeAboutBlankNavigation(uint64_t document, uint64_t initiator);
+std::string EncodeDocumentOpened(uint64_t document, uint64_t opener);
 std::string EncodeStorageBind(uint64_t document, const PageStorageBind& bind);
 std::string EncodeStorageGetAll(const PageStorageGetAll& get_all);
 // Whether a mutation fits in a frame.

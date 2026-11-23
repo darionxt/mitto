@@ -429,6 +429,46 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             id="frame-of-no-navigation",
         ),
         pytest.param(
+            "about-blank-of-the-wrong-size",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 2, 1, 1))",
+            "the library refused a message from the Page: a document that is not valid",
+            id="about-blank-of-the-wrong-size",
+        ),
+        pytest.param(
+            "srcdoc-of-no-frame",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 3, 0, 1))",
+            "the library refused a message from the Page: a document that does not take the place of its frame's"
+            " document",
+            id="srcdoc-of-no-frame",
+        ),
+        pytest.param(
+            "srcdoc-in-place-of-another-frames",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(70, struct.pack('<QBQQ', 3, 3, 2, 2))",
+            "the library refused a message from the Page: a document that does not take the place of its frame's"
+            " document",
+            id="srcdoc-in-place-of-another-frames",
+        ),
+        pytest.param(
+            "about-blank-of-no-initiator",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQ', 2, 9))",
+            "the library refused a message from the Page: an about:blank whose initiator is not one of the Page's"
+            " documents",
+            id="about-blank-of-no-initiator",
+        ),
+        pytest.param(
+            "about-blank-that-did-not-start",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 1, 2))",
+            "the library refused a message from the Page: an about:blank whose navigation did not start",
+            id="about-blank-that-did-not-start",
+        ),
+        pytest.param(
+            "about-blank-of-another-initiator",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQ', 2, 1))"
+            "\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 2, 2))",
+            "the library refused a message from the Page: an about:blank whose navigation did not start",
+            id="about-blank-of-another-initiator",
+        ),
+        pytest.param(
             "top-as-frame-target",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/f', kind=11, target=1)})",
             "the library refused a message from the Page: a frame's navigation whose target is not a frame's document",
