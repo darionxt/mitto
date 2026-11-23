@@ -645,7 +645,7 @@ bool SandboxesOrigin(std::string_view headers) {
             directive, " \t", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
         if (!tokens.empty() &&
             base::EqualsCaseInsensitiveASCII(tokens.front(), "sandbox") &&
-            std::ranges::none_of(base::span(tokens).subspan(1),
+            std::ranges::none_of(base::span(tokens).subspan(size_t{1}),
                                  [](std::string_view token) {
                                    return base::EqualsCaseInsensitiveASCII(
                                        token, "allow-same-origin");
