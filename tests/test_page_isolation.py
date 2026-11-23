@@ -312,12 +312,13 @@ def test_a_shared_array_buffer_that_a_broadcast_channel_carries_arrives_as_null(
 _WHOLE = "const whole = (ms, step) => Math.abs(ms - Math.round(ms / step) * step) < 5e-4;"
 
 # What a page reads of its clocks, by rule rather than by value. For each clock, many readings: whether each is a whole
-# number of steps of 5 microseconds, and whether some is not one of 100, which a clock of 5 microseconds gives among
-# so many readings and one of 100 never does. An event's time comes from the host's clock, as performance.now() does,
-# so it is off the grid of 100 where now() is: a host whose clock ticks in milliseconds keeps both on it. A frame's
-# time steps by the display's period and an idle deadline's time remaining from it, so they leave the grid on any host;
-# only an idle callback's readings above zero count, since one that runs past its deadline reads zeros. The last item
-# is whether performance.timeOrigin, a single reading, is a whole number of steps of 100.
+# number of steps of 5 microseconds ("fine"), and whether some is not one of 100 ("offCoarse"), which a clock of 5
+# microseconds gives among so many readings and one of 100 never does, on a host whose own clock ticks finer than a
+# millisecond: one that ticks in milliseconds, as Chromium's fallback on some Windows hosts does, keeps every reading
+# of performance.now() on whole milliseconds ("hostCoarse"). An event's time comes from the same clock, so it leaves
+# the grid of 100 where now() does. A frame's time steps by the display's period and an idle deadline's time remaining
+# from it, so they leave the grid on any host; only an idle callback's readings above zero count, since one that runs
+# past its deadline reads zeros. performance.timeOrigin is a single reading.
 _CLOCKS = (
     "(async () => {"
     + _WHOLE
@@ -348,16 +349,22 @@ _CLOCKS = (
             resolve(Array.from({length: 200}, () => deadline.timeRemaining()).filter((t) => t > 0));
         })));
     }
-    return [
-        fine(now), offCoarse(now),
-        temporal.every((t) => t % 5000n === 0n), temporal.some((t) => t % 100000n !== 0n),
-        fine(events), offCoarse(events) === offCoarse(now),
-        fine(frames), offCoarse(frames),
-        fine(idle), offCoarse(idle),
-        whole(performance.timeOrigin, 0.005),
-        typeof performance.measureUserAgentSpecificMemory,
-        whole(performance.timeOrigin, 0.1),
-    ];
+    return {
+        nowFine: fine(now),
+        nowOffCoarse: offCoarse(now),
+        hostCoarse: now.every((t) => whole(t, 1)),
+        temporalFine: temporal.every((t) => t % 5000n === 0n),
+        temporalOffCoarse: temporal.some((t) => t % 100000n !== 0n),
+        eventsFine: fine(events),
+        eventsFollowNow: offCoarse(events) === offCoarse(now),
+        framesFine: fine(frames),
+        framesOffCoarse: offCoarse(frames),
+        idleFine: fine(idle),
+        idleOffCoarse: offCoarse(idle),
+        originFine: whole(performance.timeOrigin, 0.005),
+        originCoarse: whole(performance.timeOrigin, 0.1),
+        measure: typeof performance.measureUserAgentSpecificMemory,
+    };
 })()"""
 )
 
@@ -370,25 +377,39 @@ def sixty_hertz_session(page_program: None) -> Iterator[mitto.Session]:
         yield session
 
 
+def _all_fine(clocks: dict[str, Any]) -> bool:
+    return all(
+        clocks[name] for name in ("nowFine", "temporalFine", "eventsFine", "framesFine", "idleFine", "originFine")
+    )
+
+
 def test_an_isolated_window_reads_clocks_of_5_microseconds(
     sixty_hertz_session: mitto.Session, server: RecordingServer
 ) -> None:
-    session = sixty_hertz_session
     url = server.page("/", _BLANK, _ISOLATING)
 
-    # Whether one reading of the time origin falls on the coarse grid is chance: the workers' test reads several.
-    assert _evaluate(session, url, _CLOCKS)[:-1] == [True] * 11 + ["function"]
+    clocks = _evaluate(sixty_hertz_session, url, _CLOCKS)
+
+    assert _all_fine(clocks), clocks
+    assert clocks["nowOffCoarse"] or clocks["hostCoarse"], clocks
+    # Whether the one reading of the time origin falls on the coarse grid is chance: the workers' test reads several.
+    assert [clocks[name] for name in ("temporalOffCoarse", "eventsFollowNow", "framesOffCoarse", "idleOffCoarse")] == [
+        True
+    ] * 4, clocks
+    assert clocks["measure"] == "function"
 
 
 def test_a_window_that_is_not_isolated_reads_clocks_of_100_microseconds(
     sixty_hertz_session: mitto.Session, server: RecordingServer
 ) -> None:
-    session = sixty_hertz_session
     url = server.page("/", _BLANK)
 
-    # Its events follow now(), which is on the coarse grid, so the sixth item holds as well.
-    expected = [True, False, True, False, True, True, True, False, True, False, True, "undefined", True]
-    assert _evaluate(session, url, _CLOCKS) == expected
+    clocks = _evaluate(sixty_hertz_session, url, _CLOCKS)
+
+    assert _all_fine(clocks), clocks
+    off = ("nowOffCoarse", "temporalOffCoarse", "framesOffCoarse", "idleOffCoarse")
+    assert [clocks[name] for name in off] == [False] * 4, clocks
+    assert [clocks["eventsFollowNow"], clocks["originCoarse"], clocks["measure"]] == [True, True, "undefined"]
 
 
 # Eight workers each read performance.now() for 30 ms and give the rules of their readings, each worker's own, and
@@ -399,21 +420,22 @@ _WORKERS_CLOCKS = (
     + """
     return Promise.all(Array.from({length: 8}, () => new Promise((resolve) => {
         new Worker('/clock.js').onmessage = (e) => resolve(e.data);
-    }))).then((results) => [
-        results.map(([fine]) => fine),
-        results.map(([, offCoarse]) => offCoarse),
-        results.every(([, , origin]) => whole(origin, 0.005)),
-        results.some(([, , origin]) => !whole(origin, 0.1)),
-        results.every(([, , , measure]) => measure === 'undefined'),
-    ]);
+    }))).then((results) => ({
+        fine: results.map(([fine]) => fine),
+        offCoarseOrHostCoarse: results.map(([, offCoarse, hostCoarse]) => offCoarse || hostCoarse),
+        offCoarse: results.map(([, offCoarse]) => offCoarse),
+        originsFine: results.every(([, , , origin]) => whole(origin, 0.005)),
+        someOriginOffCoarse: results.some(([, , , origin]) => !whole(origin, 0.1)),
+        measure: results.map(([, , , , measure]) => measure),
+    }));
 })()"""
 )
 
 _CLOCK_WORKER = (
     _WHOLE.encode() + b"const now = []; const end = performance.now() + 30;"
     b" while (performance.now() < end) { now.push(performance.now()); }"
-    b"postMessage([now.every((t) => whole(t, 0.005)), now.some((t) => !whole(t, 0.1)), performance.timeOrigin,"
-    b" typeof performance.measureUserAgentSpecificMemory]);"
+    b"postMessage([now.every((t) => whole(t, 0.005)), now.some((t) => !whole(t, 0.1)),"
+    b" now.every((t) => whole(t, 1)), performance.timeOrigin, typeof performance.measureUserAgentSpecificMemory]);"
 )
 
 
@@ -421,8 +443,12 @@ def test_an_isolated_worker_reads_clocks_of_5_microseconds(session: mitto.Sessio
     url = server.page("/", _BLANK, _ISOLATING)
     server.route("/clock.js", _CLOCK_WORKER, _JS, [_COEP])
 
+    clocks = _evaluate(session, url, _WORKERS_CLOCKS)
+
     # measureUserAgentSpecificMemory() is exposed on a window, a service worker and a shared worker alone.
-    assert _evaluate(session, url, _WORKERS_CLOCKS) == [[True] * 8, [True] * 8, True, True, True]
+    assert clocks["fine"] == clocks["offCoarseOrHostCoarse"] == [True] * 8, clocks
+    assert [clocks["originsFine"], clocks["someOriginOffCoarse"]] == [True, True], clocks
+    assert clocks["measure"] == ["undefined"] * 8
 
 
 def test_a_worker_that_is_not_isolated_reads_clocks_of_100_microseconds(
@@ -431,15 +457,21 @@ def test_a_worker_that_is_not_isolated_reads_clocks_of_100_microseconds(
     url = server.page("/", _BLANK)
     server.route("/clock.js", _CLOCK_WORKER, _JS)
 
-    assert _evaluate(session, url, _WORKERS_CLOCKS) == [[True] * 8, [False] * 8, True, False, True]
+    clocks = _evaluate(session, url, _WORKERS_CLOCKS)
+
+    assert clocks["fine"] == [True] * 8, clocks
+    assert clocks["offCoarse"] == [False] * 8, clocks
+    assert [clocks["originsFine"], clocks["someOriginOffCoarse"]] == [True, False], clocks
 
 
 def test_a_frame_that_is_not_isolated_lacks_what_isolation_exposes(
     session: mitto.Session, server: RecordingServer
 ) -> None:
     # [CrossOriginIsolatedOrRuntimeEnabled] members go in each context as it is made, not in the templates that the
-    # first realm makes: a same-origin frame that its container policy keeps from isolation has no
-    # measureUserAgentSpecificMemory(), though the isolated window read it first (Chrome for Testing 157).
+    # first realm makes, and a frame's interface object is made in the frame's context though another reads it: a
+    # same-origin frame that its container policy keeps from isolation has no measureUserAgentSpecificMemory(), on its
+    # Performance's prototype read from the parent first nor on its performance, though the isolated window read it
+    # first (Chrome for Testing 157).
     url = server.page("/", _BLANK, _ISOLATING)
     script = """(() => {
         const parentHas = typeof performance.measureUserAgentSpecificMemory;
@@ -447,8 +479,9 @@ def test_a_frame_that_is_not_isolated_lacks_what_isolation_exposes(
         frame.allow = "cross-origin-isolated 'none'";
         document.documentElement.appendChild(frame);
         const child = frame.contentWindow;
-        return [crossOriginIsolated, parentHas, child.crossOriginIsolated,
+        const viaConstructor = 'measureUserAgentSpecificMemory' in child.Performance.prototype;
+        return [crossOriginIsolated, parentHas, child.crossOriginIsolated, viaConstructor,
                 typeof child.performance.measureUserAgentSpecificMemory];
     })()"""
 
-    assert _evaluate(session, url, script) == [True, "function", False, "undefined"]
+    assert _evaluate(session, url, script) == [True, "function", False, False, "undefined"]
