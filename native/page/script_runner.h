@@ -146,6 +146,9 @@ class ScriptRunner final : public base::TaskObserver {
       std::unique_ptr<SessionCacheStorage> cache_storage,
       std::unique_ptr<SessionIndexedDb> indexed_db,
       std::unique_ptr<SessionStorageBuckets> storage_buckets);
+  // Keeps a removed frame until the task ends: a script of the frame, or of a
+  // frame under it, may be what removed it, and still runs.
+  void KeepRemovedFrame(std::unique_ptr<PageFrame> frame);
 
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,
@@ -214,6 +217,8 @@ class ScriptRunner final : public base::TaskObserver {
   std::unique_ptr<PageRequests> requests_;
   // The Page's top-level frame, which loads its documents.
   std::unique_ptr<PageFrame> frame_;
+  // The frames removed in the current task, as KeepRemovedFrame() keeps them.
+  std::vector<std::unique_ptr<PageFrame>> removed_frames_;
   // What window.chrome of each window that the Page has made reads. They live
   // as long as the Page, for a callback of a window that has gone.
   std::vector<std::unique_ptr<ChromeObjectData>> chrome_object_data_;

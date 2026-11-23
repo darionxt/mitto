@@ -7,6 +7,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_location.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
 #include "url/gurl.h"
@@ -132,16 +133,13 @@ void Location::SetLocation(const std::u16string& url,
   if (!window_ || !window_->HasContext()) {
     return;
   }
-  // The entered window's document completes the URL, and the incumbent
-  // window starts the navigation, as in Blink, so a script in one frame that
-  // navigates another names its own document as the initiator.
+  // Blink's Location::SetLocation(): the URL is completed against the
+  // entered window's document, and the incumbent window, whose script set it,
+  // starts the navigation, as a parent does its frame's.
   Window* const entered = Window::Entered();
-  Window* const incumbent = Window::Incumbent();
-  if (!entered || !entered->HasDocument() || !incumbent ||
-      !incumbent->HasContext()) {
-    return;
-  }
-  Document& document = entered->GetDocument();
+  Document& document = entered && entered->HasDocument()
+                           ? entered->GetDocument()
+                           : window_->GetDocument();
   const GURL completed = document.CompleteUrl(url);
   if (!completed.is_valid()) {
     // The string that KURL keeps of a URL that does not parse, which is what
@@ -157,7 +155,15 @@ void Location::SetLocation(const std::u16string& url,
   FrameLoadRequest request;
   request.url = completed;
   request.reason = ClientNavigationReason::kFrameNavigation;
-  request.origin_window = incumbent;
+  // A frame's navigation is the caller's: an about:blank that it commits
+  // takes the caller's origin and URL, and one through the Session names the
+  // caller's document as its Initiator. A top-level one stays its own
+  // document's.
+  Window* const incumbent = Window::Incumbent();
+  const Frame* const frame = window_->GetFrame();
+  if (incumbent && incumbent->HasDocument() && frame && frame->Parent()) {
+    request.origin_window = incumbent;
+  }
   Navigate(*window_, request, type);
 }
 

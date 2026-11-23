@@ -14,6 +14,8 @@
 
 namespace mitto {
 
+class Window;
+
 // What a navigation to another document that a document starts says of
 // itself, as Blink's WebNavigationInfo does. Its Initiator is the document,
 // which the Session works out.
@@ -34,9 +36,17 @@ struct NavigationRequest {
   uint64_t initiator = 0;
   url::Origin initiator_origin;
   GURL initiator_url;
-  // The initiator's base URL, which an about:blank that it commits takes as
-  // its fallback base URL.
+  // The initiator's base URL and cookie URL, which an about:blank that it
+  // commits takes as its about base URL and its cookie URL.
   GURL initiator_base_url;
+  GURL initiator_cookie_url;
+  // The initiator's own referrer policy, which an about:blank that it commits
+  // takes with its policy container, beside the navigation's above.
+  FetchReferrerPolicy initiator_referrer_policy = FetchReferrerPolicy::kDefault;
+  // The initiator's outgoing referrer, as Blink's Document::OutgoingReferrer()
+  // gives it: its document's URL, or for a srcdoc document its parent's,
+  // stripped for use as a referrer, and empty for an opaque origin.
+  GURL initiator_referrer;
 };
 
 class NavigationClient {
@@ -49,6 +59,10 @@ class NavigationClient {
   // The Session hears that a navigation within the window's document gave it
   // `url`, as Blink tells its browser with DidCommitSameDocumentNavigation().
   virtual void DidNavigateWithinDocument(const GURL& url) = 0;
+  // The Session hears that the document of `opener`, another window of the
+  // window's document's origin, opened that document with document.open(),
+  // as Blink tells its browser with DidOpenDocumentInputStream().
+  virtual void DidOpenDocument(const Window& opener) = 0;
 
   // FrameLoader::HasProvisionalNavigation(): a navigation that a document
   // started waits for its response.

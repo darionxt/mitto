@@ -54,9 +54,13 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // The execution context of the isolate's current context.
   static ExecutionContext& Current();
   // The execution context of `context`, whose global object it is, or null
-  // for a context of none.
+  // for a context of none: the one bound to it, or else its global proxy's.
   static ExecutionContext* From(v8::Isolate* isolate,
                                 v8::Local<v8::Context> context);
+  // Binds this to `context`, its global object's, so that From() finds it
+  // there even once a frame's next window has taken the global proxy over,
+  // as each of Blink's ScriptStates knows its own ExecutionContext.
+  void BindToContext(v8::Isolate* isolate, v8::Local<v8::Context> context);
 
   ExecutionContext(const ExecutionContext&) = delete;
   ExecutionContext& operator=(const ExecutionContext&) = delete;

@@ -81,8 +81,9 @@ void HTMLFrameOwnerElement::DidNotifySubtreeInsertionsToDocument() {
 
 void HTMLFrameOwnerElement::RemovedFrom(Node& insertion_point) {
   HTMLElement::RemovedFrom(insertion_point);
-  // ChildFrameDisconnector: a frame whose element leaves the document goes.
-  if (!IsConnected()) {
+  // ChildFrameDisconnector: a frame whose element leaves the document goes,
+  // but for one that moveBefore() moves, which keeps its frame.
+  if (!IsConnected() && !GetDocument().StatePreservingAtomicMoveInProgress()) {
     DisconnectContentFrame();
   }
 }

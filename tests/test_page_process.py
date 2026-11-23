@@ -457,10 +457,23 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
         ),
         pytest.param(
             "about-blank-of-no-initiator",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 9, 2))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQ', 2, 9))",
             "the library refused a message from the Page: an about:blank whose initiator is not one of the Page's"
             " documents",
             id="about-blank-of-no-initiator",
+        ),
+        pytest.param(
+            "about-blank-that-did-not-start",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 1, 2))",
+            "the library refused a message from the Page: an about:blank whose navigation did not start",
+            id="about-blank-that-did-not-start",
+        ),
+        pytest.param(
+            "about-blank-of-another-initiator",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQ', 2, 1))"
+            "\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 2, 2))",
+            "the library refused a message from the Page: an about:blank whose navigation did not start",
+            id="about-blank-of-another-initiator",
         ),
         pytest.param(
             "top-as-frame-target",

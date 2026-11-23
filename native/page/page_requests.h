@@ -130,6 +130,10 @@ class PageRequests {
 
   // Sends the Session a network hint of the current window's document.
   void Hint(const PageNetworkHint& hint);
+  // Tells the Session that document `document`'s window has dispatched its
+  // load event, unless the Session has forgotten that document, as a frame's
+  // whose element a load listener removed.
+  void SendLoaded(uint64_t document);
 
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);

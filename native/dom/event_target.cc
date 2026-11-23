@@ -823,8 +823,7 @@ bool EventTarget::FireEventListeners(Event* event) {
     const v8::Context::Scope listener_scope(listener_context);
     const v8::Local<v8::Value> current_target = ToV8(isolate);
     const v8::Local<v8::Value> event_wrapper = event->ToV8(isolate);
-    Window* const window =
-        bindings::V8Window::ToWrappable(isolate, listener_context->Global());
+    Window* const window = Window::From(isolate, listener_context);
     event->SetHandlingPassive(PassiveModeOf(*entry));
     const cppgc::Persistent<Event> previous_event(
         window ? window->CurrentEvent() : nullptr);

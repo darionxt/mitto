@@ -27,18 +27,12 @@
 namespace mitto {
 
 DocumentLoader::DocumentLoader(PageRequests& requests,
-                               SendFrame send,
                                PageFrame& frame,
                                uint64_t number)
-    : requests_(requests),
-      send_(std::move(send)),
-      frame_(frame),
-      number_(number) {}
+    : requests_(requests), frame_(frame), number_(number) {}
 
-DocumentLoader::DocumentLoader(PageRequests& requests,
-                               SendFrame send,
-                               PageFrame& frame)
-    : DocumentLoader(requests, std::move(send), frame, 0) {}
+DocumentLoader::DocumentLoader(PageRequests& requests, PageFrame& frame)
+    : DocumentLoader(requests, frame, 0) {}
 
 DocumentLoader::~DocumentLoader() {
   // The parser holds this as its client, so it stops for good first.
@@ -329,7 +323,9 @@ void DocumentLoader::ParserDetached() {
 }
 
 void DocumentLoader::DidDispatchLoadEvent() {
-  send_.Run(EncodeLoaded(document_id_));
+  // A frame whose element a load listener removed has had its document
+  // forgotten, and the Session hears no more of it.
+  requests_->SendLoaded(document_id_);
   // The browser's favicon driver fetches the icon once the top-level
   // document's load event is done, and a frame's document has none.
   if (!favicon_fetched_ && document_ && !frame_->Parent()) {
