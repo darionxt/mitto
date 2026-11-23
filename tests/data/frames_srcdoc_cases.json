@@ -1,0 +1,61 @@
+{
+  "chrome": "157.0.8103.79",
+  "how": "headless Chrome for Testing on macOS, on a page at ORIGIN/",
+  "record": {
+    "blankAfterSrcdoc": {
+      "body": "<body></body>",
+      "load": "load",
+      "loads": 3,
+      "newWindow": false,
+      "origin": "ORIGIN",
+      "referrer": "ORIGIN/",
+      "url": "about:blank"
+    },
+    "frameSrcdoc": [
+      "load",
+      "about:srcdoc",
+      null
+    ],
+    "secondBlank": {
+      "load": "no load",
+      "loads": 0,
+      "newWindow": false,
+      "syncUrl": "about:blank#next",
+      "url": "about:blank#next"
+    },
+    "srcdoc": {
+      "baseURI": "ORIGIN/",
+      "before": {
+        "loads": 0,
+        "readyState": "complete",
+        "url": "about:blank"
+      },
+      "characterSet": "UTF-8",
+      "compatMode": "CSS1Compat",
+      "isSecureContext": true,
+      "load": "load",
+      "loads": 1,
+      "locationHref": "about:srcdoc",
+      "newDocument": true,
+      "origin": "ORIGIN",
+      "ranIn": "about:srcdoc",
+      "readyState": "complete",
+      "referrer": "ORIGIN/",
+      "sameWindow": true,
+      "text": "srcdoc",
+      "url": "about:srcdoc"
+    },
+    "srcdocAgain": {
+      "load": "load",
+      "loads": 2,
+      "newWindow": false,
+      "oldWindowClosed": false,
+      "stillOld": "srcdoc",
+      "text": "again"
+    },
+    "srcdocUrlIsTheAttribute": [
+      "load",
+      "about:srcdoc"
+    ]
+  }
+}

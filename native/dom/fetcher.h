@@ -121,6 +121,14 @@ FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value);
 FetchReferrerPolicy FetchReferrerPolicyFromStringWithLegacyKeywords(
     std::u16string_view value);
 
+// SecurityPolicy::GenerateReferrer(): the referrer that `referrer`, a URL
+// stripped for use as one or empty for none, gives a request or navigation to
+// `url` under `policy`, where kDefault is Chrome's
+// strict-origin-when-cross-origin; empty for none.
+GURL GenerateReferrer(FetchReferrerPolicy policy,
+                      const GURL& url,
+                      const GURL& referrer);
+
 // The state of a crossorigin attribute, Blink's CrossOriginAttributeValue:
 // none without one, use-credentials for that value in any case, and
 // anonymous for any other.

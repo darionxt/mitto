@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/memory/raw_ref.h"
 #include "url/gurl.h"
 
 namespace mitto {
@@ -71,10 +72,38 @@ class Frame {
   Frame* ScopedChild(std::u16string_view name) const;
   // Whether this frame is `other` or one of its descendants.
   bool IsDescendantOf(const Frame& other) const;
+  // Whether its element, or an ancestor's, whose flags its documents
+  // inherit, has a sandbox attribute, whose flags the Page does not enforce
+  // yet, so that what they would withhold runs nothing.
+  bool IsSandboxed() const;
+  // Blink's LocalFrame::IsNavigationAllowed(): no navigation of the frame
+  // starts while a FrameNavigationDisabler holds it.
+  bool IsNavigationAllowed() const { return navigation_disable_count_ == 0; }
 
  protected:
   Frame() = default;
   virtual ~Frame() = default;
+
+ private:
+  friend class FrameNavigationDisabler;
+
+  int navigation_disable_count_ = 0;
+};
+
+// Blink's FrameNavigationDisabler: while a frame's document commits, a script
+// of its old document or of its frames, which unload, starts no navigation of
+// it.
+class FrameNavigationDisabler {
+ public:
+  explicit FrameNavigationDisabler(Frame& frame) : frame_(frame) {
+    ++frame_->navigation_disable_count_;
+  }
+  FrameNavigationDisabler(const FrameNavigationDisabler&) = delete;
+  FrameNavigationDisabler& operator=(const FrameNavigationDisabler&) = delete;
+  ~FrameNavigationDisabler() { --frame_->navigation_disable_count_; }
+
+ private:
+  const raw_ref<Frame> frame_;
 };
 
 }  // namespace mitto

@@ -209,13 +209,13 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
         return nullptr;
       }
       // about:client, or a URL of another origin than the document's, leaves
-      // the document's URL.
+      // the document's URL. The origin is the context's, which a frame's
+      // about:blank takes from its parent or initiator.
       const bool is_client = parsed.SchemeIs(url::kAboutScheme) &&
                              parsed.host().empty() &&
                              parsed.path() == "client";
       request->referrer_ =
-          is_client || !url::Origin::Create(GURL(document.Url()))
-                            .IsSameOriginWith(parsed)
+          is_client || !document.GetSecurityOrigin().IsSameOriginWith(parsed)
               ? std::string(kClientReferrer)
               : parsed.spec();
     }

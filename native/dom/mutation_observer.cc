@@ -269,8 +269,7 @@ void MutationObserver::Deliver() {
     return;
   }
   const v8::Context::Scope context_scope(context);
-  Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
+  Window* const window = Window::From(isolate, context);
   if (!window || !window->HasContext()) {
     return;
   }

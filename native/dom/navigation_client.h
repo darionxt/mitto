@@ -15,8 +15,11 @@
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame_loader.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace mitto {
+
+class Window;
 
 // What a navigation to another document that a document starts says of
 // itself, as Blink's WebNavigationInfo does. Its Initiator is the document,
@@ -32,6 +35,23 @@ struct NavigationRequest {
   bool replace = false;
   // The referrer policy of the document that starts it.
   FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+  // The document that starts it, its initiator, by its ID in the Page, and
+  // its origin and URL, which an about:blank that it commits takes, as its
+  // origin and its referrer.
+  uint64_t initiator = 0;
+  url::Origin initiator_origin;
+  GURL initiator_url;
+  // The initiator's base URL and cookie URL, which an about:blank that it
+  // commits takes as its about base URL and its cookie URL.
+  GURL initiator_base_url;
+  GURL initiator_cookie_url;
+  // The initiator's own referrer policy, which an about:blank that it commits
+  // takes with its policy container, beside the navigation's above.
+  FetchReferrerPolicy initiator_referrer_policy = FetchReferrerPolicy::kDefault;
+  // The initiator's outgoing referrer, as Blink's Document::OutgoingReferrer()
+  // gives it: its document's URL, or for a srcdoc document its parent's,
+  // stripped for use as a referrer, and empty for an opaque origin.
+  GURL initiator_referrer;
 };
 
 struct HistoryItem;
@@ -71,6 +91,10 @@ class NavigationClient {
   virtual void NavigateBackForward(int offset) = 0;
   // NavigateToNavigationApiKey(): the same, to the frame's entry of `key`.
   virtual void NavigateToNavigationApiKey(const std::u16string& key) = 0;
+  // The Session hears that the document of `opener`, another window of the
+  // window's document's origin, opened that document with document.open(),
+  // as Blink tells its browser with DidOpenDocumentInputStream().
+  virtual void DidOpenDocument(const Window& opener) = 0;
 
   // FrameLoader::HasProvisionalNavigation(): a navigation that a document
   // started waits for its response.

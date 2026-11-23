@@ -68,6 +68,14 @@ class CookieStore final : public EventTarget {
   // GetCookieDomainWithString() decides.
   static bool IsCookieDomainValid(const GURL& url, std::string_view domain);
 
+  // A frame's window that takes a new document, as a srcdoc takes the place
+  // of the initial about:blank in the same window: the store stops listening
+  // as the old document, while the Session knows it, and listens as the new
+  // one once that has its cookie jar, as Blink's store hears changes through
+  // the new document's.
+  void DocumentWillChange();
+  void DocumentChanged();
+
  protected:
   void ListenersChanged(std::u16string_view type) override;
 
