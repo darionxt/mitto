@@ -129,6 +129,14 @@ def test_it_refuses_an_extended_attribute_it_does_not_know_and_names_it() -> Non
         extended_attributes.check("attribute Thing.on", ["Measure", "Unheard"])
 
 
+def test_it_reads_and_writes_a_member_exposed_to_cross_origin_isolated_contexts() -> None:
+    # bind_gen installs such a member by the context's capability, which condition_test() reads of PerContextData, so
+    # neither the reader's check nor the writer's refuses the attributes.
+    keys = ["CrossOriginIsolated", "CrossOriginIsolatedOrRuntimeEnabled"]
+    extended_attributes.check("operation Thing.measure", keys)
+    cpp_writer._check_written("operation Thing.measure", _extended(*keys))  # pyright: ignore[reportPrivateUsage]
+
+
 def test_it_knows_every_extended_attribute_with_a_reason() -> None:
     assert all(reason for _, reason in extended_attributes.KNOWN.values())
 

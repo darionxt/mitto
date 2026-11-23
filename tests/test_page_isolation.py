@@ -306,10 +306,21 @@ def test_a_shared_array_buffer_that_a_broadcast_channel_carries_arrives_as_null(
     assert _evaluate(session, url, script) == [["message", "[object Null]"]] * 2
 
 
-# What a page reads of its clocks, by rule rather than by value: whether every reading is a whole number of steps of 5
-# microseconds, up to a double's rounding, and whether some reading is not one of 100.
-_CLOCKS = """(async () => {
-    const whole = (ms, step) => Math.abs(ms / step - Math.round(ms / step)) < 1e-3;
+# Whether a reading in milliseconds is a whole number of steps, within half a microsecond: Blink subtracts two
+# uptime-sized doubles for a reading, and performance.timeOrigin is a double near 1.7e12, whose last place is a quarter
+# of a microsecond, while readings on two grids differ by 5 microseconds at least.
+_WHOLE = "const whole = (ms, step) => Math.abs(ms - Math.round(ms / step) * step) < 5e-4;"
+
+# What a page reads of its clocks, by rule rather than by value. For each clock, many readings: whether each is a whole
+# number of steps of 5 microseconds, and whether some is not one of 100, which a clock of 5 microseconds gives among
+# so many readings and one of 100 never does. The last item is whether performance.timeOrigin, a single reading, is a
+# whole number of steps of 100.
+_CLOCKS = (
+    "(async () => {"
+    + _WHOLE
+    + """
+    const fine = (readings) => readings.every((t) => whole(t, 0.005));
+    const offCoarse = (readings) => readings.some((t) => !whole(t, 0.1));
     const now = [];
     const end = performance.now() + 30;
     while (performance.now() < end) {
@@ -319,25 +330,37 @@ _CLOCKS = """(async () => {
     for (let i = 0; i < 2000; i++) {
         temporal.push(Temporal.Now.instant().epochNanoseconds);
     }
-    const events = Array.from({length: 200}, () => new Event('x').timeStamp);
-    const frame = await new Promise((resolve) => requestAnimationFrame(resolve));
-    const idle = await new Promise((resolve) => requestIdleCallback((deadline) => resolve(deadline.timeRemaining())));
+    const events = [];
+    const eventsEnd = performance.now() + 5;
+    while (performance.now() < eventsEnd) {
+        events.push(new Event('x').timeStamp);
+    }
+    const frames = [];
+    for (let i = 0; i < 20; i++) {
+        frames.push(await new Promise((resolve) => requestAnimationFrame(resolve)));
+    }
+    const idle = await new Promise((resolve) => requestIdleCallback((deadline) => {
+        resolve(Array.from({length: 2000}, () => deadline.timeRemaining()));
+    }));
     return [
-        now.every((t) => whole(t, 0.005)),
-        now.some((t) => !whole(t, 0.1)),
-        temporal.every((t) => t % 5000n === 0n),
-        temporal.some((t) => t % 100000n !== 0n),
-        events.every((t) => whole(t, 0.005)),
-        [frame, idle, performance.timeOrigin].every((t) => whole(t, 0.005)),
+        fine(now), offCoarse(now),
+        temporal.every((t) => t % 5000n === 0n), temporal.some((t) => t % 100000n !== 0n),
+        fine(events), offCoarse(events),
+        fine(frames), offCoarse(frames),
+        fine(idle), offCoarse(idle),
+        whole(performance.timeOrigin, 0.005),
         typeof performance.measureUserAgentSpecificMemory,
+        whole(performance.timeOrigin, 0.1),
     ];
 })()"""
+)
 
 
 def test_an_isolated_window_reads_clocks_of_5_microseconds(session: mitto.Session, server: RecordingServer) -> None:
     url = server.page("/", _BLANK, _ISOLATING)
 
-    assert _evaluate(session, url, _CLOCKS) == [True, True, True, True, True, True, "function"]
+    # Whether one reading of the time origin falls on the coarse grid is chance: the workers' test reads several.
+    assert _evaluate(session, url, _CLOCKS)[:-1] == [True] * 11 + ["function"]
 
 
 def test_a_window_that_is_not_isolated_reads_clocks_of_100_microseconds(
@@ -345,24 +368,46 @@ def test_a_window_that_is_not_isolated_reads_clocks_of_100_microseconds(
 ) -> None:
     url = server.page("/", _BLANK)
 
-    assert _evaluate(session, url, _CLOCKS) == [True, False, True, False, True, True, "undefined"]
+    assert _evaluate(session, url, _CLOCKS) == [True, False] * 5 + [True, "undefined", True]
+
+
+# Eight workers each read performance.now() for 30 ms and give the rules of their readings and their time origin.
+_WORKERS_CLOCKS = (
+    "(() => {"
+    + _WHOLE
+    + """
+    return Promise.all(Array.from({length: 8}, () => new Promise((resolve) => {
+        new Worker('/clock.js').onmessage = (e) => resolve(e.data);
+    }))).then((results) => [
+        results.every(([fine]) => fine),
+        results.every(([, offCoarse]) => offCoarse),
+        results.every(([, , origin]) => whole(origin, 0.005)),
+        results.some(([, , origin]) => !whole(origin, 0.1)),
+        results.every(([, , , measure]) => measure === 'undefined'),
+    ]);
+})()"""
+)
+
+_CLOCK_WORKER = (
+    _WHOLE.encode() + b"const now = []; const end = performance.now() + 30;"
+    b" while (performance.now() < end) { now.push(performance.now()); }"
+    b"postMessage([now.every((t) => whole(t, 0.005)), now.some((t) => !whole(t, 0.1)), performance.timeOrigin,"
+    b" typeof performance.measureUserAgentSpecificMemory]);"
+)
 
 
 def test_an_isolated_worker_reads_clocks_of_5_microseconds(session: mitto.Session, server: RecordingServer) -> None:
     url = server.page("/", _BLANK, _ISOLATING)
-    script = """new Promise((resolve) => {
-        const worker = new Worker('/clock.js');
-        worker.onmessage = (e) => resolve(e.data);
-    })"""
-    server.route(
-        "/clock.js",
-        b"const whole = (ms, step) => Math.abs(ms / step - Math.round(ms / step)) < 1e-3; const now = [];"
-        b"const end = performance.now() + 30; while (performance.now() < end) { now.push(performance.now()); }"
-        b"postMessage([now.every((t) => whole(t, 0.005)), now.some((t) => !whole(t, 0.1)),"
-        b" typeof performance.measureUserAgentSpecificMemory]);",
-        _JS,
-        [_COEP],
-    )
+    server.route("/clock.js", _CLOCK_WORKER, _JS, [_COEP])
 
     # measureUserAgentSpecificMemory() is exposed on a window, a service worker and a shared worker alone.
-    assert _evaluate(session, url, script) == [True, True, "undefined"]
+    assert _evaluate(session, url, _WORKERS_CLOCKS) == [True] * 5
+
+
+def test_a_worker_that_is_not_isolated_reads_clocks_of_100_microseconds(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", _BLANK)
+    server.route("/clock.js", _CLOCK_WORKER, _JS)
+
+    assert _evaluate(session, url, _WORKERS_CLOCKS) == [True, False, True, False, True]
