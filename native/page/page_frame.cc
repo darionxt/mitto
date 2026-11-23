@@ -169,8 +169,9 @@ void PageFrame::Start(const PageConnection& connection) {
   // gives it. Its time origin is when its context was made.
   const url::Origin origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
-  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin,
-                                     IsolatedLikeParent(origin)));
+  context_.Reset(
+      isolate, NewContext(base::TimeTicks::Now(), origin,
+                          IsolatedLikeParent(origin, OwnerSandboxesOrigin())));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   window_->BindToContext(isolate, context());
   if (parent_) {
@@ -333,7 +334,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   // its origin, as DocumentLoader::CommitNavigation() reuses it, and makes a
   // new one for any other, or for one of another isolation, as Chrome's
   // origin then differs, an opaque one under a sandbox.
-  const bool isolated = IsolatedLikeParent(origin);
+  const bool isolated = IsolatedLikeParent(origin, navigation.origin_sandboxed);
   const bool reuse_window =
       old_document.IsInitialEmptyDocument() &&
       old_document.GetOrigin().IsSameOriginWith(origin) &&
@@ -605,6 +606,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     LocalNavigation navigation;
     navigation.start = base::TimeTicks::Now();
     navigation.url = request.url;
+    navigation.origin_sandboxed = OwnerSandboxesOrigin();
     navigation.reload = request.reload;
     // Its document's referrer is what the initiator's outgoing referrer gives
     // a navigation to its URL under the initiator's referrer policy, as
@@ -695,6 +697,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
   provisional_request_ = request;
   provisional_start_ = now;
+  provisional_origin_sandboxed_ = OwnerSandboxesOrigin();
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
   // A frame's navigation names the frame's document that the new one takes
@@ -912,7 +915,8 @@ Document& PageFrame::CommitDocument(
   // window is, so that none is more so than its parent, whose own sandbox the
   // Session cannot see yet.
   const bool isolated =
-      parent_ ? cross_origin_isolated && IsolatedLikeParent(origin)
+      parent_ ? cross_origin_isolated &&
+                    IsolatedLikeParent(origin, provisional_origin_sandboxed_)
               : cross_origin_isolated;
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin and isolation, as DocumentLoader::CommitNavigation() reuses
@@ -989,30 +993,32 @@ Document& PageFrame::CommitDocument(
   return *document;
 }
 
-bool PageFrame::IsolatedLikeParent(const url::Origin& origin) const {
-  if (!parent_) {
-    return false;
-  }
-  // A sandbox on the frame's element without allow-same-origin gives Chrome's
-  // documents of the frame an opaque origin, which the default allowlist does
-  // not take, though the Page does not make that origin yet. An ancestor's
-  // sandbox counts through its document, as committed: its isolation, which
-  // the parent's window carries.
+bool PageFrame::IsolatedLikeParent(const url::Origin& origin,
+                                   bool origin_sandboxed) const {
+  // An ancestor's sandbox counts through its document, as committed: its
+  // isolation, which the parent's window carries.
+  return parent_ && !origin_sandboxed &&
+         parent_->window_->CrossOriginIsolatedCapability() &&
+         parent_->window_->GetDocument().GetOrigin().IsSameOriginWith(origin);
+}
+
+bool PageFrame::OwnerSandboxesOrigin() const {
+  // A sandbox without allow-same-origin gives Chrome's documents of the frame
+  // an opaque origin, which the default allowlist does not take, though the
+  // Page does not make that origin yet.
   const HTMLFrameOwnerElement* const owner = owner_.Get();
   const std::u16string* const sandbox =
-      owner ? owner->FindAttribute(u"sandbox") : nullptr;
-  if (sandbox &&
-      std::ranges::none_of(
-          base::SplitStringPiece(*sandbox, u"\t\n\f\r ", base::KEEP_WHITESPACE,
-                                 base::SPLIT_WANT_NONEMPTY),
-          [](std::u16string_view token) {
-            return base::EqualsCaseInsensitiveASCII(token,
-                                                    u"allow-same-origin");
-          })) {
-    return false;
-  }
-  return parent_->window_->CrossOriginIsolatedCapability() &&
-         parent_->window_->GetDocument().GetOrigin().IsSameOriginWith(origin);
+      owner && owner->HasHTMLTagName(u"iframe")
+          ? owner->FindAttribute(u"sandbox")
+          : nullptr;
+  return sandbox &&
+         std::ranges::none_of(base::SplitStringPiece(*sandbox, u"\t\n\f\r ",
+                                                     base::KEEP_WHITESPACE,
+                                                     base::SPLIT_WANT_NONEMPTY),
+                              [](std::u16string_view token) {
+                                return base::EqualsCaseInsensitiveASCII(
+                                    token, u"allow-same-origin");
+                              });
 }
 
 v8::Local<v8::Context> PageFrame::NewContext(

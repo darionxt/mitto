@@ -484,3 +484,27 @@ def test_a_frame_whose_sandbox_goes_takes_its_parent_s_isolation_again(
     })()"""
 
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, "function"]
+
+
+def test_a_frame_whose_response_sandboxes_it_is_not_isolated(session: mitto.Session, server: RecordingServer) -> None:
+    # Content-Security-Policy: sandbox without allow-same-origin gives Chrome's frame document an opaque origin, which
+    # the parent cannot read (Chrome for Testing 157). The Page does not make that origin yet, but gives the frame no
+    # isolation either. A frame element's sandbox attribute means nothing, so that frame keeps its isolation.
+    server.route(
+        "/f-csp",
+        b"<!doctype html><title>c</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox allow-scripts")],
+    )
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/f-csp';
+        document.documentElement.appendChild(frame);
+        await new Promise((resolve) => frame.onload = resolve);
+        const legacy = document.createElement('frame');
+        legacy.setAttribute('sandbox', 'allow-scripts');
+        document.documentElement.appendChild(legacy);
+        return [frame.contentWindow.crossOriginIsolated, legacy.contentWindow.crossOriginIsolated];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]

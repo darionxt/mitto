@@ -620,6 +620,44 @@ std::string MimeTypeOf(const RequestEvent& event) {
 // Upstream: content/browser/renderer_host/navigation_request.cc
 // Upstream: content/browser/loader/navigation_url_loader_impl.cc
 // Upstream: content/browser/loader/download_utils_impl.cc
+// Whether a response's Content-Security-Policy, an enforced one, has a
+// sandbox directive without allow-same-origin, which gives Chrome's document
+// of it an opaque origin, as the browser's policy container takes the
+// response's sandbox flags. A report-only policy sandboxes nothing.
+// Upstream:
+// services/network/public/cpp/content_security_policy/content_security_policy.cc
+bool SandboxesOrigin(std::string_view headers) {
+  for (const std::string_view line : base::SplitStringPieceUsingSubstr(
+           headers, "\r\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(':');
+    if (colon == std::string_view::npos ||
+        !base::EqualsCaseInsensitiveASCII(
+            base::TrimWhitespaceASCII(line.substr(0, colon), base::TRIM_ALL),
+            "content-security-policy")) {
+      continue;
+    }
+    for (const std::string_view policy : base::SplitStringPiece(
+             line.substr(colon + 1), ",", base::TRIM_WHITESPACE,
+             base::SPLIT_WANT_NONEMPTY)) {
+      for (const std::string_view directive : base::SplitStringPiece(
+               policy, ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+        const std::vector<std::string_view> tokens = base::SplitStringPiece(
+            directive, " \t", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+        if (!tokens.empty() &&
+            base::EqualsCaseInsensitiveASCII(tokens.front(), "sandbox") &&
+            std::ranges::none_of(base::span(tokens).subspan(1),
+                                 [](std::string_view token) {
+                                   return base::EqualsCaseInsensitiveASCII(
+                                       token, "allow-same-origin");
+                                 })) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 bool MakesDocument(const RequestEvent& event) {
   if (event.status == 204 || event.status == 205) {
     return false;
@@ -1926,8 +1964,10 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
     }
     frame->second.url = GURL(event.url);
     frame->second.coep = coep;
-    frame->second.cross_origin_isolated = FrameIsCrossOriginIsolated(
-        frame->second.parent, url::Origin::Create(frame->second.url));
+    frame->second.cross_origin_isolated =
+        !SandboxesOrigin(event.headers) &&
+        FrameIsCrossOriginIsolated(frame->second.parent,
+                                   url::Origin::Create(frame->second.url));
     frame_isolation = frame->second.cross_origin_isolated
                           ? PageCrossOriginIsolation::kCoopAndCoep
                           : PageCrossOriginIsolation::kNone;

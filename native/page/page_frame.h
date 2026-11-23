@@ -191,7 +191,15 @@ class PageFrame final : public NavigationClient, public Frame {
   // the parent's document is, and of the same origin, the default allowlist
   // 'self' of the cross-origin-isolated feature. The top-level frame's
   // initial about:blank is not.
-  bool IsolatedLikeParent(const url::Origin& origin) const;
+  // `origin_sandboxed` is whether the frame's sandbox, as its navigation
+  // started, gives the document an opaque origin in Chrome, which isolates
+  // nothing.
+  bool IsolatedLikeParent(const url::Origin& origin,
+                          bool origin_sandboxed) const;
+  // Whether the frame's element is an iframe whose sandbox attribute withholds
+  // allow-same-origin, as Chrome takes it when a navigation of the frame
+  // starts. A frame element's sandbox attribute means nothing.
+  bool OwnerSandboxesOrigin() const;
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells
@@ -280,6 +288,8 @@ class PageFrame final : public NavigationClient, public Frame {
     // from the owner document.
     GURL about_base_url;
     GURL cookie_url;
+    // OwnerSandboxesOrigin() as it started.
+    bool origin_sandboxed = false;
     // A srcdoc's markup.
     std::u16string body;
     // Whether it reloads the frame's document, as location.reload() does.
@@ -351,6 +361,8 @@ class PageFrame final : public NavigationClient, public Frame {
   std::unique_ptr<DocumentLoader> provisional_;
   NavigationRequest provisional_request_;
   base::TimeTicks provisional_start_;
+  // OwnerSandboxesOrigin() as the network navigation started.
+  bool provisional_origin_sandboxed_ = false;
   uint64_t provisional_cookie_writes_ = 0;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };
