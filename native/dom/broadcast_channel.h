@@ -73,6 +73,9 @@ class BroadcastChannel final : public EventTarget {
   void ListenersChanged(std::u16string_view type) override;
 
  private:
+  // Whether its context is a worker that has called close(), as Blink's
+  // WorkerGlobalScope::IsClosing() says.
+  bool IsOfClosingWorker() const;
   void CloseInternal();
   // HasPendingActivity(): connected, and a page listens for messages.
   void UpdateKeepAlive();

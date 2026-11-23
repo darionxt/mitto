@@ -7,6 +7,7 @@ origin. Where a caller can ask for the same request, the lines that the Page sen
 the Session's Request Kinds make both. Each test needs a native library with the Page program beside it.
 """
 
+import base64
 import threading
 import time
 from collections.abc import Iterator
@@ -500,3 +501,21 @@ def test_an_image_that_lets_its_load_go_no_longer_holds_the_window_load_event_ba
         hold.set()
 
     assert complete is True
+
+
+def test_a_revoked_blob_url_loads_no_more_for_another_image(session: mitto.Session, server: _Server) -> None:
+    # As in Chrome 157, whose revokeObjectURL() drops the URL from the memory cache: the first image loads, and
+    # another of the URL once it is revoked fails, where the document's resource would have served it.
+    url = server.page("/", "<p>blob</p>")
+    png = base64.b64encode(_png(1, 1)).decode()
+
+    with _open_page(session, url) as page:
+        page.evaluate(
+            f"window.blobUrl = URL.createObjectURL(new Blob([Uint8Array.from(atob('{png}'), c => c.charCodeAt(0))],"
+            " {type: 'image/png'})); null"
+        )
+        first = _settled(page, "Object.assign(new Image(), {src: blobUrl})")
+        page.evaluate("URL.revokeObjectURL(blobUrl); null")
+        second = _settled(page, "Object.assign(new Image(), {src: blobUrl})")
+
+    assert (first["event"], second["event"]) == ("load", "error")

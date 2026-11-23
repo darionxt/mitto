@@ -8,9 +8,12 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_url.h"
 #include "mitto/dom/blob.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/public_url_manager.h"
+#include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/url_search_params.h"
+#include "mitto/dom/window.h"
 #include "url/gurl.h"
 
 namespace mitto {
@@ -92,8 +95,15 @@ std::u16string URL::CreateObjectURL(MediaSource* source) {
 
 // static
 void URL::RevokeObjectURL(const std::u16string& url) {
-  PublicUrlManager::Revoke(ExecutionContext::Current(),
-                           GURL(base::UTF16ToUTF8(url)));
+  ExecutionContext& context = ExecutionContext::Current();
+  const GURL parsed(base::UTF16ToUTF8(url));
+  // URLFileAPI::revokeObjectURL(): the URL leaves the memory cache too, so a
+  // later load of it fetches again, and fails.
+  if (context.IsWindow()) {
+    static_cast<Window&>(context).GetDocument().Fetcher().RemoveUrlFromCache(
+        parsed);
+  }
+  PublicUrlManager::Revoke(context, parsed);
 }
 
 URL::URL(const ResolvedURL& url) : url_(url) {}

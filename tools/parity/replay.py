@@ -58,6 +58,23 @@ _WORKER_ANSWERED = """new Promise((resolve, reject) => {
   };
   worker.onerror = () => reject(new Error(urls.worker + " failed"));
 })"""
+# What the start page's script does for its worker of a blob: URL, whose script fetches with no URL of its own to name as
+# the referrer, and answers once that has ended, or says that it failed, which no error event would.
+_BLOB_WORKER_ANSWERED = """new Promise((resolve, reject) => {
+  const source = `fetch("${location.origin}${urls.worker_blob_fetch}")
+    .then((response) => response.text())
+    .then(() => postMessage("done"), (error) => postMessage("failed: " + error));`;
+  const worker = new Worker(URL.createObjectURL(new Blob([source], {type: "text/javascript"})));
+  worker.onmessage = (event) => {
+    worker.terminate();
+    if (event.data === "done") {
+      resolve();
+    } else {
+      reject(new Error("the fetch of the worker of a blob: URL " + event.data));
+    }
+  };
+  worker.onerror = () => reject(new Error("the worker of a blob: URL failed"));
+})"""
 # How long a Page's document stays where it is before a replay takes it that it navigates no further.
 _SETTLED_SECONDS = 3.0
 # How often a replay looks for the request that ends a page that does not navigate.
@@ -229,7 +246,9 @@ def _document_replays() -> dict[str, Replay]:
         ),
         "worker_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, page_script=_WORKER_ANSWERED),
         "worker_module": Replay(RequestKind.WORKER, page=start),
-        "worker_blob_fetch": Replay(RequestKind.FETCH, page=start, made_by_a_page=289),
+        "worker_blob_fetch": Replay(
+            RequestKind.FETCH, page=start, through_page=True, page_script=_BLOB_WORKER_ANSWERED
+        ),
         "beacon_text": Replay(RequestKind.BEACON, _POST, body=_TEXT, page=start),
         "beacon_blob": Replay(RequestKind.BEACON, _POST, body={"data": b"blob body"}, page=start),
         "beacon_form_data": Replay(
@@ -516,7 +535,7 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
     lands_at = _PATHS[steps.lands_at or case]
     with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         if steps.page_script is not None:
-            page.evaluate(steps.page_script)
+            page.evaluate(steps.page_script, timeout=_PAGE_TIMEOUT_SECONDS)
         if steps.kind is not RequestKind.NAVIGATION:
             return
         while urlsplit(page.wait_for_navigation(timeout=_PAGE_TIMEOUT_SECONDS).url).path != lands_at:
