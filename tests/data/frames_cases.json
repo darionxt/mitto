@@ -1,0 +1,150 @@
+{
+  "chrome": "157.0.8103.79",
+  "how": "headless Chrome for Testing on macOS, on a page at ORIGIN/",
+  "record": {
+    "detach": {
+      "closed": true,
+      "contentDocument": null,
+      "contentWindow": null,
+      "documentKept": true,
+      "frameElement": null,
+      "length": 0,
+      "name": "",
+      "parent": null,
+      "seen": [
+        "pagehide false",
+        "visibilitychange hidden"
+      ],
+      "timer": 0,
+      "top": null
+    },
+    "frameElement": [
+      "[object HTMLFrameElement]",
+      true,
+      "about:blank"
+    ],
+    "indexedProperties": {
+      "afterRemoval": [
+        false,
+        null
+      ],
+      "define": "TypeError: Failed to set an indexed property [0] on 'Window': Index property setter is not supported.",
+      "deleted": "TypeError: Failed to delete an indexed property [0] from 'Window': Index property deleter is not supported.",
+      "descriptor": [
+        true,
+        false,
+        true,
+        true,
+        false
+      ],
+      "has": [
+        true,
+        false,
+        true
+      ],
+      "keys": true,
+      "ownNames": 0,
+      "sloppySet": true,
+      "strictSet": "TypeError: Failed to set an indexed property [0] on 'Window': Indexed property setter is not supported."
+    },
+    "insertion": {
+      "characterSet": "UTF-8",
+      "compatMode": "BackCompat",
+      "contentType": "text/html",
+      "cookieShared": true,
+      "document": true,
+      "frameElement": true,
+      "href": "about:blank",
+      "indexed": true,
+      "isSecureContext": true,
+      "length": 1,
+      "locationOrigin": "null",
+      "markup": "<html><head></head><body></body></html>",
+      "name": "",
+      "opener": null,
+      "origin": "ORIGIN",
+      "parent": true,
+      "readyState": "complete",
+      "referrer": "ORIGIN/",
+      "seen": [
+        "before",
+        "load true false complete about:blank",
+        "after"
+      ],
+      "top": true,
+      "url": "about:blank"
+    },
+    "names": {
+      "afterAttribute": [
+        "kid",
+        true,
+        false
+      ],
+      "afterWindowName": [
+        "fromscript",
+        true,
+        "renamed"
+      ],
+      "byId": true,
+      "byName": true,
+      "emptyName": [
+        "",
+        true
+      ],
+      "nameOfWindow": "kid",
+      "unnamed": ""
+    },
+    "realms": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      [
+        true,
+        false
+      ]
+    ],
+    "reinsertion": [
+      false,
+      true,
+      1
+    ],
+    "tree": {
+      "afterRemoval": [
+        1,
+        true
+      ],
+      "first": true,
+      "frameElementOfTop": null,
+      "innerLength": 1,
+      "innerParent": true,
+      "innerTop": true,
+      "length": 2,
+      "nested": true,
+      "second": true,
+      "selfFrames": [
+        true,
+        true,
+        true
+      ]
+    },
+    "write": {
+      "compatMode": "CSS1Compat",
+      "loads": [
+        "",
+        "<p id=\"x\">written</p>"
+      ],
+      "sameDocument": true,
+      "states": [
+        "opened loading"
+      ],
+      "text": "written",
+      "url": "ORIGIN/"
+    }
+  }
+}

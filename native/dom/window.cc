@@ -29,9 +29,11 @@
 #include "mitto/dom/dom_file_system.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/fetcher.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/history.h"
 #include "mitto/dom/history_item.h"
+#include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/idb_factory.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
@@ -192,6 +194,67 @@ v8::Local<v8::Value> Window::Event() const {
   return current_event_->ToV8(isolate);
 }
 
+uint32_t Window::Length() const {
+  return frame_ ? static_cast<uint32_t>(frame_->ChildCount()) : 0;
+}
+
+// DOMWindow::top(): the window of the frame's top-level frame. A window without
+// a frame has none, unless it is the Page program's own, which runs a script
+// with no frames and is a top-level window.
+Window* Window::Top() {
+  if (!frame_) {
+    return HasContext() ? this : nullptr;
+  }
+  return frame_->Top().DomWindow();
+}
+
+// DOMWindow::parent(): the window of the frame's parent, or the frame's own
+// for a top-level frame.
+Window* Window::Parent() {
+  if (!frame_) {
+    return HasContext() ? this : nullptr;
+  }
+  mitto::Frame* const parent = frame_->Parent();
+  return parent ? parent->DomWindow() : frame_->DomWindow();
+}
+
+Window* Window::AnonymousIndexedGetter(uint32_t index) {
+  if (!frame_ || index >= frame_->ChildCount()) {
+    return nullptr;
+  }
+  return frame_->ChildAt(index)->DomWindow();
+}
+
+Element* Window::FrameElement() const {
+  HTMLFrameOwnerElement* const owner = frame_ ? frame_->Owner() : nullptr;
+  if (!owner) {
+    return nullptr;
+  }
+  // [CheckSecurity=ReturnValue]: the element only for a caller of its
+  // document's origin.
+  if (!Window::Current().GetSecurityOrigin().IsSameOriginWith(
+          owner->GetDocument().GetOrigin())) {
+    return nullptr;
+  }
+  return owner;
+}
+
+std::u16string Window::Name() const {
+  if (frame_) {
+    return frame_->Name();
+  }
+  return HasContext() ? frameless_name_ : std::u16string();
+}
+
+void Window::SetName(const std::u16string& name) {
+  if (frame_) {
+    frame_->SetName(name);
+  } else if (HasContext()) {
+    // The Page program's own window, a top-level one with no frame, keeps it.
+    frameless_name_ = name;
+  }
+}
+
 v8::Local<v8::Value> Window::OpenerForBindings() const {
   return v8::Null(v8::Isolate::GetCurrent());
 }
@@ -216,13 +279,11 @@ void Window::SetOpenerForBindings(v8::Local<v8::Value> opener,
 // The serialized origin of the window's document, "null" for an opaque one, as
 // LocalDOMWindow::origin() gives it.
 std::u16string Window::Origin() const {
-  return base::UTF8ToUTF16(
-      url::Origin::Create(GURL(document_->UrlForBinding())).Serialize());
+  return base::UTF8ToUTF16(document_->GetOrigin().Serialize());
 }
 
 bool Window::IsSecureContextForBindings() const {
-  return bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-      ->secure_context();
+  return IsSecureContext();
 }
 
 CrashReportContext* Window::CrashReport() {
@@ -252,7 +313,7 @@ mitto::History* Window::History() {
 
 BarProp* Window::Bar(BarKind kind) {
   if (!bars_[kind]) {
-    bars_[kind] = BarProp::Create();
+    bars_[kind] = BarProp::Create(*this);
   }
   return bars_[kind].Get();
 }
@@ -378,10 +439,7 @@ StorageBucketHost* Window::GetStorageBucketHost() const {
 
 mitto::Performance* Window::Performance() {
   if (!performance_) {
-    performance_ = Performance::Create(
-        bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-            ->time_origin(),
-        &GetDocumentLoadTiming());
+    performance_ = Performance::Create(TimeOrigin(), &GetDocumentLoadTiming());
   }
   return performance_.Get();
 }
@@ -392,9 +450,8 @@ void Window::SetDocumentLoadTiming(DocumentLoadTiming* timing) {
 
 DocumentLoadTiming& Window::GetDocumentLoadTiming() {
   if (!document_load_timing_) {
-    document_load_timing_ = bindings::MakeGarbageCollected<DocumentLoadTiming>(
-        bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-            ->time_origin());
+    document_load_timing_ =
+        bindings::MakeGarbageCollected<DocumentLoadTiming>(TimeOrigin());
   }
   return *document_load_timing_;
 }
@@ -491,6 +548,17 @@ void Window::SetDocument(mitto::Document* document) {
   }
   document_ = document;
   document_->SetWindow(this);
+  // LocalWindowProxy::UpdateDocumentWrapper(): the document's wrapper is
+  // made in the window's context once it is the window's, so that it is of
+  // the window's realm whichever context reaches it first.
+  if (HasWrapper()) {
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    v8::Local<v8::Context> context;
+    if (ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context)) {
+      const v8::Context::Scope context_scope(context);
+      std::ignore = document_->ToV8(isolate);
+    }
+  }
   // A document that elements gave named items before it was the window's,
   // such as the one the parser makes of a Page's markup, has their
   // properties now.

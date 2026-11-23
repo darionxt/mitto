@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -22,24 +23,30 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/idl_member_installer.h"
 #include "mitto/bindings/interfaces_without_class.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/bindings/v8_blob.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_dom_exception.h"
 #include "mitto/bindings/v8_dom_rect.h"
 #include "mitto/bindings/v8_dom_rect_read_only.h"
+#include "mitto/bindings/v8_file.h"
 #include "mitto/bindings/v8_message_port.h"
 #include "mitto/bindings/v8_quota_exceeded_error.h"
 #include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_transform_stream.h"
 #include "mitto/bindings/v8_writable_stream.h"
+#include "mitto/dom/blob.h"
+#include "mitto/dom/blob_data.h"
 #include "mitto/dom/dom_exception.h"
 #include "mitto/dom/dom_rect.h"
 #include "mitto/dom/dom_rect_read_only.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/file.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/quota_exceeded_error.h"
 #include "mitto/dom/readable_stream.h"
@@ -61,6 +68,8 @@ constexpr uint8_t kVersionTag = 0xFF;
 constexpr uint8_t kTrailerOffsetTag = 0xFE;
 constexpr uint8_t kTrailerRequiresInterfacesTag = 0xA0;
 constexpr uint8_t kMessagePortTag = 'M';
+constexpr uint8_t kBlobTag = 'b';
+constexpr uint8_t kFileTag = 'f';
 constexpr uint8_t kDOMRectTag = 'E';
 constexpr uint8_t kDOMRectReadOnlyTag = 'R';
 constexpr uint8_t kDOMExceptionTag = 'x';
@@ -89,10 +98,8 @@ struct CopiedWithoutClass {
   RAW_PTR_EXCLUSION const bindings::WrapperTypeInfo* info;
   uint8_t blink_tag;
 };
-const std::array<CopiedWithoutClass, 10>& CopiedWithoutClassInterfaces() {
-  static const std::array<CopiedWithoutClass, 10> interfaces = {{
-      {&bindings::V8File::kWrapperTypeInfo, 'f'},
-      {&bindings::V8Blob::kWrapperTypeInfo, 'b'},
+const std::array<CopiedWithoutClass, 8>& CopiedWithoutClassInterfaces() {
+  static const std::array<CopiedWithoutClass, 8> interfaces = {{
       {&bindings::V8FileList::kWrapperTypeInfo, 'l'},
       {&bindings::V8ImageBitmap::kWrapperTypeInfo, 'g'},
       {&bindings::V8ImageData::kWrapperTypeInfo, '#'},
@@ -126,21 +133,25 @@ class Serializer final : public v8::ValueSerializer::Delegate {
  public:
   Serializer(v8::Isolate* isolate,
              Transferables* transferables,
-             bool for_storage)
+             bool for_storage,
+             BlobDataHandleMap& blob_data_handles)
       : isolate_(isolate),
         serializer_(isolate, this),
         transferables_(transferables),
-        for_storage_(for_storage) {}
+        for_storage_(for_storage),
+        blob_data_handles_(blob_data_handles) {}
   ~Serializer() override = default;
 
   // V8ScriptValueSerializer::Serialize(): the bytes, the transferred
-  // ArrayBuffers' contents and the WebAssembly modules, or false after
-  // throwing.
-  bool Serialize(v8::Local<v8::Value> value,
-                 std::vector<uint8_t>& data,
-                 std::vector<std::shared_ptr<v8::BackingStore>>& array_buffers,
-                 std::vector<v8::CompiledWasmModule>& wasm_modules,
-                 std::vector<MessagePortChannel>& stream_channels) {
+  // ArrayBuffers' contents, the SharedArrayBuffers' and the WebAssembly
+  // modules, or false after throwing.
+  bool Serialize(
+      v8::Local<v8::Value> value,
+      std::vector<uint8_t>& data,
+      std::vector<std::shared_ptr<v8::BackingStore>>& array_buffers,
+      std::vector<std::shared_ptr<v8::BackingStore>>& shared_array_buffers,
+      std::vector<v8::CompiledWasmModule>& wasm_modules,
+      std::vector<MessagePortChannel>& stream_channels) {
     // PrepareTransfer().
     if (transferables_) {
       for (size_t i = 0; i < transferables_->array_buffers.size(); ++i) {
@@ -198,14 +209,25 @@ class Serializer final : public v8::ValueSerializer::Delegate {
         return false;
       }
     }
-    // A Page is never cross-origin isolated, so the SharedArrayBuffers that
-    // the value holds are refused once the rest is done, as Blink's
-    // CheckSharedArrayBufferTransferAllowedAndReport() refuses them.
-    if (has_shared_array_buffer_) {
-      mitto::ThrowDataCloneError(
-          isolate_,
-          "SharedArrayBuffer transfer requires self.crossOriginIsolated.");
-      return false;
+    // The SharedArrayBuffers that the value holds go only from a context
+    // that may post them, which
+    // CheckSharedArrayBufferTransferAllowedAndReport() checks once the rest is
+    // done, and then share their memory with the copy:
+    // CloneSharedArrayBuffers().
+    if (!shared_array_buffers_.empty()) {
+      const ExecutionContext* const execution_context =
+          ExecutionContext::From(isolate_, context);
+      if (!execution_context ||
+          !execution_context->SharedArrayBufferTransferAllowed()) {
+        mitto::ThrowDataCloneError(
+            isolate_,
+            "SharedArrayBuffer transfer requires self.crossOriginIsolated.");
+        return false;
+      }
+      for (const v8::Global<v8::SharedArrayBuffer>& buffer :
+           shared_array_buffers_) {
+        shared_array_buffers.push_back(buffer.Get(isolate_)->GetBackingStore());
+      }
     }
     // The trailer, which names the interfaces that the value needs.
     std::vector<uint8_t> trailer;
@@ -289,9 +311,22 @@ class Serializer final : public v8::ValueSerializer::Delegate {
           isolate, "A SharedArrayBuffer can not be serialized for storage.");
       return v8::Nothing<uint32_t>();
     }
-    // Refused once the value is written, as Blink checks the transfer then.
-    has_shared_array_buffer_ = true;
-    return v8::Just<uint32_t>(0);
+    // Its index among the value's SharedArrayBuffers, which the copy reads
+    // its memory by, the same for each place that holds it. The transfer is
+    // checked once the value is written, as Blink checks it then.
+    const auto found = std::ranges::find_if(
+        shared_array_buffers_,
+        [&shared_array_buffer](
+            const v8::Global<v8::SharedArrayBuffer>& buffer) {
+          return buffer == shared_array_buffer;
+        });
+    if (found != shared_array_buffers_.end()) {
+      return v8::Just(
+          base::checked_cast<uint32_t>(found - shared_array_buffers_.begin()));
+    }
+    shared_array_buffers_.emplace_back(isolate, shared_array_buffer);
+    return v8::Just(
+        base::checked_cast<uint32_t>(shared_array_buffers_.size() - 1));
   }
 
   v8::Maybe<uint32_t> GetWasmModuleTransferId(
@@ -337,6 +372,34 @@ class Serializer final : public v8::ValueSerializer::Delegate {
     serializer_.WriteRawBytes(utf8.data(), utf8.size());
   }
 
+  // The value carries `handle`, which its copies read their bytes from, and
+  // names it by its UUID, as Blink's AttachBlob() does.
+  std::u16string AttachBlob(const scoped_refptr<BlobDataHandle>& handle) {
+    blob_data_handles_->emplace(handle->Uuid(), handle);
+    return base::ASCIIToUTF16(handle->Uuid());
+  }
+
+  // V8ScriptValueSerializer::WriteFile() without a blob info array.
+  void WriteFile(const File& file) {
+    // The path of a file that has one on disk, which a page's never has.
+    WriteUTF8String(std::u16string());
+    WriteUTF8String(file.Name());
+    WriteUTF8String(file.WebkitRelativePath());
+    WriteUTF8String(AttachBlob(file.GetBlobDataHandle()));
+    WriteUTF8String(file.Type());
+    // Blink always writes the metadata now, after a 1 that once said so.
+    serializer_.WriteUint32(1);
+    serializer_.WriteUint64(file.Size());
+    const std::optional<base::Time> last_modified =
+        file.LastModifiedTimeForSerialization();
+    serializer_.WriteDouble(
+        last_modified
+            ? last_modified->InMillisecondsFSinceUnixEpochIgnoringNull()
+            : std::numeric_limits<double>::quiet_NaN());
+    // Whether the user sees it: a file that a page made is not one of theirs.
+    serializer_.WriteUint32(0);
+  }
+
   // V8ScriptValueSerializer::WriteDOMObject(), for the objects of the
   // Runtime's: whether it wrote `wrappable`. It throws why not where Blink
   // does, and sets `thrown_`.
@@ -344,6 +407,19 @@ class Serializer final : public v8::ValueSerializer::Delegate {
     const bindings::WrapperTypeInfo* const info =
         wrappable.GetWrapperTypeInfo();
     // Blink's TypeDispatcher::ToMostDerived(): the object's own interface.
+    if (info == &bindings::V8Blob::kWrapperTypeInfo) {
+      const auto& blob = static_cast<const Blob&>(wrappable);
+      WriteAndRequireInterfaceTag(kBlobTag);
+      WriteUTF8String(AttachBlob(blob.GetBlobDataHandle()));
+      WriteUTF8String(blob.Type());
+      serializer_.WriteUint64(blob.Size());
+      return true;
+    }
+    if (info == &bindings::V8File::kWrapperTypeInfo) {
+      WriteAndRequireInterfaceTag(kFileTag);
+      WriteFile(static_cast<const File&>(wrappable));
+      return true;
+    }
     if (info == &bindings::V8DOMRect::kWrapperTypeInfo ||
         info == &bindings::V8DOMRectReadOnly::kWrapperTypeInfo) {
       const auto& rect = static_cast<const DOMRectReadOnly&>(wrappable);
@@ -588,9 +664,13 @@ class Serializer final : public v8::ValueSerializer::Delegate {
   // SerializeOptions::kForStorage, as IndexedDB serializes: what cannot be
   // stored throws where the serializer meets it.
   const bool for_storage_;
+  const raw_ref<BlobDataHandleMap> blob_data_handles_;
   std::vector<uint8_t> required_interfaces_;
   std::vector<v8::CompiledWasmModule> wasm_modules_;
-  bool has_shared_array_buffer_ = false;
+  // The value's SharedArrayBuffers, each once, in the order the serializer
+  // met them. V8 hands each over in a handle scope of its own, which ends
+  // before the value is written.
+  std::vector<v8::Global<v8::SharedArrayBuffer>> shared_array_buffers_;
   bool thrown_ = false;
 };
 
@@ -647,6 +727,10 @@ std::vector<uint8_t> RequiredInterfaces(const std::vector<uint8_t>& data) {
 // The interface of the Runtime's that Blink's tag `tag` stands for, or null.
 const bindings::WrapperTypeInfo* InterfaceOfTag(uint8_t tag) {
   switch (tag) {
+    case kBlobTag:
+      return &bindings::V8Blob::kWrapperTypeInfo;
+    case kFileTag:
+      return &bindings::V8File::kWrapperTypeInfo;
     case kDOMRectTag:
       return &bindings::V8DOMRect::kWrapperTypeInfo;
     case kDOMRectReadOnlyTag:
@@ -679,14 +763,19 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
   Deserializer(v8::Isolate* isolate,
                const std::vector<uint8_t>& data,
                const std::vector<MessagePort*>& ports,
+               const std::vector<std::shared_ptr<v8::BackingStore>>&
+                   shared_array_buffers,
                const std::vector<v8::CompiledWasmModule>& wasm_modules,
-               std::vector<MessagePortChannel>* stream_channels)
+               std::vector<MessagePortChannel>* stream_channels,
+               const BlobDataHandleMap& blob_data_handles)
       : isolate_(isolate),
         deserializer_(isolate, data.data(), data.size(), this),
         data_(data),
         ports_(ports),
+        shared_array_buffers_(shared_array_buffers),
         wasm_modules_(wasm_modules),
-        stream_channels_(stream_channels) {}
+        stream_channels_(stream_channels),
+        blob_data_handles_(blob_data_handles) {}
   ~Deserializer() override = default;
 
   v8::MaybeLocal<v8::Value> Deserialize(
@@ -750,10 +839,17 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
     return {};
   }
 
-  // The Runtime writes no SharedArrayBuffer, so one makes the value null.
+  // A SharedArrayBuffer on the memory of the original's, as Blink's
+  // DOMSharedArrayBuffer::Create() makes it. One that stayed in its agent
+  // cluster, as one that a value from another process held did, makes the
+  // value null, where Blink throws "Unable to deserialize
+  // SharedArrayBuffer.", which no page sees either.
   v8::MaybeLocal<v8::SharedArrayBuffer> GetSharedArrayBufferFromId(
       v8::Isolate* isolate,
       uint32_t id) override {
+    if (id < shared_array_buffers_->size()) {
+      return v8::SharedArrayBuffer::New(isolate, (*shared_array_buffers_)[id]);
+    }
     return {};
   }
 
@@ -790,6 +886,53 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
     return port;
   }
 
+  // The blob that the value carries by `uuid`. One that it does not carry,
+  // as a value that came from another Page does not, reads as empty, of
+  // `type`, where Chrome's browser would give the blob's bytes: a Known Gap.
+  scoped_refptr<BlobDataHandle> BlobDataHandleOf(const std::u16string& uuid,
+                                                 const std::u16string& type) {
+    const auto found = blob_data_handles_->find(base::UTF16ToUTF8(uuid));
+    if (found != blob_data_handles_->end()) {
+      return found->second;
+    }
+    return BlobDataHandle::Create(std::string(), Blob::NormalizeType(type));
+  }
+
+  // V8ScriptValueDeserializer::ReadFile(), of the version the Runtime writes.
+  v8::MaybeLocal<v8::Object> ReadFile() {
+    std::u16string path;
+    std::u16string name;
+    std::u16string relative_path;
+    std::u16string uuid;
+    std::u16string type;
+    uint32_t has_snapshot = 0;
+    uint64_t size = 0;
+    std::optional<base::Time> last_modified;
+    if (!ReadUTF8String(path) || !ReadUTF8String(name) ||
+        !ReadUTF8String(relative_path) || !ReadUTF8String(uuid) ||
+        !ReadUTF8String(type) || !deserializer_.ReadUint32(&has_snapshot)) {
+      return {};
+    }
+    if (has_snapshot) {
+      double last_modified_ms = 0;
+      if (!deserializer_.ReadUint64(&size) ||
+          !deserializer_.ReadDouble(&last_modified_ms)) {
+        return {};
+      }
+      if (std::isfinite(last_modified_ms)) {
+        last_modified =
+            base::Time::FromMillisecondsSinceUnixEpoch(last_modified_ms);
+      }
+    }
+    uint32_t is_user_visible = 0;
+    if (!deserializer_.ReadUint32(&is_user_visible)) {
+      return {};
+    }
+    return NewWrapper(File::Create(std::move(name), std::move(relative_path),
+                                   last_modified,
+                                   BlobDataHandleOf(uuid, type)));
+  }
+
   // A new object of the interface `info`, whose interface object the context
   // made before V8 started to read, or nothing if the trailer did not name it.
   v8::MaybeLocal<v8::Object> NewInstance(
@@ -818,6 +961,18 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
   // ReadDOMObject(), for the tags that the Runtime writes.
   v8::MaybeLocal<v8::Object> ReadDOMObject(uint8_t tag) {
     switch (tag) {
+      case kBlobTag: {
+        std::u16string uuid;
+        std::u16string type;
+        uint64_t size = 0;
+        if (!ReadUTF8String(uuid) || !ReadUTF8String(type) ||
+            !deserializer_.ReadUint64(&size)) {
+          return {};
+        }
+        return NewWrapper(Blob::Create(BlobDataHandleOf(uuid, type)));
+      }
+      case kFileTag:
+        return ReadFile();
       case kDOMRectTag:
       case kDOMRectReadOnlyTag: {
         double x = 0;
@@ -956,10 +1111,13 @@ class Deserializer final : public v8::ValueDeserializer::Delegate {
   v8::ValueDeserializer deserializer_;
   const raw_ref<const std::vector<uint8_t>> data_;
   const raw_ref<const std::vector<MessagePort*>> ports_;
+  const raw_ref<const std::vector<std::shared_ptr<v8::BackingStore>>>
+      shared_array_buffers_;
   const raw_ref<const std::vector<v8::CompiledWasmModule>> wasm_modules_;
   // The other ends of the ports of the streams that the value transferred,
   // which reading takes, or null for none.
   const raw_ptr<std::vector<MessagePortChannel>> stream_channels_;
+  const raw_ref<const BlobDataHandleMap> blob_data_handles_;
   // The interfaces whose interface objects the context made before V8
   // started to read.
   std::vector<const bindings::WrapperTypeInfo*> prepared_;
@@ -1088,11 +1246,13 @@ std::optional<SerializedScriptValue> SerializedScriptValue::SerializeWith(
     Transferables* transferables,
     bool for_storage) {
   SerializedScriptValue serialized;
-  Serializer serializer(isolate, transferables, for_storage);
+  Serializer serializer(isolate, transferables, for_storage,
+                        serialized.blob_data_handles_);
   std::vector<v8::CompiledWasmModule> wasm_modules;
   std::vector<MessagePortChannel> stream_channels;
   if (!serializer.Serialize(value, serialized.data_, serialized.array_buffers_,
-                            wasm_modules, stream_channels)) {
+                            serialized.shared_array_buffers_, wasm_modules,
+                            stream_channels)) {
     return std::nullopt;
   }
   if (!stream_channels.empty()) {
@@ -1109,9 +1269,11 @@ std::optional<SerializedScriptValue> SerializedScriptValue::SerializeWith(
 
 // static
 SerializedScriptValue SerializedScriptValue::FromWireData(
-    std::vector<uint8_t> data) {
+    std::vector<uint8_t> data,
+    BlobDataHandleMap blob_data_handles) {
   SerializedScriptValue serialized;
   serialized.data_ = std::move(data);
+  serialized.blob_data_handles_ = std::move(blob_data_handles);
   return serialized;
 }
 
@@ -1132,9 +1294,10 @@ v8::Local<v8::Value> SerializedScriptValue::Deserialize(
   // What fails to read gives null, and throws nothing at the page.
   v8::TryCatch try_catch(isolate);
   static const base::NoDestructor<std::vector<v8::CompiledWasmModule>> kNone;
-  Deserializer deserializer(isolate, data_, ports,
+  Deserializer deserializer(isolate, data_, ports, shared_array_buffers_,
                             wasm_modules_ ? *wasm_modules_ : *kNone,
-                            streams_ ? &streams_->channels : nullptr);
+                            streams_ ? &streams_->channels : nullptr,
+                            blob_data_handles_);
   v8::Local<v8::Value> value;
   if (!deserializer.Deserialize(array_buffers_).ToLocal(&value)) {
     return handle_scope.Escape(v8::Null(isolate));

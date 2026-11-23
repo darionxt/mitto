@@ -604,7 +604,12 @@ bool PageIndexedDb::AdoptConnection(
     std::unique_ptr<IndexedDbConnection> connection) {
   const auto found = connections_.find(id);
   if (found == connections_.end()) {
-    // The context that opened it has gone: it closes as it goes.
+    // The context that opened it has gone, as a frame's does when its element
+    // leaves the document: it closes, in a task of its own rather than inside
+    // the open that gave it, whose upgrade transaction may be running its
+    // tasks.
+    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+        FROM_HERE, std::move(connection));
     return false;
   }
   found->second = std::move(connection);

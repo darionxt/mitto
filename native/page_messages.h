@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 28;
+inline constexpr uint32_t kPageProtocolVersion = 29;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -253,6 +253,11 @@ enum class PageMessage : uint32_t {
   // To the Page: how much more of the body of a request whose body streams
   // the Session takes, as PageCredit says, once //net has taken as much.
   kRequestBodyCredit = 162,
+  // To the Page: whether the document that a navigation's response makes is
+  // cross-origin isolated, as PageIsolation says, just before the response
+  // starts, as Chrome's browser gives the renderer the document's agent
+  // cluster.
+  kIsolation = 300,
 };
 
 // The quota of an area of localStorage or sessionStorage, as Blink's
@@ -692,6 +697,24 @@ struct PageRequestBodyPart {
 struct PageRequestBodyEnded {
   uint64_t number = 0;
   bool errored = false;
+};
+
+// Whether a document is cross-origin isolated, and by what, as the agent
+// cluster key that Chrome's browser commits a document with says.
+enum class PageCrossOriginIsolation : uint8_t {
+  kNone = 0,
+  // Cross-Origin-Opener-Policy "same-origin" with a
+  // Cross-Origin-Embedder-Policy that is compatible with cross-origin
+  // isolation.
+  kCoopAndCoep = 1,
+};
+
+// The cross-origin isolation of the document that the response of
+// navigation `navigation` makes, kNavigationRequest for the navigation that
+// opened the Page.
+struct PageIsolation {
+  uint64_t navigation = kNavigationRequest;
+  PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
 };
 
 // What a document that the Page has made is made of.
@@ -1168,6 +1191,8 @@ struct FrameFromSession {
   PageStorageBucketAnswer storage_bucket_answer;
   // kRequestBodyCredit.
   PageCredit request_body_credit;
+  // kIsolation.
+  PageIsolation isolation;
   // kStorageEntries.
   PageStorageEntries storage_entries;
   // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
@@ -1209,6 +1234,7 @@ std::string EncodeCredit(const PageCredit& credit);
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part);
 std::string EncodeRequestBodyEnded(const PageRequestBodyEnded& ended);
 std::string EncodeRequestBodyCredit(const PageCredit& credit);
+std::string EncodeIsolation(const PageIsolation& isolation);
 std::string EncodeGetCookies(uint64_t document, uint64_t question);
 // `line` is at most kMaxCookieLineSize bytes.
 std::string EncodeSetCookie(uint64_t document, std::string_view line);

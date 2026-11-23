@@ -89,6 +89,11 @@ mitto_bindings_interfaces = [
     file = "before_unload_event"
   },
   {
+    name = "Blob"
+    file = "blob"
+    made_by_known_gaps = true
+  },
+  {
     name = "BroadcastChannel"
     file = "broadcast_channel"
 
@@ -545,6 +550,29 @@ mitto_bindings_interfaces = [
     missing = [ "when" ]
   },
   {
+    name = "File"
+    file = "file"
+    made_by_known_gaps = true
+  },
+  {
+    name = "FileReader"
+    file = "file_reader"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onloadstart",
+      "onprogress",
+      "onload",
+      "onabort",
+      "onerror",
+      "onloadend",
+    ]
+  },
+  {
+    name = "FileReaderSync"
+    file = "file_reader_sync"
+  },
+  {
     name = "FontFaceSet"
     file = "font_face_set"
     made_by_known_gaps = true
@@ -787,7 +815,10 @@ mitto_bindings_interfaces = [
     name = "HTMLFrameElement"
     file = "html_frame_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "contentDocument",
+      "contentWindow",
+    ]
   },
   {
     name = "HTMLFrameSetElement"
@@ -829,6 +860,8 @@ mitto_bindings_interfaces = [
     implemented = [
       "sandbox",
       "srcdoc",
+      "contentDocument",
+      "contentWindow",
     ]
   },
   {
@@ -1813,6 +1846,10 @@ mitto_bindings_interfaces = [
     missing = [ "sheet" ]
   },
   {
+    name = "ProgressEvent"
+    file = "progress_event"
+  },
+  {
     name = "PromiseRejectionEvent"
     file = "promise_rejection_event"
   },
@@ -1878,6 +1915,8 @@ mitto_bindings_interfaces = [
       "json",
       "text",
       "textStream",
+      "blob",
+      "bytes",
     ]
   },
   {
@@ -1897,6 +1936,8 @@ mitto_bindings_interfaces = [
       "json",
       "text",
       "textStream",
+      "blob",
+      "bytes",
     ]
   },
   {
@@ -2961,13 +3002,6 @@ mitto_bindings_interfaces = [
   {
     name = "URL"
     file = "url"
-
-    # createObjectURL() and revokeObjectURL(), of the File API's blob URLs, are
-    # Known Gaps.
-    missing = [
-      "createObjectURL",
-      "revokeObjectURL",
-    ]
   },
   {
     name = "URLSearchParams"
@@ -3051,11 +3085,17 @@ mitto_bindings_interfaces = [
       "devicePixelRatio",
       "matchMedia",
       "frames",
+      "length",
+      "indexed getter",
       "top",
       "parent",
+      "frameElement",
+      "name",
+      "closed",
       "opener",
       "origin",
       "isSecureContext",
+      "crossOriginIsolated",
       "originAgentCluster",
       "offscreenBuffering",
       "crashReport",
@@ -3145,6 +3185,7 @@ mitto_bindings_interfaces = [
       "navigator",
       "origin",
       "isSecureContext",
+      "crossOriginIsolated",
       "performance",
       "crypto",
       "scheduler",

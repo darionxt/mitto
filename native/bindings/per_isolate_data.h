@@ -1,5 +1,5 @@
-// What the bindings keep for a Page's isolate: its features, its time origin,
-// the template of each interface, made once, the dictionaries being converted
+// What the bindings keep for a Page's isolate: its features, the template of
+// each interface, made once, the dictionaries being converted
 // and how to make a DOMException.
 //
 // Upstream: third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h
@@ -18,7 +18,6 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/time/time.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/wrapper_type_info.h"
 #include "v8/include/v8-exception.h"
@@ -29,6 +28,7 @@
 namespace mitto::bindings {
 
 struct ExposedConstructInfo;
+class ReceiverRealmScope;
 class ScriptWrappable;
 
 class PerIsolateData {
@@ -118,13 +118,6 @@ class PerIsolateData {
 
   const RuntimeFeatureSet& features() const { return features_; }
 
-  // What DOMHighResTimeStamp counts from: when the Page started, or the start
-  // of the navigation that loaded its document.
-  base::TimeTicks time_origin() const { return time_origin_; }
-  void set_time_origin(base::TimeTicks time_origin) {
-    time_origin_ = time_origin;
-  }
-
   // Where ReportException() sends what it reports. Without one, it goes to
   // standard error.
   const ExceptionReporter& exception_reporter() const {
@@ -134,14 +127,17 @@ class PerIsolateData {
     exception_reporter_ = std::move(reporter);
   }
 
-  // Whether the Page's context is a secure context, which decides whether it
-  // gets the members that Web IDL's [SecureContext] puts behind one. Each
-  // document's origin decides it for the context made for that document, and
-  // a Session's Page's first, about:blank with an opaque origin, is none. The
-  // Page program's command line keeps it, as a file: page is one.
-  bool secure_context() const { return secure_context_; }
-  void set_secure_context(bool secure_context) {
-    secure_context_ = secure_context;
+  // Whether the isolate's current context is a secure context, which decides
+  // whether it gets the members that Web IDL's [SecureContext] puts behind
+  // one (IsSecureContext() in per_context_data.h).
+  bool secure_context() const;
+
+  // The innermost ReceiverRealmScope, or null.
+  ReceiverRealmScope* receiver_realm_scope() const {
+    return receiver_realm_scope_;
+  }
+  void set_receiver_realm_scope(ReceiverRealmScope* scope) {
+    receiver_realm_scope_ = scope;
   }
 
   // Whether the isolate's contexts are a window's, as a Page's main thread
@@ -235,9 +231,8 @@ class PerIsolateData {
 
   const raw_ptr<v8::Isolate> isolate_;
   const RuntimeFeatureSet features_;
-  base::TimeTicks time_origin_;
   ExceptionReporter exception_reporter_;
-  bool secure_context_ = true;
+  raw_ptr<ReceiverRealmScope> receiver_realm_scope_ = nullptr;
   bool window_ = true;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::Template>> templates_;
   v8::Eternal<v8::ObjectTemplate> holder_template_;

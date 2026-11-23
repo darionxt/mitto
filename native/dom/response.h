@@ -94,6 +94,7 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
  private:
   // BodyMixin:
   BodyStreamBuffer* BodyBuffer() const override;
+  std::string MimeType() const override;
 
   ResponseType type_ = ResponseType::kDefault;
   int32_t status_ = 200;

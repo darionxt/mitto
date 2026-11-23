@@ -23,6 +23,7 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/page_messages.h"
@@ -200,11 +201,49 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   const PageStart& Start() const { return start_; }
   const PageConnection& Connection() const { return connection_; }
 
+  // What the context's DOMHighResTimeStamps count from: the start of the
+  // navigation that loaded a window's document, or when a context was made
+  // for about:blank or a worker. Each context of a Page has its own, as Blink
+  // keeps one for each window's and worker's performance timeline.
+  void SetTimeOrigin(base::TimeTicks time_origin) {
+    time_origin_ = time_origin;
+  }
+  base::TimeTicks TimeOrigin() const { return time_origin_; }
+
+  // Whether the context is a secure context, which its document's origin
+  // decides, or a worker's creator, as Blink's
+  // ExecutionContext::IsSecureContext() says. The Page sets it on the context
+  // too, before the context installs what it decides
+  // (bindings::SetSecureContext()).
+  void SetSecureContext(bool secure) { secure_context_ = secure; }
+  bool IsSecureContext() const { return secure_context_; }
+
   // The ID by which the Page names the context to its Session, which each
   // message of the context carries (page_messages.h). kNoDocument for a
   // context that no Session loaded, as in the Page program given a script.
   void SetContextId(uint64_t id) { context_id_ = id; }
   uint64_t ContextId() const { return context_id_; }
+
+  // Blink's CrossOriginIsolatedCapability(): whether the context is
+  // cross-origin isolated, which WindowOrWorkerGlobalScope's
+  // crossOriginIsolated gives. A window's is its agent's, which the Session
+  // decides for each document as Chrome's browser decides its agent cluster;
+  // a dedicated worker's its creator's, but for a worker of a data: URL,
+  // which never is. The Page sets it once its global object has a context,
+  // before what the context decides is installed.
+  bool CrossOriginIsolatedCapability() const {
+    return cross_origin_isolated_capability_;
+  }
+  void SetCrossOriginIsolatedCapability(bool capability) {
+    cross_origin_isolated_capability_ = capability;
+  }
+  // ExecutionContext::SharedArrayBufferTransferAllowed(): whether the context
+  // has SharedArrayBuffer and may post one. Chrome allows it beside
+  // cross-origin isolation only through the reverse origin trial and the
+  // enterprise policy, which a Page has neither of.
+  bool SharedArrayBufferTransferAllowed() const {
+    return CrossOriginIsolatedCapability();
+  }
 
   // Where the console messages of the DOM go, such as a warning of Blink's.
   // Without one, nowhere.
@@ -226,6 +265,11 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   PageStart start_;
   PageConnection connection_;
   uint64_t context_id_ = kNoDocument;
+  base::TimeTicks time_origin_ = base::TimeTicks::Now();
+  // A context that nothing says otherwise of is one, as the Page program's
+  // command line makes, as a file: page is.
+  bool secure_context_ = true;
+  bool cross_origin_isolated_capability_ = false;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
   raw_ptr<WindowTasks> tasks_ = nullptr;

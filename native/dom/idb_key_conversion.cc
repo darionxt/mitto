@@ -18,7 +18,11 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_split.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/v8_blob.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/bindings/v8_file.h"
+#include "mitto/dom/blob.h"
+#include "mitto/dom/file.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-container.h"
@@ -204,11 +208,24 @@ std::vector<std::u16string> ParseKeyPath(std::u16string_view key_path) {
 }
 
 // Blink's IsImplicitProperty(): a property that a key path reads, but that a
-// clone of the value does not hold as its own, so that a key cannot go there.
-// Blink adds a Blob's size and type and a File's name, lastModified and
-// lastModifiedDate, which no value has in the Runtime.
-bool IsImplicitProperty(v8::Local<v8::Value> value, std::u16string_view name) {
-  return (value->IsString() || value->IsArray()) && name == u"length";
+// clone of the value does not hold as its own, so that a key cannot go there:
+// a string's or an array's length, a Blob's size and type, and a File's name,
+// lastModified and lastModifiedDate. A File is a Blob first, as in Blink, so
+// only its size and type count.
+bool IsImplicitProperty(v8::Isolate* isolate,
+                        v8::Local<v8::Value> value,
+                        std::u16string_view name) {
+  if ((value->IsString() || value->IsArray()) && name == u"length") {
+    return true;
+  }
+  if (bindings::V8Blob::ToWrappable(isolate, value)) {
+    return name == u"size" || name == u"type";
+  }
+  if (bindings::V8File::ToWrappable(isolate, value)) {
+    return name == u"name" || name == u"lastModified" ||
+           name == u"lastModifiedDate";
+  }
+  return false;
 }
 
 // Blink's CreateIDBKeyFromValueAndKeyPath() of a string, `key_path`, a valid
@@ -250,8 +267,33 @@ bool CreateIDBKeyFromValueAndKeyPathString(
     }
     const v8::Local<v8::Object> object = value.As<v8::Object>();
 
-    // Blink reads a Blob's size and type, and a File's name, lastModified and
-    // lastModifiedDate, here. The Runtime has neither.
+    // A Blob's size and type, and a File's name, lastModified and
+    // lastModifiedDate, which Blink reads directly too.
+    if (Blob* const blob = bindings::V8Blob::ToWrappable(isolate, object)) {
+      if (element == u"size") {
+        value = v8::Number::New(isolate, static_cast<double>(blob->Size()));
+        continue;
+      }
+      if (element == u"type") {
+        value = bindings::ToV8String(isolate, blob->Type());
+        continue;
+      }
+    }
+    if (File* const file = bindings::V8File::ToWrappable(isolate, object)) {
+      if (element == u"name") {
+        value = bindings::ToV8String(isolate, file->Name());
+        continue;
+      }
+      if (element == u"lastModified") {
+        value =
+            v8::Number::New(isolate, static_cast<double>(file->LastModified()));
+        continue;
+      }
+      if (element == u"lastModifiedDate") {
+        value = file->LastModifiedDate();
+        continue;
+      }
+    }
 
     const v8::Local<v8::String> property =
         bindings::ToV8String(isolate, element);
@@ -667,8 +709,9 @@ bool CanInjectIDBKeyIntoScriptValue(v8::Isolate* isolate,
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   for (const std::u16string& element : elements) {
-    // A string's or an array's length cannot be overwritten.
-    if (IsImplicitProperty(current, element)) {
+    // A string's or an array's length, or a blob's own members, cannot be
+    // overwritten.
+    if (IsImplicitProperty(isolate, current, element)) {
       return false;
     }
     // Nor can a value that is not an object take a property.
@@ -721,7 +764,7 @@ bool InjectV8KeyIntoV8Value(v8::Isolate* isolate,
       return false;
     }
     const std::u16string& element = elements[i];
-    DCHECK(!IsImplicitProperty(value, element));
+    DCHECK(!IsImplicitProperty(isolate, value, element));
     const v8::Local<v8::Object> object = value.As<v8::Object>();
     const v8::Local<v8::String> property =
         bindings::ToV8String(isolate, element);
@@ -744,9 +787,9 @@ bool InjectV8KeyIntoV8Value(v8::Isolate* isolate,
     }
   }
 
-  // A string's or an array's length needs no key put in: the caller may check
-  // that the value matches its key instead.
-  if (IsImplicitProperty(value, elements.back())) {
+  // A string's or an array's length, or a blob's own members, need no key put
+  // in: the caller may check that the value matches its key instead.
+  if (IsImplicitProperty(isolate, value, elements.back())) {
     return true;
   }
 

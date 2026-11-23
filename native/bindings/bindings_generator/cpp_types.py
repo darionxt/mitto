@@ -238,9 +238,6 @@ class TypeMapper:
         kind = idl_type.kind
         if kind is TypeKind.BOOLEAN and not idl_type.nullable:
             return "bool"
-        if kind is TypeKind.INTEGER and idl_type.name in _64_BIT_INTEGERS and "Clamp" in idl_type.extended_attributes:
-            # FromV8ClampedInteger() converts the integers of 32 bits or fewer only.
-            raise self._refuse(idl_type, where, "an argument")
         if kind is TypeKind.INTEGER and idl_type.name in _CONVERTED_INTEGERS:
             # Empty for null.
             return f"std::optional<{_INTEGERS[idl_type.name]}>" if idl_type.nullable else _INTEGERS[idl_type.name]
@@ -337,6 +334,7 @@ class TypeMapper:
                 TypeKind.FLOATING_POINT,
                 TypeKind.INTEGER,
                 TypeKind.CALLBACK_INTERFACE,
+                TypeKind.OBJECT,
             )
             or (kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES)
             or self._is_union_of_classes(idl_type)
@@ -365,6 +363,9 @@ class TypeMapper:
             # The class makes the frozen array, as Blink's ToV8Traits<IDLArray> do, and keeps it where Blink keeps the
             # one that a page reads again, such as for [CachedAttribute].
             return "v8::Local<v8::Value>"
+        if kind is TypeKind.OBJECT and idl_type.nullable:
+            # The object, or null, which the class makes, as File's lastModifiedDate gives a Date.
+            return "v8::Local<v8::Value>"
         if kind is TypeKind.OBJECT:
             # The class makes the object, as Blink's class makes a ScriptObject.
             return "v8::Local<v8::Object>"
@@ -376,6 +377,9 @@ class TypeMapper:
             # The view, which the class makes or took, as Blink returns a NotShared<T>, and empty for null, as
             # ReadableStreamBYOBRequest's view gives it.
             return f"v8::Local<v8::{idl_type.name}>"
+        if kind is TypeKind.BUFFER_SOURCE and idl_type.name == "ArrayBuffer" and not idl_type.nullable:
+            # The buffer, which the class makes, as FileReaderSync's readAsArrayBuffer() gives a DOMArrayBuffer.
+            return "v8::Local<v8::ArrayBuffer>"
         if kind is TypeKind.ENUMERATION:
             # The value as a page sees it, one of the enumeration's strings, where Blink returns its V8 enum class.
             return "std::u16string"
@@ -392,7 +396,7 @@ class TypeMapper:
             return "bindings::ScriptWrappable*"
         if self._is_union_of_values(idl_type):
             # The value of one of its members, or null, which the class makes, as Blink's class makes the union's Ret
-            # for HTMLElement's hidden.
+            # for HTMLElement's hidden, or FileReader's result, a string or an ArrayBuffer.
             return "v8::Local<v8::Value>"
         if kind is TypeKind.INTERFACE and idl_type.name in self._implemented:
             self.used_interfaces.add(idl_type.name)
@@ -485,9 +489,10 @@ class TypeMapper:
 
     @staticmethod
     def _is_union_of_values(idl_type: IdlType) -> bool:
-        """Whether the type is a union whose members are all booleans, numbers or strings."""
+        """Whether the type is a union whose members are all booleans, numbers, strings or buffer sources."""
         return idl_type.kind is TypeKind.UNION and all(
-            member.kind in (TypeKind.BOOLEAN, TypeKind.INTEGER, TypeKind.FLOATING_POINT, TypeKind.STRING)
+            member.kind
+            in (TypeKind.BOOLEAN, TypeKind.INTEGER, TypeKind.FLOATING_POINT, TypeKind.STRING, TypeKind.BUFFER_SOURCE)
             and not member.nullable
             for member in idl_type.members
         )

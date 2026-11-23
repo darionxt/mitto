@@ -721,9 +721,11 @@ def test_an_enforce_range_integer_and_an_item_of_a_sequence_convert_as_blinks_do
     # An item has NativeValue()'s message, as AbortSignal.any([{}]) throws in Chrome.
     items = "\n".join(types.from_v8(signals, "info[0]", "list", Site(fail="return;", argument_index=0), "a"))
     assert 'ExceptionMessages::FailedToConvertJSValue("AbortSignal")' in items
-    # [Clamp] converts the integers of 32 bits or fewer only, so a 64-bit one with it is refused.
-    with pytest.raises(UnhandledError, match=r"does not handle an argument of type unsigned long long"):
-        types.argument_type(dataclasses.replace(milliseconds, extended_attributes=_extended("Clamp")), "a")
+    # [Clamp] on a 64-bit integer, as Blob.slice()'s arguments have it, rounds and clamps as Blink's ToInt64Slow() does.
+    start = IdlType(TypeKind.INTEGER, "long long", extended_attributes=_extended("Clamp"))
+    assert types.argument_type(start, "a") == "int64_t"
+    clamped = "\n".join(types.from_v8(start, "info[0]", "start", Site(fail="return;", argument_index=0), "a"))
+    assert "if (!FromV8ClampedInteger(isolate, info[0], &start)) {" in clamped
 
 
 def test_the_cpp_types_of_what_text_encoder_and_text_decoder_take_and_give() -> None:
@@ -1101,6 +1103,26 @@ def _collection(*specials: str, unenumerable: bool = True) -> Interface:
     )
 
 
+def test_a_global_object_s_indexed_getter_is_on_its_template_and_its_named_ones_are_refused() -> None:
+    # Window's `getter Window (unsigned long index)`, its child frames, which bind_gen puts on the global object's
+    # instance template; its named properties are its named properties object's, WindowProperties.
+    implemented = ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("length", "item", "indexed getter"))
+    indexed = dataclasses.replace(_collection("indexed getter"), extended_attributes=_extended("Global"))
+
+    source = _bindings_of(indexed, implemented)
+
+    assert "HolderOf(isolate, holder)->Item(index)" in source
+    assert "InstallIndexedAndNamedProperties(isolate, instance_template, kIndexedAndNamedProperties);" in source
+    named = dataclasses.replace(_collection("indexed getter", "named getter"), extended_attributes=_extended("Global"))
+    with pytest.raises(UnhandledError, match=r"does not handle the named properties of a global object$"):
+        _bindings_of(
+            named,
+            ImplementedInterface(
+                "Thing", "mitto/dom/thing.h", implemented=("length", "item", "indexed getter", "named getter")
+            ),
+        )
+
+
 def _bindings_of(
     interface: Interface, implemented: ImplementedInterface, dictionaries: dict[str, Dictionary] | None = None
 ) -> str:
@@ -1245,6 +1267,54 @@ def test_overloads_of_a_sequence_and_a_dictionary_choose_neither_for_a_primitive
     assert body.index("IsIterableObject") < body.index("Overload resolution failed.") < body.index("Options arg2")
 
 
+def test_overloads_of_two_interfaces_choose_by_the_object_and_fail_for_anything_else() -> None:
+    # URL's createObjectURL(Blob blob) and createObjectURL(MediaSource source), both of which have classes.
+    string = IdlType(TypeKind.STRING, "DOMString")
+    overloads = tuple(
+        Operation(
+            "make",
+            (Argument("source", IdlType(TypeKind.INTERFACE, name), False, False, None),),
+            string,
+            False,
+            ExtendedAttributes(),
+            ALWAYS,
+        )
+        for name in ("Blob", "Source")
+    )
+    thing = _interface(operation_groups=(OperationGroup("make", overloads, False, 1, ExtendedAttributes(), ALWAYS),))
+    blob = _interface(name="Blob", tag=3, max_subclass_tag=3)
+    source = _interface(name="Source", tag=4, max_subclass_tag=4)
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Blob", "Source", "Thing", "Window"),
+        exposed=tuple(
+            ExposedConstruct(name, "interface", name, ALWAYS) for name in ("Blob", "Source", "Thing", "Window")
+        ),
+    )
+    definitions = Definitions(
+        {"Thing": thing, "Blob": blob, "Source": source, "Window": window}, {}, {}, {}, frozenset()
+    )
+    files = write_bindings(
+        definitions,
+        [],
+        [
+            ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("make",)),
+            ImplementedInterface("Blob", "mitto/dom/blob.h"),
+            ImplementedInterface("Source", "mitto/dom/source.h"),
+            ImplementedInterface("Window", "mitto/dom/window.h"),
+        ],
+    )
+
+    body = files["v8_thing.cc"][files["v8_thing.cc"].index("void MakeOperationCallback") :]
+    # bind_gen's dispatcher: a Blob takes the first, a Source the second, and anything else, null among it, fails.
+    assert "if (V8Blob::ToWrappable(isolate, info[0])) {" in body
+    assert "if (!V8Source::ToWrappable(isolate, info[0])) {" in body
+    assert body.index("V8Blob::ToWrappable") < body.index("Overload resolution failed.") < body.index("mitto::Source*")
+
+
 def test_overloads_with_optional_arguments_choose_by_count_then_by_type() -> None:
     # Window's postMessage(message, USVString targetOrigin, optional sequence<object> transfer = []) and
     # postMessage(message, optional options = {}).
@@ -1317,6 +1387,28 @@ def test_a_class_stringifier_gives_its_attributes_getter() -> None:
     callback = source[source.index("void ToStringOperationCallback") :]
     assert "impl->Value()" in callback[: callback.index("\n}")]
     assert '"toString", kInterfaceName, ToStringOperationCallback, 0' in source
+
+
+def test_a_call_with_a_receiver_makes_the_wrappers_it_returns_in_the_receivers_realm() -> None:
+    # bind_gen converts a return value with the receiver's ScriptState::ForRelevantRealm(), and a static member's,
+    # which has no receiver, with the current realm's.
+    thing = IdlType(TypeKind.INTERFACE, "Thing")
+    interface = _interface(
+        attributes=(
+            Attribute("next", thing, True, False, ExtendedAttributes(), ALWAYS),
+            Attribute("first", thing, True, True, ExtendedAttributes(), ALWAYS),
+        )
+    )
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    getter = source[source.index("void NextAttributeGetCallback") :]
+    getter = getter[: getter.index("\n}")]
+    scope = "const ReceiverRealmScope receiver_realm(isolate, info.This());"
+    assert getter.index("if (!impl) {") < getter.index(scope) < getter.index("impl->Next()")
+    static_getter = source[source.index("void FirstAttributeGetCallback") :]
+    assert "ReceiverRealmScope" not in static_getter[: static_getter.index("\n}")]
+    assert '#include "mitto/bindings/per_context_data.h"' in source
 
 
 def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None:

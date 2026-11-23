@@ -1,13 +1,23 @@
-// The Page's one frame, its top-level one, on the Page program's main thread:
-// the loader of its document and that of the navigation that waits for its
-// response, as Blink's FrameLoader and content's RenderFrameImpl keep them.
-// It is each window's NavigationClient: a navigation that a document starts
-// goes to the Session as a request of Kind navigation, and its response,
-// unless it has none, takes the place of the document once the old one has
-// unloaded, as Blink's FrameLoader::CommitNavigation() has it.
+// A frame of a Page, on the Page program's main thread: its window's context,
+// with what the window runs in it, and the loader of its document and that of
+// the navigation that waits for its response, as Blink's LocalFrame,
+// LocalWindowProxy and FrameLoader, and content's RenderFrameImpl, keep them.
+// Each document that the frame loads gets a window in a context of its own,
+// whose timers, idle callbacks, animation frames, fetches, tasks and workers
+// the frame keeps until the next document takes its place.
 //
-// Upstream: third_party/blink/renderer/core/loader/frame_loader.cc
+// It is each of its windows' NavigationClient: a navigation that a document
+// starts goes to the Session as a request of Kind navigation, and its
+// response, unless it has none, takes the place of the document once the old
+// one has unloaded, as Blink's FrameLoader::CommitNavigation() has it.
+//
+// A Page's frames make a tree: the top-level frame, which the Page opens
+// with, and a child for each iframe or frame element of a frame's document,
+// which holds the child as long as the element is in that document.
+//
 // Upstream: third_party/blink/renderer/core/frame/local_frame.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
+// Upstream: third_party/blink/renderer/core/loader/frame_loader.cc
 // Upstream: content/renderer/render_frame_impl.cc
 
 #ifndef MITTO_PAGE_PAGE_FRAME_H_
@@ -18,40 +28,94 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "mitto/dom/document_parser.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/navigation_client.h"
-#include "mitto/page/page_reporter.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
+#include "url/origin.h"
+#include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-persistent-handle.h"
 
 namespace mitto {
 
+class AnimationFrameController;
+class CacheStorageHost;
+struct ChromeObjectData;
+class DOMTimerCoordinator;
 class Document;
+class DocumentLoadTiming;
 class DocumentLoader;
-class PageRequests;
+class IdleTaskController;
+class PageFetcher;
+class HTMLFrameOwnerElement;
+class IndexedDbHost;
+class PageWorkerStarter;
 class ScriptRunner;
-class SessionCookieJar;
+class SessionCacheStorage;
 class SessionHistory;
+class SessionIndexedDb;
+class SessionStorageBuckets;
+class StorageBucketHost;
+class Window;
+class WindowTasks;
 
-class PageFrame final : public NavigationClient {
+class PageFrame final : public NavigationClient, public Frame {
  public:
+  // A frame of the Page that `runner` runs, whose ID in the Page is `id`: the
+  // top-level one, or for a `parent` the child that `owner` holds, named
+  // `name`.
   PageFrame(ScriptRunner& runner,
-            PageRequests& requests,
-            SendFrame send,
-            SessionCookieJar& cookie_jar,
-            SessionHistory& history);
+            uint64_t id,
+            PageFrame* parent = nullptr,
+            HTMLFrameOwnerElement* owner = nullptr,
+            std::u16string name = std::u16string());
 
   PageFrame(const PageFrame&) = delete;
   PageFrame& operator=(const PageFrame&) = delete;
 
   ~PageFrame() override;
 
+  // The frame's ID in the Page, which it keeps as long as it lives and no
+  // other frame of the Page ever has, as Chrome's FrameTreeNode ID.
+  uint64_t id() const { return id_; }
+
+  // Makes the frame's first window, whose document is an initial about:blank,
+  // as Blink makes a frame's, and whose navigator.connection gives
+  // `connection`: a top-level frame's has an opaque origin, as a tab's has,
+  // and a child's its parent's document's origin.
+  void Start(const PageConnection& connection);
+
+  // The context of the frame's current window, or an empty one before
+  // Start().
+  v8::Local<v8::Context> context() const;
+
   // Has the navigation that the Session makes when the Page opens load the
   // frame's document, if it makes one.
   void ExpectOpeningNavigation();
+
+  // Frame:
+  Window* DomWindow() const override;
+  Frame* Parent() const override;
+  size_t ChildCount() const override;
+  Frame* ChildAt(size_t index) const override;
+  HTMLFrameOwnerElement* Owner() const override;
+  const std::u16string& Name() const override;
+  void SetName(std::u16string name) override;
+  bool IsLoading() const override;
+  Frame* CreateChildFrame(HTMLFrameOwnerElement& owner,
+                          std::u16string name) override;
+  void NavigateFromOwner(const GURL& url) override;
+  void Detach() override;
 
   // NavigationClient:
   void BeginNavigation(const NavigationRequest& request) override;
@@ -69,16 +133,21 @@ class PageFrame final : public NavigationClient {
   // The response of `loader`'s navigation has come: the frame's document
   // stops loading and unloads, and a new context's document at `url` takes
   // its place, which this returns: an XMLDocument of `xml_content_type`
-  // where one is given. `loader` becomes the document's.
+  // where one is given, in a cross-origin isolated agent if
+  // `cross_origin_isolated`. `loader` becomes the document's.
   Document& CommitNavigation(
       DocumentLoader& loader,
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
+      bool cross_origin_isolated,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
   // `loader`'s navigation ended with no response, and the frame keeps its
   // document. `loader` goes.
   void NavigationEndedWithoutDocument(DocumentLoader& loader);
+  // How the current window's document loads, which its document's loading
+  // fills in, and performance.timing and window.chrome read.
+  DocumentLoadTiming& document_load_timing();
 
  private:
   // Takes `loader` from where the frame holds it, as the opening navigation's
@@ -89,6 +158,11 @@ class PageFrame final : public NavigationClient {
   // a navigation that commits meanwhile does not change, and whose traversal
   // a later go() counts from until the history moves.
   void QueueTraversal(size_t index, std::optional<std::u16string> key);
+  // Runs `task` from a later task of the DOM manipulation task source, in the
+  // frame's window of that time, as Chrome's browser answers the frame,
+  // unless the frame has gone.
+  void PostHistoryTask(base::OnceClosure task);
+  void RunInCurrentWindow(base::OnceClosure task);
   // The task of a traversal to the entry of item `item_sequence_number`,
   // which goes nowhere if a new entry has pruned it since, and cancels the
   // traverseTo() of `key` then.
@@ -102,12 +176,111 @@ class PageFrame final : public NavigationClient {
   // whether it went there or to the document's navigate event, which may
   // cancel it.
   bool GoToIndex(size_t index);
+  // The tab's session history, which the top-level frame keeps entries in,
+  // and the top-level frame, which a child's traversals go through until
+  // frames have entries of their own.
+  SessionHistory& history() const;
+  PageFrame& Top();
+
+  // Makes a new context, whose window has an empty document at `url`, the
+  // response of navigation `navigation`, in place of the current one, tells
+  // the Session of it, and returns the document. The old window's timers,
+  // idle callbacks, animation frames, fetches, tasks and workers stop with
+  // its context. The new window's performance.timeOrigin is
+  // `navigation_start`, and its navigator.connection gives `connection`, and
+  // its agent is cross-origin isolated if `cross_origin_isolated`. With
+  // `xml_content_type`, the document is an XMLDocument of that MIME type, as
+  // Blink's DocumentInit makes one for an XML response, and otherwise an
+  // HTMLDocument.
+  Document& CommitDocument(
+      uint64_t navigation,
+      const GURL& url,
+      base::TimeTicks navigation_start,
+      const PageConnection& connection,
+      bool cross_origin_isolated,
+      const std::optional<std::u16string>& xml_content_type);
+  // Makes a window's context, with what Chrome's renderer adds to it, whose
+  // time origin is `time_origin` and whose document's origin is `origin`,
+  // which decides whether it is a secure context and its security token, in
+  // a cross-origin isolated agent if `cross_origin_isolated`.
+  v8::Local<v8::Context> NewContext(base::TimeTicks time_origin,
+                                    const url::Origin& origin,
+                                    bool cross_origin_isolated = false);
+  // Gives the current context's window its timers, what its fetch() goes
+  // through, and what it reads of the browser and the machine, with
+  // `connection` for its document, and the ID of its document, which it tells
+  // the Session of as made of `source`, the response of `navigation` for one
+  // of a navigation.
+  void AttachWindow(const PageConnection& connection,
+                    PageDocumentSource source,
+                    uint64_t navigation);
+  // What goes with the current window's context: its timers, idle callbacks,
+  // animation frames, fetches, tasks and workers, and the inspector's and
+  // window.chrome's hold on it. What runs them stops, and goes with the frame
+  // or once the next window's takes its place, as one of them may be what
+  // ended the context.
+  void DetachWindow();
+  // The frame's Cache API, IndexedDB and Storage Buckets: its own for a child
+  // frame, the runner's for the top-level frame.
+  CacheStorageHost* cache_storage_host() const;
+  IndexedDbHost* indexed_db_host() const;
+  StorageBucketHost* storage_bucket_host() const;
+  // Gives `document`, of an HTTP or HTTPS origin, the frame's storage.
+  void GiveStorage(Document& document) const;
+  // The frame's children go, each as Detach() has it, when the frame goes or
+  // its document goes and its elements with it.
+  void DetachChildren();
+  // The child frame `child` has gone: this hands it to the runner, which lets
+  // go of it once the task ends.
+  void RemoveChild(PageFrame& child);
+  // RenderFrameImpl::SynchronouslyCommitAboutBlankForBug778318(): the first
+  // navigation of a frame's initial about:blank to about:blank, from a
+  // document of its origin, commits a new about:blank document at `url` in the
+  // same window before it returns, which loads at once, so that its load
+  // event and its element's fire then. Chrome keeps the document's token, so
+  // the Session knows it by the initial document's ID.
+  void CommitAboutBlankSynchronously(const GURL& url);
 
   const raw_ref<ScriptRunner> runner_;
-  const raw_ref<PageRequests> requests_;
-  const SendFrame send_;
-  const raw_ref<SessionCookieJar> cookie_jar_;
-  const raw_ref<SessionHistory> history_;
+  const uint64_t id_;
+  const raw_ptr<PageFrame> parent_;
+  // The element that holds the frame in its parent's document.
+  cppgc::WeakPersistent<HTMLFrameOwnerElement> owner_;
+  std::u16string name_;
+  // The frame's children, in the order they were made.
+  std::vector<std::unique_ptr<PageFrame>> children_;
+  v8::Global<v8::Context> context_;
+  // The window of the frame's current context.
+  cppgc::Persistent<Window> window_;
+  // Whether a navigation of the frame has committed, or started, since its
+  // initial about:blank, which only its first may replace synchronously.
+  bool navigated_ = false;
+  // Whether Detach() has started, whose unload events may remove the element
+  // again, and whether the frame's children and window have started to go
+  // after them.
+  bool detaching_ = false;
+  bool going_ = false;
+  // Whether DetachChildren() runs, whose children's going checks nothing of
+  // the parent's load.
+  bool detaching_children_ = false;
+  // What the parser of a synchronously committed about:blank reads: nothing.
+  std::unique_ptr<DocumentParser::Client> empty_body_;
+  // What the current window runs in its context, which stops with it.
+  std::unique_ptr<DOMTimerCoordinator> timers_;
+  std::unique_ptr<IdleTaskController> idle_tasks_;
+  std::unique_ptr<AnimationFrameController> animation_frames_;
+  std::unique_ptr<PageFetcher> fetcher_;
+  std::unique_ptr<WindowTasks> window_tasks_;
+  std::unique_ptr<PageWorkerStarter> worker_starter_;
+  // A child frame's own Cache API, IndexedDB and Storage Buckets, which ask
+  // the Session as the frame's current document, as each of Blink's frames
+  // has remotes of its own. The top-level frame's are the runner's.
+  std::unique_ptr<SessionCacheStorage> own_cache_storage_;
+  std::unique_ptr<SessionIndexedDb> own_indexed_db_;
+  std::unique_ptr<SessionStorageBuckets> own_storage_buckets_;
+  // What window.chrome of the current window reads, which the runner keeps
+  // as long as the Page, for a callback of a window that has gone.
+  raw_ptr<ChromeObjectData> chrome_object_data_ = nullptr;
   // The loader of the frame's document, none for about:blank.
   std::unique_ptr<DocumentLoader> current_;
   // The navigation that the Session makes when the Page opens, until it ends.

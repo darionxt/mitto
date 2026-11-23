@@ -1,11 +1,13 @@
 #include "mitto/dom/event.h"
 
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_event.h"
 #include "mitto/dom/event_path.h"
 #include "mitto/dom/event_target.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
@@ -114,11 +116,16 @@ void Event::PreventDefault() {
 }
 
 double Event::TimeStamp() const {
-  // Blink's Event::timeStamp(): the time it was made, from the window's time
-  // origin, through the performance timeline's clamp, so that it falls
-  // between two calls of performance.now() around its making.
+  // Blink's Event::timeStamp(): the time it was made, from the time origin of
+  // the event's relevant realm, whose ScriptState the getter is called with,
+  // through the performance timeline's clamp, so that it falls between two
+  // calls of performance.now() around its making. A frame's event read with
+  // another frame's getter counts from its own frame's time origin.
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  ExecutionContext* const relevant = ExecutionContext::From(
+      isolate, bindings::ReceiverRealmScope::CreationContext(isolate));
   return Performance::MonotonicTimeToDOMHighResTimeStamp(
-      bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->time_origin(),
+      (relevant ? *relevant : ExecutionContext::Current()).TimeOrigin(),
       created_);
 }
 
