@@ -56,6 +56,10 @@ namespace {
 // which it drops: kNavigationDuplicateDetectionTimeWindow.
 constexpr base::TimeDelta kDuplicateWindow = base::Milliseconds(3000);
 
+// What a traversal request's payload holds beside its URL: the document's ID,
+// the number and the record, each a 64-bit number, and a byte of flags.
+constexpr size_t kTraversalOverhead = 3 * 8 + 1;
+
 // A parser's client that gives it no body, for a document that has none, as
 // an about:blank that a frame commits synchronously has.
 class EmptyBody final : public DocumentParser::Client {
@@ -402,6 +406,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   provisional_ = std::make_unique<DocumentLoader>(runner_->requests(),
                                                   runner_->send(), *this);
   traversal_item_.reset();
+  traversal_record_.reset();
   provisional_request_ = request;
   provisional_start_ = now;
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
@@ -568,6 +573,12 @@ void PageFrame::GoToItem(int64_t item_sequence_number,
   if (--waiting_traversals_ == 0) {
     pending_traversal_index_.reset();
   }
+  // ShouldIgnoreIncomingRendererRequest(): the browser takes a traversal
+  // that the page asked for as it comes, and ignores it while one to another
+  // document that an earlier ask started waits for its response.
+  if (TraversalWaits()) {
+    return;
+  }
   const std::optional<size_t> index =
       history().IndexOfItem(item_sequence_number);
   if (!index) {
@@ -608,18 +619,26 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   traversal.record = entry.record();
   traversal.same_document_entry = entry.same_document_entry();
   traversal.url = target.url.spec();
-  // The tab's initial entry holds no navigation, and no traversal goes there.
-  if (traversal.record == kNoDocument) {
+  // The tab's initial entry holds no navigation, and no traversal goes there,
+  // nor to a URL that a Page message cannot carry, which no Chrome would have.
+  if (traversal.record == kNoDocument ||
+      traversal.url.size() > kMaxPayloadSize - kTraversalOverhead) {
     return false;
   }
+  // The Session keeps the record while the traversal needs it, though a
+  // listener's new entry prunes the entry meanwhile, as Chrome's request
+  // holds its FrameNavigationEntry.
+  traversal_record_ = traversal.record;
   Window& window = Window::Current();
   Document& document = window.GetDocument();
   if (document.PageDismissalEventBeingDispatched()) {
+    traversal_record_.reset();
     return false;
   }
   // Navigator::Navigate(): the browser runs the document's beforeunload
   // first, which a page without the user's activation cannot cancel.
   if (!document.DispatchBeforeUnloadEvent() || !window.HasContext()) {
+    traversal_record_.reset();
     return false;
   }
   // MaybeDispatchNavigateEventForCrossDocumentTraversal(): for an entry of
@@ -633,6 +652,7 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
     window.Navigation()->DispatchNavigateEvent(params);
   }
   if (!window.HasContext()) {
+    traversal_record_.reset();
     return false;
   }
   document.Abort();
@@ -657,6 +677,9 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
 void PageFrame::ReleaseRecords(uint64_t live_document) {
   std::set<uint64_t> held = history().RecordsHeld();
   held.insert(live_document);
+  if (traversal_record_) {
+    held.insert(*traversal_record_);
+  }
   std::vector<uint64_t> released;
   for (const uint64_t record : held_records_) {
     if (!held.contains(record)) {
@@ -698,6 +721,7 @@ void PageFrame::StopAllLoaders() {
     provisional_.reset();
   }
   traversal_item_.reset();
+  traversal_record_.reset();
 }
 
 Document& PageFrame::CommitNavigation(
@@ -767,21 +791,27 @@ Document& PageFrame::CommitNavigation(
   // A traversal's document takes the entry's own item, its state, key, ID and
   // scrollRestoration among it, at the URL its response came from.
   HistoryItem item;
+  int64_t traversed_item_sequence_number = 0;
   if (traversal) {
-    item = *std::move(traversal_item_);
-    item.url = url;
+    traversed_item_sequence_number = traversal_item_->item_sequence_number;
+    // A redirect leaves nothing of the entry for the response: no state, and
+    // a new key, ID and document, as Chrome's NavigationRequest resets the
+    // entry's page state on any redirect.
+    item = url == traversal_item_->url ? *std::move(traversal_item_)
+                                       : HistoryItem::Create(url);
     // Whether it protects its URL is the new document's, as its response's
     // policy says once it commits, as for any new document in Chrome.
     item.protect_url_in_navigation_api = false;
     traversal_item_.reset();
+    traversal_record_.reset();
   } else {
     item = HistoryItem::ForCommit(
         old_history_item ? &*old_history_item : nullptr, url, type,
         HistoryNavigationType::kDifferentDocument);
   }
   Window& window = *document.DefaultView();
-  Navigation::EntryArrays arrays =
-      history().DidCommitNavigation(item, type, window.DocumentId());
+  Navigation::EntryArrays arrays = history().DidCommitNavigation(
+      item, type, window.DocumentId(), traversed_item_sequence_number);
   // The new document's entries come from the history as it is, without the
   // entries that it dropped, which no other document shows.
   history().TakeRemovedKeys();
@@ -794,6 +824,7 @@ Document& PageFrame::CommitNavigation(
 void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader) {
   if (provisional_.get() == &loader) {
     traversal_item_.reset();
+    traversal_record_.reset();
   }
   // The loader is on the stack below this, so it goes from a later task.
   base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,

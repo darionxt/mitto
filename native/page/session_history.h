@@ -105,12 +105,15 @@ class SessionHistory final {
   // The top-level frame committed a new document of `item`, the response of
   // the navigation that made document `record`: a new entry, in place of
   // forward ones, for kStandard, unless the current one is the initial
-  // entry, the entry of `item` for kBackForward, which keeps the record it
-  // repeats, and otherwise the current one replaced. Returns the entries that
-  // the new document's Navigation API starts with.
-  Navigation::EntryArrays DidCommitNavigation(const HistoryItem& item,
-                                              FrameLoadType type,
-                                              uint64_t record);
+  // entry, for kBackForward the entry of item `traversed_item_sequence_number`
+  // that the traversal went to, which takes `item` and `record`, and
+  // otherwise the current one replaced. Returns the entries that the new
+  // document's Navigation API starts with.
+  Navigation::EntryArrays DidCommitNavigation(
+      const HistoryItem& item,
+      FrameLoadType type,
+      uint64_t record,
+      int64_t traversed_item_sequence_number = 0);
   // The top-level frame's document, document `record`, committed a
   // navigation within itself to `item`: a new entry for kStandard, the
   // current one replaced for kReplaceCurrentItem and kReload, and for

@@ -125,7 +125,8 @@ std::optional<size_t> SessionHistory::IndexOfItem(
 Navigation::EntryArrays SessionHistory::DidCommitNavigation(
     const HistoryItem& item,
     FrameLoadType type,
-    uint64_t record) {
+    uint64_t record,
+    int64_t traversed_item_sequence_number) {
   const url::Origin origin = url::Origin::Create(item.url);
   Navigation::EntryArrays arrays;
   arrays.type = type;
@@ -136,27 +137,24 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
     arrays.previous =
         ToApiEntry(old.root->item(), item.document_sequence_number);
   }
-  // A traversal goes to its entry, which keeps what it repeats, or, if a new
-  // entry pruned it meanwhile, makes it anew, as Chrome's controller does.
+  // A traversal goes to the entry it went to, whose frame entry the new
+  // document's item and navigation take, as Chrome's controller updates the
+  // FrameNavigationEntry in place, or, if a new entry pruned it meanwhile,
+  // takes the current entry's place, as Chrome 157 ends.
   if (type == FrameLoadType::kBackForward) {
     if (const std::optional<size_t> index =
-            IndexOfItem(item.item_sequence_number)) {
+            IndexOfItem(traversed_item_sequence_number)) {
       current_ = *index;
-      entries_[current_].root->set_item(item);
-      FillApiEntries(current_, origin, arrays);
-      return arrays;
     }
   }
   Entry entry;
   entry.root = base::MakeRefCounted<FrameNavigationEntry>(
       std::string(), item, record, /*same_document_entry=*/false);
-  if ((type == FrameLoadType::kStandard ||
-       type == FrameLoadType::kBackForward) &&
-      !old.initial) {
+  if (type == FrameLoadType::kStandard && !old.initial) {
     PushEntry(std::move(entry));
   } else {
-    // A replace, a reload, and the first navigation, which replaces the
-    // initial entry.
+    // A replace, a reload, a traversal, and the first navigation, which
+    // replaces the initial entry.
     entries_[current_] = std::move(entry);
   }
   FillApiEntries(current_, origin, arrays);

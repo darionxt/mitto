@@ -322,6 +322,9 @@ class PageFrame final : public NavigationClient, public Frame {
   NavigationRateLimiter navigation_rate_limiter_;
   // The entry that the navigation that waits goes to, for a traversal.
   std::optional<HistoryItem> traversal_item_;
+  // The record of the document whose navigation the traversal that waits
+  // repeats, which the Session keeps until it ends.
+  std::optional<uint64_t> traversal_record_;
   // The records that the Session keeps for the history.
   std::set<uint64_t> held_records_;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};

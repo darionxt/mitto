@@ -537,7 +537,7 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
     lands_at = _PATHS[steps.lands_at or case]
     with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         if steps.page_script is not None:
-            page.evaluate(steps.page_script)
+            page.evaluate(steps.page_script, timeout=_PAGE_TIMEOUT_SECONDS)
         if steps.kind is not RequestKind.NAVIGATION:
             return
         clicks = list(steps.clicks)
@@ -545,7 +545,7 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
             path = urlsplit(page.wait_for_navigation(timeout=_PAGE_TIMEOUT_SECONDS).url).path
             if clicks and path == clicks[0]:
                 clicks.pop(0)
-                page.evaluate(_CLICK_NEXT)
+                page.evaluate(_CLICK_NEXT, timeout=_PAGE_TIMEOUT_SECONDS)
             elif path == lands_at and not clicks:
                 break
         # The case's page navigates on, as the pages of Chrome's run did. Each navigation ends before the Page closes,

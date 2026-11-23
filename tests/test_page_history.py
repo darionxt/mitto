@@ -930,3 +930,138 @@ def test_a_traversal_repeats_the_initiator_and_referer_of_the_entrys_navigation(
     assert ("Sec-Fetch-Site", "same-origin") in pushed
     assert "Sec-Fetch-User" not in dict(pushed)
     assert traversed == navigated
+
+
+def test_a_redirected_traversal_starts_its_entry_anew(session: mitto.Session, server: RecordingServer) -> None:
+    first = server.page("/t", "<title>T</title>", _NO_STORE)
+    second = server.page("/b", "<title>B</title>")
+    moved = server.page("/t2", "<title>T2</title>", _NO_STORE)
+    entry = (
+        "[location.href, history.length, history.state, navigation.currentEntry.getState() ?? null,"
+        " navigation.activation.navigationType, navigation.entries().map(e => new URL(e.url).pathname),"
+        " navigation.currentEntry.key === sessionStorage.k0]"
+    )
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "history.replaceState({s: 1}, ''); navigation.updateCurrentEntry({state: {n: 1}});"
+            " sessionStorage.k0 = navigation.currentEntry.key; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        server.routes["/t"] = Route(b"", 302, [("Location", "/t2"), *_NO_STORE])
+        page.evaluate("history.back()")
+        # A redirect leaves nothing of the entry for its response, which takes the entry's place with a new key.
+        assert _next_document(page).url == moved
+        assert page.evaluate(entry) == [moved, 2, None, None, "traverse", ["/t2", "/b"], False]
+        page.evaluate("history.forward()")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page).url == moved
+    # The traversal back to the entry asks for its new URL.
+    assert len(server.headers_of("/t2")) == 2
+
+
+def test_a_traversal_redirected_to_another_origin_takes_no_state(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/t", "<title>T</title>", _NO_STORE)
+    second = server.page("/b", "<title>B</title>")
+    other = server.page("/tx", "<title>Other</title>", _NO_STORE).replace("127.0.0.1", "localhost")
+    entry = (
+        "[location.href, history.length, history.state, navigation.currentEntry.getState() ?? null,"
+        " navigation.activation.navigationType, navigation.entries().length]"
+    )
+
+    with _open_page(session, first) as page:
+        page.evaluate("history.replaceState({s: 1}, ''); navigation.updateCurrentEntry({state: {n: 1}}); 0")
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        server.routes["/t"] = Route(b"", 302, [("Location", other), *_NO_STORE])
+        page.evaluate("history.back()")
+        assert _next_document(page).url == other
+        assert page.evaluate(entry) == [other, 2, None, None, "traverse", 1]
+
+
+def test_a_traversal_sends_the_referer_that_its_navigation_ended_with(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    server.routes["/r"] = Route(b"", 302, [("Location", "/final"), ("Referrer-Policy", "no-referrer")])
+    final = server.page("/final", "<title>Final</title>", _NO_STORE)
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/r'; 0")
+        assert _next_document(page).url == final
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page).url == final
+    # The redirect's policy left the navigation's last request with no Referer, and the traversal repeats that.
+    navigated, traversed = server.headers_of("/final")
+    assert "Referer" not in dict(navigated)
+    assert "Referer" not in dict(traversed)
+
+
+def test_a_traversal_finds_an_entry_of_a_document_that_changed_its_url_often(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    pushed = server.page("/p1", "<title>P1</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "history.pushState(null, '', '/p1'); history.pushState(null, '', '/p2');"
+            " for (let i = 0; i < 60; i++) history.replaceState(null, '', '/q' + i); location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        page.evaluate("history.go(-2)")
+        assert _next_document(page).url == pushed
+        assert page.evaluate("[location.pathname, history.length]") == ["/p1", 4]
+
+
+def test_a_traversal_goes_on_though_a_listener_prunes_its_entry(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    entries = (
+        "[location.pathname + location.hash, history.length,"
+        " navigation.entries().map(e => new URL(e.url).pathname + new URL(e.url).hash)]"
+    )
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page).url == first
+        # The navigate event's listener pushes an entry in place of the one that the traversal goes to, whose
+        # document then takes the place of the pushed entry, as in Chrome.
+        page.evaluate(
+            "navigation.addEventListener('navigate', e => {"
+            " if (e.navigationType == 'traverse') history.pushState(null, '', '#p'); }); history.forward(); 0"
+        )
+        assert _next_document(page).url == second
+        assert page.evaluate(entries) == ["/b", 2, ["/a", "/b"]]
+
+
+def test_a_traversal_that_the_page_asks_for_while_one_waits_goes_nowhere(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    third = server.page("/c", "<title>C</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("location.href = '/c'; 0")
+        assert _next_document(page).url == third
+        # The first back() waits for its response when the second's task runs, which goes nowhere.
+        page.evaluate("history.back(); history.back(); 0")
+        assert _next_document(page).url == second
+        assert page.evaluate(
+            "new Promise(r => setTimeout(() => r([location.pathname, history.length, navigation.currentEntry.index]),"
+            " 300))"
+        ) == ["/b", 3, 1]

@@ -110,11 +110,10 @@ bool CanChangeToUrlForHistoryApi(const GURL& url,
   return !differ_in_path && !differ_in_query;
 }
 
-// How many documents' navigations the library keeps for traversals, and how
-// many same-document URLs of each: past these, the oldest go. The session
-// history holds 50 entries.
+// How many documents' navigations the library keeps for traversals: past
+// this, the oldest go. The session history holds 50 entries, and the Page
+// releases what none holds.
 constexpr size_t kMaxNavigationRecords = 100;
-constexpr size_t kMaxSameDocumentUrls = 50;
 
 constexpr std::string_view kVersionKey = "version";
 // What net::HttpConnectionInfoToString() and net::NextProtoToString() call a
@@ -2934,15 +2933,6 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
     return;
   }
   document_url = new_url;
-  // A traversal may go back to an entry of this URL.
-  if (const auto record = records_.find(document); record != records_.end()) {
-    std::vector<GURL>& urls = record->second.same_document_urls;
-    std::erase(urls, new_url);
-    urls.push_back(new_url);
-    if (urls.size() > kMaxSameDocumentUrls) {
-      urls.erase(urls.begin());
-    }
-  }
   // The Page's URL is its top-level document's.
   if (context.parent != kNoDocument) {
     return;
@@ -2980,9 +2970,12 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
   }
   const NavigationRecord& record = found->second;
   const GURL url(traversal.url);
+  // An entry of the navigation is at its URL, and one that a navigation
+  // within the document made at a URL of the document's origin, the only
+  // ones that the history API gives a document of an HTTP or HTTPS origin.
   if (traversal.same_document_entry
-          ? std::ranges::find(record.same_document_urls, url) ==
-                record.same_document_urls.end()
+          ? !url.SchemeIsHTTPOrHTTPS() ||
+                !url::IsSameOriginWith(url, record.url)
           : url != record.url) {
     Refuse("a traversal to a URL that the document's navigations never had");
     return;
@@ -3002,12 +2995,14 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
   if (traversal.same_document_entry) {
     options.fetch->initiator = record.url;
     options.fetch->opaque_initiator.reset();
-    if (record.referrer.empty()) {
-      options.fetch->referrer_policy = net::ReferrerPolicy::NO_REFERRER;
-      options.fetch->referrer_source.reset();
-    } else {
-      options.fetch->referrer_source = GURL(record.referrer);
-    }
+  }
+  // The Referer that the navigation sent last, after the policies of its
+  // redirects, as the FrameNavigationEntry keeps the committed referrer.
+  if (record.referrer.empty()) {
+    options.fetch->referrer_policy = net::ReferrerPolicy::NO_REFERRER;
+    options.fetch->referrer_source.reset();
+  } else {
+    options.fetch->referrer_source = GURL(record.referrer);
   }
   options.skip_cache_validation = true;
   StartRequest(traversal.number, document, context.origin, url,
