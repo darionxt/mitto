@@ -492,3 +492,31 @@ def test_a_frame_of_its_parent_s_opaque_origin_is_reached_through_its_window() -
     """
     with mitto.Session() as session, session._open_page("about:blank", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         assert page.evaluate(script) == ["null", True, 6, ["object", True], [True, ["body", 1]], True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_later_documents_of_its_parent_s_opaque_origin_are_reached_through_its_window() -> None:
+    # Under the top-level about:blank, a frame's second srcdoc and the about:blank after it each come in a new window of
+    # the parent's opaque origin, which the parent reaches, and which reaches the parent, as in Chrome 157.
+    script = """
+      (async () => {
+        const tried = (f) => { try { return f(); } catch (e) { return e.name + ': ' + e.message; } };
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a';
+        document.body.appendChild(element);
+        await loaded(element);
+        const first = tried(() => [element.contentWindow.document.body.textContent, element.contentWindow.origin]);
+        element.srcdoc = '<p>b';
+        await loaded(element);
+        const second = tried(() => [
+          element.contentWindow.document.body.textContent, element.contentWindow.eval('parent.document.body.localName'),
+        ]);
+        element.removeAttribute('srcdoc');
+        await loaded(element);
+        const blank = tried(() => [element.contentWindow.document.URL, element.contentWindow.eval('parent.document === top.document')]);
+        return [first, second, blank];
+      })()
+    """
+    with mitto.Session() as session, session._open_page("about:blank", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == [["a", "null"], ["b", "body"], ["about:blank", True]]

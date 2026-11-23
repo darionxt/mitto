@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 #include "base/auto_reset.h"
 #include "base/check.h"
@@ -135,16 +136,7 @@ void PageFrame::Start(const PageConnection& connection) {
   // gives it. Its time origin is when its context was made.
   const url::Origin origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
-  const v8::Local<v8::Context> new_context =
-      NewContext(base::TimeTicks::Now(), origin);
-  // A frame of its parent's opaque origin takes its parent's token too, as
-  // contexts of one origin share one, so that V8 lets each reach the other's
-  // objects, as Blink's CanAccess() lets an opaque origin reach itself. A
-  // context of another opaque origin keeps its own.
-  if (parent_ && origin.opaque()) {
-    new_context->SetSecurityToken(parent_->context()->GetSecurityToken());
-  }
-  context_.Reset(isolate, new_context);
+  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   if (parent_) {
     // The frame's own storage, which asks as each of its documents in turn.
@@ -727,13 +719,11 @@ v8::Local<v8::Context> PageFrame::NewContext(
         InstallChromeObject(context, chrome_object_data);
       });
   // LocalWindowProxy::SetSecurityToken(): contexts of one origin share a
-  // token, so that V8 lets each reach the others' objects, and one of an
-  // opaque origin keeps V8's own, its global object, which no other context
-  // has, unless a frame inherits that origin (Start()). Blink gives an initial
-  // empty document V8's own too, so that each access asks its CanAccess(),
-  // which lets one of the same origin through and tells the browser: a Page
-  // has no browser to tell, and nothing yet that asks across origins (#286),
-  // so it shares its origin's token.
+  // token, so that V8 lets each reach the others' objects. Blink gives an
+  // initial empty document V8's own, its global object, so that each access
+  // asks its CanAccess(), which lets one of the same origin through and tells
+  // the browser: a Page has no browser to tell, and nothing yet that asks
+  // across origins (#286), so it shares its origin's token.
   // V8 compares tokens as objects, so the token is an internalized string,
   // the same object for the same text, as Blink's V8AtomicString is.
   if (!origin.opaque()) {
@@ -743,6 +733,15 @@ v8::Local<v8::Context> PageFrame::NewContext(
                                 v8::NewStringType::kInternalized,
                                 base::checked_cast<int>(token.size()))
             .ToLocalChecked());
+  } else if (const v8::Local<v8::Value> token = TokenOfOpaqueOrigin(origin);
+             !token.IsEmpty()) {
+    // Blink gives a context of an opaque origin V8's own token, and its
+    // CanAccess() lets the same opaque origin through, which a frame's
+    // document has when it takes its parent's or its initiator's. Here the
+    // context takes the token of one whose document has that origin, so that
+    // every context of an opaque origin shares the first one's. One of
+    // another opaque origin keeps its own.
+    context->SetSecurityToken(token);
   }
   return context;
 }
@@ -778,6 +777,27 @@ uint64_t PageFrame::SendDocumentCommitted(PageDocumentCommitted committed) {
     host->DocumentCommitted(committed.document);
   }
   return committed.document;
+}
+
+v8::Local<v8::Value> PageFrame::TokenOfOpaqueOrigin(
+    const url::Origin& origin) const {
+  const PageFrame* top = this;
+  while (top->parent_) {
+    top = top->parent_;
+  }
+  std::vector<const PageFrame*> frames = {top};
+  while (!frames.empty()) {
+    const PageFrame* const frame = frames.back();
+    frames.pop_back();
+    if (frame->window_ && frame->window_->HasDocument() &&
+        frame->window_->GetDocument().GetOrigin() == origin) {
+      return frame->context()->GetSecurityToken();
+    }
+    for (const std::unique_ptr<PageFrame>& child : frame->children_) {
+      frames.push_back(child.get());
+    }
+  }
+  return v8::Local<v8::Value>();
 }
 
 void PageFrame::AttachWindow(const PageConnection& connection,

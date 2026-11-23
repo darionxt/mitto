@@ -176,6 +176,9 @@ class PageFrame final : public NavigationClient, public Frame {
       const url::Origin& origin,
       bool cross_origin_isolated = false,
       v8::Local<v8::Object> global_proxy = v8::Local<v8::Object>());
+  // The security token of a context of the Page whose document has
+  // `origin`, an opaque one, or an empty handle if no frame's document has it.
+  v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells
