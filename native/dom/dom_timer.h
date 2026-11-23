@@ -53,8 +53,9 @@ TimerSchedule ScheduleTimer(int nesting_level, base::TimeDelta timeout);
 // deep enough.
 base::TimeDelta RepeatIntervalAt(int nesting_level, base::TimeDelta interval);
 
-// The timers of one window's context. It stops each when it goes, as Blink
-// stops a context's timers when the context is destroyed.
+// The timers of one window's context. It stops each when it goes, or when
+// Stop() says the context has gone, as Blink stops a context's timers when the
+// context is destroyed.
 class DOMTimerCoordinator {
  public:
   // The timers run in `context`.
@@ -78,6 +79,11 @@ class DOMTimerCoordinator {
 
   // Stops the timer with ID `id`, if there is one, whichever kind it is.
   void Clear(int32_t id);
+
+  // DOMTimer::ContextDestroyed(): no timer runs again. The one that runs now,
+  // whose action may have ended the context, returns first, and the timers go
+  // with the coordinator.
+  void Stop();
 
   // How many timers are set.
   size_t size() const { return timers_.size(); }

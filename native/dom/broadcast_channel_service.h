@@ -32,13 +32,13 @@
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
+#include "mitto/dom/serialized_script_value.h"
 #include "v8/include/cppgc/cross-thread-persistent.h"
 
 namespace mitto {
 
 class BroadcastChannel;
 class ExecutionContext;
-class SerializedScriptValue;
 
 class BroadcastChannelService {
  public:
@@ -107,12 +107,14 @@ class BroadcastChannelService {
   };
 
   // Gives the message to the channel of `connection` from a task of its own,
-  // on its thread, if it is still connected then.
+  // on its thread, if it is still connected then, with the blobs it carries,
+  // which are those of a message of this Page.
   void Deliver(uint64_t connection,
                scoped_refptr<base::SingleThreadTaskRunner> runner,
                bool locked,
                bool same_agent_cluster,
-               std::vector<uint8_t> data);
+               std::vector<uint8_t> data,
+               BlobDataHandleMap blob_data_handles);
 
   base::Lock lock_;
   std::vector<Connection> connections_ GUARDED_BY(lock_);

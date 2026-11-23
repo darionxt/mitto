@@ -186,7 +186,7 @@ def test_the_window_is_the_global_object(program: Path) -> None:
 
 def test_the_windows_other_members_are_known_gaps(program: Path) -> None:
     # A Known Gap gives its type's default, and its getter what its setter stored (docs/runtime.md).
-    script = "[window.name === '', (window.name = 7, window.name)].join()"
+    script = "[window.status === '', (window.status = 7, window.status)].join()"
 
     assert _evaluate(program, script) == "true,7"
 

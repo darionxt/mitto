@@ -79,7 +79,8 @@ class PageIndexedDb {
   bool ConnectionInUse(uint64_t connection) const;
   IndexedDbTransaction* FindTransaction(uint64_t transaction);
   // Takes the connection that an open gives, unless the context that asked
-  // has gone, and returns whether it took it.
+  // has gone, and returns whether it took it. One that it does not take
+  // closes from a later task.
   bool AdoptConnection(uint64_t id,
                        std::unique_ptr<IndexedDbConnection> connection);
   void AdoptCursor(uint64_t id, std::unique_ptr<IndexedDbCursor> cursor);

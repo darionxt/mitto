@@ -79,6 +79,7 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
  private:
   // BodyMixin:
   BodyStreamBuffer* BodyBuffer() const override;
+  std::string MimeType() const override;
 
   GURL url_;
   std::string method_ = "GET";
@@ -94,10 +95,12 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
 };
 
 // Extracts a body from `value`, as the Fetch Standard does for a BodyInit
-// other than a ReadableStream: an ArrayBuffer or a view of one gives its
-// bytes, and anything else, which is a string as far as the Runtime's
+// other than a ReadableStream: a Blob gives its bytes, read as Blink's
+// BlobBytesConsumer reads them, and its type, if it has one, as the
+// Content-Type that `content_type` gets; an ArrayBuffer or a view of one gives
+// its bytes; and anything else, which is a string as far as the Runtime's
 // interfaces go, gives the UTF-8 of String(value) and a Content-Type of
-// text/plain;charset=UTF-8, which `content_type` gets. Returns null if
+// text/plain;charset=UTF-8. Returns null if
 // String() threw, or after throwing for a buffer larger than Blink takes.
 BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
                               v8::Local<v8::Value> value,

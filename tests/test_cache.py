@@ -27,6 +27,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._native import PrivateSettings
+from tests.inherited_descriptors import child_holding_descriptors_of
 from tests.local_server import QuietServer
 from tools.capture import HTTP1, HTTP2, HTTP3, CaptureServer
 from tools.parity.replay import run_of, session_settings
@@ -717,6 +718,38 @@ def test_a_session_of_another_process_holds_a_directory_too(tmp_path: Path) -> N
 
     assert held.stdout.strip() == str(errno.EBUSY), held.stderr
     assert freed.stdout.strip() == "opened", freed.stderr
+
+
+def test_a_session_refused_in_the_same_process_leaves_the_directory_held(tmp_path: Path) -> None:
+    # Closing a descriptor of a file lets go of every fcntl() lock that the process holds on it, so a Session that is
+    # refused must not have opened the lock file.
+    (tmp_path / "link").symlink_to(tmp_path / "cache", target_is_directory=True)
+    code = f"""
+        import mitto
+        try:
+            mitto.Session(cache={str(tmp_path / "cache")!r}).close()
+        except OSError as error:
+            print(error.errno)
+        """
+
+    with mitto.Session(cache=tmp_path / "cache"):
+        for name in ("cache", "link"):
+            with pytest.raises(OSError, match="another Session has this cache open"):
+                mitto.Session(cache=tmp_path / name)
+        held = _run_python(code)
+
+    assert held.stdout.strip() == str(errno.EBUSY), held.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a child process on Windows gets no handle that it is not given")
+def test_a_child_process_with_copies_of_a_sessions_descriptors_holds_none_of_its_directory(tmp_path: Path) -> None:
+    # As a Page's process that another thread starts holds them while it starts, when the Session closes.
+    with mitto.Session(cache=tmp_path) as session, child_holding_descriptors_of(tmp_path) as descriptors:
+        assert descriptors
+        session.close()
+        mitto.Session(cache=tmp_path).close()
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["Cache_Data", "mitto.lock"]
 
 
 def test_a_process_that_ends_lets_go_of_a_directory(tmp_path: Path) -> None:
