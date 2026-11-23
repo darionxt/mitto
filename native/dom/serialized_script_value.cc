@@ -320,15 +320,26 @@ class Serializer final : public v8::ValueSerializer::Delegate {
 
   v8::Maybe<bool> WriteHostObject(v8::Isolate* isolate,
                                   v8::Local<v8::Object> object) override {
+    // Objects that Blink refuses whatever is behind them here: a Known Gap
+    // gives an EventTarget's, as an RTCDataChannel's or an OffscreenCanvas's,
+    // the class of EventTarget. An OffscreenCanvas in the transfer list was
+    // refused already.
+    if (for_storage_ && ThrowIfRefusedForStorage(object)) {
+      return v8::Nothing<bool>();
+    }
+    if (bindings::PerIsolateData::From(isolate_)->HasInstance(
+            isolate_, bindings::V8OffscreenCanvas::kWrapperTypeInfo, object)) {
+      mitto::ThrowDataCloneError(isolate_,
+                                 "An OffscreenCanvas could not be cloned "
+                                 "because it was not transferred.");
+      return v8::Nothing<bool>();
+    }
     auto* const wrappable = v8::Object::Unwrap<bindings::ScriptWrappable>(
         isolate, object, v8::kAnyCppHeapPointer);
     if (!wrappable) {
       // An object of an interface without a class, with nothing behind it.
       if (WriteObjectWithoutClass(object)) {
         return v8::Just(true);
-      }
-      if (for_storage_ && ThrowIfRefusedForStorage(object)) {
-        return v8::Nothing<bool>();
       }
       std::u16string name;
       bindings::FromV8String(isolate_, object->GetConstructorName(), &name);

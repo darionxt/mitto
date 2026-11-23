@@ -6,6 +6,7 @@
 //
 // Upstream: third_party/blink/renderer/modules/notifications/notification.cc
 // Upstream: third_party/blink/renderer/modules/notifications/notification_manager.cc
+// Upstream: third_party/blink/renderer/modules/notifications/notification_data.cc
 // Upstream: third_party/blink/public/common/notifications/notification_constants.h
 // Upstream: components/permissions/permission_context_base.cc
 // Upstream: components/content_settings/core/browser/content_settings_registry.cc

@@ -400,6 +400,20 @@ _NOTIFICATION_AS_CHROME = {
         "return new Notification('t', {data: new EncodedVideoChunk({type: 'key', timestamp: 0, data: new Uint8Array(1)})})",
         "threw: DataCloneError: Failed to construct 'Notification': Encoded chunks cannot be serialized for storage.",
     ),
+    "new Notification with a data channel as data": (
+        "return new Notification('t', {data: new RTCPeerConnection().createDataChannel('x')})",
+        "threw: DataCloneError: Failed to construct 'Notification': An RTCDataChannel cannot be serialized for storage.",
+    ),
+    "new Notification with an offscreen canvas as data": (
+        "return new Notification('t', {data: new OffscreenCanvas(1, 1)})",
+        "threw: DataCloneError: Failed to construct 'Notification': An OffscreenCanvas could not be cloned because it was"
+        " not transferred.",
+    ),
+    "structuredClone of an offscreen canvas it does not transfer": (
+        "return structuredClone({canvas: new OffscreenCanvas(1, 1)})",
+        "threw: DataCloneError: Failed to execute 'structuredClone' on 'Window': An OffscreenCanvas could not be cloned"
+        " because it was not transferred.",
+    ),
     "new Notification fires error": (
         "return new Promise((r) => { const n = new Notification('t', {data: {x: 1}}); n.onerror = (e) =>"
         " r([e.constructor.name, e.type].join()); n.onshow = () => r('show'); })",
