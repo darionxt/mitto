@@ -693,7 +693,10 @@ void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
   // A child frame's commits stay its own until frames have entries of their
   // own.
   if (!parent_) {
-    const uint64_t document = window_->DocumentId();
+    // The document whose navigation the entry repeats, none for one that no
+    // navigation's response made, such as the tab's initial about:blank,
+    // whose entries no traversal goes to.
+    const uint64_t document = current_ ? window_->DocumentId() : kNoDocument;
     // The document's policy, Chrome's own where it has none, as the referrer
     // of a same-document commit goes with it.
     const FetchReferrerPolicy policy =
@@ -965,7 +968,9 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
 
 void PageFrame::ReleaseRecords(uint64_t live_document) {
   std::set<uint64_t> held = history().RecordsHeld();
-  held.insert(live_document);
+  if (live_document != kNoDocument) {
+    held.insert(live_document);
+  }
   for (const std::optional<uint64_t>& record :
        {traversal_record_, pinned_record_}) {
     if (record) {
