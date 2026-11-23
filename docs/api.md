@@ -141,7 +141,7 @@ Where to keep responses, which `//net` then answers from and revalidates as Chro
 
 | The value | What it does |
 | --- | --- |
-| A directory, as text or a path | Made if it does not exist, and what Chrome has. Responses stay for later Sessions. `//net` only touches its subdirectory `Cache_Data`, and one Session at a time can have the directory, in any process |
+| A directory, as text or a path | Made if it does not exist, and what Chrome has. Responses stay for later Sessions. `//net` only touches its subdirectory `Cache_Data`, and one Session at a time can have the directory, in any process, which on macOS and Linux it holds with the file `mitto.lock` beside it ([parity.md](parity.md#where-it-lives)) |
 | `"memory"` | Keeps them until the Session closes, as Chrome's Incognito mode does. A server can tell this from a directory by [the stream a 304 cancels](parity.md#which-backend) over HTTP/2. Write `"./memory"` for a directory of that name |
 
 An empty string raises a `ValueError`, and a value that is neither text, a path nor `None` a `TypeError`. A directory that cannot hold a cache, or that another Session has open, raises an `OSError`. [`Response.from_cache`](#response) says whether a body came from here.

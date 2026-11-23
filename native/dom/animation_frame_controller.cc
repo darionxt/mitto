@@ -176,7 +176,7 @@ void AnimationFrameController::ServiceScriptedAnimations(
   const base::WeakPtr<AnimationFrameController> self =
       weak_factory_.GetWeakPtr();
   DispatchEvents();
-  // A listener may have ended the window's context, and this with it.
+  // A listener may have ended the window's context, which stopped this.
   if (!self) {
     return;
   }
@@ -254,14 +254,16 @@ void AnimationFrameController::ExecuteFrameCallbacks(
     v8::Local<v8::Value> argument = v8::Number::New(
         isolate_, frame_callback.use_legacy_time_base ? high_res_now_ms_legacy
                                                       : high_res_now_ms);
-    std::ignore = frame_callback.callback.Get(isolate_)->Call(
-        context, v8::Undefined(isolate_), 1, &argument);
-    // As InvokeAndReportException() reports it, from a verbose TryCatch.
+    const v8::Local<v8::Function> callback =
+        frame_callback.callback.Get(isolate_);
+    std::ignore =
+        callback->Call(context, v8::Undefined(isolate_), 1, &argument);
+    // As InvokeAndReportException() reports it, from a verbose TryCatch, in
+    // the callback's realm.
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
-      bindings::ReportException(isolate_, try_catch.Exception(),
-                                try_catch.Message());
+      bindings::ReportExceptionInCallbackRealm(isolate_, callback, try_catch);
     }
-    // The callback may have ended the window's context, and this with it.
+    // The callback may have ended the window's context, which stopped this.
     if (!self) {
       return;
     }

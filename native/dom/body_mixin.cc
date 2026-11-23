@@ -6,6 +6,7 @@
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
+#include "base/notreached.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/per_isolate_data.h"
@@ -14,10 +15,12 @@
 #include "mitto/bindings/script_promise.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/blob.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetch_data_loader.h"
 #include "mitto/dom/readable_stream.h"
+#include "mitto/dom/stream_chunks.h"
 #include "mitto/dom/text_decoder_transformer.h"
 #include "mitto/dom/transform_stream.h"
 #include "mitto/dom/window_task.h"
@@ -34,19 +37,6 @@
 namespace mitto {
 namespace {
 
-v8::Local<v8::ArrayBuffer> NewArrayBuffer(v8::Isolate* isolate,
-                                          const std::string& bytes) {
-  const v8::Local<v8::ArrayBuffer> buffer =
-      v8::ArrayBuffer::New(isolate, bytes.size());
-  if (!bytes.empty()) {
-    // SAFETY: the new buffer holds bytes.size() bytes.
-    UNSAFE_BUFFERS(
-        base::span(static_cast<uint8_t*>(buffer->Data()), bytes.size()))
-        .copy_from(base::as_byte_span(bytes));
-  }
-  return buffer;
-}
-
 // Blink's BodyConsumerBase with its subclasses for arrayBuffer(), json() and
 // text(): what a read of the whole body settles once its loader has all of
 // it.
@@ -55,22 +45,57 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
  public:
   enum class Kind {
     kArrayBuffer,
+    kBlob,
+    kBytes,
     kJson,
     kText,
   };
 
+  // `mime_type` is the type of a Blob that blob() makes.
   BodyConsumer(Kind kind,
                bindings::ScriptPromiseResolver* resolver,
-               ExecutionContext* context)
-      : kind_(kind), resolver_(resolver), context_(context) {}
+               ExecutionContext* context,
+               std::string mime_type = std::string())
+      : kind_(kind),
+        resolver_(resolver),
+        context_(context),
+        mime_type_(std::move(mime_type)) {}
 
   void DidFetchDataLoadedArrayBuffer(std::string bytes) override {
-    CHECK_EQ(kind_, Kind::kArrayBuffer);
-    ResolveLater(base::BindOnce(
-        [](std::string bytes, v8::Isolate* isolate) -> v8::Local<v8::Value> {
-          return NewArrayBuffer(isolate, bytes);
-        },
-        std::move(bytes)));
+    switch (kind_) {
+      case Kind::kArrayBuffer:
+        ResolveLater(base::BindOnce(
+            [](std::string bytes,
+               v8::Isolate* isolate) -> v8::Local<v8::Value> {
+              return NewArrayBuffer(isolate, base::as_byte_span(bytes));
+            },
+            std::move(bytes)));
+        return;
+      case Kind::kBytes:
+        ResolveLater(base::BindOnce(
+            [](std::string bytes,
+               v8::Isolate* isolate) -> v8::Local<v8::Value> {
+              return NewUint8Array(isolate, base::as_byte_span(bytes));
+            },
+            std::move(bytes)));
+        return;
+      case Kind::kBlob:
+        // Blink's loader makes a blob of the body's bytes, of the body's MIME
+        // type, as FetchDataLoaderAsBlobHandle does.
+        ResolveLater(base::BindOnce(
+            [](std::string bytes, std::string mime_type,
+               v8::Isolate* isolate) -> v8::Local<v8::Value> {
+              return bindings::ToV8(
+                  isolate,
+                  mitto::Blob::Create(base::as_byte_span(bytes), mime_type));
+            },
+            std::move(bytes), mime_type_));
+        return;
+      case Kind::kJson:
+      case Kind::kText:
+        break;
+    }
+    NOTREACHED();
   }
 
   void DidFetchDataLoadedString(std::u16string string) override {
@@ -149,6 +174,7 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
   const Kind kind_;
   const cppgc::Member<bindings::ScriptPromiseResolver> resolver_;
   const cppgc::WeakMember<ExecutionContext> context_;
+  const std::string mime_type_;
 };
 
 }  // namespace
@@ -156,6 +182,16 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
 v8::Local<v8::Promise> BodyMixin::ArrayBuffer(
     bindings::ExceptionState& exception_state) {
   return LoadAndConvertBody(ReadAs::kArrayBuffer, exception_state);
+}
+
+v8::Local<v8::Promise> BodyMixin::Blob(
+    bindings::ExceptionState& exception_state) {
+  return LoadAndConvertBody(ReadAs::kBlob, exception_state);
+}
+
+v8::Local<v8::Promise> BodyMixin::Bytes(
+    bindings::ExceptionState& exception_state) {
+  return LoadAndConvertBody(ReadAs::kBytes, exception_state);
 }
 
 v8::Local<v8::Promise> BodyMixin::Json(
@@ -190,6 +226,14 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
         kind = BodyConsumer::Kind::kArrayBuffer;
         loader = FetchDataLoader::CreateLoaderAsArrayBuffer();
         break;
+      case ReadAs::kBlob:
+        kind = BodyConsumer::Kind::kBlob;
+        loader = FetchDataLoader::CreateLoaderAsArrayBuffer();
+        break;
+      case ReadAs::kBytes:
+        kind = BodyConsumer::Kind::kBytes;
+        loader = FetchDataLoader::CreateLoaderAsArrayBuffer();
+        break;
       case ReadAs::kJson:
         kind = BodyConsumer::Kind::kJson;
         loader = FetchDataLoader::CreateLoaderAsString();
@@ -199,10 +243,12 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
         loader = FetchDataLoader::CreateLoaderAsString();
         break;
     }
-    body_buffer->StartLoading(loader,
-                              bindings::MakeGarbageCollected<BodyConsumer>(
-                                  kind, resolver, execution_context),
-                              exception_state);
+    body_buffer->StartLoading(
+        loader,
+        bindings::MakeGarbageCollected<BodyConsumer>(
+            kind, resolver, execution_context,
+            read_as == ReadAs::kBlob ? MimeType() : std::string()),
+        exception_state);
     if (exception_state.HadException()) {
       return v8::Local<v8::Promise>();
     }
@@ -212,6 +258,16 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
   switch (read_as) {
     case ReadAs::kArrayBuffer:
       resolver->Resolve(isolate, v8::ArrayBuffer::New(isolate, 0));
+      break;
+    case ReadAs::kBlob:
+      resolver->Resolve(
+          isolate, bindings::ToV8(
+                       isolate, mitto::Blob::Create(base::span<const uint8_t>(),
+                                                    MimeType())));
+      break;
+    case ReadAs::kBytes:
+      resolver->Resolve(isolate,
+                        NewUint8Array(isolate, base::span<const uint8_t>()));
       break;
     case ReadAs::kJson:
       resolver->Reject(

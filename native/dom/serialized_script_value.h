@@ -3,12 +3,14 @@
 // SerializedScriptValue holds. It is V8's own serializer, as Blink's is
 // beneath it, inside Blink's envelope, with the objects of the Runtime's that
 // Blink copies or transfers: transferred ArrayBuffers, MessagePorts and
-// streams, DOMRect, DOMRectReadOnly, DOMException and QuotaExceededError,
-// WebAssembly modules, and SharedArrayBuffers from a context that may post
-// them, whose memory the copy shares. A transferred stream goes as Blink's
-// does, over a MessagePort of its own whose other end the value carries. An
+// streams, Blobs and Files, DOMRect, DOMRectReadOnly, DOMException and
+// QuotaExceededError, WebAssembly modules, and SharedArrayBuffers from a
+// context that may post them, whose memory the copy shares. A transferred
+// stream goes as Blink's does, over a MessagePort of its own whose other end
+// the value carries. A Blob goes by the UUID of its bytes, which the value
+// carries beside its own bytes, as Blink's carries the blobs' handles. An
 // object of an interface that Blink copies but the Runtime has no class for,
-// such as DOMPoint or Blob, comes back as an object of that interface with
+// such as DOMPoint or FileList, comes back as an object of that interface with
 // nothing behind it, as a Known Gap's. Every other object that wraps a C++
 // object is refused with Chrome's DataCloneError.
 //
@@ -22,10 +24,14 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
+#include "base/memory/scoped_refptr.h"
+#include "mitto/dom/blob_data.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-forward.h"
@@ -53,6 +59,10 @@ struct Transferables {
   std::vector<cppgc::Persistent<WritableStream>> writable_streams;
   std::vector<cppgc::Persistent<TransformStream>> transform_streams;
 };
+
+// The blobs that a value carries, by the UUIDs that its bytes name them by,
+// as Blink's BlobDataHandleMap.
+using BlobDataHandleMap = std::map<std::string, scoped_refptr<BlobDataHandle>>;
 
 class SerializedScriptValue {
  public:
@@ -83,10 +93,15 @@ class SerializedScriptValue {
       v8::Isolate* isolate,
       v8::Local<v8::Value> value);
 
-  // A value that came from another process: its bytes alone, as Chrome's
-  // CloneableMessage carries them, without the WebAssembly modules and the
-  // SharedArrayBuffers, which stay in their agent cluster.
-  static SerializedScriptValue FromWireData(std::vector<uint8_t> data);
+  // A value that went as its bytes, as Chrome's CloneableMessage carries
+  // them, without the WebAssembly modules and the SharedArrayBuffers, which
+  // stay in their agent cluster. One from a context of the same Page has
+  // `blob_data_handles`, the blobs it carries, as Chrome's browser hands them
+  // over. One from another process has none, so its blobs read as empty: a
+  // Known Gap.
+  static SerializedScriptValue FromWireData(
+      std::vector<uint8_t> data,
+      BlobDataHandleMap blob_data_handles = BlobDataHandleMap());
 
   SerializedScriptValue(const SerializedScriptValue&);
   SerializedScriptValue& operator=(const SerializedScriptValue&);
@@ -105,6 +120,10 @@ class SerializedScriptValue {
 
   // The bytes, which another process reads with FromWireData().
   const std::vector<uint8_t>& wire_data() const { return data_; }
+  // The blobs that the bytes name, by their UUIDs.
+  const BlobDataHandleMap& blob_data_handles() const {
+    return blob_data_handles_;
+  }
 
   // Whether the value holds what only its own agent cluster can read: a
   // WebAssembly module or a SharedArrayBuffer, as
@@ -124,6 +143,7 @@ class SerializedScriptValue {
 
   std::vector<uint8_t> data_;
   std::vector<std::shared_ptr<v8::BackingStore>> array_buffers_;
+  BlobDataHandleMap blob_data_handles_;
   // The memory of the SharedArrayBuffers that the value holds, which each
   // copy shares, as Blink's shared_array_buffers_contents_.
   std::vector<std::shared_ptr<v8::BackingStore>> shared_array_buffers_;

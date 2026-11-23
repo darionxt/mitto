@@ -15,6 +15,7 @@
 #include <string>
 
 #include "mitto/dom/html_element.h"
+#include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/html_media_element.h"
 
 namespace mitto {
@@ -161,7 +162,7 @@ class HTMLFormElement final : public HTMLElement {
   void SetAction(const std::u16string& action);
 };
 
-class HTMLFrameElement final : public HTMLElement {
+class HTMLFrameElement final : public HTMLFrameOwnerElement {
  public:
   static HTMLFrameElement* Create(Document& document);
 
@@ -195,7 +196,7 @@ class HTMLHRElement final : public HTMLElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 };
 
-class HTMLIFrameElement final : public HTMLElement {
+class HTMLIFrameElement final : public HTMLFrameOwnerElement {
  public:
   static HTMLIFrameElement* Create(Document& document);
 

@@ -1,8 +1,8 @@
 // What a window's fetch() asks its Session through: each request a fetch
 // Request Kind's, on the Page's requests, with the document as its Initiator.
-// One serves one window, and cancels what it has open when it goes, as a
-// document's loaders are cancelled when it goes, but for keepalive requests,
-// which it lets go on.
+// One serves one window, and cancels what it has open when it stops or goes,
+// as a document's loaders are cancelled when it goes, but for keepalive
+// requests, which it lets go on.
 
 #ifndef MITTO_PAGE_PAGE_FETCHER_H_
 #define MITTO_PAGE_PAGE_FETCHER_H_
@@ -14,6 +14,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/memory/raw_ref.h"
 #include "mitto/dom/fetcher.h"
@@ -32,7 +33,14 @@ class PageFetcher final : public Fetcher {
   PageFetcher(const PageFetcher&) = delete;
   PageFetcher& operator=(const PageFetcher&) = delete;
 
+  // Stops the requests that are open, as Stop() does.
   ~PageFetcher() override;
+
+  // The document's context has gone: each open request is cancelled, or, if
+  // it is a keepalive request, let go, and its client hears nothing more. The
+  // clients go with the fetcher, since one of them may be what ended the
+  // context, and still run.
+  void Stop();
 
   // Fetcher:
   void Fetch(FetchRequestData request,
@@ -49,6 +57,8 @@ class PageFetcher final : public Fetcher {
 
   const raw_ref<PageRequests> requests_;
   std::map<uint64_t, std::unique_ptr<Request>> open_;
+  // The requests that Stop() stopped.
+  std::vector<std::unique_ptr<Request>> stopped_;
   // The bytes of the bodies of the open keepalive requests.
   size_t keepalive_bytes_ = 0;
   // The final URLs of the responses that have come whole, as the Session

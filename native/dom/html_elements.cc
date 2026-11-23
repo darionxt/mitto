@@ -204,7 +204,7 @@ HTMLFrameElement* HTMLFrameElement::Create(Document& document) {
 }
 
 HTMLFrameElement::HTMLFrameElement(Document& document)
-    : HTMLElement(document, u"frame") {}
+    : HTMLFrameOwnerElement(document, u"frame") {}
 
 const bindings::WrapperTypeInfo* HTMLFrameElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLFrameElement::kWrapperTypeInfo;
@@ -250,7 +250,7 @@ HTMLIFrameElement* HTMLIFrameElement::Create(Document& document) {
 }
 
 HTMLIFrameElement::HTMLIFrameElement(Document& document)
-    : HTMLElement(document, u"iframe") {}
+    : HTMLFrameOwnerElement(document, u"iframe") {}
 
 const bindings::WrapperTypeInfo* HTMLIFrameElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLIFrameElement::kWrapperTypeInfo;

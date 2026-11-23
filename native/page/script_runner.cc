@@ -22,7 +22,10 @@
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_frame.h"
 #include "mitto/page/page_requests.h"
+#include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "mitto/page/session_indexed_db.h"
+#include "mitto/page/session_storage_buckets.h"
 #include "third_party/icu/source/common/unicode/locid.h"
 #include "third_party/icu/source/common/unicode/stringpiece.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
@@ -181,6 +184,36 @@ ChromeObjectData& ScriptRunner::NewChromeObjectData(
   return *chrome_object_data_.back();
 }
 
+void ScriptRunner::KeepRemovedFrameStorage(
+    std::unique_ptr<SessionCacheStorage> cache_storage,
+    std::unique_ptr<SessionIndexedDb> indexed_db,
+    std::unique_ptr<SessionStorageBuckets> storage_buckets) {
+  removed_cache_storage_.push_back(std::move(cache_storage));
+  removed_indexed_db_.push_back(std::move(indexed_db));
+  removed_storage_buckets_.push_back(std::move(storage_buckets));
+}
+
+void ScriptRunner::KeepRemovedFrame(std::unique_ptr<PageFrame> frame) {
+  removed_frames_.push_back(std::move(frame));
+}
+
+size_t ScriptRunner::FrameCount() const {
+  if (!frame_) {
+    return 0;
+  }
+  size_t count = 0;
+  std::vector<const Frame*> pending = {frame_.get()};
+  while (!pending.empty()) {
+    const Frame* const frame = pending.back();
+    pending.pop_back();
+    ++count;
+    for (size_t index = 0; index < frame->ChildCount(); ++index) {
+      pending.push_back(frame->ChildAt(index));
+    }
+  }
+  return count;
+}
+
 void ScriptRunner::TopLevelContextGoes() {
   for (const uint64_t call : waiting_calls_) {
     settled_.push_back(FailureOf(call, std::string(kContextDestroyed)));
@@ -193,6 +226,9 @@ void ScriptRunner::WillProcessTask(const base::PendingTask& pending_task,
 
 void ScriptRunner::DidProcessTask(const base::PendingTask& pending_task) {
   EndTask();
+  // No script runs now, so the frames that the task removed go.
+  std::vector<std::unique_ptr<PageFrame>> removed;
+  removed.swap(removed_frames_);
 }
 
 void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {

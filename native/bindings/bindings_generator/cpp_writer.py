@@ -94,6 +94,9 @@ WRITTEN = frozenset(
         "CEReactions",
         "CachedAccessor",
         "CachedAttribute",
+        # A class's getter that returns a window's document or frame element gives null to a caller of another origin,
+        # as contentDocument and frameElement do.
+        "CheckSecurity",
         "ContextEnabled",
         "CrossOrigin",
         "Exposed",
@@ -1007,6 +1010,22 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
             ]
+        elif kinds == {TypeKind.INTERFACE}:
+            # Two interfaces that have classes, as URL's createObjectURL() takes a Blob or a MediaSource: an object of
+            # the first chooses the first, one of the second the second, and anything else, null among it, fails
+            # overload resolution, as bind_gen's dispatcher tests them.
+            first_type, second_type = (self.types.reduce(overload.arguments[index].idl_type) for overload in overloads)
+            if any(t.nullable or not self.types.has_class(t.name) for t in (first_type, second_type)):
+                return None
+            self.types.used_interfaces |= {first_type.name, second_type.name}
+            test = f"V8{first_type.name}::ToWrappable(isolate, info[{index}])"
+            after = [
+                f"if (!V8{second_type.name}::ToWrappable(isolate, info[{index}])) {{",
+                '  exception_state.ThrowTypeError("Overload resolution failed.");',
+                "  return;",
+                "}",
+            ]
+            return before, test, after, first, second
         else:
             return None
         if self.types.reduce(first.arguments[index].idl_type).kind is chosen_kind:
@@ -1341,7 +1360,9 @@ class _InterfaceWriter:
             raise UnhandledError(f"interface {interface.name}: a named setter or deleter needs the named getter")
         if indexed is None and named is None:
             return False
-        if "Global" in interface.extended_attributes or interface.name == "WindowProperties":
+        # A global object's named properties are its named properties object's (WindowProperties). Its indexed ones,
+        # Window's child frames, are on the global object's template, as bind_gen puts them on its instance template.
+        if ("Global" in interface.extended_attributes and named is not None) or interface.name == "WindowProperties":
             raise UnhandledError(
                 f"interface {interface.name}: the C++ writer does not handle the named properties of a global object"
             )
