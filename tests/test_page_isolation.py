@@ -15,7 +15,7 @@ import mitto
 from mitto import _native
 from mitto._native import PrivateSettings
 from mitto._page import Page
-from tests.page_server import TIMEOUT_SECONDS, RecordingServer
+from tests.page_server import TIMEOUT_SECONDS, RecordingServer, Route
 
 _Header = tuple[str, str]
 _COOP: _Header = ("Cross-Origin-Opener-Policy", "same-origin")
@@ -449,3 +449,38 @@ def test_a_sandboxed_frame_is_isolated_only_where_it_keeps_its_origin(
     })()"""
 
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, False]
+
+
+def test_a_frame_response_that_is_sniffed_is_held_to_its_parent_s_embedder_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A response with no Content-Type is sniffed before it is known to make a document, and only then held to the
+    # parent's policy: Chrome's frame commits its error page, and the Page goes on (Chrome for Testing 157).
+    server.routes["/sniffed"] = Route(b"<!doctype html><title>s</title><p>sniffed", headers=[])
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/sniffed';
+        document.documentElement.appendChild(frame);
+        await new Promise((resolve) => frame.onload = resolve);
+        return [frame.contentDocument === null, crossOriginIsolated];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True]
+
+
+def test_a_frame_whose_sandbox_goes_takes_its_parent_s_isolation_again(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame made under a sandbox without allow-same-origin is not isolated; once the sandbox goes, the srcdoc that it
+    # then commits is, in a window of its own (Chrome for Testing 157).
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.setAttribute('sandbox', 'allow-scripts');
+        document.documentElement.appendChild(frame);
+        frame.removeAttribute('sandbox');
+        frame.srcdoc = '<p>x';
+        await new Promise((resolve) => frame.onload = resolve);
+        return [frame.contentWindow.crossOriginIsolated, typeof frame.contentWindow.SharedArrayBuffer];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, "function"]

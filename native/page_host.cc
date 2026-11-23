@@ -1846,8 +1846,8 @@ void PageHost::FinishSniffing(Request& request) {
     DropNavigation(request, sniffing.response);
     return;
   }
-  StartResponse(request, sniffing.response);
-  if (channel_ && !sniffing.body.empty()) {
+  if (StartResponse(request, sniffing.response) && channel_ &&
+      !sniffing.body.empty()) {
     channel_->Send(EncodeResponseBody(request.number(), sniffing.body));
   }
 }
@@ -1894,7 +1894,7 @@ void PageHost::BlockFrameNavigation(Request& request) {
                      weak_factory_.GetWeakPtr(), request.number()));
 }
 
-void PageHost::StartResponse(Request& request, const RequestEvent& event) {
+bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
   // What Chrome's browser makes of a top-level navigation's COOP and COEP.
   std::optional<TopLevelDocumentPolicies> policies;
   if (request.is_top_level_navigation()) {
@@ -1922,7 +1922,7 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
         FrameEmbedderPolicyOf(frame->second.parent, event);
     if (BlocksFrameNavigation(request, event, coep)) {
       BlockFrameNavigation(request);
-      return;
+      return false;
     }
     frame->second.url = GURL(event.url);
     frame->second.coep = coep;
@@ -1992,6 +1992,7 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
     channel_->Send(EncodeResponseStarted(response));
   }
   request.ReadIfCredited();
+  return true;
 }
 
 PageConnection PageHost::ConnectionOf(const GURL& url) const {

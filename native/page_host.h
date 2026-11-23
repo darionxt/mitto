@@ -578,7 +578,9 @@ class PageHost final : public PageChannel::Delegate {
   // document, and the library reads the body to its end and drops it.
   void DropNavigation(Request& request, const RequestEvent& event);
   // Tells the Page that the response of `request` has started.
-  void StartResponse(Request& request, const RequestEvent& event);
+  // Returns whether the response reached the Page: a frame's navigation that
+  // its parent's embedder policy blocks ended instead.
+  bool StartResponse(Request& request, const RequestEvent& event);
   // Ends the sniffing of a navigation's response: a download, or the
   // response with what was read of its body.
   void FinishSniffing(Request& request);
