@@ -656,6 +656,34 @@ def test_a_frame_has_the_history_of_its_tab(session: mitto.Session, server: Reco
         ]
 
 
+def test_a_document_that_document_open_gives_about_blank_may_keep_it(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/a", "<title>Opened</title>")
+    script = """new Promise(resolve => {
+      const frame = document.createElement('iframe');
+      document.body.append(frame);
+      window.done = resolve;
+      frame.contentWindow.setTimeout(frame.contentWindow.Function(`
+        const top = parent;
+        const r = [top.location.href];
+        top.document.open();
+        top.document.write('<p>y</p>');
+        top.document.close();
+        r.push(top.location.href);
+        top.history.replaceState(null, '');
+        r.push(top.location.href, top.history.length);
+        top.done(r);
+      `), 0);
+    })"""
+
+    with _open_page(session, url) as page:
+        # The frame's about:blank, run by its own timer, opens its parent's document, which takes the frame's URL,
+        # and the history API may then keep it.
+        assert page.evaluate(script) == [url, "about:blank", "about:blank", 1]
+        assert page.evaluate("location.href") == "about:blank"
+
+
 def test_each_frame_has_its_own_rate_limit(session: mitto.Session, server: RecordingServer) -> None:
     url = server.page("/a", "<title>Limit</title>")
     script = """(() => {
@@ -680,6 +708,45 @@ def test_each_frame_has_its_own_rate_limit(session: mitto.Session, server: Recor
                 "line switch --disable-ipc-flooding-protection can be used to bypass the protection",
             )
         ]
+
+
+def test_what_an_unload_listener_does_to_the_history_goes_nowhere(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/a", "<title>Unload</title>")
+    second = server.page("/b", "<title>B</title>")
+    listen = "addEventListener('pagehide', () => history.pushState(null, '', '#p'));"
+    entries = (
+        "[history.length, navigation.entries().map(e => new URL(e.url).pathname + new URL(e.url).hash),"
+        " new Set(navigation.entries().map(e => e.key)).size, performance.getEntriesByType('navigation')[0].type]"
+    )
+
+    with _open_page(session, url) as page:
+        # A pagehide listener's pushState() as a new document commits makes no entry, as Chrome's browser ignores the
+        # document that it replaces, for a reload as for a new entry.
+        page.evaluate(f"{listen} location.reload(); 0")
+        assert _next_document(page).url == url
+        assert page.evaluate(entries) == [1, ["/a"], 1, "reload"]
+        page.evaluate(f"{listen} location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        assert page.evaluate(entries) == [2, ["/a", "/b"], 2, "navigate"]
+
+
+def test_a_long_value_that_an_enumeration_lacks_warns_up_to_the_console_limit(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", "<title>Long</title>")
+    longest = 16 * 1024 * 1024 - 1
+
+    with _open_page(session, url) as page:
+        # The warning holds the value, cut to what a console message carries, and the Page goes on.
+        assert page.evaluate("const h = new Highlight(); h.type = 'x'.repeat(16 * 1024 * 1024); h.type") == "highlight"
+        [message] = page.console_messages
+        assert (message.level, len(message.text.encode()), message.text[:24]) == (
+            "warning",
+            longest,
+            "The provided value 'xxxx",
+        )
 
 
 def test_a_value_of_an_enumeration_that_it_lacks_warns_in_the_console(

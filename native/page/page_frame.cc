@@ -8,6 +8,7 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mitto/bindings/v8_window.h"
@@ -411,6 +412,9 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
 
 void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
                                                 FrameLoadType type) {
+  if (unloading_for_commit_) {
+    return;
+  }
   // A child frame's commits stay its own until frames have entries of their
   // own.
   if (!parent_) {
@@ -445,7 +449,7 @@ void PageFrame::NotifyNavigationApiOfDisposedEntries() {
 }
 
 void PageFrame::DidUpdateCurrentHistoryItem(const HistoryItem& item) {
-  if (!parent_) {
+  if (!parent_ && !unloading_for_commit_) {
     history().UpdateCurrentItem(item);
   }
 }
@@ -612,6 +616,10 @@ Document& PageFrame::CommitNavigation(
   const HistoryItem* const old_item = Window::Current().CurrentHistoryItem();
   const std::optional<HistoryItem> old_history_item =
       old_item ? std::optional<HistoryItem>(*old_item) : std::nullopt;
+  // What the old document's unload listeners do to its URL and entries goes
+  // nowhere, as Chrome's browser ignores a document that it is replacing, and
+  // nothing after them runs a script.
+  const base::AutoReset<bool> unloading(&unloading_for_commit_, true);
   if (old_document.IsInitialEmptyDocument()) {
     // FrameLoader::DetachDocument(), for a frame that has committed no
     // navigation yet: the unload events first, then the loading stops.
@@ -841,7 +849,9 @@ void PageFrame::AttachWindow(const PageConnection& connection,
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
         PageConsoleMessage message;
         message.level = level;
-        message.text = std::move(text);
+        // A message may hold what a page gave, such as the value that an
+        // enumeration lacks, and goes no further than a Page message can.
+        base::TruncateUTF8ToByteSize(text, kMaxConsoleTextSize, &message.text);
         send.Run(EncodeConsole(message));
       },
       runner_->send()));

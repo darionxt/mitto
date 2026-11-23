@@ -297,6 +297,8 @@ class PageFrame final : public NavigationClient, public Frame {
   // as Chrome's pending entry, which the next go() counts from.
   std::optional<size_t> pending_traversal_index_;
   int waiting_traversals_ = 0;
+  // Whether the old document's unload events run, as a new one commits.
+  bool unloading_for_commit_ = false;
   NavigationRateLimiter navigation_rate_limiter_;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };

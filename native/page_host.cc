@@ -2874,15 +2874,25 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
   // RenderFrameHostImpl::ValidateURLAndOrigin() for a same-document URL: one
   // that the history API gives the document, as CanChangeToUrlForHistoryApi()
-  // lets it, or, for an origin that is not opaque, any URL of that origin, as
-  // document.open() gives a frame's about:blank the URL of the document that
-  // opens it.
+  // lets it, or one that document.open() may have given it: about:blank, or
+  // for an origin that is not opaque any URL of that origin, as a frame's
+  // about:blank takes the URL of the document that opens it, and that
+  // document the about:blank's.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
-  if (!CanChangeToUrlForHistoryApi(new_url, context.origin, document_url) &&
-      (!new_url.is_valid() || context.origin.opaque() ||
-       !context.origin.IsSameOriginWith(url::Origin::Create(new_url)))) {
+  const auto opened_url = [&context, &new_url] {
+    // about:blank and about:srcdoc take the origin of the document whose URL
+    // they are, as document.open() gives them to a document of that origin.
+    if (new_url.IsAboutBlank() || new_url.IsAboutSrcdoc()) {
+      return true;
+    }
+    return !context.origin.opaque() &&
+           context.origin.IsSameOriginWith(url::Origin::Create(new_url));
+  };
+  if (!new_url.is_valid() ||
+      (!CanChangeToUrlForHistoryApi(new_url, context.origin, document_url) &&
+       !opened_url())) {
     Refuse("a same-document navigation to another origin");
     return;
   }

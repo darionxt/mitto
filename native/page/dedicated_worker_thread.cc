@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/task_observer.h"
@@ -311,7 +312,9 @@ void DedicatedWorkerThread::Scope::Start() {
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
         PageConsoleMessage message;
         message.level = level;
-        message.text = std::move(text);
+        // A message may hold what a page gave, such as the value that an
+        // enumeration lacks, and goes no further than a Page message can.
+        base::TruncateUTF8ToByteSize(text, kMaxConsoleTextSize, &message.text);
         send.Run(EncodeConsole(message));
       },
       send));

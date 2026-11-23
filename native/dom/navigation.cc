@@ -4,6 +4,7 @@
 #include <tuple>
 #include <utility>
 
+#include "base/functional/function_ref.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
@@ -90,11 +91,16 @@ class NavigationApiMethodTracker final
   // The navigation committed to `entry`, which takes the state that
   // navigate() or reload() gave, or none, but for a traversal, which keeps
   // the entry's own.
+  // NotifyAboutTheCommittedToEntry(), whose SetAndSaveState() `save` does,
+  // before the committed promise resolves, as a getter of `then` that a page
+  // defined runs then and may move the current entry.
   void NotifyAboutTheCommittedToEntry(NavigationHistoryEntry* entry,
-                                      FrameLoadType type) {
+                                      FrameLoadType type,
+                                      base::FunctionRef<void()> save) {
     committed_to_ = entry;
     if (type != FrameLoadType::kBackForward) {
       entry->SetState(std::move(state_));
+      save();
     }
     state_.reset();
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
@@ -803,15 +809,18 @@ void Navigation::UpdateForNavigation(const HistoryItem& item,
   }
   NavigationHistoryEntry* const current = CurrentEntry();
   if (ongoing_tracker_) {
-    ongoing_tracker_->NotifyAboutTheCommittedToEntry(current, type);
-    // SetAndSaveState(): the state that navigate() gave is the entry's.
-    HistoryItem* const window_item = window_->MutableCurrentHistoryItem();
-    if (type != FrameLoadType::kBackForward && window_item) {
+    // SetAndSaveState(): the state that navigate() gave is the entry's, which
+    // the session history keeps.
+    ongoing_tracker_->NotifyAboutTheCommittedToEntry(current, type, [&] {
+      HistoryItem* const window_item = window_->MutableCurrentHistoryItem();
+      if (!window_item) {
+        return;
+      }
       window_item->navigation_api_state = current->state();
       if (NavigationClient* const client = window_->GetNavigationClient()) {
         client->DidUpdateCurrentHistoryItem(*window_item);
       }
-    }
+    });
   }
   if (transition_) {
     transition_->ResolveCommitted();
