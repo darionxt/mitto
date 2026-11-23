@@ -61,6 +61,11 @@ class DocumentLoader final : public PageRequests::Client,
   void SetInheritedReferrerPolicy(FetchReferrerPolicy policy) {
     inherited_referrer_policy_ = policy;
   }
+  // Whether the initiator's policy container has a Content-Security-Policy
+  // that a header gave, which hides the nonces of the document's elements.
+  void SetInheritedHeaderCsp(bool header_csp) {
+    inherited_header_csp_ = header_csp;
+  }
   bool answered_by_page() const { return answered_by_page_; }
   base::WeakPtr<DocumentLoader> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
@@ -97,6 +102,7 @@ class DocumentLoader final : public PageRequests::Client,
   bool answered_by_page_ = false;
   FetchReferrerPolicy inherited_referrer_policy_ =
       FetchReferrerPolicy::kDefault;
+  bool inherited_header_csp_ = false;
   bool response_started_ = false;
   // Whether the document of the response is cross-origin isolated, which
   // its window's agent is, as Blink's agent cluster key from the browser

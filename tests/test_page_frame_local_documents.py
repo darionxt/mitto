@@ -58,6 +58,9 @@ def origin() -> Iterator[str]:
                 headers["Set-Cookie"] = "c1=v1; Path=/app"
                 if policy := urllib.parse.parse_qs(path.query).get("rp"):
                     headers["Referrer-Policy"] = policy[0]
+                # A Content-Security-Policy that blocks nothing, for ?csp.
+                if "csp" in urllib.parse.parse_qs(path.query, keep_blank_values=True):
+                    headers["Content-Security-Policy-Report-Only"] = "script-src 'nonce-abc'"
             elif path.path in ("/assets/importer.js", "/assets/imported.js"):
                 # A module of another origin than a data: URL's document's, which imports the other.
                 seen[path.path] = self.headers.get("Referer") or "none"
@@ -1753,3 +1756,52 @@ def test_a_frame_that_its_pagehide_removes_as_a_data_url_commits_leaves_the_pare
             " return [document.getElementById('f') === null, document.getElementById('tail') !== null]; })()",
             timeout=_TIMEOUT_SECONDS,
         ) == [True, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_mhtml_data_url_is_a_download(origin: str) -> None:
+    # Chrome downloads a data: URL of multipart/related or message/rfc822, so the frame keeps its document and fires
+    # no load.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        const add = (type) => {{
+          const frame = document.createElement('iframe');
+          let loads = 0;
+          frame.addEventListener('load', () => loads++);
+          frame.src = 'data:' + type + ',<script>parent.ran = true<\\/script>';
+          document.body.appendChild(frame);
+          return () => [frame.contentDocument && frame.contentDocument.URL, loads];
+        }};
+        const results = [add('multipart/related'), add('message/rfc822'), add('text/html')];
+        await settle(500);
+        return [window.ran === true, ...results.map((result) => result())];
+      }})()
+    """
+    assert _evaluate(origin, script) == [False, ["about:blank", 0], ["about:blank", 0], [None, 1]]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_s_document_hides_nonces_under_its_initiator_s_csp_header(origin: str) -> None:
+    # The parent's response has a Content-Security-Policy header, which the data: URL's document takes with the
+    # policy container, so its script's nonce attribute reads empty.
+    report = '\'fetch(O + "/assets/nonce-" + (document.currentScript.getAttribute("nonce") || "hidden"));\''
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        const frame = document.createElement('iframe');
+        frame.src = 'data:text/html,<script nonce=abc>const O = "' + location.origin + '";' + {report}
+          + '<\\/script>';
+        document.body.appendChild(frame);
+        const found = async () => {{
+          for (const outcome of ['hidden', 'abc']) {{
+            if ((await seen('/assets/nonce-' + outcome)) !== 'unseen') return outcome;
+          }}
+          return null;
+        }};
+        for (let i = 0; i < 300 && (await found()) === null; i++) await settle(10);
+        return found();
+      }})()
+    """
+    assert _evaluate(origin, script, "csp") == "hidden"

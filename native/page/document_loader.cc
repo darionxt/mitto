@@ -228,6 +228,9 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // Whether the response delivered a Content Security Policy: a policy for
   // each part of either header between commas that is not empty, as the
   // network service parses them, which hides nonces.
+  if (inherited_header_csp_) {
+    document_->SetHasHeaderDeliveredContentSecurityPolicy(true);
+  }
   for (const char* const name :
        {"content-security-policy", "content-security-policy-report-only"}) {
     const std::string policies = HeaderField(response.headers, name);

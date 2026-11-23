@@ -410,6 +410,8 @@ void StartNavigation(Window& window,
   navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
   navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
   navigation.initiator_referrer = OutgoingReferrer(origin_window);
+  navigation.initiator_has_header_csp =
+      origin_window.GetDocument().HasHeaderDeliveredContentSecurityPolicy();
   client->BeginNavigation(navigation);
 }
 

@@ -255,6 +255,8 @@ class PageFrame final : public NavigationClient, public Frame {
     PageResponseStarted response;
     std::string body;
     PageResponseEnded totals;
+    // A data: URL that Chrome downloads, which commits nothing.
+    bool download = false;
   };
   struct LocalNavigation {
     LocalNavigation();

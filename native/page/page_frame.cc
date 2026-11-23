@@ -246,7 +246,7 @@ bool PageFrame::IsLoading() const {
   // Frame::IsLoading(): while a navigation waits or the document loads. A
   // frame's initial about:blank, whose load event never fires, holds nothing
   // back, as Blink's FrameLoader::Init() suppresses its finish.
-  if (provisional_ || pending_local_navigation_) {
+  if (provisional_ || pending_local_navigation_ || pending_data_url_answer_) {
     return true;
   }
   if (!window_ || !window_->HasDocument()) {
@@ -746,10 +746,19 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
     CommitWithoutNetworkSoon(std::move(navigation));
     return;
   }
-  if (!IsSupportedMimeType(data->mime_type)) {
-    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(&PageFrame::LetParentCheckCompleted,
-                                  weak_factory_.GetWeakPtr()));
+  if (!IsSupportedMimeType(data->mime_type) ||
+      MustDownloadMimeType(data->mime_type)) {
+    // A download, which keeps the frame loading until its answer's task, as
+    // the browser's navigation does until it decides.
+    auto answer = std::make_unique<DataUrlAnswer>();
+    answer->number = ++last_data_url_answer_;
+    answer->download = true;
+    pending_data_url_answer_ = std::move(answer);
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kInternalLoading)
+        ->PostTask(FROM_HERE, base::BindOnce(&PageFrame::AnswerDataUrl,
+                                             weak_factory_.GetWeakPtr(),
+                                             pending_data_url_answer_->number));
     return;
   }
   // The Session takes the initiator's policy container now, as Chrome's
@@ -759,8 +768,10 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
       EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator));
   provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
   provisional_->AnswerByPage();
-  // Its document has the initiator's referrer policy too.
+  // Its document has the initiator's referrer policy too, and whether a
+  // header gave the initiator a Content-Security-Policy.
   provisional_->SetInheritedReferrerPolicy(request.initiator_referrer_policy);
+  provisional_->SetInheritedHeaderCsp(request.initiator_has_header_csp);
   provisional_request_ = request;
   provisional_start_ = base::TimeTicks::Now();
   auto answer = std::make_unique<DataUrlAnswer>();
@@ -772,7 +783,9 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
   response.headers = base::StrCat({"content-type: ", data->content_type, "\n"});
   response.navigation_start =
       (provisional_start_ - base::TimeTicks()).InMicroseconds();
-  response.connection = window_->Connection();
+  // The network quality of no host, as a data: URL has none, not the old
+  // document's, which its host rounded.
+  response.connection = runner_->start().connection;
   // The document's referrer, which the initiator's outgoing referrer gives a
   // navigation to the URL under the navigation's referrer policy, as for a
   // srcdoc or an about:blank.
@@ -798,6 +811,10 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
     return;
   }
   std::unique_ptr<DataUrlAnswer> answer = std::move(pending_data_url_answer_);
+  if (answer->download) {
+    LetParentCheckCompleted();
+    return;
+  }
   base::WeakPtr<DocumentLoader> loader = answer->loader;
   if (!loader) {
     return;
