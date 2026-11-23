@@ -1065,3 +1065,124 @@ def test_a_traversal_that_the_page_asks_for_while_one_waits_goes_nowhere(
             "new Promise(r => setTimeout(() => r([location.pathname, history.length, navigation.currentEntry.index]),"
             " 300))"
         ) == ["/b", 3, 1]
+
+
+def test_a_traversal_whose_redirects_end_at_its_url_starts_its_entry_anew(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/tc", "<title>TC</title>", _NO_STORE)
+    second = server.page("/b", "<title>B</title>")
+    held = threading.Event()
+
+    with _open_page(session, first) as page:
+        page.evaluate("history.replaceState({s: 1}, ''); location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        # A redirect away and back, as one that sets a cookie makes.
+        server.routes["/tc"] = Route(b"", 302, [("Location", "/tcb"), *_NO_STORE])
+        server.routes["/tcb"] = Route(b"", 302, [("Location", "/tc"), *_NO_STORE], hold=held)
+        page.evaluate("history.back()")
+        assert server.wait_for_path("/tcb")
+        server.page("/tc", "<title>TC</title>", _NO_STORE)
+        held.set()
+        assert _next_document(page).url == first
+        assert page.evaluate("[location.pathname, history.state, history.length]") == ["/tc", None, 2]
+
+
+def test_a_traversal_sends_the_referer_that_the_first_request_s_policy_gives(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a?x=1", "<title>A</title>")
+    final = server.page("/final2", "<title>Final</title>", _NO_STORE).replace("127.0.0.1", "localhost")
+    server.routes["/r2"] = Route(b"", 302, [("Location", final), ("Referrer-Policy", "unsafe-url"), *_NO_STORE])
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/r2'; 0")
+        assert _next_document(page).url == final
+        page.evaluate(f"location.href = '{second}'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page).url == final
+    # The redirect's unsafe-url sent the full URL, and the traversal applies the first request's policy to it again,
+    # which leaves the origin, as Chrome does.
+    navigated, traversed = server.headers_of("/final2")
+    assert ("Referer", first) in navigated
+    assert ("Referer", server.url("/")) in traversed
+
+
+def test_a_frame_cannot_navigate_its_parent_while_the_parent_commits(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    server.page("/evil", "<title>Evil</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "const f = document.createElement('iframe'); document.body.append(f);"
+            " f.contentWindow.addEventListener('pagehide', () => { parent.location.href = '/evil'; });"
+            " location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        # The frame's pagehide runs while the new document commits, when nothing navigates the frame, as in Chrome.
+        assert page.evaluate("new Promise(r => setTimeout(() => r([location.pathname, history.length]), 300))") == [
+            "/b",
+            2,
+        ]
+    assert server.headers_of("/evil") == []
+
+
+def test_a_traversal_wins_over_what_its_navigate_listener_starts(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    server.page("/c", "<title>C</title>")
+    entries = (
+        "[location.pathname + location.hash, history.length,"
+        " navigation.entries().map(e => new URL(e.url).pathname + new URL(e.url).hash)]"
+    )
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page).url == first
+        page.evaluate(
+            "navigation.addEventListener('navigate', e => { if (e.navigationType == 'traverse') {"
+            " location.href = '/c'; history.pushState(null, '', '#p'); } }); history.forward(); 0"
+        )
+        assert _next_document(page).url == second
+        assert page.evaluate(entries) == ["/b", 2, ["/a", "/b"]]
+    assert server.headers_of("/c") == []
+
+
+def test_a_traversal_to_an_entry_the_session_did_not_see_goes_nowhere(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/a", "<title>Opened</title>")
+    second = server.page("/b", "<title>B</title>")
+    opened = """new Promise(resolve => {
+      const frame = document.createElement('iframe');
+      document.body.append(frame);
+      window.done = resolve;
+      frame.contentWindow.setTimeout(frame.contentWindow.Function(`
+        const top = parent;
+        top.document.open();
+        top.document.write('<p>y</p>');
+        top.document.close();
+        top.history.replaceState(null, '');
+        top.done(top.location.href);
+      `), 0);
+    })"""
+
+    with _open_page(session, url) as page:
+        assert page.evaluate(opened) == "about:blank"
+        page.evaluate(f"location.href = '{second}'; 0")
+        assert _next_document(page).url == second
+        # The entry's about:blank is no URL that the Session goes to, and the document stays: a Known Gap, where
+        # Chrome makes a new about:blank.
+        page.evaluate("history.back()")
+        with pytest.raises(mitto.RequestError):
+            _next_document(page)
+        assert page.evaluate("[location.pathname, history.length]") == ["/b", 2]

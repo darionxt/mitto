@@ -53,6 +53,9 @@ class DocumentLoader final : public PageRequests::Client,
   ~DocumentLoader() override;
 
   uint64_t number() const { return number_; }
+  // Whether the navigation's response came after a redirect, which its
+  // frame's commit reads.
+  bool redirected() const { return redirected_; }
   void SetNumber(uint64_t number) { number_ = number; }
   // DocumentLoader::StopLoading(), once another document takes the place of
   // this one's: the parser stops, and so does the body, if it still comes.
@@ -83,6 +86,8 @@ class DocumentLoader final : public PageRequests::Client,
   const raw_ref<PageFrame> frame_;
   uint64_t number_;
   bool response_started_ = false;
+  // Whether the response came after a redirect.
+  bool redirected_ = false;
   // Whether the document of the response is cross-origin isolated, which
   // its window's agent is, as Blink's agent cluster key from the browser
   // says.

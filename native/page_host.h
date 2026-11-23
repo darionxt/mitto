@@ -657,7 +657,9 @@ class PageHost final : public PageChannel::Delegate {
   // What the library kept of the navigation that made each document that an
   // entry of the Page's session history may go back to, by the document's
   // ID, as Chrome's FrameNavigationEntry keeps it: what the navigation went
-  // as, its URL after its redirects, and the Referer it sent last.
+  // as, its URL after its redirects, the Referer it sent last, and the URLs
+  // that navigations within the document gave it, the most recent last, with
+  // how many bytes they hold.
   struct NavigationRecord {
     NavigationRecord();
     NavigationRecord(NavigationRecord&&);
@@ -667,6 +669,8 @@ class PageHost final : public PageChannel::Delegate {
     FetchParams fetch;
     GURL url;
     std::string referrer;
+    std::vector<GURL> same_document_urls;
+    size_t same_document_url_bytes = 0;
   };
   std::map<uint64_t, NavigationRecord> records_;
   // The documents whose CookieStores listen, by ID: what tells each of each

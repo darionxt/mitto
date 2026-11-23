@@ -197,8 +197,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // Tells the Session of the records that no entry holds any more, nor the
   // document `live_document`.
   void ReleaseRecords(uint64_t live_document);
-  // Whether a traversal to another document waits for its response, which
-  // Chrome's browser lets nothing that the page starts take the place of.
+  // Whether a traversal to another document waits for its response, or runs
+  // its beforeunload and navigate events, which Chrome's browser lets nothing
+  // that the page starts take the place of.
   bool TraversalWaits() const;
 
   // Makes a new context, whose window has an empty document at `url`, the
@@ -325,6 +326,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // The record of the document whose navigation the traversal that waits
   // repeats, which the Session keeps until it ends.
   std::optional<uint64_t> traversal_record_;
+  // The record of the traversal whose beforeunload and navigate events run,
+  // which the Session keeps whatever their listeners do.
+  std::optional<uint64_t> pinned_record_;
   // The records that the Session keeps for the history.
   std::set<uint64_t> held_records_;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};

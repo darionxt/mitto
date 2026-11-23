@@ -114,6 +114,11 @@ bool CanChangeToUrlForHistoryApi(const GURL& url,
 // this, the oldest go. The session history holds 50 entries, and the Page
 // releases what none holds.
 constexpr size_t kMaxNavigationRecords = 100;
+// How many URLs that navigations within a document gave it the library keeps
+// for traversals to its entries, and how many bytes of them: past these, the
+// least recent go, and a traversal to one of them goes nowhere.
+constexpr size_t kMaxSameDocumentUrls = 200;
+constexpr size_t kMaxSameDocumentUrlBytes = 4 * 1024 * 1024;
 
 constexpr std::string_view kVersionKey = "version";
 // What net::HttpConnectionInfoToString() and net::NextProtoToString() call a
@@ -2933,6 +2938,23 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
     return;
   }
   document_url = new_url;
+  // A traversal may go back to an entry of this URL.
+  if (const auto found = records_.find(document); found != records_.end()) {
+    NavigationRecord& record = found->second;
+    const auto same = std::ranges::find(record.same_document_urls, new_url);
+    if (same != record.same_document_urls.end()) {
+      record.same_document_url_bytes -= same->spec().size();
+      record.same_document_urls.erase(same);
+    }
+    record.same_document_urls.push_back(new_url);
+    record.same_document_url_bytes += new_url.spec().size();
+    while (record.same_document_urls.size() > kMaxSameDocumentUrls ||
+           record.same_document_url_bytes > kMaxSameDocumentUrlBytes) {
+      record.same_document_url_bytes -=
+          record.same_document_urls.front().spec().size();
+      record.same_document_urls.erase(record.same_document_urls.begin());
+    }
+  }
   // The Page's URL is its top-level document's.
   if (context.parent != kNoDocument) {
     return;
@@ -2970,20 +2992,25 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
   }
   const NavigationRecord& record = found->second;
   const GURL url(traversal.url);
-  // An entry of the navigation is at its URL, and one that a navigation
-  // within the document made at a URL of the document's origin, the only
-  // ones that the history API gives a document of an HTTP or HTTPS origin.
-  if (traversal.same_document_entry
-          ? !url.SchemeIsHTTPOrHTTPS() ||
-                !url::IsSameOriginWith(url, record.url)
-          : url != record.url) {
-    Refuse("a traversal to a URL that the document's navigations never had");
-    return;
-  }
   PageEvent started;
   started.type = MITTO_PAGE_EVENT_NAVIGATION_STARTED;
   started.url = traversal.url;
   Push(std::move(started));
+  // Only to a URL that the library saw the document take: its navigation's,
+  // or one that a navigation within it gave it, which the library may have
+  // let go of since, and then the traversal goes nowhere, with no request.
+  if (traversal.same_document_entry
+          ? !url.SchemeIsHTTPOrHTTPS() ||
+                std::ranges::find(record.same_document_urls, url) ==
+                    record.same_document_urls.end()
+          : url != record.url) {
+    PageResponseEnded ended;
+    ended.number = traversal.number;
+    ended.net_error = net::ERR_ABORTED;
+    channel_->Send(EncodeResponseEnded(ended));
+    PushNavigated(traversal.url, 0, net::ERR_ABORTED);
+    return;
+  }
   // NavigationControllerImpl::CreateNavigationRequestFromEntry(): the
   // entry's own Initiator, referrer and user activation, whichever document
   // asks. An entry that a navigation within the document made has the
@@ -2996,8 +3023,9 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
     options.fetch->initiator = record.url;
     options.fetch->opaque_initiator.reset();
   }
-  // The Referer that the navigation sent last, after the policies of its
-  // redirects, as the FrameNavigationEntry keeps the committed referrer.
+  // The Referer that the navigation sent last, to which the policy of its
+  // first request applies again, as Chrome's FrameNavigationEntry keeps the
+  // committed referrer with the request's policy.
   if (record.referrer.empty()) {
     options.fetch->referrer_policy = net::ReferrerPolicy::NO_REFERRER;
     options.fetch->referrer_source.reset();
