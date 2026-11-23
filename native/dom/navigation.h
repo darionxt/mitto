@@ -92,7 +92,7 @@ class Navigation final : public EventTarget {
     std::u16string id;
     std::u16string url;
     int64_t document_sequence = 0;
-    std::optional<SerializedScriptValue> state;
+    scoped_refptr<const SharedSerializedScriptValue> state;
   };
   // What a document's entries come from, as NavigationApiHistoryEntryArrays:
   // the entries of its frame of its origin right before and after its own,

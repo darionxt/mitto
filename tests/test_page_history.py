@@ -6,6 +6,7 @@ A local server serves each page. Each test goes through both APIs, and needs a n
 beside it, as CI's native job installs it on every Host.
 """
 
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -14,7 +15,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page, PageNavigation
-from tests.page_server import TIMEOUT_SECONDS, RecordingServer, Route, without_favicon
+from tests.page_server import HTML, TIMEOUT_SECONDS, RecordingServer, Route, without_favicon
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -42,6 +43,13 @@ def _open_page(session: mitto.Session, url: str) -> Page:
 
 def _next(page: Page) -> PageNavigation:
     return page.wait_for_navigation(timeout=TIMEOUT_SECONDS)
+
+
+def _next_document(page: Page) -> PageNavigation:
+    """Return the next navigation to another document, past those within the document before it."""
+    while (navigation := _next(page)).same_document:
+        pass
+    return navigation
 
 
 def test_push_state_and_replace_state_change_the_entry_at_once(session: mitto.Session, server: RecordingServer) -> None:
@@ -206,6 +214,31 @@ def test_a_traversal_goes_to_the_entry_it_asked_for_when_it_asked(
         assert page.evaluate(script) == [["#3", "#1"], "#1", 4]
 
 
+def test_a_traversal_within_the_document_leaves_a_waiting_navigation_to_go_on(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/a", "<title>Waiting</title>")
+    held = threading.Event()
+    server.routes["/slow"] = Route(b"<title>Slow</title>", headers=[("Content-Type", HTML)], hold=held)
+    slow = server.url("/slow")
+    script = """window.marker = 1;
+      history.pushState(null, '', '#x');
+      location.href = '/slow';
+      history.back();
+      new Promise(r => setTimeout(() => r([location.href, history.length, window.marker]), 300))"""
+
+    with _open_page(session, url) as page:
+        # back() goes to the first entry while the navigation waits for its response, which then commits after it,
+        # in place of the entry that the traversal left.
+        assert page.evaluate(script) == [url, 2, 1]
+        held.set()
+        assert _next_document(page).url == slow
+        assert page.evaluate("[history.length, navigation.entries().map(e => new URL(e.url).pathname)]") == [
+            2,
+            ["/a", "/slow"],
+        ]
+
+
 def test_go_with_no_offset_reloads(session: mitto.Session, server: RecordingServer) -> None:
     url = server.page("/", "<title>Reload</title>")
 
@@ -342,6 +375,85 @@ def test_canceling_the_navigate_event_of_a_traversal_keeps_the_entry(
         ]
 
 
+def test_a_traversal_whose_entry_a_listener_drops_goes_nowhere(session: mitto.Session, server: RecordingServer) -> None:
+    url = server.page("/", "<title>Dropped</title>")
+    script = """(async () => {
+      const r = [];
+      const settle = p => p.then(() => 'fulfilled', e => 'rejected ' + e.name);
+      history.pushState(null, '', '#1');
+      await new Promise(res => { addEventListener('popstate', res, {once: true}); history.back(); });
+      navigation.addEventListener('navigate', e => {
+        r.push('navigate ' + e.navigationType + ' ' + new URL(e.destination.url).hash);
+        if (e.navigationType == 'replace') e.intercept({handler: () => new Promise(() => {})});
+      });
+      const first = navigation.navigate('#2', {history: 'replace'});
+      first.committed.catch(() => {});
+      first.finished.catch(() => {});
+      navigation.addEventListener('navigateerror', e => {
+        r.push('navigateerror ' + e.error.name);
+        history.pushState(null, '', '#3');
+      }, {once: true});
+      addEventListener('popstate', () => r.push('popstate ' + location.hash));
+      const result = navigation.forward();
+      r.push(await settle(result.committed), await settle(result.finished));
+      await new Promise(res => setTimeout(res, 200));
+      r.push(location.hash, navigation.currentEntry.index, navigation.entries().map(e => new URL(e.url).hash));
+      return r;
+    })()"""
+
+    with _open_page(session, url) as page:
+        # The traversal aborts the navigation that its handler holds, whose navigateerror listener pushes an entry in
+        # place of the one that the traversal goes to, which then goes nowhere. history.length is 2 here, where
+        # Chrome's renderer copy of it gives 3, as it has taken the traversal's offset before the push.
+        assert page.evaluate(script) == [
+            "navigate replace #2",
+            "navigateerror AbortError",
+            "navigate push #3",
+            "rejected AbortError",
+            "rejected AbortError",
+            "#3",
+            1,
+            ["#2", "#3"],
+        ]
+
+
+def test_update_current_entry_keeps_the_entry_it_was_called_for(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/a", "<title>Update</title>")
+    server.page("/other", "<title>Other</title>")
+    script = """(() => {
+      const before = navigation.currentEntry;
+      const r = [];
+      navigation.addEventListener('currententrychange',
+        e => r.push(['cec', e.from === before, location.hash]));
+      navigation.updateCurrentEntry({state: {get s() { history.pushState(null, '', '#p'); return 1; }}});
+      r.push(JSON.stringify(before.getState()), navigation.currentEntry === before,
+             navigation.currentEntry.getState() === undefined, location.hash, navigation.currentEntry.index);
+      return r;
+    })()"""
+    entries = (
+        "navigation.entries().map(e => [new URL(e.url).pathname + new URL(e.url).hash, e.getState() === undefined])"
+    )
+
+    with _open_page(session, url) as page:
+        # A getter of the state pushes an entry: the entry that was current takes the state, and the event names it,
+        # but the session history keeps the state for no entry, as the entry is no longer the current one. The
+        # event's navigationType is a Known Gap.
+        assert page.evaluate(script) == [
+            ["cec", True, "#p"],
+            ["cec", True, "#p"],
+            '{"s":1}',
+            False,
+            True,
+            "#p",
+            1,
+        ]
+        page.evaluate("location.href = '/other'; 0")
+        _next_document(page)
+        assert page.evaluate(entries) == [["/a", True], ["/a#p", True], ["/other", True]]
+
+
 def test_a_new_document_adds_an_entry_that_history_counts(session: mitto.Session, server: RecordingServer) -> None:
     second = server.page("/second", "<title>Second</title>")
     first = server.page("/first", "<title>First</title>")
@@ -359,6 +471,30 @@ def test_a_new_document_adds_an_entry_that_history_counts(session: mitto.Session
         page.evaluate("location.replace('/first'); 0")
         assert _next(page).url == first
         assert page.evaluate(entries) == [2, ["/first", "/first"], "replace", "/second"]
+
+
+def test_a_document_whose_referrer_policy_hides_its_url_leaves_it_out_of_later_entries(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/norefer?q=1", "<title>No referrer</title>", [("Referrer-Policy", "no-referrer")])
+    second = server.page("/b", "<title>B</title>")
+    third = server.page("/c", "<title>C</title>")
+    entries = (
+        "[navigation.entries().map(e => e.url), navigation.activation.from === null,"
+        " navigation.activation.from && navigation.activation.from.url]"
+    )
+
+    with _open_page(session, first) as page:
+        # A document sees its own URLs.
+        assert page.evaluate(entries) == [[first], True, None]
+        page.evaluate("history.pushState(null, '', '/norefer?q=2'); location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        # Later documents see each of its entries, without a URL, as Chrome's protect_url_in_navigation_api keeps
+        # it from them.
+        assert page.evaluate(entries) == [[None, None, second], False, None]
+        page.evaluate("history.pushState(null, '', '/b2'); location.replace('/c'); 0")
+        assert _next_document(page).url == third
+        assert page.evaluate(entries) == [[None, None, second, third], False, server.url("/b2")]
 
 
 def test_an_entry_takes_the_navigation_api_state_as_chrome_carries_it(

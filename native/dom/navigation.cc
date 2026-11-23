@@ -49,8 +49,9 @@ namespace mitto {
 class NavigationApiMethodTracker final
     : public cppgc::GarbageCollected<NavigationApiMethodTracker> {
  public:
-  NavigationApiMethodTracker(v8::Local<v8::Value> info,
-                             std::optional<SerializedScriptValue> state)
+  NavigationApiMethodTracker(
+      v8::Local<v8::Value> info,
+      scoped_refptr<const SharedSerializedScriptValue> state)
       : state_(std::move(state)) {
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
     const v8::Local<v8::Context> context = isolate->GetCurrentContext();
@@ -74,7 +75,9 @@ class NavigationApiMethodTracker final
   v8::Local<v8::Value> Info() const {
     return info_.Get(v8::Isolate::GetCurrent());
   }
-  const std::optional<SerializedScriptValue>& state() const { return state_; }
+  const scoped_refptr<const SharedSerializedScriptValue>& state() const {
+    return state_;
+  }
 
   // The NavigationResult: { committed, finished }.
   v8::Local<v8::Object> Result() const {
@@ -121,7 +124,7 @@ class NavigationApiMethodTracker final
 
  private:
   v8::TracedReference<v8::Value> info_;
-  std::optional<SerializedScriptValue> state_;
+  scoped_refptr<const SharedSerializedScriptValue> state_;
   v8::TracedReference<v8::Promise::Resolver> committed_;
   v8::TracedReference<v8::Promise::Resolver> finished_;
   cppgc::Member<NavigationHistoryEntry> committed_to_;
@@ -426,15 +429,18 @@ v8::Local<v8::Object> Navigation::Navigate(
         NewDOMException(isolate, u"NotSupportedError",
                         u"The javascript: protocol is not supported"));
   }
-  std::optional<SerializedScriptValue> state;
+  scoped_refptr<const SharedSerializedScriptValue> state;
   if (options.state && !(*options.state)->IsUndefined()) {
     const v8::TryCatch try_catch(isolate);
-    state = SerializedScriptValue::Serialize(isolate, *options.state);
-    if (!state) {
+    std::optional<SerializedScriptValue> serialized =
+        SerializedScriptValue::Serialize(isolate, *options.state);
+    if (!serialized) {
       return EarlyErrorResult(try_catch.HasCaught()
                                   ? try_catch.Exception()
                                   : v8::Undefined(isolate).As<v8::Value>());
     }
+    state = base::MakeRefCounted<SharedSerializedScriptValue>(
+        std::move(*serialized));
   }
   const bool push = options.history == u"push";
   if (push && document.IsInitialEmptyDocument()) {
@@ -466,15 +472,18 @@ v8::Local<v8::Object> Navigation::Reload(
     const bindings::NavigationReloadOptions& options) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   MakeEntries();
-  std::optional<SerializedScriptValue> state;
+  scoped_refptr<const SharedSerializedScriptValue> state;
   if (options.state && !(*options.state)->IsUndefined()) {
     const v8::TryCatch try_catch(isolate);
-    state = SerializedScriptValue::Serialize(isolate, *options.state);
-    if (!state) {
+    std::optional<SerializedScriptValue> serialized =
+        SerializedScriptValue::Serialize(isolate, *options.state);
+    if (!serialized) {
       return EarlyErrorResult(try_catch.HasCaught()
                                   ? try_catch.Exception()
                                   : v8::Undefined(isolate).As<v8::Value>());
     }
+    state = base::MakeRefCounted<SharedSerializedScriptValue>(
+        std::move(*serialized));
   } else if (NavigationHistoryEntry* const current = CurrentEntry()) {
     state = current->state();
   }
@@ -548,7 +557,7 @@ v8::Local<v8::Object> Navigation::PerformTraversal(
   auto* const tracker =
       bindings::MakeGarbageCollected<NavigationApiMethodTracker>(
           options.info ? *options.info : v8::Undefined(isolate).As<v8::Value>(),
-          std::nullopt);
+          nullptr);
   upcoming_traverse_trackers_.emplace_back(key, tracker);
   if (NavigationClient* const client = window_->GetNavigationClient()) {
     client->NavigateToNavigationApiKey(key);
@@ -579,33 +588,36 @@ v8::Local<v8::Object> Navigation::Forward(
 void Navigation::UpdateCurrentEntry(
     const bindings::NavigationUpdateCurrentEntryOptions& options,
     bindings::ExceptionState& exception_state) {
-  if (!CurrentEntry()) {
+  NavigationHistoryEntry* const current = CurrentEntry();
+  if (!current) {
     exception_state.ThrowDOMException(
         "InvalidStateError",
         "updateCurrent() cannot be called when navigation.current is null.");
     return;
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  std::optional<SerializedScriptValue> state;
+  std::optional<SerializedScriptValue> serialized;
   {
     const bindings::TryRethrowScope rethrow(isolate, exception_state);
-    state = SerializedScriptValue::SerializeForStorage(
+    serialized = SerializedScriptValue::SerializeForStorage(
         isolate,
         options.state.value_or(v8::Undefined(isolate).As<v8::Value>()));
   }
-  // A getter that the serializer ran may have moved the current entry, which
-  // takes the state on both sides, and which the event names.
-  NavigationHistoryEntry* const current = CurrentEntry();
-  if (!state || !current) {
+  if (!serialized) {
     return;
   }
-  // NavigationHistoryEntry::SetAndSaveState(): the session history keeps it
-  // at once.
+  // NavigationHistoryEntry::SetAndSaveState(): the entry takes the state, and
+  // the session history keeps it at once, unless a getter that the serializer
+  // ran has moved the current entry since.
+  const scoped_refptr<const SharedSerializedScriptValue> state =
+      base::MakeRefCounted<SharedSerializedScriptValue>(std::move(*serialized));
   current->SetState(state);
-  if (HistoryItem* const item = window_->MutableCurrentHistoryItem()) {
-    item->navigation_api_state = std::move(state);
-    if (NavigationClient* const client = window_->GetNavigationClient()) {
-      client->DidUpdateCurrentHistoryItem(*item);
+  if (current == CurrentEntry()) {
+    if (HistoryItem* const item = window_->MutableCurrentHistoryItem()) {
+      item->navigation_api_state = state;
+      if (NavigationClient* const client = window_->GetNavigationClient()) {
+        client->DidUpdateCurrentHistoryItem(*item);
+      }
     }
   }
   DispatchEvent(NavigationCurrentEntryChangeEvent::CreateTrusted(u"", current));
@@ -665,6 +677,14 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
     return DispatchResult::kContinue;
   }
   MakeEntries();
+  // A navigation that starts aborts the ongoing one first, whose listeners
+  // may change the entries, so a traversal looks for its entry after.
+  while (ongoing_navigate_event_) {
+    AbortOngoingNavigation();
+  }
+  if (!window_->HasContext()) {
+    return DispatchResult::kAbort;
+  }
   const bool traverse = params.load_type == FrameLoadType::kBackForward;
   // A traversal goes to one of the entries, or nowhere.
   NavigationHistoryEntry* destination_entry = nullptr;
@@ -678,9 +698,6 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
       return DispatchResult::kAbort;
     }
     destination_entry = entries_[static_cast<size_t>(index)].Get();
-  }
-  while (ongoing_navigate_event_) {
-    AbortOngoingNavigation();
   }
   // PromoteUpcomingNavigationToOngoing(): a traversal's own tracker, by its
   // key, or the navigate() or reload() that waits.
@@ -701,7 +718,7 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const GURL document_url(window_->GetDocument().UrlForBinding());
   const std::u16string navigation_type = NavigationTypeOf(params.load_type);
-  std::optional<SerializedScriptValue> destination_state;
+  scoped_refptr<const SharedSerializedScriptValue> destination_state;
   if (traverse) {
     destination_state = params.destination_item->navigation_api_state;
   } else if (ongoing_tracker_) {

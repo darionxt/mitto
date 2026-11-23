@@ -35,7 +35,7 @@ class NavigationHistoryEntry final : public EventTarget {
       std::u16string id,
       std::u16string url,
       int64_t document_sequence,
-      std::optional<SerializedScriptValue> state);
+      scoped_refptr<const SharedSerializedScriptValue> state);
   // A new random key or ID, as Blink makes one for a HistoryItem.
   static std::u16string NewKey();
   // One of no window, with no keys and no URL, for a Known Gap that gives
@@ -43,12 +43,13 @@ class NavigationHistoryEntry final : public EventTarget {
   static bindings::ScriptWrappable* CreateForKnownGap(
       const bindings::WrapperTypeInfo& info);
 
-  NavigationHistoryEntry(Window* window,
-                         std::u16string key,
-                         std::u16string id,
-                         std::u16string url,
-                         int64_t document_sequence,
-                         std::optional<SerializedScriptValue> state);
+  NavigationHistoryEntry(
+      Window* window,
+      std::u16string key,
+      std::u16string id,
+      std::u16string url,
+      int64_t document_sequence,
+      scoped_refptr<const SharedSerializedScriptValue> state);
   ~NavigationHistoryEntry() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -68,8 +69,10 @@ class NavigationHistoryEntry final : public EventTarget {
   const std::u16string& id() const { return id_; }
   const std::u16string& url() const { return url_; }
   int64_t document_sequence() const { return document_sequence_; }
-  const std::optional<SerializedScriptValue>& state() const { return state_; }
-  void SetState(std::optional<SerializedScriptValue> state) {
+  const scoped_refptr<const SharedSerializedScriptValue>& state() const {
+    return state_;
+  }
+  void SetState(scoped_refptr<const SharedSerializedScriptValue> state) {
     state_ = std::move(state);
   }
 
@@ -82,7 +85,7 @@ class NavigationHistoryEntry final : public EventTarget {
   const std::u16string id_;
   const std::u16string url_;
   const int64_t document_sequence_;
-  std::optional<SerializedScriptValue> state_;
+  scoped_refptr<const SharedSerializedScriptValue> state_;
 };
 
 }  // namespace mitto

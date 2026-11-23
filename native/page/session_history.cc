@@ -13,12 +13,17 @@
 namespace mitto {
 namespace {
 
-// ToNavigationApiHistoryEntry().
-Navigation::ApiEntry ToApiEntry(const HistoryItem& item) {
+// ToNavigationApiHistoryEntry(), for a document of `document_sequence_number`,
+// which sees no URL of another document's entry that protects it.
+Navigation::ApiEntry ToApiEntry(const HistoryItem& item,
+                                int64_t document_sequence_number) {
   Navigation::ApiEntry entry;
   entry.key = item.navigation_api_key;
   entry.id = item.navigation_api_id;
-  entry.url = base::UTF8ToUTF16(item.url.spec());
+  if (!item.protect_url_in_navigation_api ||
+      item.document_sequence_number == document_sequence_number) {
+    entry.url = base::UTF8ToUTF16(item.url.spec());
+  }
   entry.document_sequence = item.document_sequence_number;
   entry.state = item.navigation_api_state;
   return entry;
@@ -108,7 +113,8 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
   const Entry& old = entries_[current_];
   if (!old.initial &&
       url::Origin::Create(old.root->item().url).IsSameOriginWith(origin)) {
-    arrays.previous = ToApiEntry(old.root->item());
+    arrays.previous =
+        ToApiEntry(old.root->item(), item.document_sequence_number);
   }
   Entry entry;
   entry.root =
@@ -151,6 +157,17 @@ void SessionHistory::DidCommitSameDocumentNavigation(const HistoryItem& item,
   }
 }
 
+void SessionHistory::ProtectUrlsOfDocument(int64_t document_sequence_number) {
+  for (const Entry& entry : entries_) {
+    if (entry.root->item().document_sequence_number ==
+        document_sequence_number) {
+      HistoryItem item = entry.root->item();
+      item.protect_url_in_navigation_api = true;
+      entry.root->set_item(std::move(item));
+    }
+  }
+}
+
 void SessionHistory::UpdateCurrentItem(const HistoryItem& item) {
   entries_[current_].root->set_item(item);
 }
@@ -186,8 +203,11 @@ void SessionHistory::FillApiEntries(size_t index,
                                     Navigation::EntryArrays& arrays) const {
   // PopulateSingleNavigationApiHistoryEntryVector(): outwards while the
   // entries are of the origin, each item once.
-  const auto fill = [this, &origin](size_t from, bool back,
-                                    std::vector<Navigation::ApiEntry>& out) {
+  const int64_t document_sequence_number =
+      entries_[index].root->item().document_sequence_number;
+  const auto fill = [this, &origin, document_sequence_number](
+                        size_t from, bool back,
+                        std::vector<Navigation::ApiEntry>& out) {
     int64_t last = entries_[from].root->item().item_sequence_number;
     size_t i = from;
     while (back ? i > 0 : i + 1 < entries_.size()) {
@@ -202,7 +222,7 @@ void SessionHistory::FillApiEntries(size_t index,
         continue;
       }
       last = item.item_sequence_number;
-      out.push_back(ToApiEntry(item));
+      out.push_back(ToApiEntry(item, document_sequence_number));
     }
   };
   fill(index, /*back=*/true, arrays.back);
