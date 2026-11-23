@@ -313,8 +313,11 @@ _WHOLE = "const whole = (ms, step) => Math.abs(ms - Math.round(ms / step) * step
 
 # What a page reads of its clocks, by rule rather than by value. For each clock, many readings: whether each is a whole
 # number of steps of 5 microseconds, and whether some is not one of 100, which a clock of 5 microseconds gives among
-# so many readings and one of 100 never does. The last item is whether performance.timeOrigin, a single reading, is a
-# whole number of steps of 100.
+# so many readings and one of 100 never does. An event's time comes from the host's clock, as performance.now() does,
+# so it is off the grid of 100 where now() is: a host whose clock ticks in milliseconds keeps both on it. A frame's
+# time steps by the display's period and an idle deadline's time remaining from it, so they leave the grid on any host;
+# only an idle callback's readings above zero count, since one that runs past its deadline reads zeros. The last item
+# is whether performance.timeOrigin, a single reading, is a whole number of steps of 100.
 _CLOCKS = (
     "(async () => {"
     + _WHOLE
@@ -339,13 +342,16 @@ _CLOCKS = (
     for (let i = 0; i < 20; i++) {
         frames.push(await new Promise((resolve) => requestAnimationFrame(resolve)));
     }
-    const idle = await new Promise((resolve) => requestIdleCallback((deadline) => {
-        resolve(Array.from({length: 2000}, () => deadline.timeRemaining()));
-    }));
+    const idle = [];
+    for (let i = 0; i < 20 && idle.length < 50; i++) {
+        idle.push(...await new Promise((resolve) => requestIdleCallback((deadline) => {
+            resolve(Array.from({length: 200}, () => deadline.timeRemaining()).filter((t) => t > 0));
+        })));
+    }
     return [
         fine(now), offCoarse(now),
         temporal.every((t) => t % 5000n === 0n), temporal.some((t) => t % 100000n !== 0n),
-        fine(events), offCoarse(events),
+        fine(events), offCoarse(events) === offCoarse(now),
         fine(frames), offCoarse(frames),
         fine(idle), offCoarse(idle),
         whole(performance.timeOrigin, 0.005),
@@ -380,7 +386,9 @@ def test_a_window_that_is_not_isolated_reads_clocks_of_100_microseconds(
     session = sixty_hertz_session
     url = server.page("/", _BLANK)
 
-    assert _evaluate(session, url, _CLOCKS) == [True, False] * 5 + [True, "undefined", True]
+    # Its events follow now(), which is on the coarse grid, so the sixth item holds as well.
+    expected = [True, False, True, False, True, True, True, False, True, False, True, "undefined", True]
+    assert _evaluate(session, url, _CLOCKS) == expected
 
 
 # Eight workers each read performance.now() for 30 ms and give the rules of their readings, each worker's own, and
@@ -424,3 +432,23 @@ def test_a_worker_that_is_not_isolated_reads_clocks_of_100_microseconds(
     server.route("/clock.js", _CLOCK_WORKER, _JS)
 
     assert _evaluate(session, url, _WORKERS_CLOCKS) == [[True] * 8, [False] * 8, True, False, True]
+
+
+def test_a_frame_that_is_not_isolated_lacks_what_isolation_exposes(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # [CrossOriginIsolatedOrRuntimeEnabled] members go in each context as it is made, not in the templates that the
+    # first realm makes: a same-origin frame that its container policy keeps from isolation has no
+    # measureUserAgentSpecificMemory(), though the isolated window read it first (Chrome for Testing 157).
+    url = server.page("/", _BLANK, _ISOLATING)
+    script = """(() => {
+        const parentHas = typeof performance.measureUserAgentSpecificMemory;
+        const frame = document.createElement('iframe');
+        frame.allow = "cross-origin-isolated 'none'";
+        document.documentElement.appendChild(frame);
+        const child = frame.contentWindow;
+        return [crossOriginIsolated, parentHas, child.crossOriginIsolated,
+                typeof child.performance.measureUserAgentSpecificMemory];
+    })()"""
+
+    assert _evaluate(session, url, script) == [True, "function", False, "undefined"]

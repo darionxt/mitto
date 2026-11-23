@@ -48,7 +48,7 @@ from bindings_generator.model import (
 from bindings_generator.runtime_features import read_features
 from bindings_generator.table_writer import Construct, KnownGapContext, write_tables
 from bindings_generator.type_tables import TypeTables
-from bindings_generator.web_idl_reader import Definitions
+from bindings_generator.web_idl_reader import Definitions, condition_of, group_condition
 
 BINDINGS = Path(__file__).resolve().parents[1] / "native" / "bindings"
 
@@ -135,6 +135,55 @@ def test_it_reads_and_writes_a_member_exposed_to_cross_origin_isolated_contexts(
     keys = ["CrossOriginIsolated", "CrossOriginIsolatedOrRuntimeEnabled"]
     extended_attributes.check("operation Thing.measure", keys)
     cpp_writer._check_written("operation Thing.measure", _extended(*keys))  # pyright: ignore[reportPrivateUsage]
+
+
+class _Exposure:
+    """What condition_of() reads of Blink's web_idl.Exposure, which bind_gen counts as context dependent or not."""
+
+    def __init__(self, *, coi_or_features: tuple[str, ...] = (), context_dependent: bool = False) -> None:
+        self.only_in_coi_contexts = False
+        self.only_in_coi_contexts_or_runtime_enabled_features = coi_or_features
+        self.only_in_injection_mitigated_contexts = False
+        self.only_in_isolated_contexts = False
+        self.only_in_secure_contexts = False
+        self.global_names_and_features: tuple[object, ...] = ()
+        self.runtime_enabled_features: tuple[object, ...] = ()
+        self.context_enabled_features: tuple[str, ...] = ()
+        self._context_dependent = context_dependent
+
+    def is_context_dependent(self, global_names: list[str] | None = None) -> bool:
+        return self._context_dependent
+
+
+class _Overload:
+    def __init__(self, exposure: _Exposure) -> None:
+        self.exposure = exposure
+
+
+class _Group(list[_Overload]):
+    def __init__(self, overloads: list[_Overload], exposure: _Exposure) -> None:
+        super().__init__(overloads)
+        self.exposure = exposure
+
+
+def test_a_member_exposed_to_isolated_contexts_or_by_a_feature_is_installed_for_each_context() -> None:
+    # Performance.measureUserAgentSpecificMemory(): bind_gen's is_context_dependent() leaves the attribute out, but
+    # Chrome for Testing 157 gives it to an isolated window and not to a same-origin frame there that is not isolated,
+    # even once the window made Performance's templates. So it goes in the per-context phase, not the templates.
+    measure = condition_of(_Exposure(coi_or_features=("UnrestrictedMeasureUserAgentSpecificMemory",)), ["Window"])
+    plain = condition_of(_Exposure(), ["Window"])
+    group = group_condition(
+        _Group(
+            [_Overload(_Exposure(coi_or_features=("F",))), _Overload(_Exposure(coi_or_features=("G",)))], _Exposure()
+        ),
+        ["Window"],
+    )
+
+    assert measure.other == ("CrossOriginIsolatedOrRuntimeEnabled=UnrestrictedMeasureUserAgentSpecificMemory",)
+    assert measure.context_dependent
+    assert not plain.context_dependent
+    assert len(group.alternatives) == 2
+    assert group.context_dependent
 
 
 def test_it_knows_every_extended_attribute_with_a_reason() -> None:
