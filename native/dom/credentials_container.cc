@@ -85,8 +85,7 @@ void RunAnswer(v8::Isolate* isolate,
   const v8::Context::Scope context_scope(context);
   // A window that has gone gets no answer, as Blink's resolvers settle nothing
   // once their execution context is destroyed.
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
+  const Window* const window = Window::From(isolate, context);
   if (!window || !window->HasContext()) {
     return;
   }

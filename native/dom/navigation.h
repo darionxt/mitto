@@ -123,8 +123,11 @@ class Navigation final : public EventTarget {
   // What the Page and the frame loader use.
   //
   // Where the document's entries come from, which the Page gives a document
-  // that a navigation loaded, before anything reads them.
-  void SetCarried(Carried carried) { carried_ = std::move(carried); }
+  // that a navigation loaded, before anything reads them. A frame's window
+  // that its initial about:blank leaves to a document of its origin makes
+  // the new document's entries again, as Blink's
+  // NavigationApi::InitializeForNewWindow() does.
+  void SetCarried(Carried carried);
   // The document's entries, for the document after it.
   Carried CarryForNextDocument();
   // Fires the navigate event of a navigation, unless the document has no

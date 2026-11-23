@@ -458,12 +458,13 @@ def test_a_request_that_stops_with_a_cache(program: Path, protocol: str, scenari
 def test_a_directory_that_something_else_holds(program: Path, tmp_path: Path) -> None:
     # In the body rather than in a mark, so that a type checker on Windows skips the rest too.
     if sys.platform == "win32":
-        pytest.skip("holds the directory with flock(), which Windows does not have")
+        pytest.skip("holds the directory's lock file with fcntl(), which Windows does not have")
     import fcntl
 
-    lock = os.open(tmp_path, os.O_RDONLY)
+    # The lock that a Session of another process holds: fcntl()'s, on the directory's lock file.
+    lock = os.open(tmp_path / "mitto.lock", os.O_RDWR | os.O_CREAT)
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        fcntl.lockf(lock, fcntl.LOCK_EX)
         result = _run(program, "http://127.0.0.1:9/", {"version": SETTINGS_VERSION, "http_cache": str(tmp_path)})
     finally:
         os.close(lock)

@@ -175,6 +175,37 @@ def test_coep_credentialless_sends_no_credentials_on_a_no_cors_request_to_anothe
     assert _value(other.headers_of("/cors")[0], "Cookie") == "who=mitto"
 
 
+def test_a_frame_s_srcdoc_and_about_blank_keep_their_parent_s_credentialless_policy(
+    session: mitto.Session, server: RecordingServer, other: RecordingServer
+) -> None:
+    # A srcdoc takes its parent's policy container, and the about:blank after it its initiator's, the parent's, as
+    # Chrome 157's do, so their no-cors requests to another origin send no cookie either.
+    url = server.page("/", _BLANK, [_COOP, _coep("credentialless"), ("Set-Cookie", "who=mitto")])
+    srcdoc_url = other.route("/srcdoc", b"none", "text/plain")
+    blank_url = other.route("/blank", b"none", "text/plain")
+    script = f"""
+      (async () => {{
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {{once: true}}));
+        const ask = (w, url) =>
+          w.eval(`fetch('${{url}}', {{mode: 'no-cors', credentials: 'include'}}).then((r) => r.type, (e) => String(e))`);
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>s';
+        document.body.appendChild(element);
+        await loaded(element);
+        const fromSrcdoc = await ask(element.contentWindow, '{srcdoc_url}');
+        element.removeAttribute('srcdoc');
+        await loaded(element);
+        return [fromSrcdoc, await ask(element.contentWindow, '{blank_url}')];
+      }})()
+    """
+
+    with _open_page(session, url) as page:
+        outcomes = page.evaluate(script, timeout=TIMEOUT_SECONDS)
+
+    assert outcomes == ["opaque", "opaque"]
+    assert [_value(other.headers_of(path)[0], "Cookie") for path in ("/srcdoc", "/blank")] == [None, None]
+
+
 def test_a_worker_holds_its_requests_to_its_own_embedder_policy(
     session: mitto.Session, server: RecordingServer, other: RecordingServer
 ) -> None:

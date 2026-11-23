@@ -2083,3 +2083,9 @@ def test_a_navigation_that_ends_with_no_response_keeps_the_document(session: _Se
     assert session.evaluate("[window.marker, document.URL]", call=2) == (False, f'["kept","{_DOCUMENT_URL}"]')
     assert session.documents == [struct.pack("<QBQ", 1, 0, 0), struct.pack("<QBQQ", 2, 1, 0, 0)]
     assert session.close() == 0
+
+
+def test_a_script_s_window_of_an_opaque_origin_has_no_storage(program: Path) -> None:
+    # The window of the Page program given a script has no frame, but a context, so its about:blank, of an opaque
+    # origin, throws, as a Page's does.
+    assert _evaluate(program, "try { localStorage; 'none' } catch (error) { error.name }") == "SecurityError"

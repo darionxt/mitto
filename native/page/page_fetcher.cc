@@ -19,6 +19,9 @@ constexpr int kFailed = -2;
 // Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
 constexpr size_t kKeepaliveInflightBytesQuota = 64 * 1024;
 
+// net::ERR_ABORTED.
+constexpr int kNetErrorAborted = -3;
+
 PageRequestMode ToPageRequestMode(FetchMode mode) {
   switch (mode) {
     case FetchMode::kCors:
@@ -107,6 +110,9 @@ class PageFetcher::Request final : public PageRequests::Client,
   // The bytes of its body that count against the keepalive quota.
   size_t keepalive_bytes() const { return keepalive_bytes_; }
   void set_keepalive_bytes(size_t bytes) { keepalive_bytes_ = bytes; }
+  // The fetcher has stopped it: the Session hears nothing more of it from its
+  // client.
+  void Stop() { stopped_ = true; }
 
   // PageRequests::Client:
   void OnResponseStarted(const PageResponseStarted& response) override {
@@ -136,21 +142,30 @@ class PageFetcher::Request final : public PageRequests::Client,
 
   // FetchController:
   void TookBody(size_t bytes) override {
-    fetcher_->requests_->TookBody(number_, bytes);
+    if (!stopped_) {
+      fetcher_->requests_->TookBody(number_, bytes);
+    }
   }
   void Cancel() override {
+    if (stopped_) {
+      return;
+    }
     fetcher_->requests_->Cancel(number_);
     // Destroys this.
     fetcher_->Finished(number_);
   }
   size_t BodyRoom() const override {
-    return fetcher_->requests_->BodyCredit(number_);
+    return stopped_ ? 0 : fetcher_->requests_->BodyCredit(number_);
   }
   void SendBody(std::string_view bytes) override {
-    fetcher_->requests_->SendBodyPart(number_, bytes);
+    if (!stopped_) {
+      fetcher_->requests_->SendBodyPart(number_, bytes);
+    }
   }
   void EndBody(bool errored) override {
-    fetcher_->requests_->EndBody(number_, errored);
+    if (!stopped_) {
+      fetcher_->requests_->EndBody(number_, errored);
+    }
   }
 
  private:
@@ -159,6 +174,7 @@ class PageFetcher::Request final : public PageRequests::Client,
   const bool keepalive_;
   size_t keepalive_bytes_ = 0;
   uint64_t number_ = 0;
+  bool stopped_ = false;
   // The response's URL, once it has started.
   std::optional<std::string> response_url_;
 };
@@ -211,15 +227,36 @@ PageRequestKind KindOf(const FetchRequestData& data) {
 PageFetcher::PageFetcher(PageRequests& requests) : requests_(requests) {}
 
 PageFetcher::~PageFetcher() {
+  Stop();
+}
+
+void PageFetcher::Stop() {
   // A keepalive request goes on without its document, which lets it go
   // without a word: the Session lets it outlive the document once it hears
   // of the next one.
-  for (const auto& [number, request] : open_) {
+  for (auto& [number, request] : open_) {
     if (request->keepalive()) {
       requests_->LetGo(number);
     } else {
       requests_->Cancel(number);
     }
+    request->Stop();
+    stopped_.push_back(std::move(request));
+  }
+  open_.clear();
+  keepalive_bytes_ = 0;
+}
+
+void PageFetcher::Abort() {
+  std::vector<FetchClient*> clients;
+  for (auto& [number, request] : open_) {
+    clients.push_back(&request->client());
+  }
+  // The stopped requests keep their clients, and a keepalive one goes on in
+  // the Session.
+  Stop();
+  for (FetchClient* const client : clients) {
+    client->OnResponseEnded(kNetErrorAborted);
   }
 }
 

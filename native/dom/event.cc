@@ -1,5 +1,6 @@
 #include "mitto/dom/event.h"
 
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
@@ -115,11 +116,17 @@ void Event::PreventDefault() {
 }
 
 double Event::TimeStamp() const {
-  // Blink's Event::timeStamp(): the time it was made, from the window's time
-  // origin, through the performance timeline's clamp, so that it falls
-  // between two calls of performance.now() around its making.
+  // Blink's Event::timeStamp(): the time it was made, from the time origin of
+  // the event's relevant realm, whose ScriptState the getter is called with,
+  // through the performance timeline's clamp, so that it falls between two
+  // calls of performance.now() around its making. A frame's event read with
+  // another frame's getter counts from its own frame's time origin.
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  ExecutionContext* const relevant = ExecutionContext::From(
+      isolate, bindings::ReceiverRealmScope::CreationContext(isolate));
   return Performance::MonotonicTimeToDOMHighResTimeStamp(
-      ExecutionContext::Current().TimeOrigin(), created_);
+      (relevant ? *relevant : ExecutionContext::Current()).TimeOrigin(),
+      created_);
 }
 
 void Event::InitEvent(const std::u16string& type,

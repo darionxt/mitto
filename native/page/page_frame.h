@@ -35,6 +35,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "mitto/dom/document_parser.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/page_messages.h"
@@ -118,6 +119,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // NavigationClient:
   void BeginNavigation(const NavigationRequest& request) override;
   void DidNavigateWithinDocument(const GURL& url) override;
+  void DidOpenDocument(const Window& opener) override;
   bool HasProvisionalNavigation() const override;
   void StopAllLoaders() override;
 
@@ -127,8 +129,11 @@ class PageFrame final : public NavigationClient, public Frame {
   // stops loading and unloads, and a new context's document at `url` takes
   // its place, which this returns: an XMLDocument of `xml_content_type`
   // where one is given, in a cross-origin isolated agent if
-  // `cross_origin_isolated`. `loader` becomes the document's.
-  Document& CommitNavigation(
+  // `cross_origin_isolated`. `loader` becomes the document's. Null if a
+  // listener of the old document's unload events, or of its frames', took
+  // the frame away: the response goes, and so does `loader`, from a later
+  // task.
+  Document* CommitNavigation(
       DocumentLoader& loader,
       const GURL& url,
       base::TimeTicks navigation_start,
@@ -177,6 +182,9 @@ class PageFrame final : public NavigationClient, public Frame {
       const url::Origin& origin,
       bool cross_origin_isolated = false,
       v8::Local<v8::Object> global_proxy = v8::Local<v8::Object>());
+  // The security token of a context of the Page whose document has
+  // `origin`, an opaque one, or an empty handle if no frame's document has it.
+  v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells
@@ -189,7 +197,9 @@ class PageFrame final : public NavigationClient, public Frame {
   uint64_t SendDocumentCommitted(PageDocumentCommitted committed);
   // What goes with the current window's context: its timers, idle callbacks,
   // animation frames, fetches, tasks and workers, and the inspector's and
-  // window.chrome's hold on it.
+  // window.chrome's hold on it. What runs them stops, and goes with the frame
+  // or once the next window's takes its place, as one of them may be what
+  // ended the context.
   void DetachWindow();
   // The frame's Cache API, IndexedDB and Storage Buckets: its own for a child
   // frame, the runner's for the top-level frame.
@@ -198,11 +208,35 @@ class PageFrame final : public NavigationClient, public Frame {
   StorageBucketHost* storage_bucket_host() const;
   // Gives `document`, of an HTTP or HTTPS origin, the frame's storage.
   void GiveStorage(Document& document) const;
-  // The frame's children go, each as Detach() has it, when the frame's
-  // document goes and its elements with it. The Session forgets them with the
-  // document, so it hears of none of them going.
+  // The frame's children go, each as Detach() has it, when the frame goes or
+  // its document goes and its elements with it.
   void DetachChildren();
-  // The child frame `child` has gone: this lets go of it.
+  // A frame that loaded held its parent's load event back, or an ancestor's,
+  // which checks again once the frame stops, as Blink's does: from a task,
+  // since the element's removal may still be under way, and not while the
+  // parent's own document goes.
+  void CheckParentLoadSoon();
+  // A srcdoc or an about:blank that waits commits nothing then, and the
+  // parent, whose load event it held back, checks again.
+  void CancelLocalNavigation();
+  // A navigation through the Session that waits for its response ends, as a
+  // newer one takes its place.
+  void CancelProvisionalNavigation();
+  // The window that a frame's initial about:blank leaves to a document of
+  // its origin keeps it, as Blink's does, but the Session forgets the old
+  // document: its fetches fail, as Chrome's do, and its dedicated workers,
+  // which Chrome keeps with the window, are terminated.
+  void EndOldDocumentInWindow();
+  // Whether two of the frame's ancestors' documents are at `url`, but for the
+  // fragment.
+  bool IsSelfReferential(const GURL& url) const;
+  // The Session records a document that the frame commits without the network
+  // at the bare about:blank or about:srcdoc, since message 70 names no URL,
+  // so it hears the URL that the document committed at, such as
+  // about:blank?v=1, as Chrome's browser knows it.
+  void TellOfLocalUrl(const GURL& url);
+  // The child frame `child` has gone: this hands it to the runner, which lets
+  // go of it once the task ends.
   void RemoveChild(PageFrame& child);
   // RenderFrameImpl::SynchronouslyCommitAboutBlankForBug778318(): the first
   // navigation of a frame's initial about:blank to about:blank, from a
@@ -219,22 +253,30 @@ class PageFrame final : public NavigationClient, public Frame {
     LocalNavigation& operator=(LocalNavigation&&);
     ~LocalNavigation();
 
-    // Its number among the frame's, which the newest takes.
+    // Its number among the frame's, which the newest takes, and when it
+    // started.
     uint64_t number = 0;
+    base::TimeTicks start;
     GURL url;
     // Its source, kSrcdoc, kAboutBlank or kErrorPage, and an about:blank's
     // initiator.
     PageDocumentCommitted committed;
-    // Its document's origin and referrer: the parent document's for a
+    // Its document's origin and referrer policy, the parent document's for a
     // srcdoc, the initiator's for an about:blank, and an opaque origin and
-    // none for an error page.
+    // the default for an error page, and its referrer, none for an error page.
     url::Origin origin;
+    FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
     std::u16string referrer;
-    // Its document's fallback base URL: the parent document's base URL for a
-    // srcdoc, and the initiator's for an about:blank.
-    GURL fallback_base_url;
+    // Its document's about base URL, the parent document's base URL for a
+    // srcdoc and the initiator's for an about:blank, and its cookie URL, the
+    // parent document's or the initiator's, as Blink's DocumentInit takes it
+    // from the owner document.
+    GURL about_base_url;
+    GURL cookie_url;
     // A srcdoc's markup.
     std::u16string body;
+    // Whether it reloads the frame's document, as location.reload() does.
+    bool reload = false;
   };
   // Commits `navigation` from a later task, as Chrome's browser commits it,
   // unless a newer navigation of the frame takes its place first.
@@ -246,8 +288,6 @@ class PageFrame final : public NavigationClient, public Frame {
   void AnswerDataUrl(base::WeakPtr<DocumentLoader> loader,
                      PageResponseStarted response,
                      std::string body);
-  // Lets the navigation that waits for its response go, with its request.
-  void CancelProvisionalNavigation();
   // Has the parent check whether all of its frames have loaded, once this
   // frame no longer loads.
   void LetParentCheckCompleted();
@@ -255,7 +295,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // window for a document of the initial about:blank's origin, as Blink's
   // DocumentLoader::CommitNavigation() reuses it, and otherwise in a new
   // context that the frame's WindowProxy takes.
-  void CommitWithoutNetwork(LocalNavigation navigation);
+  void CommitWithoutNetwork(uint64_t number);
 
   const raw_ref<ScriptRunner> runner_;
   const uint64_t id_;
@@ -271,18 +311,25 @@ class PageFrame final : public NavigationClient, public Frame {
   // Whether a navigation of the frame has committed, or started, since its
   // initial about:blank, which only its first may replace synchronously.
   bool navigated_ = false;
-  // Whether Detach() runs, whose unload events may remove the element again.
+  // Whether Detach() has started, whose unload events may remove the element
+  // again, and whether the frame's children and window have started to go
+  // after them.
   bool detaching_ = false;
+  bool going_ = false;
+  // Whether DetachChildren() runs, whose children's going checks nothing of
+  // the parent's load.
+  bool detaching_children_ = false;
   // What the parser of a synchronously committed about:blank reads: nothing.
   std::unique_ptr<DocumentParser::Client> empty_body_;
   // What the parser of a document that the frame committed without the
   // network reads.
   std::unique_ptr<DocumentParser::Client> local_body_;
   // The number of the last navigation of the frame that commits without the
-  // network, and that of the one that waits to commit, or 0.
+  // network, and the one that waits to commit, if any, which the newest
+  // takes the place of.
   uint64_t last_local_navigation_ = 0;
-  uint64_t pending_local_navigation_ = 0;
-  // What the current window runs in its context, which goes with it.
+  std::unique_ptr<LocalNavigation> pending_local_navigation_;
+  // What the current window runs in its context, which stops with it.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;
   std::unique_ptr<AnimationFrameController> animation_frames_;

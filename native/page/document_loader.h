@@ -39,13 +39,10 @@ class DocumentLoader final : public PageRequests::Client,
  public:
   // Loads the response of navigation `number` into a document of `frame`.
   // What the Session sends of it runs in the frame's current window's context.
-  DocumentLoader(PageRequests& requests,
-                 SendFrame send,
-                 PageFrame& frame,
-                 uint64_t number);
+  DocumentLoader(PageRequests& requests, PageFrame& frame, uint64_t number);
   // The same for a navigation that the frame starts, whose number comes once
   // it has started: SetNumber().
-  DocumentLoader(PageRequests& requests, SendFrame send, PageFrame& frame);
+  DocumentLoader(PageRequests& requests, PageFrame& frame);
 
   DocumentLoader(const DocumentLoader&) = delete;
   DocumentLoader& operator=(const DocumentLoader&) = delete;
@@ -88,7 +85,6 @@ class DocumentLoader final : public PageRequests::Client,
   void TookBody(size_t size);
 
   const raw_ref<PageRequests> requests_;
-  const SendFrame send_;
   const raw_ref<PageFrame> frame_;
   uint64_t number_;
   bool answered_by_page_ = false;

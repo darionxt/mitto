@@ -11,15 +11,35 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
+#include "base/memory/raw_ref.h"
+#include "base/time/time.h"
 #include "url/gurl.h"
 
 namespace mitto {
 
 class HTMLFrameOwnerElement;
 class Window;
+
+// NavigationRateLimiter: at most 200 navigations of a frame in 10 seconds,
+// and a warning in the console for the first one past that in each period.
+class NavigationRateLimiter {
+ public:
+  // Whether the frame, whose window is `window`, may start one more, which
+  // counts.
+  bool CanProceed(Window& window);
+
+ private:
+  static constexpr base::TimeDelta kPeriod = base::Seconds(10);
+  static constexpr int kStateUpdateLimit = 200;
+
+  base::TimeTicks period_start_;
+  int count_ = 0;
+  std::optional<base::TimeTicks> warned_period_start_;
+};
 
 class Frame {
  public:
@@ -55,7 +75,9 @@ class Frame {
   virtual void NavigateFromOwner(const GURL& url) = 0;
   // HTMLFrameOwnerElement::DisconnectContentFrame(): the frame's documents
   // unload, its window's context goes, and it leaves the frame tree, with
-  // its own children.
+  // its own children. The frame lives on until the task ends, for a script
+  // of it that still runs, and so do its window's timers, callbacks and
+  // fetches, which stop at once.
   virtual void Detach() = 0;
 
   // The top-level frame of this one's tree.
@@ -65,10 +87,46 @@ class Frame {
   Frame* ScopedChild(std::u16string_view name) const;
   // Whether this frame is `other` or one of its descendants.
   bool IsDescendantOf(const Frame& other) const;
+  // Whether its element, or an ancestor's, whose flags its documents
+  // inherit, has a sandbox attribute that withholds scripts or the frame's
+  // origin, which the Page does not enforce yet, so that what they would
+  // withhold runs nothing. One that allows both runs as the frame's own,
+  // whose script could take the sandbox away, without the other flags.
+  bool IsSandboxed() const;
+  // Blink's LocalFrame::IsNavigationAllowed(): no navigation of the frame
+  // starts while a FrameNavigationDisabler holds it.
+  bool IsNavigationAllowed() const { return navigation_disable_count_ == 0; }
+
+  // Blink's Frame::NavigationRateLimiter(): each frame counts its own.
+  NavigationRateLimiter& navigation_rate_limiter() {
+    return navigation_rate_limiter_;
+  }
 
  protected:
   Frame() = default;
   virtual ~Frame() = default;
+
+ private:
+  friend class FrameNavigationDisabler;
+
+  NavigationRateLimiter navigation_rate_limiter_;
+  int navigation_disable_count_ = 0;
+};
+
+// Blink's FrameNavigationDisabler: while a frame's document commits, a script
+// of its old document or of its frames, which unload, starts no navigation of
+// it.
+class FrameNavigationDisabler {
+ public:
+  explicit FrameNavigationDisabler(Frame& frame) : frame_(frame) {
+    ++frame_->navigation_disable_count_;
+  }
+  FrameNavigationDisabler(const FrameNavigationDisabler&) = delete;
+  FrameNavigationDisabler& operator=(const FrameNavigationDisabler&) = delete;
+  ~FrameNavigationDisabler() { --frame_->navigation_disable_count_; }
+
+ private:
+  const raw_ref<Frame> frame_;
 };
 
 }  // namespace mitto

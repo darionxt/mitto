@@ -16,6 +16,7 @@
 #define MITTO_DOM_FRAME_LOADER_H_
 
 #include "base/memory/raw_ptr_exclusion.h"
+#include "mitto/dom/fetcher.h"
 #include "url/gurl.h"
 
 namespace mitto {
@@ -60,6 +61,9 @@ struct FrameLoadRequest {
   // frame's, or null for the navigated window's own.
   // On the stack only, as the garbage collector scans it.
   RAW_PTR_EXCLUSION Window* origin_window = nullptr;
+  // The referrer policy of the element that starts it, as an iframe's
+  // referrerpolicy names it, or kDefault for the initiator's.
+  FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
 };
 
 // LocalFrame::Navigate(): drops a navigation past the rate limit, makes a

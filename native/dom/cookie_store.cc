@@ -86,8 +86,7 @@ void RunInContext(v8::Isolate* isolate,
                   Run run) {
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = context_handle.Get(isolate);
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
+  const Window* const window = Window::From(isolate, context);
   if (!window || !window->HasContext()) {
     return;
   }
@@ -281,8 +280,7 @@ v8::Local<v8::Promise> CookieStore::DoRead(
     get.all = true;
   }
   if (options.url) {
-    const GURL document_url(
-        base::UTF16ToUTF8(window_->GetDocument().UrlForBinding()));
+    const GURL document_url = window_->GetDocument().CookieUrl();
     GURL::Replacements without_fragment;
     without_fragment.ClearRef();
     const GURL cookie_url =
@@ -298,6 +296,12 @@ v8::Local<v8::Promise> CookieStore::DoRead(
   v8::Local<v8::Promise::Resolver> resolver;
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return {};
+  }
+  // A store whose window has gone asks nothing, and its promise never
+  // settles, as Blink's resolvers settle nothing once their execution context
+  // is destroyed.
+  if (!window_ || !window_->HasContext()) {
+    return resolver->GetPromise();
   }
   jar->GetForCookieStore(
       std::move(get),
@@ -349,6 +353,12 @@ v8::Local<v8::Promise> CookieStore::DoWrite(
   v8::Local<v8::Promise::Resolver> resolver;
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return {};
+  }
+  // A store whose window has gone asks nothing, and its promise never
+  // settles, as Blink's resolvers settle nothing once their execution context
+  // is destroyed.
+  if (!window_ || !window_->HasContext()) {
+    return resolver->GetPromise();
   }
   jar->SetForCookieStore(
       *std::move(set),
@@ -429,8 +439,7 @@ std::optional<PageCookieStoreSet> CookieStore::ToCookieParams(
   }
   const bool is_host_prefixed_cookie =
       base::StartsWith(name, u"__host-", base::CompareCase::INSENSITIVE_ASCII);
-  const GURL cookie_url(
-      base::UTF16ToUTF8(window_->GetDocument().UrlForBinding()));
+  const GURL cookie_url = window_->GetDocument().CookieUrl();
   PageCookieStoreSet set;
   if (options.domain) {
     if (is_host_prefixed_cookie) {
@@ -495,6 +504,16 @@ void CookieStore::ListenersChanged(std::u16string_view type) {
   }
 }
 
+void CookieStore::DocumentWillChange() {
+  StopObserving();
+}
+
+void CookieStore::DocumentChanged() {
+  if (HasEventListeners(u"change")) {
+    StartObserving();
+  }
+}
+
 void CookieStore::StartObserving() {
   Window* const window = window_.Get();
   if (observing_ || !window || !window->HasContext()) {
@@ -509,18 +528,21 @@ void CookieStore::StartObserving() {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   auto context = std::make_shared<v8::Global<v8::Context>>(
       isolate, isolate->GetCurrentContext());
-  jar->ListenForCookieStore(base::BindRepeating(
-      [](cppgc::WeakPersistent<CookieStore> store, v8::Isolate* isolate,
-         const std::shared_ptr<v8::Global<v8::Context>>& context,
-         const PageCookieStoreChange& change) {
-        if (!store) {
-          return;
-        }
-        RunInContext(isolate, *context, [&](v8::Local<v8::Context>) {
-          store->OnCookieChange(change);
-        });
-      },
-      cppgc::WeakPersistent<CookieStore>(this), isolate, std::move(context)));
+  jar->ListenForCookieStore(
+      window->DocumentId(),
+      base::BindRepeating(
+          [](cppgc::WeakPersistent<CookieStore> store, v8::Isolate* isolate,
+             const std::shared_ptr<v8::Global<v8::Context>>& context,
+             const PageCookieStoreChange& change) {
+            if (!store) {
+              return;
+            }
+            RunInContext(isolate, *context, [&](v8::Local<v8::Context>) {
+              store->OnCookieChange(change);
+            });
+          },
+          cppgc::WeakPersistent<CookieStore>(this), isolate,
+          std::move(context)));
   if (!stops_with_context_) {
     stops_with_context_ = true;
     window->AddContextDestroyedCallback(base::BindOnce(
@@ -541,7 +563,8 @@ void CookieStore::StopObserving() {
   Window* const window = window_.Get();
   if (CookieJar* const jar =
           window ? window->GetDocument().GetCookieJar() : nullptr) {
-    jar->ListenForCookieStore(CookieJar::ChangeListener());
+    jar->ListenForCookieStore(window->DocumentId(),
+                              CookieJar::ChangeListener());
   }
 }
 

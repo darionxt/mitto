@@ -1,6 +1,7 @@
 #include "mitto/page/document_loader.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -12,6 +13,7 @@
 #include "base/time/time.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/http_refresh_scheduler.h"
 #include "mitto/dom/page_reveal_event.h"
 #include "mitto/dom/window.h"
@@ -27,18 +29,12 @@
 namespace mitto {
 
 DocumentLoader::DocumentLoader(PageRequests& requests,
-                               SendFrame send,
                                PageFrame& frame,
                                uint64_t number)
-    : requests_(requests),
-      send_(std::move(send)),
-      frame_(frame),
-      number_(number) {}
+    : requests_(requests), frame_(frame), number_(number) {}
 
-DocumentLoader::DocumentLoader(PageRequests& requests,
-                               SendFrame send,
-                               PageFrame& frame)
-    : DocumentLoader(requests, std::move(send), frame, 0) {}
+DocumentLoader::DocumentLoader(PageRequests& requests, PageFrame& frame)
+    : DocumentLoader(requests, frame, 0) {}
 
 DocumentLoader::~DocumentLoader() {
   // The parser holds this as its client, so it stops for good first.
@@ -98,12 +94,18 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
                    document_kind == DocumentKind::kSvg ||
                    document_kind == DocumentKind::kXml;
   // The Session's base::TimeTicks, which the Page's clock shares.
-  document_ = &frame_->CommitNavigation(
+  Document* const document = frame_->CommitNavigation(
       *this, url_,
       base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection, cross_origin_isolated_,
       xml ? std::optional<std::u16string>(base::ASCIIToUTF16(mime_type))
           : std::nullopt);
+  // The frame went as its old document unloaded, and this goes from a later
+  // task.
+  if (!document) {
+    return;
+  }
+  document_ = document;
   document_id_ = document_->DefaultView()->DocumentId();
   // The Referer that the navigation's last hop sent, as //net kept it through
   // its redirects.
@@ -154,9 +156,24 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // document of a browser in the Persona's locale. A response with no MIME
   // type is HTML here, as the parser reads it, where Chrome's network service
   // sniffs one.
-  decoder_ = BuildTextResourceDecoder(url_, mime_type, content_type.charset,
-                                      document_->DefaultView()->Start().locale,
-                                      /*parent=*/nullptr);
+  // A frame's takes its parent's encoding as its default where the parent's
+  // origin can reach its own, and as the detector's hint where the parent's
+  // detector found it, as Blink's BuildTextResourceDecoder() does.
+  std::optional<ParentFrameEncoding> parent_encoding;
+  if (const Frame* const parent = frame_->Parent()) {
+    const Window* const parent_window = parent->DomWindow();
+    if (parent_window && parent_window->HasDocument() &&
+        parent_window->GetSecurityOrigin().IsSameOriginWith(url_)) {
+      const Document& parent_document = parent_window->GetDocument();
+      parent_encoding = ParentFrameEncoding{
+          base::UTF16ToUTF8(parent_document.CharacterSet()),
+          parent_document.EncodingWasDetectedHeuristically()};
+    }
+  }
+  decoder_ =
+      BuildTextResourceDecoder(url_, mime_type, content_type.charset,
+                               document_->DefaultView()->Start().locale,
+                               parent_encoding ? &*parent_encoding : nullptr);
   document_->SetDidDispatchLoadEvent(base::BindRepeating(
       &DocumentLoader::DidDispatchLoadEvent, weak_factory_.GetWeakPtr()));
   // DocumentInit::CreateDocument(): the kind of document of the MIME type,
@@ -337,7 +354,9 @@ void DocumentLoader::ParserDetached() {
 }
 
 void DocumentLoader::DidDispatchLoadEvent() {
-  send_.Run(EncodeLoaded(document_id_));
+  // A frame whose element a load listener removed has had its document
+  // forgotten, and the Session hears no more of it.
+  requests_->SendLoaded(document_id_);
   // The browser's favicon driver fetches the icon once the top-level
   // document's load event is done, and a frame's document has none.
   if (!favicon_fetched_ && document_ && !frame_->Parent()) {

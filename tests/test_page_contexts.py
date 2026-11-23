@@ -126,6 +126,40 @@ _FAKE_PAGE = textwrap.dedent(
     """
 )
 
+# The helpers of the fake Page above, before its first message.
+_FAKE_PAGE_HELPERS = _FAKE_PAGE[: _FAKE_PAGE.index('send(1, struct.pack("<I", {version}))')]
+
+# A frame's about:blank, of the top-level document's HTTP origin, that says a navigation within it gave it an HTTP URL of
+# that origin, which no about:blank may take.
+_FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    send(1, struct.pack("<I", {version}))
+    send(70, struct.pack("<QBQ", 1, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(70, struct.pack("<QBQ", 3, 0, 2))
+    send(71, struct.pack("<Q", 3) + b"{other}")
+    while channel.recv(65536):
+        pass
+    """
+)
+
+# Opens a Page at the URL in argv[1] and prints why it ended.
+_SESSION_OF_AN_ENDED_PAGE = textwrap.dedent(
+    """\
+    import sys
+
+    import mitto
+
+    with mitto.Session() as session:
+        try:
+            with session._open_page(sys.argv[1], timeout=60) as page:
+                page.evaluate("1", timeout=60)
+        except Exception as error:
+            print(error)
+    """
+)
+
 # Opens a Page at the URL in argv[1] in a Session that has the frame site's cookie, and asks it for something.
 _SESSION = textwrap.dedent(
     """\
@@ -206,6 +240,21 @@ def _value(lines: list[tuple[str, str]], name: str) -> str | None:
 
 def _run_page(tmp_path: Path, top: _Server, frame_site: _Server) -> str:
     """Run the fake Page in a Session of its own, and return what its call gave, as Python prints it."""
+    program = _FAKE_PAGE.format(
+        python=sys.executable,
+        version=_PROTOCOL_VERSION,
+        frame=frame_site.url("/frame-page"),
+        frame_fetch=frame_site.url("/frame-fetch"),
+        worker=top.url("/worker.js"),
+        worker_fetch=top.url("/worker-fetch"),
+        blob=top.url("/blob-1").replace("http://", "blob:http://"),
+    )
+    return _run_fake_page(tmp_path, program, _SESSION, top.url("/page"), frame_site.url("/set"))
+
+
+def _run_fake_page(tmp_path: Path, program: str, session: str, *arguments: str) -> str:
+    """Run `program` as the Page program of a copy of the library, and `session` in a Session of its own with
+    `arguments`, and return what it printed."""
     library = _native.find_library()
     assert library is not None
     directory = tmp_path / "library"
@@ -213,21 +262,11 @@ def _run_page(tmp_path: Path, top: _Server, frame_site: _Server) -> str:
     copy = directory / library.name
     shutil.copy2(library, copy)
     page_program = directory / _native.PAGE_PROGRAM_NAME
-    page_program.write_text(
-        _FAKE_PAGE.format(
-            python=sys.executable,
-            version=_PROTOCOL_VERSION,
-            frame=frame_site.url("/frame-page"),
-            frame_fetch=frame_site.url("/frame-fetch"),
-            worker=top.url("/worker.js"),
-            worker_fetch=top.url("/worker-fetch"),
-            blob=top.url("/blob-1").replace("http://", "blob:http://"),
-        )
-    )
+    page_program.write_text(program)
     page_program.chmod(0o755)
     environment = {**os.environ, _native.LIBRARY_ENV_VAR: str(copy)}
     finished = subprocess.run(
-        [sys.executable, "-c", _SESSION, top.url("/page"), frame_site.url("/set")],
+        [sys.executable, "-c", session, *arguments],
         env=environment,
         check=True,
         capture_output=True,
@@ -284,3 +323,15 @@ def test_each_documents_cookie_store_listens_on_its_own_and_a_blob_worker_speaks
     # document set, under their own IDs, and once the frame goes only the document hears. The broadcast of a worker of
     # a blob: URL goes as its origin's, where the library would refuse one of a URL that is not HTTP or HTTPS.
     assert _run_page(tmp_path, top, frame_site) == "[2, 6, 2]"
+
+
+def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: Path, top: _Server) -> None:
+    # Its origin is the top-level document's, but its URL may only change to another about:blank one, as the
+    # renderer's own check has it.
+    program = _FAKE_PAGE_OF_A_LOCAL_URL.format(
+        python=sys.executable, version=_PROTOCOL_VERSION, other=top.url("/other-page")
+    )
+
+    printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
+
+    assert printed == "the library refused a message from the Page: a same-document navigation to another origin"

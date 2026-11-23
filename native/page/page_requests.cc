@@ -278,6 +278,10 @@ void PageRequests::Hint(const PageNetworkHint& hint) {
   sender_->SendFromContext(document, EncodeNetworkHint(document, hint));
 }
 
+void PageRequests::SendLoaded(uint64_t document) {
+  sender_->SendFromContext(document, EncodeLoaded(document));
+}
+
 void PageRequests::LetGo(uint64_t number) {
   const auto found = open_.find(number);
   if (found == open_.end()) {

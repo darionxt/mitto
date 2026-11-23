@@ -345,6 +345,11 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
+    // The URL whose cookies a document's cookie calls read and write, as
+    // Blink's Document::CookieURL(): for a frame's about:blank or srcdoc its
+    // creator's or its initiator's, and empty for a document's own URL, as
+    // ContextUrl() speaks for it.
+    GURL cookie_url;
     // The final URLs of the context's requests that have finished, which a
     // request of the context may name as its referrer, as a module names the
     // module that imports it, or a style sheet the sheet that imports it, in
@@ -401,6 +406,11 @@ class PageHost final : public PageChannel::Delegate {
   void OnContextGone(uint64_t context_id);
   // A navigation within document `document` that gave it the URL `url`.
   void OnSameDocumentNavigation(uint64_t document, const std::string& url);
+  // A navigation of document `document`'s frame to about:blank that document
+  // `initiator` started.
+  void OnAboutBlankNavigation(uint64_t document, uint64_t initiator);
+  // Document `opener` of another window opened document `document`.
+  void OnDocumentOpened(uint64_t document, uint64_t opener);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
   // with `net_error`, and `status` for one that kept the document.
   void PushNavigated(std::string url, int32_t status, int32_t net_error);
@@ -429,6 +439,10 @@ class PageHost final : public PageChannel::Delegate {
   GURL TopDocumentUrl() const;
   // What the cookie calls of document `id` are made for.
   CookieContext CookieContextOf(uint64_t id) const;
+  // The cookie URL of a context, which a frame's document that takes the
+  // place of its creator's or initiator's takes, as Blink's
+  // DocumentInit::GetCookieUrl() does from its owner document.
+  static GURL CookieUrlOf(const Context& context);
   // Where document `id`'s frame is in the frame tree: the top-level
   // document's origin, and whether a document from `id` up is of another
   // site, or of another origin, than the top-level one.
@@ -509,6 +523,9 @@ class PageHost final : public PageChannel::Delegate {
     // The embedder policy of the document or worker that asks, which the
     // Cross-Origin-Resource-Policy check of a request of mode no-cors reads.
     CrossOriginEmbedderPolicy embedder_policy;
+    // A frame's navigation: the URLs of the frame's ancestors' documents, from
+    // its parent's up, as they were when it started.
+    std::vector<GURL> frame_ancestor_urls;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
@@ -624,6 +641,17 @@ class PageHost final : public PageChannel::Delegate {
     uint64_t target = kNoDocument;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
+  // The navigations of frames to about:blank that have started and not
+  // committed yet, by the frame's document that the about:blank takes the
+  // place of: the document that started it, and what of it the about:blank
+  // takes.
+  struct AboutBlankNavigation {
+    uint64_t initiator = kNoDocument;
+    url::Origin origin;
+    CrossOriginEmbedderPolicy coep;
+    GURL cookie_url;
+  };
+  std::map<uint64_t, AboutBlankNavigation> about_blank_navigations_;
   // The responses of the scripts of workers that the Page has and has not
   // started yet, by number: the context that asked and the final URL.
   struct WorkerScript {

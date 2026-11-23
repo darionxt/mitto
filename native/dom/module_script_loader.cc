@@ -305,12 +305,13 @@ std::string ModuleScriptLoader::ReferrerOf(
     const ExecutionContext& context,
     const Fetcher& fetcher) const {
   // The referrer is the base URL of the script that imports it, which the
-  // Session takes from the document's origin, or as the final URL of a
-  // response that the document has had, such as a module's of another
-  // origin. One that is neither, as the base URL of an inline script beneath
-  // a base element of another origin, is the document's URL: a Known Gap.
-  // One of a local scheme, as a module worker's of a data: URL is, gives no
-  // Referer, as Referrer Policy strips it to none.
+  // Session takes from the context's origin, a srcdoc's or a frame's
+  // about:blank's being its parent's, or as the final URL of a response that
+  // the document has had, such as a module's of another origin. One that is
+  // neither, as the base URL of an inline script beneath a base element of
+  // another origin, is the document's URL: a Known Gap. One of a local scheme,
+  // as a module worker's of a data: URL is, gives no Referer, as Referrer
+  // Policy strips it to none.
   if (request.referrer == kNoReferrer) {
     return std::string(kNoReferrer);
   }
@@ -320,7 +321,7 @@ std::string ModuleScriptLoader::ReferrerOf(
       return std::string(kNoReferrer);
     }
     if (referrer.is_valid() &&
-        (url::Origin::Create(referrer).IsSameOriginWith(GURL(context.Url())) ||
+        (context.GetSecurityOrigin().IsSameOriginWith(referrer) ||
          fetcher.HasFinishedResponse(referrer.spec()))) {
       return referrer.spec();
     }
