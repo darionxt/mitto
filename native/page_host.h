@@ -523,6 +523,9 @@ class PageHost final : public PageChannel::Delegate {
     // The embedder policy of the document or worker that asks, which the
     // Cross-Origin-Resource-Policy check of a request of mode no-cors reads.
     CrossOriginEmbedderPolicy embedder_policy;
+    // A frame's navigation: the URLs of the frame's ancestors' documents, from
+    // its parent's up, as they were when it started.
+    std::vector<GURL> frame_ancestor_urls;
   };
 
   // Starts a request numbered `number`, whose client is a Request that

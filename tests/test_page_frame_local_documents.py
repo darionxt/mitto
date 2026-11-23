@@ -83,6 +83,27 @@ def origin() -> Iterator[str]:
             elif path.path == "/selfembed":
                 seen[path.path] = str(int(seen.get(path.path, "0")) + 1)
                 body, content_type = b"<!doctype html><p>s<iframe src=/selfembed></iframe>", "text/html"
+            elif path.path == "/navlisten":
+                # Cancels each navigation that its navigate event hears of, and says so.
+                body = (
+                    b"<!doctype html><script>navigation.addEventListener('navigate', (event) => {"
+                    b" fetch('/assets/navigate-heard'); event.preventDefault(); })</script>"
+                )
+                content_type = "text/html"
+            elif path.path == "/redirembed":
+                seen[path.path] = str(int(seen.get(path.path, "0")) + 1)
+                body, content_type = b"<!doctype html><p>r<iframe src=/hop></iframe>", "text/html"
+            elif path.path == "/hop":
+                seen[path.path] = str(int(seen.get(path.path, "0")) + 1)
+                status, body, content_type = 302, b"", "text/html"
+                headers["Location"] = "/redirembed"
+            elif path.path == "/dupslow":
+                # The Referer of each request, joined, half a second late.
+                seen[path.path] = seen.get(path.path, "") + "|" + (self.headers.get("Referer") or "none")
+                time.sleep(0.5)
+                body, content_type = b"<!doctype html><p>dup", "text/html"
+            elif path.path == "/sib":
+                body, content_type = b"<!doctype html><p>sibling", "text/html"
             elif path.path == "/nocontent":
                 status, body, content_type = 204, b"", "text/html"
             elif path.path == "/late":
@@ -1375,3 +1396,183 @@ def test_a_fetch_of_a_frame_s_initial_about_blank_fails_as_its_window_is_reused(
       }})()
     """
     assert _evaluate(origin, script) == "TypeError: Failed to fetch"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_document_of_another_origin_hears_no_navigate_event_of_its_parent_s_navigation(origin: str) -> None:
+    # The frame's document at localhost would cancel any navigation it heard of; the parent's change of src goes on.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = location.origin.replace('127.0.0.1', 'localhost') + '/navlisten';
+        document.body.appendChild(element);
+        await loaded(element);
+        element.src = '/ran?navigated';
+        const seen = async (path) => (await fetch('/seen?path=' + path)).text();
+        for (let i = 0; i < 100 && (await seen('/assets/ran-navigated')) === 'unseen'; i++) await settle(10);
+        return [(await seen('/assets/navigate-heard')) !== 'unseen', (await seen('/assets/ran-navigated')) !== 'unseen'];
+      }})()
+    """
+    assert _evaluate(origin, script) == [False, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_whose_redirect_goes_to_the_url_two_ancestors_have_loads_nothing(origin: str) -> None:
+    # Each copy of /redirembed embeds /hop, which redirects to /redirembed: Chrome follows it once inside the first
+    # copy, then cancels the next frame's navigation at its redirect, and that frame keeps its initial about:blank.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = '/redirembed';
+        document.body.appendChild(element);
+        await loaded(element);
+        await settle(300);
+        const second = element.contentDocument.querySelector('iframe');
+        const third = second.contentDocument.querySelector('iframe');
+        const seen = async (path) => (await fetch('/seen?path=' + path)).text();
+        return [second.contentDocument.URL.replace(location.origin, 'ORIGIN'), third.contentDocument.URL,
+                await seen('/redirembed'), await seen('/hop')];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["ORIGIN/redirembed", "about:blank", "2", "2"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_cache_that_a_frame_s_initial_about_blank_opened_ends_no_page_after_its_window_is_reused(origin: str) -> None:
+    # The about:blank opens a cache before the frame's document of its origin takes the window; a call of it then
+    # settles, where Chrome's still works and the Page's rejects, and the Page goes on.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const element = document.createElement('iframe');
+        element.src = '/slow';
+        document.body.appendChild(element);
+        const cache = await element.contentWindow.caches.open('reused');
+        await loaded(element);
+        return cache.keys().then(() => 'settled', () => 'settled');
+      }})()
+    """
+    assert _evaluate(origin, script) == "settled"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_navigations_of_a_frame_from_two_documents_to_one_url_both_go(origin: str) -> None:
+    # The parent at /app/page and its frame at /sib navigate the frame t to /dupslow, a tenth of a second apart, while
+    # the first still waits: their referrers differ, so the second is no duplicate of the first, and each request goes
+    # with its own Referer.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const sibling = document.createElement('iframe');
+        sibling.src = '/sib';
+        document.body.appendChild(sibling);
+        await loaded(sibling);
+        const target = document.createElement('iframe');
+        target.id = 't';
+        target.srcdoc = '<p>t';
+        document.body.appendChild(target);
+        await loaded(target);
+        target.contentWindow.location.href = '/dupslow';
+        await settle(100);
+        sibling.contentWindow.eval("top.document.getElementById('t').contentWindow.location.href = '/dupslow'");
+        await loaded(target);
+        await settle(200);
+        return (await (await fetch('/seen?path=/dupslow')).text()).replaceAll(location.origin, 'ORIGIN');
+      }})()
+    """
+    assert _evaluate(origin, script) == "|ORIGIN/app/page|ORIGIN/sib"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_keepalive_fetch_of_a_frame_s_initial_about_blank_fails_as_its_window_is_reused(origin: str) -> None:
+    # As any fetch of the about:blank does, though its request goes on.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = '/other?keepalive';
+        document.body.appendChild(element);
+        const fetched = element.contentWindow.fetch('/slow', {{keepalive: true}}).then(
+          (response) => response.text(), (error) => error.name + ': ' + error.message);
+        await loaded(element);
+        return Promise.race([fetched, settle(3000).then(() => 'pending')]);
+      }})()
+    """
+    assert _evaluate(origin, script) == "TypeError: Failed to fetch"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_beforeunload_listener_opens_no_document_of_the_frame_that_navigates(origin: str) -> None:
+    # The child's listener tries to open its parent's document, which navigates to a 204 and so keeps it.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a';
+        document.body.appendChild(element);
+        await loaded(element);
+        const child = element.contentDocument.createElement('iframe');
+        child.srcdoc = '<body><script>addEventListener("beforeunload", () => {{ parent.document.open();'
+          + ' parent.document.write("<p>replaced"); parent.document.close(); }});<\\/script>';
+        element.contentDocument.body.appendChild(child);
+        await loaded(child);
+        element.contentWindow.location.href = '/nocontent';
+        await settle(500);
+        return element.contentDocument.body.textContent;
+      }})()
+    """
+    assert _evaluate(origin, script) == "a"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_without_a_body_yet_fires_no_load_after_its_parent_s_navigation_ends_in_a_204(origin: str) -> None:
+    # As with a body: the child parses on behind a script in its head, and Blink's BeforeUnloadDoneWillUnload() marks
+    # its document unloading all the same.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a';
+        document.body.appendChild(element);
+        await loaded(element);
+        const child = element.contentDocument.createElement('iframe');
+        child.srcdoc = '<script src="/stall"><\\/script><p>c';
+        element.contentDocument.body.appendChild(child);
+        const childLoaded = loaded(child);
+        for (let i = 0; i < 200 && !(child.contentDocument && child.contentDocument.URL === 'about:srcdoc'); i++) {{
+          await settle(10);
+        }}
+        element.contentWindow.location.href = '/nocontent';
+        return Promise.race([childLoaded.then(() => true), settle(5000).then(() => false)]);
+      }})()
+    """
+    assert _evaluate(origin, script) is False
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_storage_bucket_that_a_frame_s_initial_about_blank_opened_ends_no_page_after_its_window_is_reused(
+    origin: str,
+) -> None:
+    # As with a cache: the bucket and its caches settle each call, where Chrome's still work and the Page's reject,
+    # and the Page goes on.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const element = document.createElement('iframe');
+        element.src = '/slow';
+        document.body.appendChild(element);
+        const bucket = await element.contentWindow.navigator.storageBuckets.open('reused');
+        await loaded(element);
+        const settled = (promise) => promise.then(() => 'settled', () => 'settled');
+        return [await settled(bucket.persisted()), await settled(bucket.caches.open('c'))];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["settled", "settled"]

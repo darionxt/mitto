@@ -250,11 +250,10 @@ void PageFetcher::Stop() {
 void PageFetcher::Abort() {
   std::vector<FetchClient*> clients;
   for (auto& [number, request] : open_) {
-    if (!request->keepalive()) {
-      clients.push_back(&request->client());
-    }
+    clients.push_back(&request->client());
   }
-  // The stopped requests keep their clients.
+  // The stopped requests keep their clients, and a keepalive one goes on in
+  // the Session.
   Stop();
   for (FetchClient* const client : clients) {
     client->OnResponseEnded(kNetErrorAborted);

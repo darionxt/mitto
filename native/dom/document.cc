@@ -538,9 +538,11 @@ bool Document::DispatchBeforeUnloadEvent() {
         "frame that never had a user gesture since its load. "
         "https://www.chromestatus.com/feature/5082396709879808");
   }
-  // FrameLoader::BeforeUnloadDoneWillUnload().
-  load_event_progress_ = LoadEventProgress::kBeforeUnloadEventHandled;
   return true;
+}
+
+void Document::BeforeUnloadDoneWillUnload() {
+  load_event_progress_ = LoadEventProgress::kBeforeUnloadEventHandled;
 }
 
 HttpRefreshScheduler& Document::GetHttpRefreshScheduler() {

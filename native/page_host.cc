@@ -748,6 +748,17 @@ class PageHost::ResponseChecks {
   // Whether the response that `event` describes passes: net::OK, or the net
   // error that ends the request.
   int Check(const RequestEvent& event) {
+    // NavigationRequest::WillRedirectRequest(): a frame's navigation that a
+    // redirect takes to the URL of two of the frame's ancestors' documents,
+    // but for the fragment, is canceled there, as IsSelfReferentialURL() has
+    // it, and the frame keeps its document.
+    if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
+        std::ranges::count_if(checks_.frame_ancestor_urls,
+                              [to = GURL(event.new_url)](const GURL& url) {
+                                return url.EqualsIgnoringRef(to);
+                              }) >= 2) {
+      return net::ERR_ABORTED;
+    }
     if (!AllowsByCors(event)) {
       return net::ERR_FAILED;
     }
@@ -1432,6 +1443,13 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     }
     frame_parent = target->second.parent;
   }
+  // The URLs of the frame's ancestors' documents, which each redirect of its
+  // navigation is held to.
+  std::vector<GURL> frame_ancestor_urls;
+  for (uint64_t ancestor = frame_parent; ancestor != kNoDocument;
+       ancestor = contexts_.at(ancestor).parent) {
+    frame_ancestor_urls.push_back(contexts_.at(ancestor).url);
+  }
   // A module of a module worker's top-level graph is of destination worker in
   // mode cors, where the worker's own script, which its creator asks for, is
   // of mode same-origin. The worker asks for it, and Blink fetches it through
@@ -1620,7 +1638,8 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
           .is_navigation = is_navigation,
           .top_level = top_level,
           .creator_embedder_policy = std::move(creator_embedder_policy),
-          .embedder_policy = contexts_.at(settings_id).coep});
+          .embedder_policy = contexts_.at(settings_id).coep,
+          .frame_ancestor_urls = std::move(frame_ancestor_urls)});
 }
 
 void PageHost::OnCancel(uint64_t number) {

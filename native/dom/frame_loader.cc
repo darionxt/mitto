@@ -73,20 +73,39 @@ bool DispatchBeforeUnloadEvents(Window& window) {
     }
     navigation_disabler.emplace(*frame);
   }
-  if (!window.GetDocument().DispatchBeforeUnloadEvent()) {
-    return false;
-  }
-  for (Frame* const descendant : descendants) {
-    // A frame that went keeps its window for what still runs of it, which
-    // has lost its frame.
+  // The window's document opens nothing while any of them runs its
+  // listeners, a frame's that reaches it included.
+  Document& document = window.GetDocument();
+  const IgnoreOpensDuringUnloadCountIncrementer ignore_opens_during_unload(
+      document);
+  // A frame that went keeps its window for what still runs of it, which has
+  // lost its frame.
+  const auto remaining = [frame](Frame* descendant) -> Document* {
     Window* const descendant_window = descendant->DomWindow();
     if (!descendant_window || descendant_window->GetFrame() != descendant ||
         !descendant->IsDescendantOf(*frame) ||
         !descendant_window->HasDocument()) {
-      continue;
+      return nullptr;
     }
-    if (!descendant_window->GetDocument().DispatchBeforeUnloadEvent()) {
+    return &descendant_window->GetDocument();
+  };
+  if (!document.DispatchBeforeUnloadEvent()) {
+    return false;
+  }
+  for (Frame* const descendant : descendants) {
+    Document* const descendant_document = remaining(descendant);
+    if (descendant_document &&
+        !descendant_document->DispatchBeforeUnloadEvent()) {
       return false;
+    }
+  }
+  // Once none has kept the navigation from going on, each document that is
+  // left will unload, whether or not it has a body yet, as
+  // BeforeUnloadDoneWillUnload() has it.
+  document.BeforeUnloadDoneWillUnload();
+  for (Frame* const descendant : descendants) {
+    if (Document* const descendant_document = remaining(descendant)) {
+      descendant_document->BeforeUnloadDoneWillUnload();
     }
   }
   return true;
@@ -334,14 +353,21 @@ void StartNavigation(Window& window,
     return;
   }
   // The navigate event, which may cancel the navigation, or intercept it,
-  // which makes it one within the document, committed already.
-  Navigation::NavigateParams params;
-  params.url = url;
-  params.load_type = type;
-  params.source_element = request.source_element;
-  if (window.Navigation()->DispatchNavigateEvent(params) !=
-      Navigation::DispatchResult::kContinue) {
-    return;
+  // which makes it one within the document, committed already. It fires only
+  // where the window that starts the navigation can reach the frame's, as
+  // FrameLoader::StartNavigation() has it, so a frame's document of another
+  // origin hears nothing of its parent's navigation.
+  if (!request.origin_window ||
+      request.origin_window->GetSecurityOrigin().IsSameOriginWith(
+          window.GetSecurityOrigin())) {
+    Navigation::NavigateParams params;
+    params.url = url;
+    params.load_type = type;
+    params.source_element = request.source_element;
+    if (window.Navigation()->DispatchNavigateEvent(params) !=
+        Navigation::DispatchResult::kContinue) {
+      return;
+    }
   }
   if (!window.GetNavigationClient() || !window.HasContext()) {
     return;

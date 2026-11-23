@@ -47,6 +47,10 @@ void SessionStorageBuckets::Release(uint64_t bucket) {
   sender_->SendFromContext(document_, EncodeStorageBuckets(document_, call));
 }
 
+bool SessionStorageBuckets::HasBucket(uint64_t bucket) const {
+  return buckets_.contains(bucket);
+}
+
 void SessionStorageBuckets::DocumentCommitted(uint64_t document) {
   // What the document before asked goes unheard.
   if (host_ != 0) {

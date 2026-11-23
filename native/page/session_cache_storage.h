@@ -54,6 +54,7 @@ class SessionCacheStorage final : public CacheStorageHost {
   void CreditStoredBody(uint64_t body, uint32_t bytes) override;
   void ReleaseStoredBody(uint64_t body) override;
   void ReleaseCache(uint64_t cache) override;
+  bool HasCache(uint64_t cache) const override;
   void DocumentCommitted(uint64_t document) override;
 
   // From a task of its own: what the Session answered the document or worker

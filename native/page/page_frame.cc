@@ -664,12 +664,18 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     return;
   }
   const base::TimeTicks now = base::TimeTicks::Now();
-  // RenderFrameImpl::BeginNavigationInternal(): a navigation the same as the
-  // one that waits, which started less than 3 seconds before while no script
-  // wrote a cookie, is dropped, and the one that waits goes on.
+  // Navigator::Navigate(): a navigation the same as the one that waits, of
+  // the same initiator, origin, referrer and history handling, which started
+  // less than 3 seconds before while no script wrote a cookie, is dropped,
+  // and the one that waits goes on.
   if (provisional_ && request.url == provisional_request_.url &&
       request.reload == provisional_request_.reload &&
+      request.replace == provisional_request_.replace &&
       request.user_activation == provisional_request_.user_activation &&
+      request.initiator == provisional_request_.initiator &&
+      request.initiator_origin == provisional_request_.initiator_origin &&
+      request.initiator_referrer == provisional_request_.initiator_referrer &&
+      request.referrer_policy == provisional_request_.referrer_policy &&
       now - provisional_start_ < kDuplicateWindow &&
       runner_->cookie_jar().cookie_writes() == provisional_cookie_writes_) {
     return;

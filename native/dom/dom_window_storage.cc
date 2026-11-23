@@ -73,8 +73,10 @@ Storage* WindowStorage(Window& window,
                        cppgc::Member<Storage>& slot,
                        bindings::ExceptionState& exception_state) {
   // GetOrCreateLocalStorage(): a window that has lost its frame, as a removed
-  // frame's that a script still holds, has none, not even one it made.
-  if (!window.GetFrame()) {
+  // frame's that a script still holds, whose context has gone, has none, not
+  // even one it made. The Page program given a script has a window with no
+  // frame, whose context remains.
+  if (!window.HasContext()) {
     return nullptr;
   }
   const GURL url(base::UTF16ToUTF8(window.GetDocument().UrlForBinding()));
