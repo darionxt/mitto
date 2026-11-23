@@ -47,9 +47,10 @@ namespace mitto {
 namespace {
 
 // The context's embedder data that holds the execution context bound to it.
-// Index 0 is Chrome's debugger's, 1 the objects of its constructs and 2
-// whether it is a secure context (per_context_data.cc).
-constexpr int kBoundExecutionContextIndex = 3;
+// Index 0 is Chrome's debugger's, 1 the objects of its constructs, 2 whether
+// it is a secure context and 3 whether it is cross-origin isolated
+// (per_context_data.cc).
+constexpr int kBoundExecutionContextIndex = 4;
 
 // The string's code units as bytes, or nullopt if one is beyond Latin-1.
 std::optional<std::string> ToLatin1(const std::u16string& text) {
