@@ -2,9 +2,11 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <vector>
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
@@ -46,6 +48,48 @@ namespace {
 // Whether `a` and `b` are the same but for their fragments.
 bool EqualIgnoringFragment(const GURL& a, const GURL& b) {
   return a.GetWithoutRef() == b.GetWithoutRef();
+}
+
+// FrameLoader::ShouldClose(): beforeunload at the window's document, then at
+// each document of its frames, the frames under them among them, in tree
+// order, as they were when it started, while no navigation of the window's
+// frame starts. A frame that a listener took away gets none. Whether the
+// navigation may go on.
+bool DispatchBeforeUnloadEvents(Window& window) {
+  Frame* const frame = window.GetFrame();
+  std::vector<Frame*> descendants;
+  std::optional<FrameNavigationDisabler> navigation_disabler;
+  if (frame) {
+    std::vector<Frame*> pending = {frame};
+    while (!pending.empty()) {
+      Frame* const parent = pending.back();
+      pending.pop_back();
+      if (parent != frame) {
+        descendants.push_back(parent);
+      }
+      for (size_t index = parent->ChildCount(); index > 0; --index) {
+        pending.push_back(parent->ChildAt(index - 1));
+      }
+    }
+    navigation_disabler.emplace(*frame);
+  }
+  if (!window.GetDocument().DispatchBeforeUnloadEvent()) {
+    return false;
+  }
+  for (Frame* const descendant : descendants) {
+    // A frame that went keeps its window for what still runs of it, which
+    // has lost its frame.
+    Window* const descendant_window = descendant->DomWindow();
+    if (!descendant_window || descendant_window->GetFrame() != descendant ||
+        !descendant->IsDescendantOf(*frame) ||
+        !descendant_window->HasDocument()) {
+      continue;
+    }
+    if (!descendant_window->GetDocument().DispatchBeforeUnloadEvent()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // Document::OutgoingReferrer(): none for a document of an opaque origin, and
@@ -294,12 +338,12 @@ void StartNavigation(Window& window,
   if (!window.GetNavigationClient() || !window.HasContext()) {
     return;
   }
-  // RenderFrameImpl::BeginNavigation(): beforeunload, which lets it go on,
-  // then the document stops loading, as
+  // RenderFrameImpl::BeginNavigation(): beforeunload, at the document and at
+  // its frames', which lets it go on, then the document stops loading, as
   // CancelProvisionalLoaderForNewNavigation() aborts it, and the browser hears
   // of the navigation. A beforeunload listener that removed the frame, or the
   // initiator's, took the navigation with it.
-  if (!document.DispatchBeforeUnloadEvent()) {
+  if (!DispatchBeforeUnloadEvents(window)) {
     return;
   }
   NavigationClient* const client = window.GetNavigationClient();

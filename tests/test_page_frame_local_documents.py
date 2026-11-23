@@ -1,7 +1,8 @@
 """Tests of the documents that a Page's frame commits without the network, its srcdocs and about:blanks, on a local server.
 
 The page is at /app/page, which sets a cookie for /app and, with ?rp=..., sends that Referrer-Policy; /echo and /app/echo
-answer with the Referer and the Cookie of their request, or "none", and /stall with a script two seconds later. Each test holds a frame's documents to what headless
+answer with the Referer and the Cookie of their request, or "none", and /stall with a script two seconds later. Each path
+under /assets/ answers with a module script and keeps its request's Referer, which /seen?path=... gives. Each test holds a frame's documents to what headless
 Chrome for Testing 157.0.8103.79 gave for the same script on the same page, with the page's origin as ORIGIN: what they
 take from their parent or from the document that started them, what they send, and how their navigations go.
 """
@@ -40,6 +41,7 @@ def page_program(native_library: Any) -> None:
 @pytest.fixture
 def origin() -> Iterator[str]:
     """The origin of a server on 127.0.0.1 with the page at /app/page and the echoes."""
+    seen: dict[str, str] = {}
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -52,6 +54,12 @@ def origin() -> Iterator[str]:
                 headers["Set-Cookie"] = "c1=v1; Path=/app"
                 if policy := urllib.parse.parse_qs(path.query).get("rp"):
                     headers["Referrer-Policy"] = policy[0]
+            elif path.path.startswith("/assets/"):
+                seen[path.path] = self.headers.get("Referer") or "none"
+                body, content_type = b"export default 1;", "text/javascript"
+            elif path.path == "/seen":
+                body = seen.get(urllib.parse.parse_qs(path.query)["path"][0], "unseen").encode()
+                content_type = "text/plain"
             elif path.path == "/stall":
                 # A script that keeps its parser waiting a while.
                 time.sleep(2)
@@ -863,3 +871,56 @@ def test_a_srcdoc_s_navigation_counts_from_its_start(origin: str) -> None:
       }})()
     """
     assert _evaluate(origin, script) == [True, 0, 0, 0]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_navigation_fires_beforeunload_at_its_frames_too(origin: str) -> None:
+    # beforeunload at the frame's document, then at its frame's, before either unloads; a navigation that the inner
+    # one's listener starts of the outer frame starts nothing. Whether unload fires is a Known Gap, which this leaves
+    # out.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const order = [];
+        const outer = document.createElement('iframe');
+        outer.srcdoc = '<p>outer<iframe srcdoc="<p>inner"></iframe>';
+        document.body.appendChild(outer);
+        await loaded(outer);
+        await settle(100);
+        const inner = outer.contentWindow.frames[0];
+        for (const [name, w] of [['outer', outer.contentWindow], ['inner', inner]]) {{
+          for (const type of ['beforeunload', 'pagehide']) {{
+            w.addEventListener(type, () => order.push(name + ' ' + type));
+          }}
+        }}
+        inner.addEventListener('beforeunload', () => {{ outer.contentWindow.location.href = '/child?fromInner'; }});
+        outer.removeAttribute('srcdoc');
+        await loaded(outer);
+        await settle(200);
+        return [order, outer.contentDocument.URL];
+      }})()
+    """
+    assert _evaluate(origin, script) == [
+        ["outer beforeunload", "inner beforeunload", "outer pagehide", "inner pagehide"],
+        "about:blank",
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_s_module_sends_its_base_url_as_what_it_imports_referer(origin: str) -> None:
+    # The inline module's base URL, of the srcdoc's base element, is the referrer of what it imports, as it is of the
+    # parent's origin, which the srcdoc took.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<base href="/assets/"><script type=module>import "./dep.js"; parent.imported = true;<\\/script>';
+        document.body.appendChild(element);
+        await loaded(element);
+        for (let i = 0; i < 100 && !window.imported; i++) await settle(10);
+        return [window.imported === true, await (await fetch('/seen?path=/assets/dep.js')).text()];
+      }})()
+    """
+    assert _evaluate(origin, script) == [True, "ORIGIN/assets/"]
