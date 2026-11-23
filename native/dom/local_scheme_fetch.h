@@ -24,9 +24,9 @@
 #include "base/memory/weak_ptr.h"
 #include "mitto/dom/blob_data.h"
 #include "mitto/dom/fetcher.h"
+#include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
 
-class GURL;
 
 namespace mitto {
 
@@ -50,6 +50,10 @@ class LocalSchemeFetch final : public FetchController {
     scoped_refptr<BlobDataHandle> blob;
     size_t blob_offset = 0;
     size_t blob_length = 0;
+
+    // A data: URL and its method, which the task decodes, with nothing else.
+    std::optional<GURL> data_url;
+    std::string method;
 
     // All of the body at once, for a worker's script, which reads it whole.
     std::string TakeBody();
@@ -93,6 +97,9 @@ class LocalSchemeFetch final : public FetchController {
   void Cancel() override;
 
  private:
+  // What AnswerDataUrl() gives once the URL is decoded.
+  static Answer DecodeDataUrl(const GURL& url, std::string_view method);
+
   LocalSchemeFetch(Answer answer,
                    std::unique_ptr<FetchClient> client,
                    ExecutionContext& context);
@@ -100,8 +107,8 @@ class LocalSchemeFetch final : public FetchController {
   // The context's going, which cancels the fetch, once any call to the
   // client has returned.
   void OnContextDestroyed();
-  // After a call to the client: whether the fetch goes on, or the context
-  // went under the call, which cancelled it.
+  // After a call to the client: whether the fetch goes on, or was cancelled
+  // under the call, which destroys it now.
   bool ReturnedFromClient();
   // Posts `step` to run from a later task of the context.
   void Post(void (LocalSchemeFetch::*step)());
@@ -122,10 +129,10 @@ class LocalSchemeFetch final : public FetchController {
   // the pipe's capacity, and whether a piece waits for room.
   size_t in_pipe_ = 0;
   bool waiting_for_room_ = false;
-  // Whether the client is being called, and whether the context went under
-  // the call.
+  // Whether the client is being called, and whether the fetch was cancelled
+  // under the call.
   bool calling_client_ = false;
-  bool context_gone_ = false;
+  bool cancel_pending_ = false;
   base::WeakPtrFactory<LocalSchemeFetch> weak_factory_{this};
 };
 

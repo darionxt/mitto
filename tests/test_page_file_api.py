@@ -484,6 +484,20 @@ LOCAL_SCHEMES = {
         " return settle(fetch(u).then((r) => r.text()))",
         "value: fulfilled hi",
     ),
+    "an abort as the promise resolves": (
+        "const c = new AbortController(); let got = 'no getter'; Object.defineProperty(Response.prototype,"
+        " 'then', { configurable: true, get() { got = 'getter'; c.abort('why'); return undefined; } }); const"
+        " outcome = await settle(fetch('data:,x', { signal: c.signal }).then((r) => r.status)); delete"
+        " Response.prototype.then; return got + ', ' + outcome",
+        "value: getter, fulfilled 200",
+    ),
+    "a stream body of a local fetch is locked only for a blob: URL": (
+        "const out = []; for (const url of ['data:,x', blobUrl(['hi'])]) { const body = new ReadableStream({"
+        " pull(c) { c.enqueue(new Uint8Array([1])); c.close(); } }); const p = fetch(url, { method: 'POST', body,"
+        " duplex: 'half' }); const locked = body.locked; out.push(locked + ' ' + await settle(p.then((r) =>"
+        " r.status)) + ' ' + body.locked); } return out.join(' // ')",
+        "value: false fulfilled 200 false // true rejected TypeError: Failed to fetch true",
+    ),
     "a large blob: URL's body": (
         "const u = blobUrl([new Uint8Array(5 * 1024 * 1024)]); const r = await fetch(u);"
         " return [r.headers.get('content-length'), (await r.arrayBuffer()).byteLength].join()",
@@ -527,6 +541,37 @@ IN_A_PAGE = {
         " const first = await load(f.contentDocument); URL.revokeObjectURL(u); const second = await load(f.contentDocument);"
         " return first + ', ' + second",
         "value: load, error",
+    ),
+    "a frame that its stream body's cancel removes": (
+        "const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow; const"
+        " body = new w.ReadableStream({ cancel() { f.remove(); } }); const c = new w.AbortController(); const p ="
+        " w.fetch('data:,x', { method: 'POST', body, duplex: 'half', signal: c.signal }); c.abort('why'); return"
+        " await Promise.race([settle(p), new Promise((r) => setTimeout(() => r('pending'), 500))])",
+        "value: rejected String: undefined",
+    ),
+    "a frame that its body's conversion removes": (
+        "const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow; const"
+        " out = []; for (const url of ['data:,x', blobUrl(['hi'])]) { const g = document.createElement('iframe');"
+        " document.body.append(g); const gw = g.contentWindow; out.push(await Promise.race([settle(gw.fetch(url,"
+        " { method: 'POST', body: { toString() { g.remove(); return 'x'; } } })), new Promise((r) =>"
+        " setTimeout(() => r('pending'), 500))])); } return out.join(' // ')",
+        "value: rejected TypeError: Failed to execute 'fetch' on 'Window': The global scope is shutting down. // rejected TypeError: Failed to execute 'fetch' on 'Window': The global scope is shutting down.",
+    ),
+    "two imports of a blob: URL with other fragments": (
+        "const u = blobUrl(['export const u = import.meta.url;'], { type: 'text/javascript' }); const [a, b] ="
+        " await Promise.all([import(u + '#a'), import(u + '#b')]); return [a.u === u + '#a', b.u === u +"
+        " '#b'].join()",
+        "value: true,true",
+    ),
+    "a revoked blob: URL that srcset would prefer": (
+        "const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgG"
+        "AWjR9awAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0)); const u = blobUrl([png], { type: 'image/png' });"
+        " const v = blobUrl([png], { type: 'image/png' }); const f = document.createElement('iframe');"
+        " document.body.append(f); const d = f.contentDocument; const load = (set) => new Promise((r) => { const"
+        " i = d.createElement('img'); i.onload = () => r('load ' + (i.currentSrc === u ? 'u' : 'v')); i.onerror ="
+        " () => r('error'); i.srcset = set; d.body.append(i); }); const first = await load(u + ' 2x');"
+        " URL.revokeObjectURL(u); const second = await load(u + ' 2x, ' + v + ' 1x'); return first + ', ' + second",
+        "value: load u, load v",
     ),
 }
 

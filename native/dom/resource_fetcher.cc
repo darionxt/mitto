@@ -79,9 +79,11 @@ FetchPriority AdjustPriorityWithPriorityHintAndRenderBlocking(
   return priority;
 }
 
-// MemoryCache::RemoveFragmentIdentifierIfNeeded().
+// MemoryCache::RemoveFragmentIdentifierIfNeeded(): an HTTP URL's resource is
+// the same whatever its fragment, but a data: or a blob: URL's is its own for
+// each.
 GURL WithoutFragment(const GURL& url) {
-  if (!url.has_ref()) {
+  if (!url.has_ref() || !url.SchemeIsHTTPOrHTTPS()) {
     return url;
   }
   GURL::Replacements no_fragment;
@@ -278,11 +280,20 @@ Resource* ResourceFetcher::CachedResource(const GURL& url) const {
   const GURL key = WithoutFragment(url);
   for (size_t i = resources_.size(); i > 0; --i) {
     Resource* const resource = resources_[i - 1];
-    if (WithoutFragment(resource->Url()) == key) {
+    if (WithoutFragment(resource->Url()) == key && !IsRevokedBlob(*resource)) {
       return resource;
     }
   }
   return nullptr;
+}
+
+// static
+bool ResourceFetcher::IsRevokedBlob(const Resource& resource) {
+  // A blob: URL that a context revoked, which Blink's revokeObjectURL()
+  // drops from the memory cache that every document of the renderer shares:
+  // only a preload, which Blink keeps apart, still has it.
+  return resource.Url().SchemeIsBlob() && !resource.IsUnusedPreload() &&
+         !BlobUrlRegistry::Get().ResolveEntry(resource.Url());
 }
 
 void ResourceFetcher::RemoveUrlFromCache(const GURL& url) {
@@ -341,12 +352,7 @@ bool ResourceFetcher::CanUse(const Resource& existing,
   if (existing.Url().SchemeIs(url::kDataScheme)) {
     return true;
   }
-  // A blob: URL that a context revoked, which Blink's revokeObjectURL()
-  // drops from the memory cache that every document of the renderer shares,
-  // as it does for the revoking document's own resources: only a preload,
-  // which Blink keeps apart, serves a later request of it.
-  if (existing.Url().SchemeIsBlob() && !existing.IsUnusedPreload() &&
-      !BlobUrlRegistry::Get().ResolveEntry(existing.Url())) {
+  if (IsRevokedBlob(existing)) {
     return false;
   }
   // Resource::CanReuse(): the same mode and credentials mode.

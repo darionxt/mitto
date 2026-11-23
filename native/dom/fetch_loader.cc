@@ -327,11 +327,17 @@ void FetchLoader::Abort() {
     uploader_->Detach();
     uploader_.Clear();
   }
-  if (ReadableStream* const stream = upload_stream_.Get()) {
-    upload_stream_.Clear();
-    std::ignore = ReadableStream::Cancel(isolate_, stream, signal_->Reason());
-  }
+  // The request goes first, which destroys this, so that the stream's
+  // cancel, whose source may run a script that lets the context go, finds
+  // nothing of this to touch.
+  const cppgc::Persistent<ReadableStream> stream = upload_stream_.Get();
+  upload_stream_.Clear();
+  const v8::Local<v8::Value> reason = signal_->Reason();
+  v8::Isolate* const isolate = isolate_;
   Cancel();
+  if (stream) {
+    std::ignore = ReadableStream::Cancel(isolate, stream.Get(), reason);
+  }
 }
 
 void FetchLoader::Cancel() {

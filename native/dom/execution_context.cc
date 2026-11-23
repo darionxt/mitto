@@ -261,6 +261,12 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   if (exception_state.HadException()) {
     return v8::Local<v8::Promise>();
   }
+  // A script that making the Request ran, such as a body's conversion to a
+  // string, may have let the context go, which ScopedFetcher checks again.
+  if (!HasContext()) {
+    exception_state.ThrowTypeError("The global scope is shutting down.");
+    return v8::Local<v8::Promise>();
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::Promise::Resolver> resolver;
@@ -293,11 +299,20 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
       return resolver->GetPromise();
     }
     // A stream body goes nowhere, but an abort cancels it, as the Fetch
-    // Standard's abort steps cancel a request's body that is readable.
-    auto loader = std::make_unique<FetchLoader>(
-        isolate, context, resolver, /*credentials=*/false, signal,
-        /*upload_body=*/nullptr,
-        body && body->IsMadeFromReadableStream() ? body->Stream() : nullptr);
+    // Standard's abort steps cancel a request's body that is readable. A
+    // blob: URL's fetch takes Blink's HTTP fetch, which locks the stream with
+    // a reader of its own, though the Page's blob reads none of it; a data:
+    // URL's does not.
+    ReadableStream* const stream =
+        body && body->IsMadeFromReadableStream() ? body->Stream() : nullptr;
+    BytesConsumer* const upload_body =
+        stream && url.SchemeIs(url::kBlobScheme)
+            ? bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
+                  isolate, stream)
+            : nullptr;
+    auto loader = std::make_unique<FetchLoader>(isolate, context, resolver,
+                                                /*credentials=*/false, signal,
+                                                upload_body, stream);
     if (Resource* const preload = MatchFetchPreload(*request)) {
       PreloadedFetch::Start(*preload, std::move(loader), *this);
       return resolver->GetPromise();

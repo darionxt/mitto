@@ -60,6 +60,19 @@ std::string LocalSchemeFetch::Answer::TakeBody() {
 LocalSchemeFetch::Answer LocalSchemeFetch::AnswerDataUrl(
     const GURL& url,
     std::string_view method) {
+  // ResourceLoader::RequestAsynchronously() posts HandleDataUrl() before it
+  // parses anything, so the URL is decoded in the task, which an abort before
+  // it spares.
+  Answer answer;
+  answer.data_url = url;
+  answer.method = std::string(method);
+  return answer;
+}
+
+// static
+LocalSchemeFetch::Answer LocalSchemeFetch::DecodeDataUrl(
+    const GURL& url,
+    std::string_view method) {
   Answer answer;
   std::optional<DataUrlResponse> data = ParseDataUrl(url);
   if (!data) {
@@ -190,24 +203,24 @@ LocalSchemeFetch::~LocalSchemeFetch() {
 }
 
 void LocalSchemeFetch::Cancel() {
+  // A cancel under a call to the client, as when a script that resolving the
+  // fetch's promise runs aborts it or lets the context go: the client goes
+  // once the call has returned, not under it.
+  if (calling_client_) {
+    cancel_pending_ = true;
+    return;
+  }
   delete this;
 }
 
 void LocalSchemeFetch::OnContextDestroyed() {
-  // The context goes under a call to the client, as when a getter that
-  // resolving the fetch's promise runs detaches the frame: the client goes
-  // once the call has returned, not under it.
-  if (calling_client_) {
-    context_gone_ = true;
-    return;
-  }
   Cancel();
 }
 
 bool LocalSchemeFetch::ReturnedFromClient() {
   calling_client_ = false;
-  if (context_gone_) {
-    Cancel();
+  if (cancel_pending_) {
+    delete this;
     return false;
   }
   return true;
@@ -223,6 +236,9 @@ void LocalSchemeFetch::PostRespond() {
 }
 
 void LocalSchemeFetch::Respond() {
+  if (answer_.data_url) {
+    answer_ = DecodeDataUrl(*answer_.data_url, answer_.method);
+  }
   if (answer_.net_error) {
     const std::unique_ptr<FetchClient> client = std::move(client_);
     const int net_error = answer_.net_error;
@@ -233,7 +249,6 @@ void LocalSchemeFetch::Respond() {
   const base::WeakPtr<LocalSchemeFetch> weak = weak_factory_.GetWeakPtr();
   calling_client_ = true;
   client_->OnResponseStarted(answer_.head);
-  // The client may have cancelled the fetch, which destroyed it.
   if (!weak || !ReturnedFromClient()) {
     return;
   }
