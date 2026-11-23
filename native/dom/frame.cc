@@ -1,9 +1,34 @@
 #include "mitto/dom/frame.h"
 
+#include <string_view>
+
+#include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/window.h"
 
 namespace mitto {
+
+namespace {
+
+// Whether a sandbox attribute allows both scripts and the frame's origin, as
+// Blink's ParseSandboxPolicy() reads its tokens: split at HTML whitespace,
+// in any case.
+bool AllowsScriptsAndOrigin(std::u16string_view sandbox) {
+  bool scripts = false;
+  bool origin = false;
+  for (const std::u16string_view token :
+       base::SplitStringPiece(sandbox, u"\t\n\f\r ", base::KEEP_WHITESPACE,
+                              base::SPLIT_WANT_NONEMPTY)) {
+    scripts =
+        scripts || base::EqualsCaseInsensitiveASCII(token, u"allow-scripts");
+    origin =
+        origin || base::EqualsCaseInsensitiveASCII(token, u"allow-same-origin");
+  }
+  return scripts && origin;
+}
+
+}  // namespace
 
 bool NavigationRateLimiter::CanProceed(Window& window) {
   const base::TimeTicks now = base::TimeTicks::Now();
@@ -60,7 +85,9 @@ bool Frame::IsDescendantOf(const Frame& other) const {
 bool Frame::IsSandboxed() const {
   for (const Frame* frame = this; frame; frame = frame->Parent()) {
     const HTMLFrameOwnerElement* const owner = frame->Owner();
-    if (owner && owner->FindAttribute(u"sandbox")) {
+    const std::u16string* const sandbox =
+        owner ? owner->FindAttribute(u"sandbox") : nullptr;
+    if (sandbox && !AllowsScriptsAndOrigin(*sandbox)) {
       return true;
     }
   }

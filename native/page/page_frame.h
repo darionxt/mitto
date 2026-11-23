@@ -222,6 +222,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // A navigation through the Session that waits for its response ends, as a
   // newer one takes its place.
   void CancelProvisionalNavigation();
+  // Whether two of the frame's ancestors' documents are at `url`, but for the
+  // fragment.
+  bool IsSelfReferential(const GURL& url) const;
   // The Session records a document that the frame commits without the network
   // at the bare about:blank or about:srcdoc, since message 70 names no URL,
   // so it hears the URL that the document committed at, such as

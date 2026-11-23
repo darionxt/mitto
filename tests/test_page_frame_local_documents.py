@@ -73,6 +73,13 @@ def origin() -> Iterator[str]:
             elif path.path == "/secure-report":
                 body = b"<!doctype html><script>fetch('/assets/secure-' + isSecureContext)</script>"
                 content_type = "text/html"
+            elif path.path == "/ran":
+                # A document whose script asks for /assets/ran-<query> once it runs.
+                body = b"<!doctype html><script>fetch('/assets/ran-' + location.search.slice(1))</script>"
+                content_type = "text/html"
+            elif path.path == "/selfembed":
+                seen[path.path] = str(int(seen.get(path.path, "0")) + 1)
+                body, content_type = b"<!doctype html><p>s<iframe src=/selfembed></iframe>", "text/html"
             elif path.path == "/slow":
                 time.sleep(0.3)
                 body, content_type = b"<!doctype html><p>slow", "text/html"
@@ -1072,3 +1079,90 @@ def test_a_frame_under_an_insecure_parent_is_no_secure_context(origin: str) -> N
     ):
         result = _anonymized(page.evaluate(script, timeout=_TIMEOUT_SECONDS), origin)
     assert result == [False, "unseen", "ORIGIN/secure-report"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_first_network_document_in_its_reused_window_has_navigation_entries(origin: str) -> None:
+    # The frame's document is of its initial about:blank's origin, so it keeps that window, and the Navigation API's
+    # entries are the new document's.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = '/other?entries';
+        document.body.appendChild(element);
+        await loaded(element);
+        const w = element.contentWindow;
+        const before = [w.navigation.currentEntry.url.replace(location.origin, 'ORIGIN'), w.navigation.entries().length];
+        // From a task of the frame's, whose document the fragment then completes against.
+        w.eval("setTimeout(() => location.replace('#x'))");
+        await settle(100);
+        return [...before, w.navigation.currentEntry.url.replace(location.origin, 'ORIGIN'),
+                w.navigation.entries().length];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["ORIGIN/other?entries", 1, "ORIGIN/other?entries#x", 1]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_sandboxed_frame_s_network_document_runs_no_script(origin: str) -> None:
+    # A sandbox that withholds scripts, its own or an ancestor's, keeps the document's script from running, and one
+    # that allows scripts and the frame's origin, in any case, lets it run. Chrome runs one that allows scripts alone
+    # with an opaque origin, which the Page cannot give a network document yet, so it runs nothing there. Chrome loads
+    # each document, where the Page loads none for a sandbox that withholds either, so no frame's load is awaited.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        const add = (sandbox, query, parent) => {{
+          const element = (parent || document).createElement('iframe');
+          if (sandbox !== null) element.setAttribute('sandbox', sandbox);
+          element.src = '/ran?' + query;
+          (parent || document).body.appendChild(element);
+        }};
+        add('', 'none');
+        add('allow-same-origin', 'origin');
+        add(' ALLOW-SAME-ORIGIN\tallow-scripts ', 'both');
+        // A srcdoc runs under a sandbox that allows both too.
+        const srcdoc = document.createElement('iframe');
+        srcdoc.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+        srcdoc.srcdoc = "<script>fetch('/assets/ran-srcdoc')<\\/script>";
+        document.body.appendChild(srcdoc);
+        const outer = document.createElement('iframe');
+        outer.setAttribute('sandbox', 'allow-same-origin');
+        document.body.appendChild(outer);
+        add(null, 'ancestor', outer.contentDocument);
+        const seen = async (query) => (await fetch('/seen?path=/assets/ran-' + query)).text();
+        for (let i = 0; i < 100 && ((await seen('both')) === 'unseen' || (await seen('srcdoc')) === 'unseen'); i++) {{
+          await settle(10);
+        }}
+        await settle(300);
+        return Promise.all(['none', 'origin', 'both', 'srcdoc', 'ancestor'].map(
+          async (query) => (await seen(query)) !== 'unseen'));
+      }})()
+    """
+    assert _evaluate(origin, script) == [False, False, True, True, False]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_whose_url_two_ancestors_have_loads_nothing(origin: str) -> None:
+    # A document that embeds its own URL: Chrome loads it once more inside itself, then cancels the next frame's
+    # navigation before any request, and that frame keeps its initial about:blank.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = '/selfembed';
+        document.body.appendChild(element);
+        await loaded(element);
+        await settle(300);
+        const second = element.contentDocument.querySelector('iframe');
+        const third = second.contentDocument.querySelector('iframe');
+        return [element.contentDocument.URL.replace(location.origin, 'ORIGIN'),
+                second.contentDocument.URL.replace(location.origin, 'ORIGIN'),
+                third.contentDocument.URL,
+                await (await fetch('/seen?path=/selfembed')).text()];
+      }})()
+    """
+    assert _evaluate(origin, script) == ["ORIGIN/selfembed", "ORIGIN/selfembed", "about:blank", "2"]

@@ -299,6 +299,14 @@ void Navigation::MakeEntries() {
       carried.navigation_type, from);
 }
 
+void Navigation::SetCarried(Carried carried) {
+  carried_ = std::move(carried);
+  made_ = false;
+  entries_.clear();
+  current_index_ = -1;
+  activation_ = nullptr;
+}
+
 Navigation::Carried Navigation::CarryForNextDocument() {
   MakeEntries();
   Carried carried;

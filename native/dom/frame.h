@@ -88,8 +88,10 @@ class Frame {
   // Whether this frame is `other` or one of its descendants.
   bool IsDescendantOf(const Frame& other) const;
   // Whether its element, or an ancestor's, whose flags its documents
-  // inherit, has a sandbox attribute, whose flags the Page does not enforce
-  // yet, so that what they would withhold runs nothing.
+  // inherit, has a sandbox attribute that withholds scripts or the frame's
+  // origin, which the Page does not enforce yet, so that what they would
+  // withhold runs nothing. One that allows both runs as the frame's own,
+  // whose script could take the sandbox away, without the other flags.
   bool IsSandboxed() const;
   // Blink's LocalFrame::IsNavigationAllowed(): no navigation of the frame
   // starts while a FrameNavigationDisabler holds it.

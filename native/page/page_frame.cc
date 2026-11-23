@@ -646,6 +646,24 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     CommitWithoutNetworkSoon(std::move(navigation));
     return;
   }
+  // A sandboxed frame's document would run with the flags that its sandbox
+  // withholds, which the Page cannot enforce yet, so the frame keeps its
+  // document, as with a srcdoc, where Chrome sends the request and commits
+  // the document without those flags.
+  if (IsSandboxed()) {
+    CancelProvisionalNavigation();
+    CheckParentLoadSoon();
+    return;
+  }
+  // NavigationRequest::IsSelfReferentialURL(): a navigation to the URL of two
+  // of the frame's ancestors' documents, but for the fragment, ends before
+  // its request, and the frame keeps its document, so that a document that
+  // embeds its own URL is in itself once and no more.
+  if (IsSelfReferential(request.url)) {
+    CancelProvisionalNavigation();
+    CheckParentLoadSoon();
+    return;
+  }
   const base::TimeTicks now = base::TimeTicks::Now();
   // RenderFrameImpl::BeginNavigationInternal(): a navigation the same as the
   // one that waits, which started less than 3 seconds before while no script
@@ -686,6 +704,20 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   // its number once the request has it.
   provisional_->SetNumber(runner_->requests().StartNavigation(
       request.initiator, std::move(page_request), *provisional_));
+}
+
+bool PageFrame::IsSelfReferential(const GURL& url) const {
+  bool found = false;
+  for (const PageFrame* frame = parent_; frame; frame = frame->parent_) {
+    if (GURL(frame->window_->GetDocument().UrlForBinding())
+            .EqualsIgnoringRef(url)) {
+      if (found) {
+        return true;
+      }
+      found = true;
+    }
+  }
+  return false;
 }
 
 void PageFrame::DidNavigateWithinDocument(const GURL& url) {
