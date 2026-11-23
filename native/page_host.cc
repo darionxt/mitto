@@ -649,6 +649,14 @@ bool SandboxesOrigin(std::string_view headers) {
         }
         // A policy's first sandbox directive counts, and a later one of the
         // same policy is ignored, as the parser ignores a duplicate directive.
+        // One whose value has a character that no directive value may have,
+        // such as one that is not ASCII, sandboxes nothing, as
+        // AddContentSecurityPolicyFromHeader() leaves its flags out.
+        if (!std::ranges::all_of(directive, [](char c) {
+              return base::IsAsciiWhitespace(c) || (c >= 0x21 && c <= 0x7e);
+            })) {
+          break;
+        }
         if (std::ranges::none_of(base::span(tokens).subspan(size_t{1}),
                                  [](std::string_view token) {
                                    return base::EqualsCaseInsensitiveASCII(

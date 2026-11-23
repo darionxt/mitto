@@ -514,22 +514,32 @@ def test_a_policy_s_second_sandbox_directive_counts_for_nothing(
     session: mitto.Session, server: RecordingServer
 ) -> None:
     # The parser ignores a duplicate directive, so a sandbox that keeps allow-same-origin, then a bare one, keeps the
-    # frame's origin and its isolation (Chrome for Testing 157).
+    # frame's origin and its isolation, and so does a sandbox whose value has a character that is not ASCII, whose
+    # flags the parser leaves out (Chrome for Testing 157).
     server.route(
         "/f-dup",
         b"<!doctype html><title>d</title>",
         "text/html",
         [_COEP, ("Content-Security-Policy", "sandbox allow-scripts allow-same-origin; sandbox")],
     )
+    server.route(
+        "/f-bad",
+        b"<!doctype html><title>b</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox \u00e9")],
+    )
     script = """(async () => {
-        const frame = document.createElement('iframe');
-        frame.src = '/f-dup';
-        document.documentElement.appendChild(frame);
-        await new Promise((resolve) => frame.onload = resolve);
-        return frame.contentWindow.crossOriginIsolated;
+        const isolated = async (src) => {
+            const frame = document.createElement('iframe');
+            frame.src = src;
+            document.documentElement.appendChild(frame);
+            await new Promise((resolve) => frame.onload = resolve);
+            return frame.contentWindow.crossOriginIsolated;
+        };
+        return [await isolated('/f-dup'), await isolated('/f-bad')];
     })()"""
 
-    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) is True
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True]
 
 
 def test_a_redirect_s_resource_policy_comes_before_its_recursion(
@@ -548,21 +558,17 @@ def test_a_redirect_s_resource_policy_comes_before_its_recursion(
         [_COEP],
     )
     server.routes["/redir"] = Route(b"", 302, [("Location", server.url("/p"))])
-    # The page waits until the grandchild's navigation has ended, then reads whether it committed the error page,
-    # which the page cannot read into, or kept its initial about:blank.
+    # The outer frame's load waits for the frames under it, the grandchild's navigation among them; then the page reads
+    # whether the grandchild committed the error page, which the page cannot read into, or kept its about:blank.
     script = """(async () => {
         const frame = document.createElement('iframe');
         frame.src = '/p';
+        const loaded = new Promise((resolve) => frame.onload = resolve);
         document.documentElement.appendChild(frame);
-        const grandchild = () => {
-            const inner = frame.contentDocument && frame.contentDocument.querySelector('iframe');
-            return inner && inner.contentDocument ? inner.contentDocument.querySelector('iframe') : null;
-        };
-        while (!grandchild()) {
-            await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        return grandchild().contentDocument === null ? 'error page' : 'kept';
+        await loaded;
+        const inner = frame.contentDocument.querySelector('iframe');
+        const grandchild = inner.contentDocument.querySelector('iframe');
+        return grandchild.contentDocument === null ? 'error page' : 'kept';
     })()"""
 
     with _open_page(session, server.page("/", _BLANK, _ISOLATING)) as page:
