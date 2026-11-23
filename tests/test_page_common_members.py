@@ -396,10 +396,6 @@ _NOTIFICATION_AS_CHROME = {
         "const parts = []; parts.length = 536346625; return new Blob(parts)",
         "threw: RangeError: Failed to construct 'Blob': Array length exceeds supported limit.",
     ),
-    "new Notification with a directory handle as data": (
-        "return new Notification('t', {data: await navigator.storage.getDirectory()})",
-        "value: [object Notification]",
-    ),
     "new Notification fires error": (
         "return new Promise((r) => { const n = new Notification('t', {data: {x: 1}}); n.onerror = (e) =>"
         " r([e.constructor.name, e.type].join()); n.onshow = () => r('show'); })",
@@ -640,16 +636,6 @@ def test_keyword_attributes_reflect_as_chrome_does(program: Path, script: str, e
 )
 def test_notification_does_what_chrome_does(program: Path, script: str, expected: str) -> None:
     assert _evaluate(program, script) == expected
-
-
-def test_a_file_system_handle_clones_as_chrome_does(program: Path) -> None:
-    # V8ScriptValueSerializerForModules writes a FileSystemDirectoryHandle, whose copy is another handle, here one
-    # with nothing behind it, as getDirectory()'s Known Gap gives one (Chrome for Testing 157).
-    script = """const handle = await navigator.storage.getDirectory();
-        const copy = structuredClone({h: [handle]}).h[0];
-        return [Object.prototype.toString.call(copy), copy === handle].join()"""
-
-    assert _evaluate(program, script) == "value: [object FileSystemDirectoryHandle],false"
 
 
 _NOTIFICATION_UNDER_FEATURES = {

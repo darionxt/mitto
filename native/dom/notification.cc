@@ -79,10 +79,19 @@ Notification* Notification::Create(const std::u16string& title,
       return nullptr;
     }
   }
+  // A context that has gone throws, as one whose frame a getter of `data`
+  // removed, or that of a frame removed before.
+  v8::Isolate* const isolate = exception_state.GetIsolate();
+  ExecutionContext* const context =
+      ExecutionContext::From(isolate, isolate->GetCurrentContext());
+  if (!context || !context->HasContext()) {
+    exception_state.ThrowTypeError("Illegal invocation.");
+    return nullptr;
+  }
   Notification* const notification = Create();
   // SchedulePrepareShow() and PrepareShow(): a Page has no permission to show
   // it, so error fires from a task of its own.
-  PostTaskInContext(&ExecutionContext::Current(), TaskType::kMiscPlatformAPI,
+  PostTaskInContext(context, TaskType::kMiscPlatformAPI,
                     base::BindOnce(
                         [](cppgc::Persistent<Notification> notification) {
                           Event* const event =

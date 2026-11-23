@@ -601,10 +601,14 @@ size_t SequenceCapacity(IdlTypeKind item_kind, bool item_nullable) {
       size = 24;
       nullable_size = 32;
       break;
+    case IdlTypeKind::kBigInt:
+      // BigInt: a Vector of its words and its sign.
+      size = 32;
+      nullable_size = 40;
+      break;
     case IdlTypeKind::kAny:
     case IdlTypeKind::kObject:
     case IdlTypeKind::kPromise:
-    case IdlTypeKind::kBigInt:
     case IdlTypeKind::kSymbol:
     case IdlTypeKind::kUndefined:
     case IdlTypeKind::kIterator:
