@@ -415,6 +415,10 @@ void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
   if (unloading_for_commit_) {
     return;
   }
+  // The traversal has committed, as Chrome's controller drops its pending
+  // entry once it hears of the commit, so what its popstate listeners and
+  // their microtasks ask counts from the entry it went to.
+  committing_traversal_index_.reset();
   // A child frame's commits stay its own until frames have entries of their
   // own.
   if (!parent_) {

@@ -83,6 +83,29 @@ def test_push_state_and_replace_state_change_the_entry_at_once(session: mitto.Se
     assert without_favicon(server.paths()) == ["/"]
 
 
+def test_a_request_after_push_state_names_the_new_url(session: mitto.Session, server: RecordingServer) -> None:
+    url = server.page("/a", "<title>Referer</title>")
+    server.route("/one", b"1", "text/plain")
+    server.route("/two", b"2", "text/plain")
+    script = """(async () => {
+      history.pushState(null, '', '/pushed?x#f');
+      await fetch('/one');
+      history.replaceState(null, '', '/replaced');
+      await fetch('/two');
+      return 0;
+    })()"""
+
+    with _open_page(session, url) as page:
+        # The Session hears each URL that the history API gives the document, which its requests then name.
+        page.evaluate(script)
+        referers = [
+            {name.lower(): value for name, value in headers}.get("referer")
+            for path in ("/one", "/two")
+            for headers in server.headers_of(path)
+        ]
+        assert referers == [server.url("/pushed?x"), server.url("/replaced")]
+
+
 def test_push_state_refuses_what_chrome_refuses(session: mitto.Session, server: RecordingServer) -> None:
     url = server.page("/errors", "<title>Errors</title>")
     script = """(() => {
@@ -158,6 +181,29 @@ def test_back_traverses_within_the_document_from_a_later_task(session: mitto.Ses
             1,
             True,
         ]
+
+
+def test_what_runs_after_a_traversal_counts_from_its_entry(session: mitto.Session, server: RecordingServer) -> None:
+    url = server.page("/", "<title>After</title>")
+    script = """(async () => {
+      const r = [];
+      history.pushState({x: 1}, '');
+      await new Promise(resolve => { addEventListener('popstate', resolve, {once: true}); history.back(); });
+      r.push(history.state?.x ?? null, history.length);
+      history.pushState({x: 2}, '');
+      const key = navigation.entries()[0].key;
+      await new Promise(resolve => { addEventListener('popstate', resolve, {once: true}); history.back(); });
+      r.push(history.state?.x ?? null, history.length, navigation.currentEntry.index);
+      history.pushState({x: 3}, '');
+      r.push(await navigation.traverseTo(key).finished.then(e => 'traversed ' + e.index, e => e.name));
+      r.push(history.state?.x ?? null);
+      return r;
+    })()"""
+
+    with _open_page(session, url) as page:
+        # The microtasks of a traversal's popstate run once it has committed, so a back() or traverseTo() there
+        # counts from the entry that it went to, as WPT's back-pushstate-back-history-state does.
+        assert page.evaluate(script) == [None, 2, None, 2, 0, "traversed 0", None]
 
 
 def test_each_go_goes_from_where_the_one_before_it_went(session: mitto.Session, server: RecordingServer) -> None:

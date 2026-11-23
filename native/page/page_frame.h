@@ -299,7 +299,8 @@ class PageFrame final : public NavigationClient, public Frame {
   // as Chrome's pending entry, which the next go() counts from.
   std::optional<size_t> pending_traversal_index_;
   int waiting_traversals_ = 0;
-  // The entry that the traversal whose navigate event runs goes to.
+  // The entry that the traversal whose navigate event runs goes to, until it
+  // commits.
   std::optional<size_t> committing_traversal_index_;
   // Whether the old document's unload events run, as a new one commits.
   bool unloading_for_commit_ = false;
