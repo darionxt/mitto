@@ -207,13 +207,13 @@ bool IsKnown(uint32_t type) {
           type <= static_cast<uint32_t>(PageMessage::kRecordsReleased)) ||
          type == static_cast<uint32_t>(PageMessage::kIsolation);
 }
+
 // The frame of a message that names `document`, which comes first.
 std::string EncodeDocumentFrame(PageMessage type,
                                 uint64_t document,
-
-
                                 std::string_view payload) {
   return EncodeFrame(type, base::StrCat({EncodeUint64(document), payload}));
+
 }
 
 bool IsRequestKind(uint8_t kind) {
