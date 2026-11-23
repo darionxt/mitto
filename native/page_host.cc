@@ -624,8 +624,7 @@ std::string MimeTypeOf(const RequestEvent& event) {
 // sandbox directive without allow-same-origin, which gives Chrome's document
 // of it an opaque origin, as the browser's policy container takes the
 // response's sandbox flags. A report-only policy sandboxes nothing.
-// Upstream:
-// services/network/public/cpp/content_security_policy/content_security_policy.cc
+// Upstream: services/network/public/cpp/content_security_policy/content_security_policy.cc
 bool SandboxesOrigin(std::string_view headers) {
   for (const std::string_view line : base::SplitStringPieceUsingSubstr(
            headers, "\r\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
