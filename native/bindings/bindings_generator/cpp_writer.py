@@ -99,6 +99,9 @@ WRITTEN = frozenset(
         "CheckSecurity",
         "ContextEnabled",
         "CrossOrigin",
+        # condition_test() installs the construct where PerContextData says the context is cross-origin isolated.
+        "CrossOriginIsolated",
+        "CrossOriginIsolatedOrRuntimeEnabled",
         "Exposed",
         "Global",
         "HTMLConstructor",
@@ -211,11 +214,12 @@ _RECEIVER_REALM = ["const ReceiverRealmScope receiver_realm(isolate, info.This()
 def condition_test(condition: Condition, where: str) -> str | None:
     """The C++ test of whether a Page installs a construct, or None if it never does.
 
-    A Page is a top-level window that is a secure context, as about:blank is, and is neither isolated nor cross-origin
-    isolated, and no embedder turns a context-enabled feature on for it, and so is each of its dedicated workers. A
-    feature that a context could turn on, such as one an origin trial can enable, is on if the Page's set has it, since
-    a Page has no origin trials. A worker's isolate has only workers' contexts, so a construct exposed on the window or
-    on workers alone is tested once for each isolate, as bind_gen tests it for each context.
+    A Page is a top-level window that is a secure context, as about:blank is, and is not an isolated context, and no
+    embedder turns a context-enabled feature on for it, and so is each of its dedicated workers. Whether a context is
+    cross-origin isolated is its own, which PerContextData holds. A feature that a context could turn on, such as one an
+    origin trial can enable, is on if the Page's set has it, since a Page has no origin trials. A worker's isolate has
+    only workers' contexts, so a construct exposed on the window or on workers alone is tested once for each isolate, as
+    bind_gen tests it for each context.
     """
     if condition.alternatives:
         # The overloads of one operation whose conditions differ: Blink installs it if any of them holds.
@@ -258,12 +262,13 @@ def condition_test(condition: Condition, where: str) -> str | None:
                     "!data->is_window()" if worker_test == "true" else f"(!data->is_window() && {worker_test})"
                 )
             tests.append(parts[0] if len(parts) == 1 else "(" + " || ".join(parts) + ")")
+        elif other == "CrossOriginIsolated":
+            tests.append("data->cross_origin_isolated()")
         elif other.startswith("CrossOriginIsolatedOrRuntimeEnabled="):
             names = other.removeprefix("CrossOriginIsolatedOrRuntimeEnabled=").split(",")
-            tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
-        elif other in ("CrossOriginIsolated", "IsolatedContext", "InjectionMitigated") or other.startswith(
-            "ContextEnabled="
-        ):
+            features_on = " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names)
+            tests.append(f"(data->cross_origin_isolated() || {features_on})")
+        elif other in ("IsolatedContext", "InjectionMitigated") or other.startswith("ContextEnabled="):
             return None
         else:
             raise UnhandledError(f"{where}: the C++ writer does not handle the condition {other}")
@@ -921,7 +926,12 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
             ]
-        body += self.types.from_v8(attribute.idl_type, "info[0]", "value", site, where)
+        reduced = self.types.reduce(attribute.idl_type)
+        if reflected is None and reduced.kind is TypeKind.ENUMERATION and not reduced.nullable:
+            # Web IDL's attribute setter returns for a string that is none of the enumeration's, as bind_gen's does.
+            body += self.types.from_v8_enumeration_for_setter(reduced, "info[0]", "value", site, where)
+        else:
+            body += self.types.from_v8(attribute.idl_type, "info[0]", "value", site, where)
         if reflected is not None:
             kind = reflection_kind(attribute)
             assert kind is not None
@@ -2074,7 +2084,8 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
 
     Web IDL tries the union's members in a fixed order: a dictionary for undefined and null, then an object of each
     interface, then an ArrayBuffer and a view, then a dictionary for any other object, then a boolean for a boolean, a
-    number for a Number, and then, for what is left, a string, or else a number, or else a boolean.
+    number for a Number, and then, for what is left, a string, or else a number, or else a boolean. The number is
+    the union's one numeric member, an integer or a floating point one, which converts as its own type does.
     """
     alternatives = ", ".join(types.union_alternative(member) for member in union.members)
     signature = f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result)"
@@ -2092,7 +2103,9 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
     sequence = next((member for member in union.members if member.kind is TypeKind.SEQUENCE), None)
     record = next((member for member in union.members if member.kind is TypeKind.RECORD), None)
     has_boolean = any(member.kind is TypeKind.BOOLEAN for member in union.members)
-    number = next((member for member in union.members if member.kind is TypeKind.FLOATING_POINT), None)
+    number = next(
+        (member for member in union.members if member.kind in (TypeKind.FLOATING_POINT, TypeKind.INTEGER)), None
+    )
     string = next((member for member in union.members if member.kind is TypeKind.STRING), None)
     convert_dictionary = [
         f"  {dictionary.name if dictionary else ''} dictionary;",
@@ -2137,6 +2150,26 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             inner = types.from_v8(
                 sequence.members[0], "item", "element", Site(fail="return false;"), f"union {union.syntax}"
             )
+            capacity = types.sequence_capacity(sequence.members[0], f"union {union.syntax}")
+            convert_items = [
+                *["            " + line for line in inner],
+                "            items.push_back(std::move(element));",
+                "            return true;",
+            ]
+            # bind_gen's union.py takes an array by its indices, as IterateSequence() does, before any @@iterator.
+            source += [
+                "    if (value->IsArray()) {",
+                f"      std::vector<{element_type}> items;",
+                f"      if (!IterateSequence(isolate, value, exception_state, {capacity},",
+                "                           [&](v8::Local<v8::Value> item) {",
+                *convert_items,
+                "          })) {",
+                "        return false;",
+                "      }",
+                "      *result = std::move(items);",
+                "      return true;",
+                "    }",
+            ]
             source += [
                 "    v8::Local<v8::Function> method;",
                 "    if (!GetIteratorMethod(isolate, value.As<v8::Object>(), &method)) {",
@@ -2146,9 +2179,7 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
                 f"      std::vector<{element_type}> items;",
                 "      if (!IterateSequenceWithMethod(isolate, value.As<v8::Object>(), method,",
                 "                                     [&](v8::Local<v8::Value> item) {",
-                *["            " + line for line in inner],
-                "            items.push_back(std::move(element));",
-                "            return true;",
+                *convert_items,
                 "          })) {",
                 "        return false;",
                 "      }",

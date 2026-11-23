@@ -12,6 +12,8 @@ namespace {
 // Index 0 is Chrome's debugger's (v8-context.h), and 1 the objects that the
 // context made for constructs (idl_member_installer.cc).
 constexpr int kContextSecureIndex = 2;
+// And the one that holds whether it is cross-origin isolated.
+constexpr int kContextCrossOriginIsolatedIndex = 3;
 
 }  // namespace
 
@@ -31,6 +33,24 @@ bool IsSecureContext(v8::Local<v8::Context> context) {
     return true;
   }
   return data.As<v8::Boolean>()->Value();
+}
+
+void SetCrossOriginIsolated(v8::Local<v8::Context> context, bool isolated) {
+  context->SetEmbedderDataV2(
+      kContextCrossOriginIsolatedIndex,
+      v8::Boolean::New(v8::Isolate::GetCurrent(), isolated));
+}
+
+bool IsCrossOriginIsolated(v8::Local<v8::Context> context) {
+  if (context.IsEmpty() ||
+      context->GetNumberOfEmbedderDataFields() <=
+          static_cast<uint32_t>(kContextCrossOriginIsolatedIndex)) {
+    return false;
+  }
+  const v8::Local<v8::Data> data =
+      context->GetEmbedderDataV2(kContextCrossOriginIsolatedIndex);
+  return data->IsValue() && data.As<v8::Value>()->IsBoolean() &&
+         data.As<v8::Boolean>()->Value();
 }
 
 ReceiverRealmScope::ReceiverRealmScope(v8::Isolate* isolate,

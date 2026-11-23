@@ -432,6 +432,28 @@ bool FromV8Enumeration(v8::Isolate* isolate,
 }
 
 // Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+bool FromV8EnumerationForSetter(v8::Isolate* isolate,
+                                v8::Local<v8::Value> value,
+                                base::span<const std::u16string_view> values,
+                                std::string_view type_name,
+                                std::u16string* result) {
+  std::u16string string;
+  if (!FromV8String(isolate, value, &string)) {
+    return false;
+  }
+  for (const std::u16string_view item : values) {
+    if (item == string) {
+      *result = std::move(string);
+      return true;
+    }
+  }
+  PerIsolateData::From(isolate)->ReportConsoleWarning(
+      base::StrCat({"The provided value '", base::UTF16ToUTF8(string),
+                    "' is not a valid enum value of type ", type_name, "."}));
+  return false;
+}
+
+// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 bool IsIterableObject(v8::Isolate* isolate,
                       v8::Local<v8::Value> value,
                       bool* threw) {
@@ -534,14 +556,104 @@ bool IterateSequenceWithMethod(
   }
 }
 
+size_t SequenceCapacity(IdlTypeKind item_kind, bool item_nullable) {
+  // sizeof(NativeValueTraits<T>::ImplType) in Chrome 157, whose release build
+  // gives a Vector its modification counter, and std::optional<T> for a
+  // nullable number, boolean, enumeration or sequence. Chrome for Testing
+  // 157 refuses an array of one item more than this gives, and reads one of
+  // this many, for unsigned long, double, DOMString, object, a union and a
+  // sequence.
+  size_t size = 16;
+  size_t nullable_size = size;
+  switch (item_kind) {
+    case IdlTypeKind::kBoolean:
+    case IdlTypeKind::kByte:
+    case IdlTypeKind::kOctet:
+      size = 1;
+      nullable_size = 2;
+      break;
+    case IdlTypeKind::kShort:
+    case IdlTypeKind::kUnsignedShort:
+      size = 2;
+      nullable_size = 4;
+      break;
+    case IdlTypeKind::kLong:
+    case IdlTypeKind::kUnsignedLong:
+    case IdlTypeKind::kFloat:
+    case IdlTypeKind::kUnrestrictedFloat:
+      size = 4;
+      nullable_size = 8;
+      break;
+    case IdlTypeKind::kLongLong:
+    case IdlTypeKind::kUnsignedLongLong:
+    case IdlTypeKind::kDouble:
+    case IdlTypeKind::kUnrestrictedDouble:
+      size = 8;
+      nullable_size = 16;
+      break;
+    case IdlTypeKind::kDOMString:
+    case IdlTypeKind::kByteString:
+    case IdlTypeKind::kUSVString:
+      // A String, null for null.
+      size = nullable_size = 8;
+      break;
+    case IdlTypeKind::kArrayBuffer:
+    case IdlTypeKind::kSharedArrayBuffer:
+    case IdlTypeKind::kArrayBufferView:
+    case IdlTypeKind::kDataView:
+    case IdlTypeKind::kTypedArray:
+    case IdlTypeKind::kInterface:
+    case IdlTypeKind::kCallbackInterface:
+    case IdlTypeKind::kCallbackFunction:
+    case IdlTypeKind::kDictionary:
+    case IdlTypeKind::kUnion:
+    case IdlTypeKind::kObservableArray:
+      // A compressed Member, null for null.
+      size = nullable_size = 4;
+      break;
+    case IdlTypeKind::kEnumeration:
+      // EnumerationBase: its value and its string.
+      size = 16;
+      nullable_size = 24;
+      break;
+    case IdlTypeKind::kSequence:
+    case IdlTypeKind::kFrozenArray:
+    case IdlTypeKind::kRecord:
+      // A Vector: its buffer, capacity, size and modification counter.
+      size = 24;
+      nullable_size = 32;
+      break;
+    case IdlTypeKind::kBigInt:
+      // BigInt: a Vector of its words and its sign.
+      size = 32;
+      nullable_size = 40;
+      break;
+    case IdlTypeKind::kAny:
+    case IdlTypeKind::kObject:
+    case IdlTypeKind::kPromise:
+    case IdlTypeKind::kSymbol:
+    case IdlTypeKind::kUndefined:
+    case IdlTypeKind::kIterator:
+      // A ScriptValue: its reference and its world.
+      break;
+  }
+  return kMaxAllocationSize / (item_nullable ? nullable_size : size);
+}
+
 bool IterateSequence(v8::Isolate* isolate,
                      v8::Local<v8::Value> value,
                      ExceptionState& exception_state,
+                     size_t capacity,
                      base::FunctionRef<bool(v8::Local<v8::Value>)> each) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  // As Blink, an array is read by its indices, not through its @@iterator.
+  // As Blink, an array is read by its indices, not through its @@iterator,
+  // once CreateIDLSequenceFromV8ArraySlow() has checked its length.
   if (value->IsArray()) {
     const v8::Local<v8::Array> array = value.As<v8::Array>();
+    if (array->Length() > capacity) {
+      exception_state.ThrowRangeError("Array length exceeds supported limit.");
+      return false;
+    }
     for (uint32_t i = 0; i < array->Length(); ++i) {
       v8::Local<v8::Value> item;
       if (!array->Get(context, i).ToLocal(&item) || !each(item)) {

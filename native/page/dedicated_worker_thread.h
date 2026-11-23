@@ -76,6 +76,9 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     uint64_t id = kNoDocument;
     // Its origin, its creator's.
     url::Origin origin;
+    // Its creator's origin, that of the outside settings that its top-level
+    // module graph is fetched with, even for a worker of an opaque origin.
+    url::Origin outside_origin;
     std::u16string name;
     // The URL that new Worker() asked for, the key of a module worker's root
     // in its module map, which a redirect does not change.

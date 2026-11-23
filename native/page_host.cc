@@ -77,6 +77,39 @@ bool IsStorageAsBlinkWrites(PageStorageKind kind,
   return local(key) && (!value || local(*value));
 }
 
+// Blink's CanChangeToUrlForHistoryApi() for a document at `document_url` of
+// `document_origin`: the same scheme, user, password, host and port, any
+// path, query and fragment for HTTP and HTTPS, and for a document whose origin
+// is opaque only another query or fragment.
+bool CanChangeToUrlForHistoryApi(const GURL& url,
+                                 const url::Origin& document_origin,
+                                 const GURL& document_url) {
+  if (!url.is_valid()) {
+    return false;
+  }
+  if (url.scheme() != document_url.scheme() ||
+      url.username() != document_url.username() ||
+      url.password() != document_url.password() ||
+      url.host() != document_url.host() || url.port() != document_url.port()) {
+    return false;
+  }
+  if (url.SchemeIsHTTPOrHTTPS()) {
+    return true;
+  }
+  const bool differ_in_path = url.path() != document_url.path();
+  const bool differ_in_query = url.query() != document_url.query();
+  if (url.SchemeIsFile() && differ_in_path) {
+    return false;
+  }
+  if (document_origin.opaque()) {
+    return !differ_in_path;
+  }
+  if (url.IsStandard()) {
+    return true;
+  }
+  return !differ_in_path && !differ_in_query;
+}
+
 constexpr std::string_view kVersionKey = "version";
 // What net::HttpConnectionInfoToString() and net::NextProtoToString() call a
 // protocol that is not known.
@@ -2933,20 +2966,18 @@ void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
 
 void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
-  // The browser checks a renderer's same-document URL as
-  // CanChangeToUrlForHistoryApi() does: of the document's origin, or only its
-  // fragment changed, as about:blank's can. A frame's
-  // about:blank or srcdoc may have committed at another such URL, such as
-  // about:blank?v=1, which the library does not hear of, so one about:blank
-  // or about:srcdoc URL may follow another: the document keeps its origin,
-  // and the Page holds it to its path and query.
+  // RenderFrameHostImpl::ValidateURLAndOrigin() for a same-document URL: one
+  // that the history API gives the document, as CanChangeToUrlForHistoryApi()
+  // lets it. A frame's about:blank or srcdoc may have committed at another
+  // such URL, such as about:blank?v=1, which the library does not hear of, so
+  // one about:blank or about:srcdoc URL may follow another: the document
+  // keeps its origin, and the Page holds it to its path and query. A URL that
+  // document.open() gives a document, the library hears of with type 73.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
   if (!new_url.is_valid() ||
-      (!url::Origin::Create(document_url)
-            .IsSameOriginWith(url::Origin::Create(new_url)) &&
-       document_url.GetWithoutRef() != new_url.GetWithoutRef() &&
+      (!CanChangeToUrlForHistoryApi(new_url, context.origin, document_url) &&
        !(document_url.IsAboutBlank() && new_url.IsAboutBlank()) &&
        !(document_url.IsAboutSrcdoc() && new_url.IsAboutSrcdoc()))) {
     Refuse("a same-document navigation to another origin");

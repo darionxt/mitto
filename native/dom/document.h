@@ -529,7 +529,13 @@ class Document : public Node {
   // initiator, as Chrome's browser hands it over.
   void SetReferrerPolicy(FetchReferrerPolicy policy) {
     referrer_policy_ = policy;
+    policy_container_referrer_policy_ = policy;
   }
+  // Whether a new entry of the document in the session history keeps its URL
+  // from other documents' Navigation API entries, as Chrome's browser takes
+  // it from the policy container: for a policy of no-referrer or origin that
+  // the response gave.
+  bool ProtectsUrlInNavigationApi() const;
 
   // What fetches the document's subresources, such as its images.
   ResourceFetcher& Fetcher();
@@ -760,6 +766,9 @@ class Document : public Node {
   // CloneDocumentWithoutChildren() makes it.
   virtual Document* CloneDocumentWithoutChildren() const;
  private:
+  // The document's policy changed, which the entry it is at in the session
+  // history takes.
+  void DidChangeReferrerPolicy();
   std::u16string BodyAttribute(std::u16string_view name) const;
   // Blink's SetBodyAttribute(): nothing for a frameset, no body, or the value
   // it already has.
@@ -867,6 +876,9 @@ class Document : public Node {
   cppgc::Member<DocumentScriptRunner> script_runner_;
   cppgc::Member<ResourceFetcher> fetcher_;
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
+  // The response's policy, which the browser's policy container keeps.
+  FetchReferrerPolicy policy_container_referrer_policy_ =
+      FetchReferrerPolicy::kDefault;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;

@@ -418,10 +418,16 @@ v8::MaybeLocal<v8::Value> ConvertSequence(v8::Isolate* isolate,
     items.push_back(converted);
     return true;
   };
-  const bool done = method.IsEmpty()
-                        ? IterateSequence(isolate, value, exception_state, each)
-                        : IterateSequenceWithMethod(
-                              isolate, value.As<v8::Object>(), method, each);
+  const IdlTypeInfo& item_type = *type.members[0];
+  const bool done =
+      method.IsEmpty()
+          ? IterateSequence(
+                isolate, value, exception_state,
+                SequenceCapacity(item_type.kind,
+                                 item_type.flags & kIdlTypeNullable),
+                each)
+          : IterateSequenceWithMethod(isolate, value.As<v8::Object>(), method,
+                                      each);
   if (!done) {
     return {};
   }
