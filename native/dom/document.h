@@ -521,6 +521,12 @@ class Document : public Node {
   // Chrome's console error for one that names none.
   void ParseAndSetReferrerPolicy(std::u16string_view policy,
                                  ReferrerPolicySource source);
+  // The policy that a frame's about:blank or srcdoc document takes with the
+  // policy container of its creator, its parent or its navigation's
+  // initiator, as Chrome's browser hands it over.
+  void SetReferrerPolicy(FetchReferrerPolicy policy) {
+    referrer_policy_ = policy;
+  }
 
   // What fetches the document's subresources, such as its images.
   ResourceFetcher& Fetcher();

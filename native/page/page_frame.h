@@ -35,6 +35,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "mitto/dom/document_parser.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/page_messages.h"
@@ -205,6 +206,14 @@ class PageFrame final : public NavigationClient, public Frame {
   // The frame's children go, each as Detach() has it, when the frame goes or
   // its document goes and its elements with it.
   void DetachChildren();
+  // A frame that loaded held its parent's load event back, which checks
+  // again once the frame stops, as Blink's does: from a task, since the
+  // element's removal may still be under way, and not while the parent's own
+  // document goes.
+  void CheckParentLoadSoon();
+  // A srcdoc or an about:blank that waits commits nothing then, and the
+  // parent, whose load event it held back, checks again.
+  void CancelLocalNavigation();
   // The child frame `child` has gone: this hands it to the runner, which lets
   // go of it once the task ends.
   void RemoveChild(PageFrame& child);
@@ -228,9 +237,10 @@ class PageFrame final : public NavigationClient, public Frame {
     GURL url;
     // Its source, kSrcdoc or kAboutBlank, and an about:blank's initiator.
     PageDocumentCommitted committed;
-    // Its document's origin and referrer: the parent document's for a
-    // srcdoc, and the initiator's for an about:blank.
+    // Its document's origin and referrer policy, the parent document's for a
+    // srcdoc and the initiator's for an about:blank, and its referrer.
     url::Origin origin;
+    FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
     std::u16string referrer;
     // Its document's about base URL, the parent document's base URL for a
     // srcdoc and the initiator's for an about:blank, and its cookie URL, the

@@ -345,6 +345,11 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
+    // The URL whose cookies a document's cookie calls read and write, as
+    // Blink's Document::CookieURL(): for a frame's about:blank or srcdoc its
+    // creator's or its initiator's, and empty for a document's own URL, as
+    // ContextUrl() speaks for it.
+    GURL cookie_url;
     // The final URLs of the context's requests that have finished, which a
     // request of the context may name as its referrer, as a module names the
     // module that imports it, or a style sheet the sheet that imports it, in
@@ -429,6 +434,10 @@ class PageHost final : public PageChannel::Delegate {
   GURL TopDocumentUrl() const;
   // What the cookie calls of document `id` are made for.
   CookieContext CookieContextOf(uint64_t id) const;
+  // The cookie URL of a context, which a frame's document that takes the
+  // place of its creator's or initiator's takes, as Blink's
+  // DocumentInit::GetCookieUrl() does from its owner document.
+  static GURL CookieUrlOf(const Context& context);
   // Where document `id`'s frame is in the frame tree: the top-level
   // document's origin, and whether a document from `id` up is of another
   // site, or of another origin, than the top-level one.

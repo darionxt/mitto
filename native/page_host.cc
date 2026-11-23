@@ -1547,6 +1547,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   }
   if (!asked.referrer.empty()) {
     options.fetch->referrer_source = referrer;
+    options.fetch->no_referrer_source = false;
   }
   if (has_body && !std::ranges::any_of(lines, [](const auto& entry) {
         return base::EqualsCaseInsensitiveASCII(
@@ -2748,10 +2749,12 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           return;
         }
       } else {
-        // A frame's first document, which has its parent's origin and
-        // embedder policy.
-        context.origin = contexts_.at(committed.parent).origin;
-        context.coep = contexts_.at(committed.parent).coep;
+        // A frame's first document, which has its parent's origin,
+        // embedder policy and cookie URL.
+        const Context& parent = contexts_.at(committed.parent);
+        context.origin = parent.origin;
+        context.coep = parent.coep;
+        context.cookie_url = CookieUrlOf(parent);
       }
       context.url = GURL(url::kAboutBlankURL);
       break;
@@ -2813,10 +2816,18 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
               "documents");
           return;
         }
+        // Its policy container is its initiator's, with its embedder
+        // policy, and so is its cookie URL.
         context.origin = initiator->second.origin;
+        context.coep = initiator->second.coep;
+        context.cookie_url = CookieUrlOf(initiator->second);
         context.url = GURL(url::kAboutBlankURL);
       } else {
-        context.origin = contexts_.at(committed.parent).origin;
+        // A srcdoc's are its parent's.
+        const Context& parent = contexts_.at(committed.parent);
+        context.origin = parent.origin;
+        context.coep = parent.coep;
+        context.cookie_url = CookieUrlOf(parent);
         context.url = GURL(url::kAboutSrcdocURL);
       }
       replaced = committed.replaces;
@@ -2874,14 +2885,18 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
   // The browser checks a renderer's same-document URL as
   // CanChangeToUrlForHistoryApi() does: of the document's origin, or only its
-  // fragment changed, as about:blank's can.
+  // fragment changed, as about:blank's can. A frame's about:blank may have
+  // committed at another about:blank URL, such as about:blank?v=1, which the
+  // library does not hear of, so one about:blank URL may follow another: the
+  // document keeps its origin, and the Page holds it to its path and query.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
   if (!new_url.is_valid() ||
       (!url::Origin::Create(document_url)
             .IsSameOriginWith(url::Origin::Create(new_url)) &&
-       document_url.GetWithoutRef() != new_url.GetWithoutRef())) {
+       document_url.GetWithoutRef() != new_url.GetWithoutRef() &&
+       !(document_url.IsAboutBlank() && new_url.IsAboutBlank()))) {
     Refuse("a same-document navigation to another origin");
     return;
   }
@@ -2915,6 +2930,12 @@ GURL PageHost::ContextUrl(const Context& context) {
     return context.url;
   }
   return context.origin.GetURL();
+}
+
+// static
+GURL PageHost::CookieUrlOf(const Context& context) {
+  return context.cookie_url.is_valid() ? context.cookie_url
+                                       : ContextUrl(context);
 }
 
 const PageHost::Context* PageHost::ContextOf(uint64_t id, uint32_t type) {
@@ -3033,7 +3054,7 @@ void PageHost::FillContextFetch(uint64_t id,
     source = &contexts_.at(source->parent);
   }
   if (!source->url.SchemeIsHTTPOrHTTPS()) {
-    fetch.referrer_policy = net::ReferrerPolicy::NO_REFERRER;
+    fetch.no_referrer_source = true;
   } else if (fetch.initiator && source->url != *fetch.initiator) {
     fetch.referrer_source = source->url;
   }
@@ -3082,7 +3103,7 @@ PageHost::CookieContext PageHost::CookieContextOf(uint64_t id) const {
   const Context& context = contexts_.at(id);
   const FrameTree tree = FrameTreeOf(id);
   CookieContext cookies;
-  cookies.url = ContextUrl(context);
+  cookies.url = CookieUrlOf(context);
   cookies.site_for_cookies =
       tree.cross_site ? net::SiteForCookies()
                       : net::SiteForCookies::FromOrigin(tree.top_frame_origin);

@@ -38,6 +38,10 @@ struct NavigationRequest {
   // commits takes as its about base URL and its cookie URL.
   GURL initiator_base_url;
   GURL initiator_cookie_url;
+  // The initiator's outgoing referrer, as Blink's Document::OutgoingReferrer()
+  // gives it: its document's URL, or for a srcdoc document its parent's,
+  // stripped for use as a referrer, and empty for an opaque origin.
+  GURL initiator_referrer;
 };
 
 class NavigationClient {

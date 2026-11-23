@@ -162,6 +162,9 @@ void PageFrame::Start(const PageConnection& connection) {
     const Document& creator = parent_->window_->GetDocument();
     document.SetAboutBaseUrl(creator.BaseUrl());
     document.SetCookieUrl(creator.CookieUrl());
+    // Its policy container is its creator's, as Chrome's browser gives a new
+    // frame's, and so is its referrer policy.
+    document.SetReferrerPolicy(creator.GetReferrerPolicy());
     // Its document.cookie and storage are its origin's, for one of an HTTP or
     // HTTPS origin.
     if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
@@ -279,13 +282,21 @@ void PageFrame::CommitWithoutNetwork(LocalNavigation navigation) {
     }
     old_document.DispatchUnloadEvents();
   }
+  // A listener of the old document's unload events, or of its frames', that
+  // removed the frame's element took the frame away, which then commits
+  // nothing.
+  if (detaching_) {
+    return;
+  }
   DetachChildren();
+  if (detaching_) {
+    return;
+  }
   Document* document = nullptr;
   if (reuse_window) {
     const v8::Context::Scope context_scope(context());
     window_->SetDocumentId(SendDocumentCommitted(committed));
     document = Document::CreateHTML();
-    document->SetLoadTiming(&document_load_timing());
     window_->SetDocument(document);
   } else {
     // The frame keeps its WindowProxy, which takes the new window.
@@ -304,9 +315,16 @@ void PageFrame::CommitWithoutNetwork(LocalNavigation navigation) {
   }
   current_.reset();
   const v8::Context::Scope context_scope(context());
+  document->SetLoadTiming(&document_load_timing());
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
+  // HTMLDocument's constructor: a srcdoc document stays in no-quirks mode,
+  // whatever its doctype.
+  if (url.IsAboutSrcdoc()) {
+    document->LockCompatibilityMode();
+  }
   document->SetOrigin(origin);
   document->SetReferrer(navigation.referrer);
+  document->SetReferrerPolicy(navigation.referrer_policy);
   document->SetAboutBaseUrl(navigation.about_base_url);
   document->SetCookieUrl(navigation.cookie_url);
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
@@ -363,10 +381,14 @@ void PageFrame::Detach() {
   }
   PageFrame& parent = *parent_;
   parent.RemoveChild(*this);
-  // A frame that still loaded held its parent's load event back, which checks
-  // again, as Blink's does once the frame's loading stops. It checks from a
-  // task, since the element's removal is still under way, and not while the
-  // parent's own document goes.
+  CheckParentLoadSoon();
+}
+
+void PageFrame::CheckParentLoadSoon() {
+  if (!parent_) {
+    return;
+  }
+  PageFrame& parent = *parent_;
   if (!parent.detaching_ && !parent.detaching_children_ && parent.window_ &&
       parent.window_->HasDocument()) {
     Document& parent_document = parent.window_->GetDocument();
@@ -450,6 +472,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   // its initiator's base URL of the time, and its cookie URL.
   document->SetAboutBaseUrl(old_document.FallbackBaseUrl());
   document->SetCookieUrl(old_document.CookieUrl());
+  document->SetReferrerPolicy(old_document.GetReferrerPolicy());
   // The referrer is the full URL of the document that started it, its
   // parent's, as RenderFrameImpl takes it from the initiator frame.
   if (parent_ && parent_->window_ && parent_->window_->HasDocument()) {
@@ -474,14 +497,22 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   if (parent_) {
     // A srcdoc or an about:blank goes through Chrome's browser and commits
     // from a later task, with the srcdoc that an iframe has now. The newest
-    // navigation takes the place of one that waits. A frame's navigations
-    // through the Session, and to a data: or blob: URL, are Known Gaps for
-    // now: it keeps its document.
+    // navigation takes the place of one that waits, whatever its URL. A
+    // frame's navigations through the Session, and to a data: or blob: URL,
+    // are Known Gaps for now: it keeps its document.
+    CancelLocalNavigation();
     if (!request.url.IsAboutSrcdoc() && !request.url.IsAboutBlank()) {
       return;
     }
     LocalNavigation navigation;
     navigation.url = request.url;
+    // Its document's referrer is what the initiator's outgoing referrer gives
+    // a navigation to its URL under the initiator's referrer policy, as
+    // Chrome's browser takes it from the navigation's request.
+    navigation.referrer =
+        base::UTF8ToUTF16(GenerateReferrer(request.referrer_policy, request.url,
+                                           request.initiator_referrer)
+                              .spec());
     if (request.url.IsAboutSrcdoc()) {
       navigation.committed.source = PageDocumentSource::kSrcdoc;
       // Only an iframe's srcdoc reaches its document, as Chrome's browser
@@ -491,17 +522,22 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
           owner && owner->HasHTMLTagName(u"iframe")
               ? owner->FindAttribute(u"srcdoc")
               : nullptr;
+      // A sandboxed frame's srcdoc would run with the flags that its sandbox
+      // withholds, which the Page cannot enforce yet, so it commits nothing.
+      if (owner && owner->FindAttribute(u"sandbox")) {
+        return;
+      }
       navigation.body = srcdoc ? *srcdoc : std::u16string();
       Document& parent_document = parent_->window_->GetDocument();
       navigation.origin = parent_document.GetOrigin();
-      navigation.referrer = parent_document.UrlForBinding();
+      navigation.referrer_policy = parent_document.GetReferrerPolicy();
       navigation.about_base_url = parent_document.BaseUrl();
       navigation.cookie_url = parent_document.CookieUrl();
     } else {
       navigation.committed.source = PageDocumentSource::kAboutBlank;
       navigation.committed.initiator = request.initiator;
       navigation.origin = request.initiator_origin;
-      navigation.referrer = base::UTF8ToUTF16(request.initiator_url.spec());
+      navigation.referrer_policy = request.referrer_policy;
       navigation.about_base_url = request.initiator_base_url;
       navigation.cookie_url = request.initiator_cookie_url;
     }
@@ -559,7 +595,9 @@ void PageFrame::DidNavigateWithinDocument(const GURL& url) {
 }
 
 bool PageFrame::HasProvisionalNavigation() const {
-  return provisional_ != nullptr;
+  // A srcdoc or an about:blank that waits to commit is the browser's
+  // navigation that FrameLoader's client navigation stands for.
+  return provisional_ != nullptr || pending_local_navigation_ != 0;
 }
 
 void PageFrame::StopAllLoaders() {
@@ -570,6 +608,15 @@ void PageFrame::StopAllLoaders() {
     runner_->requests().Cancel(provisional_->number());
     provisional_.reset();
   }
+  CancelLocalNavigation();
+}
+
+void PageFrame::CancelLocalNavigation() {
+  if (pending_local_navigation_ == 0) {
+    return;
+  }
+  pending_local_navigation_ = 0;
+  CheckParentLoadSoon();
 }
 
 Document& PageFrame::CommitNavigation(

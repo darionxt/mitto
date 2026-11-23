@@ -20,6 +20,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
@@ -41,50 +42,30 @@
 namespace mitto {
 namespace {
 
-// NavigationRateLimiter: at most 200 navigations of a frame in 10 seconds,
-// and a warning in the console for the first one past that in each period. A
-// Page has one frame, so this is the process's.
-class NavigationRateLimiter {
- public:
-  bool CanProceed(Window& window) {
-    const base::TimeTicks now = base::TimeTicks::Now();
-    if (now - period_start_ > kPeriod) {
-      period_start_ = now;
-      count_ = 0;
-    }
-    if (count_ < kStateUpdateLimit) {
-      ++count_;
-      return true;
-    }
-    if (!warned_period_start_ || *warned_period_start_ != period_start_) {
-      warned_period_start_ = period_start_;
-      window.AddConsoleMessage(
-          ConsoleLevel::kWarning,
-          "Throttling navigation to prevent the browser from hanging. See "
-          "https://crbug.com/1038223. Command line switch "
-          "--disable-ipc-flooding-protection can be used to bypass the "
-          "protection");
-    }
-    return false;
-  }
-
- private:
-  static constexpr base::TimeDelta kPeriod = base::Seconds(10);
-  static constexpr int kStateUpdateLimit = 200;
-
-  base::TimeTicks period_start_;
-  int count_ = 0;
-  std::optional<base::TimeTicks> warned_period_start_;
-};
-
-NavigationRateLimiter& RateLimiter() {
-  static NavigationRateLimiter limiter;
-  return limiter;
-}
 
 // Whether `a` and `b` are the same but for their fragments.
 bool EqualIgnoringFragment(const GURL& a, const GURL& b) {
   return a.GetWithoutRef() == b.GetWithoutRef();
+}
+
+// Document::OutgoingReferrer(): none for a document of an opaque origin, and
+// otherwise the URL of the window's document, or for a srcdoc document of its
+// parent's, up to one that is none, stripped for use as a referrer.
+GURL OutgoingReferrer(const Window& window) {
+  if (window.GetSecurityOrigin().opaque()) {
+    return GURL();
+  }
+  const Window* source = &window;
+  while (GURL(source->GetDocument().UrlForBinding()).IsAboutSrcdoc()) {
+    const Frame* const frame = source->GetFrame();
+    const Frame* const parent = frame ? frame->Parent() : nullptr;
+    if (!parent || !parent->DomWindow() ||
+        !parent->DomWindow()->HasDocument()) {
+      break;
+    }
+    source = parent->DomWindow();
+  }
+  return GURL(source->GetDocument().UrlForBinding()).GetAsReferrer();
 }
 
 // KURL::ElidedString(): a URL longer than 1024 characters keeps its first
@@ -236,7 +217,8 @@ void ProcessJavaScriptUrl(Window& window, const GURL& url) {
 void Navigate(Window& window,
               const FrameLoadRequest& request,
               FrameLoadType type) {
-  if (!RateLimiter().CanProceed(window)) {
+  if (Frame* const frame = window.GetFrame();
+      frame && !frame->navigation_rate_limiter().CanProceed(window)) {
     return;
   }
   if (type == FrameLoadType::kStandard && !request.force_history_push &&
@@ -325,6 +307,7 @@ void StartNavigation(Window& window,
   navigation.initiator_url = GURL(origin_window.GetDocument().UrlForBinding());
   navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
   navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
+  navigation.initiator_referrer = OutgoingReferrer(origin_window);
   client->BeginNavigation(navigation);
 }
 

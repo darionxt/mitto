@@ -7,6 +7,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/header_rules.h"
+#include "url/gurl.h"
+#include "url/origin.h"
+#include "url/url_constants.h"
 
 namespace mitto {
 
@@ -104,6 +107,46 @@ FetchReferrerPolicy FetchReferrerPolicyFromStringWithLegacyKeywords(
     return FetchReferrerPolicy::kStrictOriginWhenCrossOrigin;
   }
   return FetchReferrerPolicyFromString(value);
+}
+
+GURL GenerateReferrer(FetchReferrerPolicy policy,
+                      const GURL& url,
+                      const GURL& referrer) {
+  if (!referrer.is_valid()) {
+    return GURL();
+  }
+  // Its origin, with no path or query, and the whole URL, but for one longer
+  // than 4096 characters, which gives its origin.
+  const GURL origin = referrer.DeprecatedGetOriginAsURL();
+  const GURL& full = referrer.spec().size() > 4096 ? origin : referrer;
+  const bool same_origin = url::Origin::Create(full).IsSameOriginWith(url);
+  // SecurityPolicy::ShouldHideReferrer(): an HTTPS referrer goes only to an
+  // HTTPS URL.
+  const bool hide =
+      full.SchemeIs(url::kHttpsScheme) && !url.SchemeIs(url::kHttpsScheme);
+  switch (policy) {
+    case FetchReferrerPolicy::kNoReferrer:
+      return GURL();
+    case FetchReferrerPolicy::kUnsafeUrl:
+      return full;
+    case FetchReferrerPolicy::kOrigin:
+      return origin;
+    case FetchReferrerPolicy::kOriginWhenCrossOrigin:
+      return same_origin ? full : origin;
+    case FetchReferrerPolicy::kSameOrigin:
+      return same_origin ? full : GURL();
+    case FetchReferrerPolicy::kStrictOrigin:
+      return hide ? GURL() : origin;
+    case FetchReferrerPolicy::kDefault:
+    case FetchReferrerPolicy::kStrictOriginWhenCrossOrigin:
+      if (!same_origin) {
+        return hide ? GURL() : origin;
+      }
+      break;
+    case FetchReferrerPolicy::kNoReferrerWhenDowngrade:
+      break;
+  }
+  return hide ? GURL() : full;
 }
 
 CrossOriginAttribute CrossOriginAttributeFromValue(
