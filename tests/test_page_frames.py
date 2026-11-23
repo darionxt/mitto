@@ -424,3 +424,32 @@ def test_a_page_of_an_opaque_origin_is_of_its_own_origin() -> None:
     """
     with mitto.Session() as session, session._open_page("about:blank", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         assert page.evaluate(script) == [True, "<p>x</p>"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_of_its_parent_s_opaque_origin_is_reached_through_its_window() -> None:
+    # A frame that took the top-level about:blank's opaque origin is of that origin through its window too: its parent
+    # reaches its document and globals, and it its parent's, and so do its own frame and a sibling, as in Chrome 157.
+    script = """
+      const tried = (f) => { try { return f(); } catch (e) { return e.name + ': ' + e.message; } };
+      const element = document.createElement('iframe');
+      document.body.appendChild(element);
+      const w = element.contentWindow;
+      const sibling = document.createElement('iframe');
+      document.body.appendChild(sibling);
+      [
+        tried(() => w.origin),
+        tried(() => w.document === element.contentDocument),
+        tried(() => { w.fromTop = 5; return w.eval('fromTop + 1'); }),
+        tried(() => w.eval('[typeof parent.document, parent.document === top.document]')),
+        tried(() => w.eval(`
+          const inner = document.createElement('iframe');
+          document.body.appendChild(inner);
+          inner.contentWindow.k = 1;
+          [inner.contentWindow.document === inner.contentDocument, inner.contentWindow.eval('[top.document.body.localName, k]')]
+        `)),
+        tried(() => sibling.contentWindow.eval('parent.frames[0].document === parent.document.querySelector("iframe").contentDocument')),
+      ]
+    """
+    with mitto.Session() as session, session._open_page("about:blank", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == ["null", True, 6, ["object", True], [True, ["body", 1]], True]

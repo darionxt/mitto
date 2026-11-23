@@ -97,7 +97,16 @@ void PageFrame::Start(const PageConnection& connection) {
   // gives it. Its time origin is when its context was made.
   const url::Origin origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
-  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin));
+  const v8::Local<v8::Context> new_context =
+      NewContext(base::TimeTicks::Now(), origin);
+  // A frame of its parent's opaque origin takes its parent's token too, as
+  // contexts of one origin share one, so that V8 lets each reach the other's
+  // objects, as Blink's CanAccess() lets an opaque origin reach itself. A
+  // context of another opaque origin keeps its own.
+  if (parent_ && origin.opaque()) {
+    new_context->SetSecurityToken(parent_->context()->GetSecurityToken());
+  }
+  context_.Reset(isolate, new_context);
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   if (parent_) {
     // The frame's own storage, which asks as each of its documents in turn.
@@ -558,10 +567,11 @@ v8::Local<v8::Context> PageFrame::NewContext(base::TimeTicks time_origin,
   // LocalWindowProxy::SetSecurityToken(): contexts of one origin share a
   // token, so that V8 lets each reach the others' objects, and one of an
   // opaque origin keeps V8's own, its global object, which no other context
-  // has. Blink gives an initial empty document V8's own too, so that each
-  // access asks its CanAccess(), which lets one of the same origin through and
-  // tells the browser: a Page has no browser to tell, and nothing yet that
-  // asks across origins (#286), so it shares its origin's token.
+  // has, unless a frame inherits that origin (Start()). Blink gives an initial
+  // empty document V8's own too, so that each access asks its CanAccess(),
+  // which lets one of the same origin through and tells the browser: a Page
+  // has no browser to tell, and nothing yet that asks across origins (#286),
+  // so it shares its origin's token.
   // V8 compares tokens as objects, so the token is an internalized string,
   // the same object for the same text, as Blink's V8AtomicString is.
   if (!origin.opaque()) {
