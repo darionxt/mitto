@@ -156,7 +156,10 @@ uint64_t PageRequests::StartTraversal(PageTraversalRequest traversal,
         return EncodeTraversalRequest(context, traversal);
       },
       route_);
+  // A navigation, whose response the Session says the cross-origin isolation
+  // of first, as of any navigation.
   open_[number].client = &client;
+  open_[number].navigation = true;
   return number;
 }
 
