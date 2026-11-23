@@ -72,6 +72,11 @@ Storage* WindowStorage(Window& window,
                        PageStorageKind kind,
                        cppgc::Member<Storage>& slot,
                        bindings::ExceptionState& exception_state) {
+  // GetOrCreateLocalStorage(): a window that has lost its frame, as a removed
+  // frame's that a script still holds, has none, not even one it made.
+  if (!window.GetFrame()) {
+    return nullptr;
+  }
   const GURL url(base::UTF16ToUTF8(window.GetDocument().UrlForBinding()));
   const url::Origin origin = url::Origin::Create(url);
   // GetOrCreateLocalStorage() and GetOrCreateSessionStorage(): a document of

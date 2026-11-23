@@ -83,6 +83,8 @@ def origin() -> Iterator[str]:
             elif path.path == "/selfembed":
                 seen[path.path] = str(int(seen.get(path.path, "0")) + 1)
                 body, content_type = b"<!doctype html><p>s<iframe src=/selfembed></iframe>", "text/html"
+            elif path.path == "/nocontent":
+                status, body, content_type = 204, b"", "text/html"
             elif path.path == "/late":
                 # Three seconds late: a 204 for ?204, else a document.
                 time.sleep(3)
@@ -1211,7 +1213,8 @@ def test_a_frame_whose_url_two_ancestors_have_loads_nothing(origin: str) -> None
 @pytest.mark.usefixtures("page_program")
 def test_a_frame_that_a_loaded_frame_gains_holds_back_a_loading_ancestor_until_it_ends(origin: str) -> None:
     # Each outer frame parses for two seconds behind a script after its srcdoc child has loaded, which then gains a
-    # frame that ends three seconds later, with a 204 or a document: the outer frame's load waits for it, and fires.
+    # frame that ends three seconds later, with a 204 or a document: the outer frame's load waits for it, not firing
+    # once its own parsing ends, and fires.
     script = f"""
       (async () => {{
         {_LOADED}
@@ -1231,7 +1234,9 @@ def test_a_frame_that_a_loaded_frame_gains_holds_back_a_loading_ancestor_until_i
           const grandchild = child.contentDocument.createElement('iframe');
           grandchild.src = '/late?' + query;
           child.contentDocument.body.appendChild(grandchild);
-          return Promise.race([outerLoaded.then(() => true), settle(8000).then(() => false)]);
+          const start = performance.now();
+          const after = await Promise.race([outerLoaded.then(() => performance.now() - start), settle(8000).then(() => -1)]);
+          return after >= 2500;
         }};
         return Promise.all([outer('204'), outer('document')]);
       }})()
@@ -1304,3 +1309,69 @@ def test_a_frame_s_document_in_a_reused_window_imports_under_a_base_its_initial_
       }})()
     """
     assert _evaluate(origin, script) == [True, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_still_parses_fires_no_load_after_its_parent_s_navigation_ends_in_a_204(origin: str) -> None:
+    # The parent's navigation fires beforeunload at the frame, whose document has a body and parses on behind a
+    # script; the navigation ends with a 204, and the frame's load never fires, as Blink's
+    # BeforeUnloadDoneWillUnload() has marked its document unloading.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.srcdoc = '<p>a';
+        document.body.appendChild(element);
+        await loaded(element);
+        const child = element.contentDocument.createElement('iframe');
+        child.srcdoc = '<body><p>c<script src="/stall"><\\/script>';
+        element.contentDocument.body.appendChild(child);
+        const childLoaded = loaded(child);
+        for (let i = 0; i < 200 && !(child.contentDocument && child.contentDocument.URL === 'about:srcdoc'
+            && child.contentDocument.body); i++) await settle(10);
+        element.contentWindow.location.href = '/nocontent';
+        return Promise.race([childLoaded.then(() => true), settle(5000).then(() => false)]);
+      }})()
+    """
+    assert _evaluate(origin, script) is False
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_removed_frame_s_window_has_no_storage(origin: str) -> None:
+    # A script that holds the window of a removed frame of the parent's origin reads null for both storages, even for
+    # the one that the frame's document made.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        const element = document.createElement('iframe');
+        element.src = '/other?removed';
+        document.body.appendChild(element);
+        await loaded(element);
+        const w = element.contentWindow;
+        const made = w.sessionStorage !== null;
+        element.remove();
+        return [made, w.localStorage, w.sessionStorage];
+      }})()
+    """
+    assert _evaluate(origin, script) == [True, None, None]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_fetch_of_a_frame_s_initial_about_blank_fails_as_its_window_is_reused(origin: str) -> None:
+    # The fetch's response would come after the frame's document of the same origin has taken the window, which fails
+    # it, as Chrome stops the old document's loaders.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const element = document.createElement('iframe');
+        element.src = '/other?reused';
+        document.body.appendChild(element);
+        const fetched = element.contentWindow.fetch('/slow').then(
+          (response) => response.text(), (error) => error.name + ': ' + error.message);
+        await loaded(element);
+        return Promise.race([fetched, settle(3000).then(() => 'pending')]);
+      }})()
+    """
+    assert _evaluate(origin, script) == "TypeError: Failed to fetch"

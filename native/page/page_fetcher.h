@@ -41,6 +41,11 @@ class PageFetcher final : public Fetcher {
   // clients go with the fetcher, since one of them may be what ended the
   // context, and still run.
   void Stop();
+  // As Stop(), for the old document of a window that a document of its
+  // origin keeps, whose context goes on: each client of a request that is not
+  // a keepalive one then hears that it failed, as Blink's
+  // ResourceFetcher::StopFetching() fails the old document's loaders.
+  void Abort();
 
   // Fetcher:
   void Fetch(FetchRequestData request,

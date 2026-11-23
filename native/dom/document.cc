@@ -1845,8 +1845,17 @@ void Document::CheckCompleted() {
   if (window_) {
     if (Frame* const frame = window_->GetFrame()) {
       if (Frame* const parent = frame->Parent()) {
+        // In the parent's own context, so that what its load event starts,
+        // such as the top-level document's favicon, is the parent's.
+        v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+        const v8::HandleScope handle_scope(isolate);
+        v8::Local<v8::Context> parent_context;
         if (Window* const parent_window = parent->DomWindow();
-            parent_window && parent_window->HasDocument()) {
+            parent_window && parent_window->HasDocument() &&
+            parent_window->HasContext() &&
+            parent_window->ToV8(isolate)->GetCreationContext(isolate).ToLocal(
+                &parent_context)) {
+          const v8::Context::Scope context_scope(parent_context);
           parent_window->GetDocument().CheckCompleted();
         }
       }

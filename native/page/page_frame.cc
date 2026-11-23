@@ -1129,9 +1129,10 @@ void PageFrame::AttachWindow(const PageConnection& connection,
 }
 
 void PageFrame::EndOldDocumentInWindow() {
-  // Its fetches end, and the next document has had no response; the old
-  // fetcher goes from a later task, in case one of its clients runs below.
-  fetcher_->Stop();
+  // Its fetches fail, as Chrome's do, and the next document starts with none
+  // of its responses; the old fetcher goes from a later task, in case one of
+  // its clients runs below.
+  fetcher_->Abort();
   base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
       FROM_HERE, std::move(fetcher_));
   fetcher_ = std::make_unique<PageFetcher>(runner_->requests());

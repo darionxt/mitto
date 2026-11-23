@@ -224,8 +224,8 @@ class PageFrame final : public NavigationClient, public Frame {
   void CancelProvisionalNavigation();
   // The window that a frame's initial about:blank leaves to a document of
   // its origin keeps it, as Blink's does, but the Session forgets the old
-  // document: its fetches end, and its dedicated workers, which Chrome keeps
-  // with the window, are terminated.
+  // document: its fetches fail, as Chrome's do, and its dedicated workers,
+  // which Chrome keeps with the window, are terminated.
   void EndOldDocumentInWindow();
   // Whether two of the frame's ancestors' documents are at `url`, but for the
   // fragment.
