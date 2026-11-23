@@ -439,13 +439,17 @@ StorageBucketHost* Window::GetStorageBucketHost() const {
 
 mitto::Performance* Window::Performance() {
   if (!performance_) {
-    performance_ = Performance::Create(TimeOrigin(), &GetDocumentLoadTiming());
+    performance_ = Performance::Create(TimeOrigin(), &GetDocumentLoadTiming(),
+                                       CrossOriginIsolatedCapability());
   }
   return performance_.Get();
 }
 
 void Window::SetDocumentLoadTiming(DocumentLoadTiming* timing) {
   document_load_timing_ = timing;
+  if (timing) {
+    timing->cross_origin_isolated_capability = CrossOriginIsolatedCapability();
+  }
 }
 
 DocumentLoadTiming& Window::GetDocumentLoadTiming() {

@@ -131,6 +131,9 @@ class PerIsolateData {
   // whether it gets the members that Web IDL's [SecureContext] puts behind
   // one (IsSecureContext() in per_context_data.h).
   bool secure_context() const;
+  // Whether the isolate's current context is cross-origin isolated
+  // (IsCrossOriginIsolated() in per_context_data.h).
+  bool cross_origin_isolated() const;
 
   // The innermost ReceiverRealmScope, or null.
   ReceiverRealmScope* receiver_realm_scope() const {

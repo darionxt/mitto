@@ -99,6 +99,9 @@ WRITTEN = frozenset(
         "CheckSecurity",
         "ContextEnabled",
         "CrossOrigin",
+        # condition_test() installs the construct where PerContextData says the context is cross-origin isolated.
+        "CrossOriginIsolated",
+        "CrossOriginIsolatedOrRuntimeEnabled",
         "Exposed",
         "Global",
         "HTMLConstructor",
@@ -211,11 +214,12 @@ _RECEIVER_REALM = ["const ReceiverRealmScope receiver_realm(isolate, info.This()
 def condition_test(condition: Condition, where: str) -> str | None:
     """The C++ test of whether a Page installs a construct, or None if it never does.
 
-    A Page is a top-level window that is a secure context, as about:blank is, and is neither isolated nor cross-origin
-    isolated, and no embedder turns a context-enabled feature on for it, and so is each of its dedicated workers. A
-    feature that a context could turn on, such as one an origin trial can enable, is on if the Page's set has it, since
-    a Page has no origin trials. A worker's isolate has only workers' contexts, so a construct exposed on the window or
-    on workers alone is tested once for each isolate, as bind_gen tests it for each context.
+    A Page is a top-level window that is a secure context, as about:blank is, and is not an isolated context, and no
+    embedder turns a context-enabled feature on for it, and so is each of its dedicated workers. Whether a context is
+    cross-origin isolated is its own, which PerContextData holds. A feature that a context could turn on, such as one an
+    origin trial can enable, is on if the Page's set has it, since a Page has no origin trials. A worker's isolate has
+    only workers' contexts, so a construct exposed on the window or on workers alone is tested once for each isolate, as
+    bind_gen tests it for each context.
     """
     if condition.alternatives:
         # The overloads of one operation whose conditions differ: Blink installs it if any of them holds.
@@ -258,12 +262,13 @@ def condition_test(condition: Condition, where: str) -> str | None:
                     "!data->is_window()" if worker_test == "true" else f"(!data->is_window() && {worker_test})"
                 )
             tests.append(parts[0] if len(parts) == 1 else "(" + " || ".join(parts) + ")")
+        elif other == "CrossOriginIsolated":
+            tests.append("data->cross_origin_isolated()")
         elif other.startswith("CrossOriginIsolatedOrRuntimeEnabled="):
             names = other.removeprefix("CrossOriginIsolatedOrRuntimeEnabled=").split(",")
-            tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
-        elif other in ("CrossOriginIsolated", "IsolatedContext", "InjectionMitigated") or other.startswith(
-            "ContextEnabled="
-        ):
+            features_on = " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names)
+            tests.append(f"(data->cross_origin_isolated() || {features_on})")
+        elif other in ("IsolatedContext", "InjectionMitigated") or other.startswith("ContextEnabled="):
             return None
         else:
             raise UnhandledError(f"{where}: the C++ writer does not handle the condition {other}")

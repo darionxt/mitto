@@ -30,8 +30,8 @@ uint64_t DocumentLoadTiming::ToIntegerMilliseconds(base::TimeTicks time) const {
   if (time.is_null()) {
     return 0;
   }
-  return static_cast<uint64_t>(
-      Performance::ClampTimeResolution(MonotonicTimeToPseudoWallTime(time)));
+  return static_cast<uint64_t>(Performance::ClampTimeResolution(
+      MonotonicTimeToPseudoWallTime(time), cross_origin_isolated_capability));
 }
 
 base::TimeDelta DocumentLoadTiming::MonotonicTimeToPseudoWallTime(
