@@ -1365,9 +1365,14 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
                                       base::Unretained(&runner_->requests()),
                                       request)));
   }
-  // The microtasks that waited, and what they queue, run as the page thaws.
+  // The microtasks that waited run as the page thaws, then what they queued,
+  // which no script that they ran on the way checks for, as one queue has it.
   if (stored->microtasks) {
-    stored->microtasks->PerformCheckpoint(isolate);
+    {
+      const v8::Isolate::SuppressMicrotaskExecutionScope suppress(
+          isolate, context->GetMicrotaskQueue());
+      stored->microtasks->PerformCheckpoint(isolate);
+    }
     v8::MicrotasksScope::PerformCheckpoint(isolate);
   }
   // LocalFrame::DidResume()'s resume, then the page shows again, then its
@@ -1645,8 +1650,21 @@ void PageFrame::EvictDocument(uint64_t document) {
   stored->chrome_object_data->detached = true;
   runner_->sender()->SendDocumentEvicted(document);
   // What ran in it may be on the stack, so it goes from a later task.
-  base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
-                                                             std::move(stored));
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&PageFrame::Drop, base::Unretained(isolate),
+                                std::move(stored)));
+}
+
+// static
+void PageFrame::Drop(v8::Isolate* isolate,
+                     std::unique_ptr<StoredDocument> stored) {
+  const v8::HandleScope handle_scope(isolate);
+  // V8 keeps what waits in a queue, and the context of each, until its queue
+  // has had its turn, which passes over those of a context without one.
+  stored->context.Get(isolate)->DetachGlobal();
+  if (stored->microtasks) {
+    stored->microtasks->PerformCheckpoint(isolate);
+  }
 }
 
 void PageFrame::EvictBrowsingInstance(uint64_t browsing_instance) {

@@ -939,25 +939,27 @@ def test_a_credential_request_keeps_a_page_out(
         assert page.evaluate("window.marker ?? null") == (1 if kept else None)
 
 
+_CELL = "const cell = new Int32Array(new WebAssembly.Memory({initial: 1, maximum: 1, shared: true}).buffer);"
+
+
 def test_a_promise_that_v8_settles_while_its_page_is_kept_has_its_reactions_as_it_comes_back(
     session: mitto.Session, server: RecordingServer
 ) -> None:
     first = server.page("/a", "<title>A</title>" + _LOGGING)
     second = server.page("/b", "<title>B</title>")
-    # A module of one function, which V8 compiles on another thread.
-    module = "new Uint8Array([0,97,115,109,1,0,0,0,1,4,1,96,0,0,3,2,1,0,10,4,1,2,0,11])"
 
     with _open_page(session, first) as page:
+        # V8 settles the promise itself once the wait's time is up, on the page's own thread.
         page.evaluate(
-            f"const bytes = {module}; document.addEventListener('freeze', () => {{"
-            " WebAssembly.compile(bytes).then(() => { log.push('compiled'); localStorage.compiled = 'yes'; }); });"
-            " document.addEventListener('resume', () => Promise.resolve().then(() => log.push('resumed')));"
+            f"{_CELL} document.addEventListener('freeze', () => {{"
+            " Atomics.waitAsync(cell, 0, 0, 100).value.then(value => { log.push(value); localStorage.settled = 'yes'; });"
+            " }); document.addEventListener('resume', () => Promise.resolve().then(() => log.push('resumed')));"
             " localStorage.clear(); window.marker = 1; location.href = '/b'; 0"
         )
         assert _next_document(page).url == second
         _wait(page, 500)
         # The page's agent runs no microtask while it is frozen.
-        assert page.evaluate("localStorage.compiled ?? null") is None
+        assert page.evaluate("localStorage.settled ?? null") is None
         page.evaluate("history.back()")
         assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
         assert page.evaluate("[window.marker, log]") == [
@@ -967,7 +969,7 @@ def test_a_promise_that_v8_settles_while_its_page_is_kept_has_its_reactions_as_i
                 "pagehide:true",
                 "visibilitychange:hidden",
                 "freeze",
-                "compiled",
+                "timed-out",
                 "resume",
                 "resumed",
                 "visibilitychange:visible",
@@ -983,6 +985,51 @@ def test_a_promise_that_v8_settles_while_its_page_is_kept_has_its_reactions_as_i
         assert page.evaluate("Promise.resolve(log.at(-1)).then(x => x)") == "pageshow:true"
 
 
+def test_the_reactions_of_a_kept_page_run_in_order_past_what_they_queue(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title><script>window.log = [];</script>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            f"{_CELL} addEventListener('x', () => {{ Promise.resolve().then(() => log.push('inner')); }});"
+            " document.addEventListener('freeze', () => {"
+            " Atomics.waitAsync(cell, 0, 0, 100).value.then(() => {"
+            " log.push('first'); dispatchEvent(new Event('x')); log.push('after the event'); });"
+            " Atomics.waitAsync(cell, 0, 0, 120).value.then(() => log.push('second')); });"
+            " location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        _wait(page, 500)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate("log") == ["first", "after the event", "second", "inner"]
+
+
+def test_a_page_that_goes_takes_the_reactions_that_waited_with_it(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            f"{_CELL} document.addEventListener('freeze', () => {{"
+            " Atomics.waitAsync(cell, 0, 0, 50).value.then(() => { localStorage.settled = 'yes'; }); });"
+            " localStorage.clear(); window.bc = new BroadcastChannel('x'); bc.onmessage = () => {};"
+            " location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        _wait(page, 300)
+        # The message evicts the page, and its reactions never run.
+        page.evaluate("new BroadcastChannel('x').postMessage(1); new Promise(r => setTimeout(r, 300))")
+        assert page.evaluate("localStorage.settled ?? null") is None
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200)
+        assert page.evaluate("localStorage.settled ?? null") is None
+
+
 @pytest.mark.parametrize(
     ("before", "after", "expected"),
     [
@@ -996,13 +1043,23 @@ def test_a_promise_that_v8_settles_while_its_page_is_kept_has_its_reactions_as_i
         ("setTimeout(() => log.push('old'), 0)", "setTimeout(() => log.push('new'), 0)", ["old", "new"]),
         ("channel.port2.postMessage('old')", "channel.port2.postMessage('new')", ["old", "new"]),
         (
+            "AbortSignal.timeout(0).onabort = () => log.push('old')",
+            "setTimeout(() => log.push('new'), 0)",
+            ["old", "new"],
+        ),
+        (
+            "AbortSignal.timeout(50).onabort = () => log.push('old')",
+            "setTimeout(() => log.push('new'), 0)",
+            ["new", "old"],
+        ),
+        (
             "scheduler.postTask(() => log.push('old'), {delay: 100})",
             "scheduler.postTask(() => log.push('new'))",
             ["new", "old"],
         ),
         ("setTimeout(() => log.push('old'), 100)", "setTimeout(() => log.push('new'), 0)", ["new", "old"]),
     ],
-    ids=["task", "yield", "timeout", "message", "delayed-task", "delayed-timeout"],
+    ids=["task", "yield", "timeout", "message", "signal", "delayed-signal", "delayed-task", "delayed-timeout"],
 )
 def test_what_waited_comes_before_what_a_pageshow_listener_posts_but_for_what_was_delayed(
     session: mitto.Session, server: RecordingServer, before: str, after: str, expected: list[str]

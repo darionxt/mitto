@@ -416,6 +416,7 @@ void AbortSignal::StartTimeout(base::TimeDelta delay) {
             }
           },
           cppgc::WeakPersistent<AbortSignal>(this)));
+  timeout_is_delayed_ = delay.is_positive();
   timeout_timer_ = std::make_unique<base::DeadlineTimer>();
   // Blink posts the task with base's default policy, which may run it late.
   timeout_timer_->Start(
@@ -438,7 +439,7 @@ void AbortSignal::TimeoutFired() {
                            signal->TimeoutFired();
                          },
                          cppgc::Persistent<AbortSignal>(this)),
-                     /*delayed=*/true);
+                     /*delayed=*/timeout_is_delayed_);
     return;
   }
   // Let go of the signal once this returns.

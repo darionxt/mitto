@@ -79,6 +79,9 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
            (fatal_code_ != 0 || timeout_ms_ != kNoTimeout);
   }
 
+  // Whether its timer had a delay, which a fatal error has not.
+  bool is_delayed() const { return fatal_code_ == 0 && timeout_ms_ > 0; }
+
   uint16_t fatal_code() const { return fatal_code_; }
   const std::u16string& fatal_message() const { return fatal_message_; }
   int32_t watch_id() const { return watch_id_; }
@@ -247,7 +250,7 @@ void Geolocation::Fire(GeoNotifier* notifier) {
                          },
                          cppgc::Persistent<Geolocation>(this),
                          cppgc::Persistent<GeoNotifier>(notifier)),
-                     /*delayed=*/true);
+                     /*delayed=*/notifier->is_delayed());
     return;
   }
   const v8::Context::Scope context_scope(context);
