@@ -436,13 +436,19 @@ void CacheStorage::Close(base::OnceClosure callback) {
 }
 
 void CacheStorage::CloseImpl(base::OnceClosure callback) {
-  // FlushIndexIfDirty(), once each cache has run the operations that it had.
+  // FlushIndexIfDirty(), once each cache has run the operations that it had,
+  // after whatever write of the index is under way.
   const base::RepeatingClosure barrier = base::BarrierClosure(
       caches_.size() + doomed_.size(),
       base::BindOnce(
           [](base::WeakPtr<CacheStorage> self, base::OnceClosure callback) {
-            if (!self || !self->write_index_timer_.IsRunning()) {
+            if (!self || self->directory_.empty()) {
               std::move(callback).Run();
+              return;
+            }
+            if (!self->write_index_timer_.IsRunning()) {
+              self->file_runner_->PostTaskAndReply(FROM_HERE, base::DoNothing(),
+                                                   std::move(callback));
               return;
             }
             self->WriteIndex(
