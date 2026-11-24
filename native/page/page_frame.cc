@@ -216,6 +216,8 @@ void PageFrame::Start(const PageConnection& connection) {
     Document& document = window_->GetDocument();
     document.SetOrigin(origin);
     document.SetSandboxFlags(sandbox);
+    document.SetInSandboxedProcess(
+        parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
     // Its about base URL is its creator's base URL, as Blink's
     // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
     // creator's too.
@@ -429,6 +431,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   }
   document->SetOrigin(origin);
   document->SetSandboxFlags(navigation.sandbox);
+  document->SetInSandboxedProcess(navigation.sandboxed_process);
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
   document->SetReferrer(navigation.referrer);
@@ -581,6 +584,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   const url::Origin origin = old_document.GetOrigin();
   document->SetOrigin(origin);
   document->SetSandboxFlags(old_document.GetSandboxFlags());
+  document->SetInSandboxedProcess(old_document.IsInSandboxedProcess());
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
@@ -681,6 +685,9 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     // what the sandbox withholds now, and an opaque origin without
     // allow-same-origin.
     navigation.sandbox = PendingSandboxFlags();
+    navigation.sandboxed_process = request.url.IsAboutBlank()
+                                       ? request.initiator_in_sandboxed_process
+                                       : IsOriginSandboxed(navigation.sandbox);
     navigation.origin = SandboxedOrigin(navigation.origin, navigation.sandbox);
     navigation.committed.sandboxed_origin =
         IsOriginSandboxed(navigation.sandbox);
@@ -1428,7 +1435,8 @@ void PageFrame::CommitErrorPageSoon() {
   navigation.url = GURL(kErrorPageUrl);
   navigation.committed.source = PageDocumentSource::kErrorPage;
   navigation.sandbox = provisional_sandbox_;
-  navigation.committed.sandboxed_origin = IsOriginSandboxed(navigation.sandbox);
+  navigation.sandboxed_process = IsOriginSandboxed(navigation.sandbox);
+  navigation.committed.sandboxed_origin = navigation.sandboxed_process;
   CommitWithoutNetworkSoon(std::move(navigation));
 }
 
@@ -1549,6 +1557,7 @@ Document& PageFrame::CommitDocument(
   // about:blank frame that opens the document gives it, as Blink's does.
   document->SetOrigin(origin);
   document->SetSandboxFlags(sandbox);
+  document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);

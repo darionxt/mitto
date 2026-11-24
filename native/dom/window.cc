@@ -45,6 +45,7 @@
 #include "mitto/dom/navigator.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
+#include "mitto/dom/remote_window.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/scheduler.h"
 #include "mitto/dom/screen.h"
@@ -526,6 +527,11 @@ EventTarget* Window::ErrorEventTarget() {
 
 url::Origin Window::GetSecurityOrigin() const {
   return GetDocument().GetOrigin();
+}
+
+RendererProcess Window::Process() const {
+  return {GetSecurityOrigin(),
+          HasDocument() && GetDocument().IsInSandboxedProcess()};
 }
 
 bool Window::IsInFrame() const {

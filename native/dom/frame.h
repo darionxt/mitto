@@ -26,6 +26,7 @@ namespace mitto {
 class HTMLFrameOwnerElement;
 class NavigationRateLimiter;
 class RemoteWindow;
+struct RendererProcess;
 class Window;
 
 class Frame {
@@ -72,7 +73,7 @@ class Frame {
 
   // The frame's window in the process of `viewer`'s documents, another than
   // its own document's, the same for as long as a message holds it.
-  RemoteWindow* RemoteWindowFor(const url::Origin& viewer);
+  RemoteWindow* RemoteWindowFor(const RendererProcess& viewer);
   // The top-level frame of this one's tree.
   Frame& Top();
   // FrameTree::ScopedChild(): the first child whose name is `name`, or null.

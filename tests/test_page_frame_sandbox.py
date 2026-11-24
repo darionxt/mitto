@@ -35,6 +35,30 @@ else if (location.search) {
   postMessage.call(parent, said, '*');
 }
 </script>"""
+# Says who the source of its frame's message is, before and after the frame navigates.
+_HOLDS = """<!doctype html><body><script>
+const frame = document.createElement('iframe');
+onmessage = async (event) => {
+  onmessage = null;
+  const proxy = frame.contentWindow;
+  const source = () => event.source === null ? 'null' : event.source === proxy ? 'its window' : 'another';
+  const before = source();
+  const loaded = new Promise((resolve) => { frame.onload = resolve; });
+  frame.src = frame.src.replace('/says', '/empty');
+  await loaded;
+  setTimeout(() => postMessage.call(parent, [before, source()], '*'), 50);
+};
+frame.src = decodeURIComponent(location.search.slice(1));
+document.body.append(frame);
+</script>"""
+# A document in windows-1251 with a frame in the sandbox that its query names, which passes on what the frame says.
+_CYRILLIC = """<!doctype html><body><script>
+onmessage = (event) => postMessage.call(parent, event.data, '*');
+const frame = document.createElement('iframe');
+if (location.search) frame.sandbox = decodeURIComponent(location.search.slice(1));
+frame.src = '/charset';
+document.body.append(frame);
+</script>"""
 _HEADERS = {
     "origin",
     "cookie",
@@ -90,6 +114,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             body = "<script>postMessage.call(top, ['inner', location.protocol, isSecureContext], '*')</script>"
         elif path.startswith("/times"):
             body = _TIMES
+        elif path == "/says":
+            body = "<!doctype html><script>postMessage.call(parent, 'hello', '*')</script>"
+        elif path.startswith("/holds?"):
+            body = _HOLDS
+        elif path.startswith("/cyrillic?"):
+            kind, body = "text/html; charset=windows-1251", _CYRILLIC
+        elif path == "/charset":
+            body = "<!doctype html><script>postMessage.call(parent, document.characterSet, '*')</script>"
         elif path == "/refresh":
             body = "<!doctype html><meta http-equiv=refresh content='0; url=/empty?refreshed'>"
         elif path == "/refresh-header":
@@ -144,7 +176,11 @@ def test_what_a_sandbox_withholds_is_chrome_s(server: _Server) -> None:
     url = f"http://127.0.0.1:{port}/app/page"
     with mitto.Session() as session, session._open_page(url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         record = page.evaluate(_CASES, timeout=_TIMEOUT_SECONDS)
-        console = collections.Counter(message.text for message in page.console_messages if "sandbox" in message.text)
+        console = collections.Counter(
+            _plain(message.text, port)
+            for message in page.console_messages
+            if "sandbox" in message.text or ".example" in message.text
+        )
 
     assert set(record) == set(_AS_CHROME["record"])
     for section, expected in _AS_CHROME["record"].items():

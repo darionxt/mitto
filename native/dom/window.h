@@ -73,6 +73,7 @@ class Navigation;
 class NavigationClient;
 class Navigator;
 class Performance;
+struct RendererProcess;
 class Scheduler;
 class Screen;
 class StyleMedia;
@@ -294,6 +295,8 @@ class Window final : public WindowProperties, public ExecutionContext {
   mitto::Frame* GetFrame() const { return frame_; }
   // Whether its frame is under another.
   bool IsInFrame() const;
+  // The process that Chrome has its document in.
+  RendererProcess Process() const;
   // What a navigation of the window's frame to another document asks the
   // Session through. Without one, as in the Page program given a script or
   // once the context is gone, such a navigation does not start.

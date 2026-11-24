@@ -824,6 +824,169 @@
     ]
    }
   },
+  "messages": {
+   "same": {
+    "stays": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed document": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed srcdoc": [
+     "its window",
+     "its window"
+    ],
+    "to its own origin": [
+     "its window",
+     "null"
+    ],
+    "to the other site": [
+     "its window",
+     "its window"
+    ],
+    "to about:blank": [
+     "its window",
+     "null"
+    ],
+    "to a data: URL": [
+     "its window",
+     "its window"
+    ],
+    "is removed": [
+     "its window",
+     "its window"
+    ]
+   },
+   "other": {
+    "stays": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed document": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed srcdoc": [
+     "its window",
+     "its window"
+    ],
+    "to its own origin": [
+     "its window",
+     "null"
+    ],
+    "to the other site": [
+     "its window",
+     "its window"
+    ],
+    "to about:blank": [
+     "its window",
+     "null"
+    ],
+    "to a data: URL": [
+     "its window",
+     "its window"
+    ],
+    "is removed": [
+     "its window",
+     "its window"
+    ]
+   },
+   "data": {
+    "stays": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed document": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed srcdoc": [
+     "its window",
+     "its window"
+    ],
+    "to its own origin": [
+     "its window",
+     "null"
+    ],
+    "to the other site": [
+     "its window",
+     "its window"
+    ],
+    "to about:blank": [
+     "its window",
+     "null"
+    ],
+    "to a data: URL": [
+     "its window",
+     "its window"
+    ],
+    "is removed": [
+     "its window",
+     "its window"
+    ]
+   },
+   "within: /says": [
+    [
+     "its window",
+     "null"
+    ]
+   ],
+   "within: OTHER/says": [
+    [
+     "its window",
+     "its window"
+    ]
+   ]
+  },
+  "javascript": {
+   "none, then none": [
+    "src",
+    "location",
+    "link"
+   ],
+   "none, then all": [],
+   "none, then scripts": [],
+   "none, then origin": [
+    "src",
+    "location",
+    "link"
+   ],
+   "none, then both": [
+    "src",
+    "location",
+    "link"
+   ],
+   "both, then none": [
+    "src",
+    "location",
+    "link"
+   ],
+   "both, then all": [],
+   "both, then scripts": [],
+   "both, then origin": [
+    "src",
+    "location",
+    "link"
+   ],
+   "both, then both": [
+    "src",
+    "location",
+    "link"
+   ]
+  },
+  "encoding": {
+   "none": [
+    "windows-1251"
+   ],
+   "scripts": [
+    "windows-1252"
+   ],
+   "both": [
+    "windows-1251"
+   ]
+  },
   "no scripts": {
    "noscript": [
     true,
@@ -1640,6 +1803,15 @@
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "Failed to execute 'postMessage' on 'DOMWindow': The target origin provided ('https://blank.example') does not match the recipient window's origin ('null').",
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",

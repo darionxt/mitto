@@ -342,6 +342,7 @@ class PageFrame final : public NavigationClient, public Frame {
     // if its parent's is, which its parent's context says.
     SandboxFlags sandbox = SandboxFlags::kNone;
     bool trustworthy = false;
+    bool sandboxed_process = false;
     std::u16string referrer;
     // Its document's about base URL, the parent document's base URL for a
     // srcdoc and the initiator's for an about:blank, and its cookie URL, the

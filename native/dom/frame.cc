@@ -16,7 +16,7 @@ namespace mitto {
 Frame::Frame() = default;
 Frame::~Frame() = default;
 
-RemoteWindow* Frame::RemoteWindowFor(const url::Origin& viewer) {
+RemoteWindow* Frame::RemoteWindowFor(const RendererProcess& viewer) {
   std::erase_if(remote_windows_,
                 [](const cppgc::WeakPersistent<RemoteWindow>& window) {
                   return !window;
@@ -33,14 +33,14 @@ RemoteWindow* Frame::RemoteWindowFor(const url::Origin& viewer) {
 }
 
 void Frame::DidShowDocument(Window& window) {
-  const url::Origin origin = window.GetSecurityOrigin();
+  const RendererProcess process = window.Process();
   std::erase_if(remote_windows_,
                 [&](const cppgc::WeakPersistent<RemoteWindow>& remote_window) {
                   if (!remote_window) {
                     return true;
                   }
                   const bool replaced =
-                      IsInSameProcess(remote_window->Viewer(), origin);
+                      IsInSameProcess(remote_window->Viewer(), process);
                   remote_window->SetCurrentWindow(replaced ? nullptr : &window);
                   return replaced;
                 });

@@ -239,6 +239,90 @@
     }
     return {...results, javascript: heardOf};
   });
+  // Chrome's process for sandboxed documents: who an event's source is once a frame has navigated, and what the console says.
+  await section('messages', async () => {
+    const results = {};
+    const go = async (element, attributes) => {
+      const done = loaded(element);
+      for (const name in attributes) element.setAttribute(name, attributes[name]);
+      await done;
+    };
+    const ways = {
+      'stays': async () => {}, 'to a sandboxed document': (element) => go(element, {src: '/empty?x'}), 'to a sandboxed srcdoc': (element) => go(element, {srcdoc: 'x'}),
+      'to its own origin': (element) => go(element, {sandbox: SANDBOXES.both, src: '/empty?y'}), 'to the other site': (element) => go(element, {src: `${OTHER}/empty?x`}),
+      'to about:blank': (element) => go(element, {src: 'about:blank'}), 'to a data: URL': (element) => go(element, {src: 'data:text/html,x'}), 'is removed': async (element) => element.remove(),
+    };
+    const say = `<script>postMessage.call(parent, 'hello', '*')</script>`;
+    for (const [kind, src] of [['same', '/says'], ['other', `${OTHER}/says`], ['data', `data:text/html,${encodeURIComponent(say)}`]]) {
+      results[kind] = {};
+      for (const way in ways) {
+        const events = [];
+        const listener = (event) => events.push(event);
+        addEventListener('message', listener);
+        const element = await show(make(SANDBOXES.scripts, {src}));
+        await until(() => events.length);
+        removeEventListener('message', listener);
+        const proxy = element.contentWindow;
+        const source = () => events[0].source === null ? 'null' : events[0].source === proxy ? 'its window' : 'another';
+        const before = source();
+        await ways[way](element);
+        await settle(50);
+        results[kind][way] = [before, source()];
+        element.remove();
+      }
+    }
+    // Within a sandboxed document, whose process a document of its own origin is in.
+    for (const inner of ['/says', `${OTHER}/says`]) {
+      heard.length = 0;
+      const element = await show(make(SANDBOXES.scripts, {src: `/holds?${encodeURIComponent(inner)}`}));
+      await until(() => heard.length);
+      results[`within: ${inner}`] = heard.map(([data]) => data);
+      element.remove();
+    }
+    for (const [name, attributes] of Object.entries({same: {src: '/empty'}, srcdoc: {srcdoc: 'x'}, blank: {}, data: {src: 'data:text/html,x'}})) {
+      const element = await show(make(SANDBOXES.scripts, attributes));
+      postMessage.call(element.contentWindow, name, `https://${name}.example`);
+      await settle(50);
+      element.remove();
+    }
+    return results;
+  });
+  // A javascript: URL, with the sandbox that the element has now.
+  await section('javascript', async () => {
+    const results = {};
+    for (const first of ['none', 'both']) {
+      for (const then in SANDBOXES) {
+        const element = await show(make(SANDBOXES[first], {src: '/empty'}));
+        const ran = window.ran = [];
+        if (SANDBOXES[then] === null) element.removeAttribute('sandbox');
+        else element.sandbox = SANDBOXES[then];
+        element.src = 'javascript:parent.ran.push("src")';
+        await settle(40);
+        element.contentWindow.location = 'javascript:parent.ran.push("location")';
+        await settle(40);
+        const link = element.contentDocument.createElement('a');
+        link.href = 'javascript:parent.ran.push("link")';
+        element.contentDocument.body.append(link);
+        link.click();
+        await settle(40);
+        results[`${first}, then ${then}`] = ran;
+        element.remove();
+      }
+    }
+    return results;
+  });
+  // The encoding of a frame's document that says none, which is its parent's where the parent's origin is its own.
+  await section('encoding', async () => {
+    const results = {};
+    for (const sandbox of ['none', 'scripts', 'both']) {
+      heard.length = 0;
+      const element = await show(make(null, {src: `/cyrillic?${SANDBOXES[sandbox] ?? ''}`}));
+      await until(() => heard.length);
+      results[sandbox] = heard.map(([data]) => data);
+      element.remove();
+    }
+    return results;
+  });
   // A document without scripts, of the page's origin.
   await section('no scripts', async () => {
     const results = {};

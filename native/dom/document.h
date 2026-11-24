@@ -208,6 +208,13 @@ class Document : public Node {
   bool IsSandboxed(SandboxFlags flag) const {
     return (sandbox_flags_ & flag) != SandboxFlags::kNone;
   }
+  // Whether Chrome has it in a process for sandboxed documents, as it has one
+  // whose origin a sandbox makes opaque, but for an about:blank, which is in
+  // the process of the document that started it.
+  bool IsInSandboxedProcess() const { return is_in_sandboxed_process_; }
+  void SetInSandboxedProcess(bool sandboxed) {
+    is_in_sandboxed_process_ = sandboxed;
+  }
   // Whether it keeps the origin that an earlier URL of its said, which its URL
   // does not (SetUrlKeepingOrigin()).
   bool KeepsOriginOfEarlierUrl() const { return keeps_origin_of_earlier_url_; }
@@ -832,6 +839,7 @@ class Document : public Node {
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
   SandboxFlags sandbox_flags_ = SandboxFlags::kNone;
+  bool is_in_sandboxed_process_ = false;
   bool keeps_origin_of_earlier_url_ = false;
   // The first opaque origin that its URL gave, which it keeps.
   mutable std::optional<url::Origin> opaque_origin_;

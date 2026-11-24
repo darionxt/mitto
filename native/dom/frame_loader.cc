@@ -27,6 +27,7 @@
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/history.h"
 #include "mitto/dom/history_item.h"
+#include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/navigation_rate_limiter.h"
@@ -360,6 +361,13 @@ void StartNavigation(Window& window,
             window.GetSecurityOrigin())) {
       return;
     }
+    // FrameLoader::AllowRequestForThisFrame(): nor with an element that now
+    // withholds the frame's origin, whatever its document has.
+    if (frame && frame->Owner() &&
+        (frame->Owner()->GetSandboxFlags() & SandboxFlags::kOrigin) !=
+            SandboxFlags::kNone) {
+      return;
+    }
     if (request.origin_window &&
         !request.origin_window->CanExecuteScripts(/*about_to_execute=*/true)) {
       return;
@@ -431,6 +439,8 @@ void StartNavigation(Window& window,
   navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
   navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
   navigation.initiator_referrer = OutgoingReferrer(origin_window);
+  navigation.initiator_in_sandboxed_process =
+      origin_window.GetDocument().IsInSandboxedProcess();
   navigation.initiator_has_header_csp =
       origin_window.GetDocument().HasHeaderDeliveredContentSecurityPolicy();
   client->BeginNavigation(navigation);

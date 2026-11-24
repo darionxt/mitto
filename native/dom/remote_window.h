@@ -1,10 +1,10 @@
-// The frames of other sites, which Chrome's site isolation keeps in processes
-// of their own. A document has such a frame as a RemoteFrame, whose
-// RemoteDOMWindow stays the frame's while its documents come and go, until one
-// of the document's own site takes the frame into this process, where it has a
-// LocalDOMWindow for each of them. A Page's documents are all in one process,
-// so a window here is its document's alone, and what a script of another site
-// would have of its frame instead is this.
+// The frames of other sites, and the sandboxed ones, which Chrome's site
+// isolation keeps in processes of their own. A document has such a frame as a
+// RemoteFrame, whose RemoteDOMWindow stays the frame's while its documents come
+// and go, until one of the document's own site takes the frame into this
+// process, where it has a LocalDOMWindow for each of them. A Page's documents
+// are all in one process, so a window here is its document's alone, and what a
+// script of another site would have of its frame instead is this.
 //
 // Upstream: third_party/blink/renderer/core/frame/remote_dom_window.h
 // Upstream: content/browser/site_info.cc
@@ -21,21 +21,29 @@ namespace mitto {
 
 class Window;
 
-// Whether Chrome has documents of the two origins in one process: those of one
-// site, where an opaque origin counts as the one it was made for. Known Gap: a
-// document that asks for a process of its origin's own, with an
-// Origin-Agent-Cluster header, counts with its site's.
-bool IsInSameProcess(const url::Origin& a, const url::Origin& b);
+// The process that Chrome has a document in: its site's, where an opaque origin
+// counts as the one it was made for, or, with kIsolateSandboxedIframes, its
+// origin's own for the documents that a sandbox gives an opaque origin.
+struct RendererProcess {
+  url::Origin origin;
+  bool sandboxed = false;
+};
 
-// The window of a frame in the process of `viewer`'s documents, which is not
-// its own document's: Blink's RemoteDOMWindow.
+// Whether the two are one process. Known Gap: a document that asks for a
+// process of its origin's own, with an Origin-Agent-Cluster header, counts
+// with its site's.
+bool IsInSameProcess(const RendererProcess& a, const RendererProcess& b);
+
+// The window of a frame in the process `viewer`, which is not its own
+// document's: Blink's RemoteDOMWindow.
 class RemoteWindow final : public cppgc::GarbageCollected<RemoteWindow> {
  public:
-  // What `window`'s frame is to a document of `viewer`, or null if they are in
-  // one process, or the window is not its frame's now.
-  static RemoteWindow* From(const Window& window, const url::Origin& viewer);
+  // What `window`'s frame is in `viewer`, or null if that is its own process,
+  // or the window is not its frame's now.
+  static RemoteWindow* From(const Window& window,
+                            const RendererProcess& viewer);
 
-  RemoteWindow(url::Origin viewer, Window* window);
+  RemoteWindow(RendererProcess viewer, Window* window);
 
   RemoteWindow(const RemoteWindow&) = delete;
   RemoteWindow& operator=(const RemoteWindow&) = delete;
@@ -44,7 +52,7 @@ class RemoteWindow final : public cppgc::GarbageCollected<RemoteWindow> {
 
   void Trace(cppgc::Visitor* visitor) const;
 
-  const url::Origin& Viewer() const { return viewer_; }
+  const RendererProcess& Viewer() const { return viewer_; }
   // The frame's window, its last if it was removed, whose WindowProxy is the
   // frame's. Null once the frame has shown a document of the viewer's process,
   // and so has another window there.
@@ -52,7 +60,7 @@ class RemoteWindow final : public cppgc::GarbageCollected<RemoteWindow> {
   void SetCurrentWindow(Window* window) { window_ = window; }
 
  private:
-  const url::Origin viewer_;
+  const RendererProcess viewer_;
   cppgc::Member<Window> window_;
 };
 
