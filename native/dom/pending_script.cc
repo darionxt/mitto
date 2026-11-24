@@ -76,10 +76,12 @@ void PendingScript::ExecuteScriptBlock() {
   if (!element) {
     return;
   }
-  // A script that has moved to another context or document does not run.
+  // A script that has moved to another context or document does not run, nor
+  // one in a document that no frame shows.
   Document& document = element->GetDocument();
   Window* const window = document.DefaultView();
-  if (!window || window != original_window || &document != original_document) {
+  if (!window || !window->HasContext() || window != original_window ||
+      &document != original_document) {
     return;
   }
   // Step 2 of execute the script element: a script that is null fires

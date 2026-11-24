@@ -932,10 +932,11 @@ def test_a_script_that_a_parent_inserts_runs_as_its_frame_s(page_url: str) -> No
           Node.prototype.appendChild.call(body, mark('our append'));
           Element.prototype.append.call(body, mark('our append()'));
           Node.prototype.insertBefore.call(body, mark('our insertBefore'), body.firstChild);
-          const module = mark('module');
+          const module = inline(element, `(window.ran ||= []).push('module'); dispatchEvent(new Event('moduleran'))`);
           module.type = 'module';
+          const moduleRan = new Promise((resolve) => element.contentWindow.addEventListener('moduleran', resolve));
           Node.prototype.appendChild.call(body, module);
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await moduleRan;
           runs.push([element.contentWindow.ran, window.ran]);
           element.remove();
         }
@@ -967,6 +968,66 @@ def test_a_script_that_a_parent_inserts_runs_as_its_frame_s(page_url: str) -> No
     ran = ["its append", "our append", "our append()", "our insertBefore", "module"]
     assert runs == [[ran, None], [ran, None]]
     assert locations == ["/dir/child#a", "/dir/child#b", "/dir/child#c", "/dir/next", "/next"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_document_that_its_frame_left_runs_no_script_and_shares_no_realm(page_url: str) -> None:
+    # A script that the parent inserts into a document that its frame left, or that went with its frame, runs nowhere, as
+    # in Chrome 157, and what the old window makes is of its own realm. A queuing strategy's size function is too, where
+    # Chrome gives the next window's, which a Page may not for a window of another origin.
+    script = """
+      (async () => {
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const results = {};
+        for (const way of ['about:blank', 'network', 'srcdoc', 'removed']) {
+          const element = document.createElement('iframe');
+          element.src = '/child?old';
+          document.body.appendChild(element);
+          await loaded(element);
+          const oldDocument = element.contentDocument, oldFunction = element.contentWindow.Function;
+          const Strategy = element.contentWindow.CountQueuingStrategy;
+          if (way === 'removed') {
+            element.remove();
+          } else {
+            const load = loaded(element);
+            if (way === 'srcdoc') element.srcdoc = '<p>new';
+            else element.src = way === 'network' ? '/child?new' : 'about:blank';
+            await load;
+            new element.contentWindow.CountQueuingStrategy({highWaterMark: 1}).size;
+          }
+          window.ran = [];
+          for (const type of ['', 'module']) {
+            for (const append of [Node.prototype.appendChild, oldDocument.body.appendChild]) {
+              const child = oldDocument.createElement('script');
+              child.type = type;
+              child.textContent = "(window.ran ||= []).push(document.URL); try { top.ran.push('ran'); } catch (e) {}";
+              append.call(oldDocument.body, child);
+            }
+          }
+          const image = oldDocument.createElement('img');
+          image.setAttribute('onerror', "top.ran.push('handler')");
+          oldDocument.body.appendChild(image);
+          image.dispatchEvent(new Event('error'));
+          const form = oldDocument.createElement('form');
+          form.name = 'named';
+          oldDocument.body.appendChild(form);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const current = element.contentWindow;
+          results[way] = [
+            window.ran, current ? current.ran === undefined && !('named' in current.document) : true,
+            new Strategy({highWaterMark: 1}).size instanceof oldFunction,
+            Object.getPrototypeOf(oldDocument) instanceof oldFunction('return Object')(),
+          ];
+          element.remove();
+        }
+        return results;
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        results = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    expected: list[Any] = [[], True, True, True]
+    assert results == {"about:blank": expected, "network": expected, "srcdoc": expected, "removed": expected}
 
 
 @pytest.mark.usefixtures("page_program")
@@ -1007,7 +1068,8 @@ def test_a_listener_of_a_window_that_its_frame_left_runs_nothing(page_url: str) 
           window.target = target;
           const name = `x${way}`;
           element.contentWindow.eval(`
-            const tell = (what) => top.heard.push(what);
+            const heard = top.heard;
+            const tell = (what) => heard.push(what);
             top.target.addEventListener('${name}', () => tell('target'));
             top.document.addEventListener('${name}', {handleEvent() { tell('object'); }});
             top.addEventListener('${name}', function() { tell('window'); });
