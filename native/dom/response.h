@@ -18,6 +18,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/types/expected.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -97,14 +98,16 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
   //
   // Whether its body is null, as an opaque response's is.
   bool HasNullBody() const { return !body_buffer_; }
+  // Why ReadAll() gives no body: it failed, its signal aborted it, or its
+  // context went while it was read, which settles nothing.
+  enum class ReadAllError { kFailed, kAborted, kStopped };
+  using ReadAllCallback =
+      base::OnceCallback<void(base::expected<std::string, ReadAllError>)>;
   // Uses the body, as a read by a script does, and calls `done` with all of it
-  // once it has come, or with nullopt if it failed, and whether its signal
-  // aborted it. A null body reads as empty. Its body must be neither locked
-  // nor used. A body that cannot be read, such as one whose frame has gone,
-  // throws, and `done` hears of nothing.
-  void ReadAll(base::OnceCallback<void(std::optional<std::string> body,
-                                       bool aborted)> done,
-               bindings::ExceptionState& exception_state);
+  // once it has come. A null body reads as empty. Its body must be neither
+  // locked nor used. A body that cannot be read, such as one whose frame has
+  // gone, throws, and `done` hears of nothing.
+  void ReadAll(ReadAllCallback done, bindings::ExceptionState& exception_state);
 
  private:
   // BodyMixin:

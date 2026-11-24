@@ -84,6 +84,8 @@ class BodyStreamBuffer::LoaderClient final
 
   void Abort(v8::Local<v8::Value> reason) override { NOTREACHED(); }
 
+  void DidStopLoading() override { client_->DidStopLoading(); }
+
   void Trace(cppgc::Visitor* visitor) const override {
     visitor->Trace(buffer_);
     visitor->Trace(client_);
@@ -226,8 +228,8 @@ void BodyStreamBuffer::StartLoading(FetchDataLoader* loader,
     return;
   }
   keep_alive_ = this;
-  loader->Start(handle,
-                bindings::MakeGarbageCollected<LoaderClient>(this, client));
+  loader_client_ = bindings::MakeGarbageCollected<LoaderClient>(this, client);
+  loader->Start(handle, loader_client_.Get());
   // A load that waits for more of the body stops when the context goes, a
   // window's or a worker's, as Blink's LoaderClient, an
   // ExecutionContextLifecycleObserver, stops it, so that it keeps nothing
@@ -269,8 +271,10 @@ void BodyStreamBuffer::StopLoading() {
     DCHECK(!keep_alive_);
     return;
   }
+  LoaderClient* const client = loader_client_.Get();
   loader_->Cancel();
   EndLoading();
+  client->DidStopLoading();
 }
 
 v8::Local<v8::Promise> BodyStreamBuffer::Pull(
@@ -349,6 +353,7 @@ void BodyStreamBuffer::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(stream_);
   visitor->Trace(consumer_);
   visitor->Trace(loader_);
+  visitor->Trace(loader_client_);
   visitor->Trace(signal_);
   UnderlyingByteSourceBase::Trace(visitor);
   BytesConsumer::Client::Trace(visitor);
@@ -481,6 +486,7 @@ void BodyStreamBuffer::EndLoading() {
   }
   keep_alive_.Clear();
   loader_ = nullptr;
+  loader_client_ = nullptr;
 }
 
 void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,

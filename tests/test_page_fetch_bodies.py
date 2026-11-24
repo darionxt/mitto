@@ -7,6 +7,7 @@ value is what Chrome 157.0.8103.79 gave for the same script, in a page of its ow
 names the Page program, as tests/test_page_program.py does.
 """
 
+import dataclasses
 import http.server
 import os
 import subprocess
@@ -1050,3 +1051,39 @@ def test_requests_of_a_page_have_the_members_chrome_gives_them(page_url: str, na
     ):
         wrapped = f"(async () => {{ {_MEMBERS_PRELUDE} {script} }})()"
         assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == expected
+
+
+def test_a_cache_put_whose_bodys_frame_goes_keeps_nothing(page_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The promise stays pending, and the request and the response that it waited with go. gc() is V8's, which
+    # --expose-gc gives the Page.
+    to_option = _native.PageFeatures.to_option
+
+    def with_gc(features: _native.PageFeatures) -> dict[str, object]:
+        return to_option(dataclasses.replace(features, v8_flags=(*features.v8_flags, "--expose-gc")))
+
+    monkeypatch.setattr(_native.PageFeatures, "to_option", with_gc)
+    script = """
+      (async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const cache = await caches.open("kept"); const refs = []; globalThis.cache = cache;
+        const put = async (i) => {
+            const f = document.createElement("iframe"); document.body.append(f); const w = f.contentWindow;
+            const request = new Request(location.origin + "/" + i);
+            let controller;
+            const response = new w.Response(new w.ReadableStream({ start(c) { controller = c; } }));
+            cache.put(request, response);
+            controller.enqueue(new Uint8Array(10));
+            refs.push(new WeakRef(request), new WeakRef(response));
+            await wait(10);
+            f.remove();
+        };
+        for (let i = 0; i < 5; i++) await put(i);
+        for (let i = 0; i < 5; i++) { await wait(50); gc(); }
+        return refs.filter((ref) => ref.deref()).length;
+      })()
+    """
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == 0

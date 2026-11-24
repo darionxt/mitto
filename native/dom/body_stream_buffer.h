@@ -134,6 +134,7 @@ class BodyStreamBuffer final : public UnderlyingByteSourceBase,
   // While it is loading, it keeps itself alive, as Blink's keep_alive_ does.
   cppgc::Persistent<BodyStreamBuffer> keep_alive_;
   cppgc::Member<FetchDataLoader> loader_;
+  cppgc::Member<LoaderClient> loader_client_;
   // The signal of the request that brought the body, if any.
   cppgc::Member<AbortSignal> signal_;
   // Whether the stream needs more data even if the desired size is not

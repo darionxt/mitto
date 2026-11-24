@@ -612,8 +612,8 @@ void Cache::OnResponse(uint64_t barrier,
   response->ReadAll(
       base::BindOnce(
           [](cppgc::Persistent<Cache> self, uint64_t barrier, size_t index,
-             std::optional<std::string> body, bool aborted) {
-            self->CompletedResponse(barrier, index, std::move(body), aborted);
+             base::expected<std::string, Response::ReadAllError> body) {
+            self->CompletedResponse(barrier, index, std::move(body));
           },
           cppgc::Persistent<Cache>(this), barrier, index),
       exception_state);
@@ -626,33 +626,39 @@ void Cache::OnResponse(uint64_t barrier,
   FailBarrier(barrier, exception);
 }
 
-void Cache::CompletedResponse(uint64_t barrier,
-                              size_t index,
-                              std::optional<std::string> body,
-                              bool aborted) {
+void Cache::CompletedResponse(
+    uint64_t barrier,
+    size_t index,
+    base::expected<std::string, Response::ReadAllError> body) {
   PutBarrier* const state = FindBarrier(barrier);
   if (!state) {
     return;
   }
+  if (!body.has_value() && body.error() == Response::ReadAllError::kStopped) {
+    // The promise stays pending, as in Chrome, and nothing is put.
+    barriers_.erase(barrier);
+    return;
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (!body) {
+  if (!body.has_value()) {
     // FailedResponse(), or AbortedResponse() for a body that its signal
     // aborted.
     const v8::HandleScope handle_scope(isolate);
     const v8::Local<v8::Context> context = state->context.Get(isolate);
     const v8::Context::Scope context_scope(context);
     const v8::Local<v8::Value> exception =
-        aborted ? CacheCallException(isolate, "AbortError",
-                                     state->method_name + " was aborted",
-                                     state->member, "Cache")
-                : CacheCallException(
-                      isolate, "NetworkError",
-                      state->method_name + " encountered a network error",
-                      state->member, "Cache");
+        body.error() == Response::ReadAllError::kAborted
+            ? CacheCallException(isolate, "AbortError",
+                                 state->method_name + " was aborted",
+                                 state->member, "Cache")
+            : CacheCallException(
+                  isolate, "NetworkError",
+                  state->method_name + " encountered a network error",
+                  state->member, "Cache");
     FailBarrier(barrier, exception);
     return;
   }
-  state->bodies[index] = std::move(body);
+  state->bodies[index] = std::move(body).value();
   if (++state->complete == state->requests.size()) {
     PutAll(barrier);
   }
