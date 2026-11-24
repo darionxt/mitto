@@ -651,16 +651,19 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     } else {
       navigation.committed.source = PageDocumentSource::kAboutBlank;
       navigation.committed.initiator = request.initiator;
-      // The Session takes what the about:blank inherits of its initiator now.
-      runner_->send().Run(
-          EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator,
-                                     PageLocalNavigationKind::kAboutBlank));
       navigation.origin = request.initiator_origin;
       navigation.referrer_policy = request.initiator_referrer_policy;
       navigation.about_base_url = request.initiator_base_url;
       navigation.cookie_url = request.initiator_cookie_url;
     }
     StopAllLoaders();
+    // The Session takes what the about:blank inherits of its initiator now,
+    // once it has heard that a data: URL or an about:blank that waited ends.
+    if (navigation.committed.source == PageDocumentSource::kAboutBlank) {
+      runner_->send().Run(
+          EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator,
+                                     PageLocalNavigationKind::kAboutBlank));
+    }
     CommitWithoutNetworkSoon(std::move(navigation));
     return;
   }
@@ -1207,9 +1210,12 @@ void PageFrame::StopAllLoaders() {
 }
 
 void PageFrame::CancelProvisionalNavigation() {
-  // A data: URL that waits for its task ends with no document.
+  // A data: URL that waits for its task ends with no document, and its request
+  // goes with it, which holds the URL.
   if (pending_data_url_answer_) {
     pending_data_url_answer_.reset();
+    provisional_request_ = NavigationRequest();
+    ++provisional_request_serial_;
     EndLocalNavigation();
   }
   if (provisional_) {

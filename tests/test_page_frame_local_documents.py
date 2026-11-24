@@ -1872,3 +1872,68 @@ def test_a_data_url_frame_of_a_feed_type_is_an_xml_document_of_it(origin: str) -
         "application_rss_xml-feed",
         "application_xml-feed",
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_navigation_that_takes_a_waiting_data_url_s_place_wins(origin: str) -> None:
+    # Two navigations of a frame in one task, the first or the second to a data: URL: the second alone commits, and the
+    # frame goes on to navigate.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        {_SEEN}
+        // A data: URL's document asks for its name, which the server remembers.
+        let way = '';
+        const tag = (name) => '/assets/takes-' + way.replace(/ /g, '-') + '-' + name;
+        const data = (name) => 'data:text/html,<script>fetch("' + location.origin + tag(name) + '")<\\/script>';
+        const ways = {{
+          'data blank': (f) => {{ f.src = data('first'); f.src = 'about:blank?1'; }},
+          'blank data': (f) => {{ f.src = 'about:blank?1'; f.src = data('second'); }},
+          'data data': (f) => {{ f.src = data('first'); f.src = data('second'); }},
+          'data srcdoc': (f) => {{ f.src = data('first'); f.srcdoc = '<p>srcdoc'; }},
+          'data network': (f) => {{ f.src = data('first'); f.src = '/app/page'; }},
+          'data blank data': (f) => {{ f.src = data('first'); f.src = 'about:blank?1'; f.src = data('third'); }},
+          'data blank blank': (f) => {{ f.src = data('first'); f.src = 'about:blank?1'; f.src = 'about:blank?2'; }},
+          'data open': (f) => {{ f.src = data('first'); f.contentDocument.open(); f.contentDocument.close(); }},
+        }};
+        const results = {{}};
+        for (way in ways) {{
+          const element = document.createElement('iframe');
+          element.srcdoc = '<p>start';
+          document.body.appendChild(element);
+          await loaded(element);
+          element.removeAttribute('srcdoc');
+          await loaded(element);
+          let loads = 0;
+          element.addEventListener('load', () => loads++);
+          ways[way](element);
+          await settle(400);
+          const inner = element.contentDocument;
+          const paragraph = inner && inner.querySelector('p');
+          const first = [inner && inner.URL.replace(location.origin, ''), paragraph && paragraph.textContent];
+          const next = loaded(element);
+          element.removeAttribute('srcdoc');
+          element.src = data('last');
+          await next;
+          await settle(50);
+          const ran = [];
+          for (const name of ['first', 'second', 'third', 'last']) {{
+            if ((await seen(tag(name))) !== 'unseen') ran.push(name);
+          }}
+          results[way] = [...first, loads, ran.join(' ')];
+          element.remove();
+        }}
+        return results;
+      }})()
+    """
+    assert _evaluate(origin, script) == {
+        "data blank": ["about:blank?1", None, 2, "last"],
+        "blank data": [None, None, 2, "second last"],
+        "data data": [None, None, 2, "second last"],
+        "data srcdoc": ["about:srcdoc", "srcdoc", 2, "last"],
+        "data network": ["/app/page", "top", 2, "last"],
+        "data blank data": [None, None, 2, "third last"],
+        "data blank blank": ["about:blank?2", None, 2, "last"],
+        "data open": ["/app/page", None, 2, "last"],
+    }
