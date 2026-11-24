@@ -214,8 +214,9 @@ class FetchController {
   // The client has taken `bytes` more of the body, which lets the Session
   // send as many more.
   virtual void TookBody(size_t bytes) = 0;
-  // Ends the request, and destroys its client before it returns, so the
-  // client must touch nothing of itself after calling it.
+  // Ends the request, and destroys its client before it returns, or, under a
+  // call to the client, once that call has returned. So the client must touch
+  // nothing of itself after calling it, and hears nothing more.
   virtual void Cancel() = 0;
 
   // For a body that streams: how many more bytes of it the Session takes now,

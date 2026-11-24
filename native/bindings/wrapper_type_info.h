@@ -101,12 +101,15 @@ struct WrapperTypeInfo : v8::Object::WrapperTypeInfo {
 
 // The tags of the C++ objects that the bindings wrap for themselves and that no
 // interface has, above those of every interface in Blink's database: the
-// holder of a ScriptFunction (script_function.h) and the C++ side of an
-// asynchronous iterator (async_iterable.h).
+// holder of a ScriptFunction (script_function.h), the C++ side of an
+// asynchronous iterator (async_iterable.h) and that of an iterator of a pair
+// iterable (pair_iterable.h).
 inline constexpr v8::CppHeapPointerTag kFunctionHolderTag =
     static_cast<v8::CppHeapPointerTag>(0x6e00);
 inline constexpr v8::CppHeapPointerTag kAsyncIteratorTag =
     static_cast<v8::CppHeapPointerTag>(0x6e01);
+inline constexpr v8::CppHeapPointerTag kPairIteratorTag =
+    static_cast<v8::CppHeapPointerTag>(0x6e02);
 
 }  // namespace mitto::bindings
 

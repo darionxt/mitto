@@ -1,11 +1,14 @@
 #include "mitto/dom/headers.h"
 
+#include <algorithm>
 #include <variant>
 
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_headers.h"
 #include "mitto/header_rules.h"
+#include "v8/include/cppgc/member.h"
 
 namespace mitto {
 namespace {
@@ -15,6 +18,45 @@ constexpr std::string_view kInvalidValue = "Invalid value";
 constexpr std::string_view kImmutable = "Headers are immutable";
 
 }  // namespace
+
+class Headers::IterationSource final : public bindings::PairIterationSource {
+ public:
+  explicit IterationSource(Headers* headers) : headers_(headers) {}
+
+  void Trace(cppgc::Visitor* visitor) const override {
+    bindings::PairIterationSource::Trace(visitor);
+    visitor->Trace(headers_);
+  }
+
+ protected:
+  bool FetchNextItem(v8::Isolate* isolate,
+                     bindings::PairIterationKind kind,
+                     v8::Local<v8::Value>* key,
+                     v8::Local<v8::Value>* value) override {
+    // Blink's Headers resets each iterator's list when its own changes.
+    if (!lines_ || changes_ != headers_->changes_) {
+      lines_ = headers_->SortAndCombine();
+      changes_ = headers_->changes_;
+    }
+    if (current_ >= lines_->size()) {
+      return false;
+    }
+    const auto& [name, line_value] = (*lines_)[current_++];
+    if (kind != bindings::PairIterationKind::kValue) {
+      *key = bindings::ToV8ByteString(isolate, name);
+    }
+    if (kind != bindings::PairIterationKind::kKey) {
+      *value = bindings::ToV8ByteString(isolate, line_value);
+    }
+    return true;
+  }
+
+ private:
+  const cppgc::Member<Headers> headers_;
+  std::optional<std::vector<std::pair<std::string, std::string>>> lines_;
+  uint64_t changes_ = 0;
+  size_t current_ = 0;
+};
 
 // static
 Headers* Headers::Create(
@@ -126,6 +168,7 @@ void Headers::Remove(const std::string& name,
   std::erase_if(list_, [&name](const auto& line) {
     return base::EqualsCaseInsensitiveASCII(line.first, name);
   });
+  DidChangeList();
 }
 
 std::optional<std::string> Headers::Get(
@@ -200,6 +243,11 @@ void Headers::Set(const std::string& name,
   if (!found) {
     list_.emplace_back(name, std::string(normalized));
   }
+  DidChangeList();
+}
+
+bindings::PairIterationSource* Headers::CreateIterationSource() {
+  return bindings::MakeGarbageCollected<IterationSource>(this);
 }
 
 void Headers::AppendLine(std::string name, std::string value) {
@@ -211,6 +259,7 @@ void Headers::AppendLine(std::string name, std::string value) {
     }
   }
   list_.emplace_back(std::move(name), std::move(value));
+  DidChangeList();
 }
 
 std::optional<std::string> Headers::GetValue(std::string_view name) const {
@@ -226,6 +275,35 @@ std::optional<std::string> Headers::GetValue(std::string_view name) const {
     }
   }
   return combined;
+}
+
+std::vector<std::pair<std::string, std::string>> Headers::SortAndCombine()
+    const {
+  // Blink's FetchHeaderList::SortAndCombine() over its list sorted by name:
+  // the values of each name in their order, joined, but Set-Cookie's, each a
+  // line of its own, in one pass over the lines in a stable order of names.
+  std::vector<std::pair<std::string, const std::string*>> sorted;
+  sorted.reserve(list_.size());
+  for (const auto& [name, value] : list_) {
+    sorted.emplace_back(base::ToLowerASCII(name), &value);
+  }
+  std::ranges::stable_sort(sorted, {},
+                           &std::pair<std::string, const std::string*>::first);
+  std::vector<std::pair<std::string, std::string>> lines;
+  for (size_t i = 0; i < sorted.size();) {
+    const std::string& name = sorted[i].first;
+    if (name == "set-cookie") {
+      lines.emplace_back(name, *sorted[i].second);
+      ++i;
+      continue;
+    }
+    std::string combined = *sorted[i].second;
+    for (++i; i < sorted.size() && sorted[i].first == name; ++i) {
+      base::StrAppend(&combined, {", ", *sorted[i].second});
+    }
+    lines.emplace_back(name, std::move(combined));
+  }
+  return lines;
 }
 
 std::string Headers::ToLines() const {
