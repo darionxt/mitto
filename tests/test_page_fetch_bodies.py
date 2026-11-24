@@ -220,8 +220,10 @@ BODIES = {
     "formData() of an urlencoded body": (
         "return [await parse('a=1&b=%20+x&&c&=d&%zz=%e9%', 'application/x-www-form-urlencoded'),"
         " await parse(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x3d, 0xff]), 'Application/X-WWW-Form-Urlencoded; charset=x'),"
-        " await parse('?q=1', 'application/x-www-form-urlencoded')].join(' / ')",
-        'value: [["a","1"],["b","  x"],["c",""],["","d"],["%zz","�%"]] / [["﻿a","�"]] / [["?q","1"]]',
+        " await parse('?q=1', 'application/x-www-form-urlencoded'),"
+        " await parse('a&b=1&c&d==2&=&e', 'application/x-www-form-urlencoded')].join(' / ')",
+        'value: [["a","1"],["b","  x"],["c",""],["","d"],["%zz","�%"]] / [["﻿a","�"]] / [["?q","1"]]'
+        ' / [["a",""],["b","1"],["c",""],["d","=2"],["",""],["e",""]]',
     ),
     "formData() of a body of another type": (
         "const r = new Response('a=1'); const outcome = await settle(r.formData());"
@@ -274,6 +276,15 @@ BODIES = {
         " else c.enqueue(new TextEncoder().encode(p)); } });"
         " return parse(stream, 'multipart/form-data; boundary=b')",
         'value: [["a","12"]]',
+    ),
+    "formData() of a body in pieces": (
+        "const bytes = new TextEncoder().encode('--b\\r\\nContent-Disposition: form-data; name=a\\r\\nX: y\\r\\n\\r\\n1\\r\\n--b"
+        "\\r\\nContent-Disposition: form-data; name=c; filename=d\\r\\n\\r\\n2\\n\\n3\\r\\n\\r\\n--b--');"
+        " const run = (pieces) => parse(new ReadableStream({ pull(c) { const p = pieces.shift(); if (p === undefined) c.close();"
+        " else c.enqueue(p); } }), 'multipart/form-data; boundary=b'); const seen = new Set();"
+        " for (let i = 1; i < bytes.length; ++i) seen.add(await run([bytes.slice(0, i), bytes.slice(i)]));"
+        " seen.add(await run([...bytes].map((b) => Uint8Array.of(b)))); return [...seen].join(' / ')",
+        'value: [["a","1"],["c","File","d","text/plain",6,"2\\n\\n3\\r\\n"]]',
     ),
     "formData() after the body is used": (
         "const r = new Response('a=1', { headers: { 'content-type': 'application/x-www-form-urlencoded' } });"
@@ -384,3 +395,191 @@ def test_form_datas_get_all_gives_an_array_of_the_receivers_realm(page_url: str)
         session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
     ):
         assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "true,false,true,false"
+
+
+# Helpers of the realm scripts below: a frame, which realm a value is of ("the window's/the frame's"), the outcome of a
+# promise or "pending", and a body of each read with the init that gives it its type.
+_REALM_PRELUDE = """
+const frame = () => { const f = document.createElement("iframe"); document.body.append(f); return f; };
+const of = (v, w) => v === null || typeof v !== "object" ? typeof v : (v instanceof Object) + "/" + (v instanceof w.Object);
+const promiseOf = (p, w) => (p instanceof Promise) + "/" + (p instanceof w.Promise);
+const outcome = (p) => Promise.race([
+    p.then((v) => "ok " + (v && v.get ? v.get("a") : v), (e) => "rejected " + e.name + ": " + e.message),
+    new Promise((resolve) => setTimeout(() => resolve("pending"), 300))]);
+const URL_ENCODED = { headers: { "content-type": "application/x-www-form-urlencoded" } };
+const MULTIPART = { headers: { "content-type": "multipart/form-data; boundary=x" } };
+const BODIES = [
+    ["text", "x"], ["json", '{"a":1}'], ["arrayBuffer", "x"], ["blob", "x"], ["bytes", "x"], ["formData", "a=1", URL_ENCODED],
+    ["formData", '--x\\r\\nContent-Disposition: form-data; name="a"\\r\\n\\r\\n1\\r\\n--x--\\r\\n', MULTIPART]];
+const each = async (run) => (await Promise.all(BODIES.map(run))).join("; ");
+"""
+
+_EVERY_READ = ("text", "json", "arrayBuffer", "blob", "bytes", "formData", "formData")
+
+
+def _each(result: str) -> str:
+    """What a realm script gives whose every read ends in `result`, with the read's name in place of "READ"."""
+    return "; ".join(f"{read} {result.replace('READ', read)}" for read in _EVERY_READ)
+
+
+# The scripts, with what Chrome 157.0.8103.79 gave for each in a page of its own.
+_REALM_SCRIPTS: dict[str, tuple[str, str]] = {
+    "a frame's method on the window's body": (
+        """
+        const w = frame().contentWindow;
+        return each(async ([read, body, init]) => {
+            const p = w.Response.prototype[read].call(new Response(body, init));
+            return read + " " + promiseOf(p, w) + " " + of(await p, w);
+        });
+        """,
+        _each("true/false true/false").replace("text true/false true/false", "text true/false string"),
+    ),
+    "the window's method on a frame's body": (
+        """
+        const w = frame().contentWindow;
+        return each(async ([read, body, init]) => {
+            const p = Response.prototype[read].call(new w.Response(body, init));
+            return read + " " + promiseOf(p, w) + " " + of(await p, w);
+        });
+        """,
+        _each("false/true false/true").replace("text false/true false/true", "text false/true string"),
+    ),
+    "a frame's method on the window's stream": (
+        """
+        const w = frame().contentWindow;
+        return each(async ([read, body, init]) => {
+            let controller;
+            const stream = new w.ReadableStream({ start(c) { controller = c; } });
+            const p = w.Response.prototype[read].call(new Response(stream, init));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+            return read + " " + promiseOf(p, w) + " " + of(await p, w);
+        });
+        """,
+        _each("true/false true/false").replace("text true/false true/false", "text true/false string"),
+    ),
+    "a frame's method on the window's stream that fails": (
+        """
+        const w = frame().contentWindow;
+        const run = async (read, body, init) => {
+            let controller;
+            const stream = new w.ReadableStream({ start(c) { controller = c; } });
+            const p = w.Response.prototype[read].call(new Response(stream, init));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            controller.enqueue(body === null ? "not bytes" : new TextEncoder().encode(body));
+            if (body !== null) controller.close();
+            return read + " " + promiseOf(p, w) + " " + await p.catch((e) => "rejected " + of(e, w));
+        };
+        return [await run("json", "{"), await run("formData", "x", MULTIPART), await run("formData", "x"),
+                await run("text", null), await run("formData", null, URL_ENCODED)].join("; ");
+        """,
+        "json true/false rejected true/false; formData true/false rejected true/false; "
+        "formData true/false rejected true/false; text true/false rejected true/false; "
+        "formData true/false rejected true/false",
+    ),
+    "a frame's method on the window's null body": (
+        """
+        const w = frame().contentWindow;
+        return each(async ([read, body, init]) => {
+            const p = w.Response.prototype[read].call(new Response(null, init));
+            return read + " " + promiseOf(p, w) + " " + await p.then((v) => of(v, w), (e) => "rejected " + of(e, w));
+        });
+        """,
+        "text true/false string; json true/false rejected false/true; arrayBuffer true/false true/false; "
+        "blob true/false true/false; bytes true/false true/false; formData true/false true/false; "
+        "formData true/false rejected false/true",
+    ),
+    "a frame's method on the window's body that fails": (
+        """
+        const w = frame().contentWindow;
+        const run = async ([read, body, init]) => {
+            const p = w.Response.prototype[read].call(new Response(body, init));
+            return read + " " + promiseOf(p, w) + " " + await p.catch((e) => "rejected " + of(e, w));
+        };
+        const used = new Response("x"); await used.text();
+        const q = w.Response.prototype.text.call(used);
+        return [await run(["json", "{"]), await run(["formData", "x", MULTIPART]), await run(["formData", "x"]),
+                "used " + promiseOf(q, w) + " " + await q.catch((e) => "rejected " + of(e, w))].join("; ");
+        """,
+        "json true/false rejected true/false; formData true/false rejected true/false; "
+        "formData true/false rejected true/false; used false/true rejected false/true",
+    ),
+    "the body of a frame that has gone": (
+        """
+        return each(async ([read, body, init]) => {
+            const f = frame(); const r = new f.contentWindow.Response(body, init);
+            f.remove();
+            const p = Response.prototype[read].call(r);
+            return read + " " + (p instanceof Promise) + " " + await outcome(p);
+        });
+        """,
+        _each(
+            "true rejected InvalidStateError: Failed to execute 'READ' on 'Response': "
+            "Cannot load body from a frame or worker than has been detached"
+        ),
+    ),
+    "the null body of a frame that has gone": (
+        """
+        return each(async ([read, body, init]) => {
+            const f = frame(); const r = new f.contentWindow.Response(null, init);
+            f.remove();
+            const p = Response.prototype[read].call(r);
+            return read + " " + (p instanceof Promise) + " " + await outcome(p);
+        });
+        """,
+        _each("false pending"),
+    ),
+    "the method of a frame that has gone": (
+        """
+        return each(async ([read, body, init]) => {
+            const f = frame(); const method = f.contentWindow.Response.prototype[read];
+            f.remove();
+            return read + " " + await outcome(method.call(new Response(body, init)));
+        });
+        """,
+        "text ok x; json ok [object Object]; arrayBuffer ok [object ArrayBuffer]; blob ok [object Blob]; "
+        "bytes ok 120; formData ok 1; formData ok 1",
+    ),
+    "the body of a frame that goes while it is read": (
+        """
+        return each(async ([read, body, init]) => {
+            const f = frame(); const w = f.contentWindow; let controller;
+            const stream = new w.ReadableStream({ start(c) { controller = c; } });
+            const p = Response.prototype[read].call(new w.Response(stream, init));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            f.remove();
+            try { controller.enqueue(new TextEncoder().encode(body)); controller.close(); } catch {}
+            return read + " " + await outcome(p);
+        });
+        """,
+        _each("pending"),
+    ),
+    "the method of a frame that goes while it reads": (
+        """
+        return each(async ([read, body, init]) => {
+            const f = frame(); const w = f.contentWindow; let controller;
+            const stream = new ReadableStream({ start(c) { controller = c; } });
+            const p = w.Response.prototype[read].call(new Response(stream, init));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            f.remove();
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+            return read + " " + await outcome(p);
+        });
+        """,
+        "text ok x; json ok [object Object]; arrayBuffer ok [object ArrayBuffer]; blob ok [object Blob]; "
+        "bytes ok 120; formData ok 1; formData ok 1",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", _REALM_SCRIPTS)
+def test_body_reads_are_of_the_realm_chrome_has_them_of(page_url: str, name: str) -> None:
+    script, expected = _REALM_SCRIPTS[name]
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        wrapped = f"(async () => {{ {_REALM_PRELUDE} {script} }})()"
+        assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == expected

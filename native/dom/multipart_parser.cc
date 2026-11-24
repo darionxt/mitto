@@ -47,26 +47,6 @@ bool IsHttpToken(std::string_view text) {
   return true;
 }
 
-// net's LocateEndOfAdditionalHeaders(): the end of the empty line that ends
-// the header fields, an empty list among them.
-size_t LocateEndOfAdditionalHeaders(base::span<const char> buffer) {
-  char last_c = '\n';
-  bool was_lf = true;
-  for (size_t i = 0; i < buffer.size(); ++i) {
-    const char c = buffer[i];
-    if (c == '\n') {
-      if (was_lf) {
-        return i + 1;
-      }
-      was_lf = true;
-    } else if (c != '\r' || last_c != '\n') {
-      was_lf = false;
-    }
-    last_c = c;
-  }
-  return std::string::npos;
-}
-
 // Whether a line can go on in the next, as net's IsLineSegmentContinuable():
 // it has a name, which does not start with whitespace, and a colon.
 bool IsLineSegmentContinuable(std::string_view line) {
@@ -173,16 +153,8 @@ void MultipartPartHeaders::Field::Add(std::optional<std::u16string> added) {
 }
 
 // static
-std::optional<MultipartPartHeaders> MultipartPartHeaders::Parse(
-    base::span<const char> bytes,
-    size_t* end) {
-  const size_t headers_end = LocateEndOfAdditionalHeaders(bytes);
-  if (headers_end == std::string::npos) {
-    return std::nullopt;
-  }
-  *end = headers_end;
+MultipartPartHeaders MultipartPartHeaders::Parse(std::string_view text) {
   MultipartPartHeaders headers;
-  const std::string_view text(bytes.data(), headers_end);
   for (const std::string& line : AssembleLines(text)) {
     // net's HeadersIterator: a name that is a token, before a colon.
     const size_t colon = line.find(':');
@@ -461,54 +433,36 @@ std::optional<MultipartPartHeaders> MultipartParser::ParseHeaderFields(
     state_ = State::kCancelled;
     return std::nullopt;
   }
-  // The bytes after those held from before, if any.
-  base::span<const char> header_bytes = bytes;
-  if (!buffered_header_bytes_.empty()) {
-    buffered_header_bytes_.insert(buffered_header_bytes_.end(),
-                                  header_bytes.begin(), header_bytes.end());
-    header_bytes = buffered_header_bytes_;
-  }
-  // LocateEndOfAdditionalHeaders()'s scan, from where it got to in the bytes
-  // held before: until the empty line that ends the header fields has come,
-  // nothing is parsed.
+  // The scan of net's LocateEndOfAdditionalHeaders(), over the new bytes: the
+  // end of the empty line that ends the header fields.
+  size_t scanned = 0;
   bool found_end = false;
-  for (; header_scan_position_ < header_bytes.size(); ++header_scan_position_) {
-    const char c = header_bytes[header_scan_position_];
+  while (scanned < bytes.size() && !found_end) {
+    const char c = bytes[scanned++];
     if (c == '\n') {
-      if (header_scan_was_lf_) {
-        found_end = true;
-        break;
-      }
+      found_end = header_scan_was_lf_;
       header_scan_was_lf_ = true;
     } else if (c != '\r' || header_scan_last_c_ != '\n') {
       header_scan_was_lf_ = false;
     }
     header_scan_last_c_ = c;
   }
+  base::span<const char> header_bytes = bytes.first(scanned);
+  bytes = bytes.subspan(scanned);
+  // The header fields alone are held, and not the part's bytes after them.
+  if (!found_end || !buffered_header_bytes_.empty()) {
+    buffered_header_bytes_.insert(buffered_header_bytes_.end(),
+                                  header_bytes.begin(), header_bytes.end());
+    header_bytes = buffered_header_bytes_;
+  }
   if (!found_end) {
-    if (buffered_header_bytes_.empty()) {
-      buffered_header_bytes_.assign(header_bytes.begin(), header_bytes.end());
-    }
-    bytes = {};
     return std::nullopt;
   }
-  header_scan_position_ = 0;
   header_scan_last_c_ = '\n';
   header_scan_was_lf_ = true;
-  size_t end = 0u;
-  std::optional<MultipartPartHeaders> header_fields =
-      MultipartPartHeaders::Parse(header_bytes, &end);
-  if (!header_fields) {
-    // Held for the next call, unless they already are.
-    if (buffered_header_bytes_.empty()) {
-      buffered_header_bytes_.assign(header_bytes.begin(), header_bytes.end());
-    }
-    bytes = {};
-    return std::nullopt;
-  }
-  const size_t rest = header_bytes.size() - end;
+  const MultipartPartHeaders header_fields = MultipartPartHeaders::Parse(
+      std::string_view(header_bytes.data(), header_bytes.size()));
   buffered_header_bytes_.clear();
-  bytes = bytes.last(rest);
   return header_fields;
 }
 

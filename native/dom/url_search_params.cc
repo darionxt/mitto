@@ -157,18 +157,16 @@ void URLSearchParams::SetInputWithoutUpdate(std::u16string_view query) {
       name_value_end = query.size();
     }
     if (name_value_end > start) {
-      size_t end_of_name = query.find(u'=', start);
-      if (end_of_name == std::u16string_view::npos ||
-          end_of_name > name_value_end) {
-        end_of_name = name_value_end;
-      }
+      // The search for an equals sign stays in the pair, so that pairs without
+      // one cost no more.
+      const std::u16string_view pair =
+          query.substr(start, name_value_end - start);
+      const size_t end_of_name = pair.find(u'=');
       std::u16string value;
-      if (end_of_name != name_value_end) {
-        value = DecodeString(query.substr(
-            end_of_name + 1, name_value_end - end_of_name - 1));
+      if (end_of_name != std::u16string_view::npos) {
+        value = DecodeString(pair.substr(end_of_name + 1));
       }
-      AppendWithoutUpdate(
-          DecodeString(query.substr(start, end_of_name - start)), value);
+      AppendWithoutUpdate(DecodeString(pair.substr(0, end_of_name)), value);
     }
     start = name_value_end + 1;
   }

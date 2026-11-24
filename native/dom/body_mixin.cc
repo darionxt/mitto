@@ -11,6 +11,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
@@ -150,27 +151,33 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
       return;
     }
     CHECK_EQ(kind_, Kind::kJson);
-    const v8::TryCatch try_catch(isolate);
-    v8::Local<v8::Value> parsed;
-    if (!v8::JSON::Parse(isolate->GetCurrentContext(),
-                         bindings::ToV8String(isolate, string))
-             .ToLocal(&parsed)) {
-      if (try_catch.HasCaught()) {
-        resolver_->Reject(isolate, try_catch.Exception());
+    // The loader of a stream's body ends in the stream's realm.
+    RunInContext(context_.Get(), [&] {
+      const v8::TryCatch try_catch(isolate);
+      v8::Local<v8::Value> parsed;
+      if (!v8::JSON::Parse(isolate->GetCurrentContext(),
+                           bindings::ToV8String(isolate, string))
+               .ToLocal(&parsed)) {
+        if (try_catch.HasCaught()) {
+          resolver_->Reject(isolate, try_catch.Exception());
+        }
+        return;
       }
-      return;
-    }
-    ResolveLater(
-        base::BindOnce([](v8::Global<v8::Value> parsed,
-                          v8::Isolate* isolate) { return parsed.Get(isolate); },
-                       v8::Global<v8::Value>(isolate, parsed)));
+      ResolveLater(base::BindOnce(
+          [](v8::Global<v8::Value> parsed, v8::Isolate* isolate) {
+            return parsed.Get(isolate);
+          },
+          v8::Global<v8::Value>(isolate, parsed)));
+    });
   }
 
   void DidFetchDataLoadFailed() override {
-    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-    resolver_->Reject(isolate,
-                      v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                          isolate, "Failed to fetch")));
+    RunInContext(context_.Get(), [&] {
+      v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+      resolver_->Reject(isolate,
+                        v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                            isolate, "Failed to fetch")));
+    });
   }
 
   void Abort(v8::Local<v8::Value> reason) override {
@@ -246,20 +253,7 @@ v8::Local<v8::Promise> BodyMixin::FormData(
       return LoadAndConvertBody(ReadAs::kFormData, exception_state,
                                 base::UTF16ToUTF8(*boundary));
     }
-    // No boundary rejects without reading the body.
-    RejectInvalidConsumption(exception_state);
-    if (exception_state.HadException()) {
-      return v8::Local<v8::Promise>();
-    }
-    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-    auto* const resolver =
-        bindings::MakeGarbageCollected<bindings::ScriptPromiseResolver>(
-            isolate);
-    const v8::Local<v8::Promise> promise = resolver->Promise(isolate);
-    resolver->Reject(isolate,
-                     v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                         isolate, "Invalid MIME type")));
-    return promise;
+    return LoadAndConvertBody(ReadAs::kNothing, exception_state);
   }
   if (type == u"application/x-www-form-urlencoded") {
     return LoadAndConvertBody(ReadAs::kUrlEncodedFormData, exception_state);
@@ -289,14 +283,28 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
   if (exception_state.HadException()) {
     return v8::Local<v8::Promise>();
   }
+  // The promise and what the body becomes are of the receiver's realm, whose
+  // ScriptState Blink's resolver has; the error of a null body is of the
+  // current one.
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::Local<v8::Context> current = isolate->GetCurrentContext();
+  const v8::Local<v8::Context> realm =
+      bindings::ReceiverRealmScope::CreationContext(isolate);
+  const v8::Context::Scope realm_scope(realm);
   auto* const resolver =
       bindings::MakeGarbageCollected<bindings::ScriptPromiseResolver>(isolate);
   const v8::Local<v8::Promise> promise = resolver->Promise(isolate);
-  if (BodyStreamBuffer* const body_buffer = BodyBuffer()) {
-    const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-    ExecutionContext* const execution_context =
-        ExecutionContext::From(isolate, context);
+  ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, realm);
+  const bool has_context = execution_context && execution_context->HasContext();
+  if (BodyStreamBuffer* const body_buffer =
+          read_as == ReadAs::kNothing ? nullptr : BodyBuffer()) {
+    if (!has_context) {
+      exception_state.ThrowDOMException(
+          "InvalidStateError",
+          "Cannot load body from a frame or worker than has been detached");
+      return v8::Local<v8::Promise>();
+    }
     BodyConsumer::Kind kind = BodyConsumer::Kind::kText;
     FetchDataLoader* loader = nullptr;
     switch (read_as) {
@@ -325,6 +333,8 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
         kind = BodyConsumer::Kind::kFormData;
         loader = FetchDataLoader::CreateLoaderAsFailure();
         break;
+      case ReadAs::kNothing:
+        NOTREACHED();
       case ReadAs::kJson:
         kind = BodyConsumer::Kind::kJson;
         loader = FetchDataLoader::CreateLoaderAsString();
@@ -345,7 +355,10 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
     }
     return promise;
   }
-  // A null body.
+  // A null body, whose promise a frame that has gone leaves as it is.
+  if (!has_context) {
+    return promise;
+  }
   switch (read_as) {
     case ReadAs::kArrayBuffer:
       resolver->Resolve(isolate, v8::ArrayBuffer::New(isolate, 0));
@@ -362,19 +375,24 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
       break;
     case ReadAs::kFormData:
     case ReadAs::kFailure:
+    case ReadAs::kNothing: {
+      const v8::Context::Scope error_scope(current);
       resolver->Reject(isolate,
                        v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
                            isolate, "Invalid MIME type")));
       break;
+    }
     case ReadAs::kUrlEncodedFormData:
       resolver->Resolve(isolate,
                         bindings::ToV8(isolate, mitto::FormData::Create()));
       break;
-    case ReadAs::kJson:
+    case ReadAs::kJson: {
+      const v8::Context::Scope error_scope(current);
       resolver->Reject(
           isolate, v8::Exception::SyntaxError(v8::String::NewFromUtf8Literal(
                        isolate, "Unexpected end of input")));
       break;
+    }
     case ReadAs::kText:
       resolver->Resolve(isolate, v8::String::Empty(isolate));
       break;
