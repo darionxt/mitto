@@ -9,6 +9,7 @@
 #include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
@@ -468,6 +469,9 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
   DCHECK(!IsStreamDisturbed());
   *branch1 = nullptr;
   *branch2 = nullptr;
+  // Blink's buffer has the script state that it was made in, the receiver's.
+  const v8::Local<v8::Context> realm =
+      bindings::ReceiverRealmScope::CreationContext(isolate_);
   if (made_from_readable_stream_) {
     if (stream_broken_) {
       // What state the stream is in is not known, so this throws rather
@@ -476,6 +480,7 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
           "InvalidStateError", "Unsafe to tee stream in unknown state");
       return;
     }
+    const v8::Context::Scope realm_scope(realm);
     ReadableStream* stream1 = nullptr;
     ReadableStream* stream2 = nullptr;
     // A stream that a page made may have a default controller.
@@ -496,14 +501,24 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
         bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate_, stream2);
     return;
   }
+  ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate_, realm);
+  if (!execution_context || !execution_context->HasContext()) {
+    stream_broken_ = true;
+    exception_state.ThrowDOMException(
+        "InvalidStateError",
+        "Cannot release body in a window or worker that has been detached");
+    return;
+  }
   BytesConsumer* const handle = ReleaseHandle(exception_state);
   if (exception_state.HadException()) {
     stream_broken_ = true;
     return;
   }
+  const v8::Context::Scope realm_scope(realm);
   BytesConsumer* dest1 = nullptr;
   BytesConsumer* dest2 = nullptr;
-  BytesConsumerTee(&ExecutionContext::Current(), handle, &dest1, &dest2);
+  BytesConsumerTee(execution_context, handle, &dest1, &dest2);
   *branch1 = Create(isolate_, dest1, signal_.Get());
   *branch2 = Create(isolate_, dest2, signal_.Get());
 }
