@@ -182,6 +182,15 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // sends of its requests waits until it thaws.
   bool IsInBackForwardCache() const { return in_back_forward_cache_; }
   void SetIsInBackForwardCache(bool in) { in_back_forward_cache_ = in; }
+  // Whether the context used a feature that keeps its document out of the
+  // back/forward cache for good, as Blink's schedulers and the browser's
+  // services register WebOTP and the password store.
+  bool UsedBackForwardCacheBlocker() const {
+    return used_back_forward_cache_blocker_;
+  }
+  void DidUseBackForwardCacheBlocker() {
+    used_back_forward_cache_blocker_ = true;
+  }
   // A task posted to the context waits while the back/forward cache keeps its
   // window frozen, as a task queue of Blink's frozen frame does, and is held
   // here. TakeHeldTasks() empties it for the window that comes back, which
@@ -312,6 +321,7 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   bool in_back_forward_cache_ = false;
   bool received_no_store_for_script_request_ = false;
   std::vector<std::pair<TaskType, base::OnceClosure>> held_tasks_;
+  bool used_back_forward_cache_blocker_ = false;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
   raw_ptr<WindowTasks> tasks_ = nullptr;

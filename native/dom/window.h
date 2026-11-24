@@ -105,6 +105,8 @@ class Window final : public WindowProperties, public ExecutionContext {
   Window* Self() { return this; }
   mitto::Document* Document() const { return document_.Get(); }
   mitto::Performance* Performance() override;
+  // The same, or null before a script has asked for it.
+  mitto::Performance* PerformanceIfExists() const { return performance_.Get(); }
   // The document's.
   CacheStorageHost* GetCacheStorageHost() const override;
   IndexedDbHost* GetIndexedDbHost() const override;
@@ -117,6 +119,8 @@ class Window final : public WindowProperties, public ExecutionContext {
                                v8::Local<v8::Object> success_callback,
                                v8::Local<v8::Object> error_callback);
   mitto::Navigator* Navigator();
+  // Whether the browser holds a WebAuthn request of the window's document.
+  bool HasPublicKeyRequest() const;
   mitto::Navigator* ClientInformation() { return Navigator(); }
   mitto::Screen* Screen();
   int32_t InnerWidth() const { return Start().viewport_width; }

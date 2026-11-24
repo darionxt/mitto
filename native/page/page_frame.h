@@ -270,6 +270,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // page, and the Session hears of it, unless a traversal waits to restore
   // it, which takes it anyway.
   void EvictDocument(uint64_t document);
+  // The same if a request of it is still open, once its time is up:
+  // kNetworkRequestTimeout.
+  void EvictLoadingDocument(uint64_t document);
   // The traversal that waited to restore a stored document ended otherwise:
   // the document goes, as Chrome's GetOrEvictEntry() evicts it then.
   void EndRestore();

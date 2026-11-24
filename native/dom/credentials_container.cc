@@ -695,6 +695,8 @@ void CredentialsContainer::GetPublicKey(
 void CredentialsContainer::GetOtp(v8::Isolate* isolate,
                                   v8::Local<v8::Promise::Resolver> resolver,
                                   AbortSignal* signal) {
+  // CredentialManagerProxy::WebOTPService() registers kWebOTPService, sticky.
+  ExecutionContext::Current().DidUseBackForwardCacheBlocker();
   // WebOTPService::Receive() cancels the request it held.
   if (Request* const previous = otp_request_.Get()) {
     otp_request_.Clear();
@@ -852,6 +854,9 @@ void CredentialsContainer::GetFromPasswordStore(
     v8::Isolate* isolate,
     v8::Local<v8::Promise::Resolver> resolver) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  // ChromePasswordManagerClient::BindCredentialManager() keeps the page out of
+  // the back/forward cache.
+  ExecutionContext::Current().DidUseBackForwardCacheBlocker();
   if (password_request_pending_) {
     // CredentialManagerImpl::Get() answers PENDING_REQUEST at once.
     PostAnswer(isolate, context,

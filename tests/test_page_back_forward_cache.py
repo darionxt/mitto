@@ -595,8 +595,6 @@ def test_what_a_freeze_listener_asks_is_answered_once_its_page_comes_back(
         " cookieStore.set('x', '1').then(() => log.push('set'));"
         " navigator.locks.query().then(() => log.push('query'));"
         " navigator.permissions.query({name: 'geolocation'}).then(() => log.push('permission'));"
-        # A password manager answers, or nothing offers one, by the Host.
-        " navigator.credentials.get({password: true}).then(() => log.push('password'), () => log.push('password'));"
         " chrome.app.installState(() => log.push('installState'));"
         " Promise.reject('no'); });"
     )
@@ -617,7 +615,6 @@ def test_what_a_freeze_listener_asks_is_answered_once_its_page_comes_back(
         assert sorted(log[len(_KEPT_AND_BACK) :]) == [
             "getAll",
             "installState",
-            "password",
             "permission",
             "query",
             "set",
@@ -748,3 +745,180 @@ def test_a_fragment_that_a_pagehide_listener_of_a_kept_page_goes_to_stays(
         page.evaluate("history.back()")
         assert _next_document(page) == PageNavigation(url=first + "#x", status=200, restored=True)
         assert page.evaluate(_ENTRIES) == ["/a#x", 1, 3, ["/a", "/a#x", "/b"], 1]
+
+
+def test_a_freeze_listener_sends_keepalive_requests_only(session: mitto.Session, server: RecordingServer) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    server.route("/kept", b"k", "text/plain")
+    ask = (
+        "document.addEventListener('freeze', () => {"
+        " fetch('/fetched').then(() => log.push('fetched'), error => log.push(error.message));"
+        " fetch('data:text/plain,x').then(() => log.push('data'), error => log.push('data: ' + error.name));"
+        " const script = document.createElement('script'); script.onerror = () => log.push('script');"
+        " script.src = '/script'; document.head.append(script);"
+        " fetch('/kept', {keepalive: true}).then(() => log.push('kept')); });"
+    )
+
+    with _open_page(session, first) as page:
+        page.evaluate(f"{ask} window.marker = 1; location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        assert server.wait_for_path("/kept")
+        _wait(page, 200)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 200)
+        marker, log = page.evaluate("[window.marker, log]")
+        assert marker == 1
+        assert log[: len(_KEPT_AND_BACK)] == _KEPT_AND_BACK
+        assert sorted(log[len(_KEPT_AND_BACK) :]) == ["Failed to fetch", "data: TypeError", "kept", "script"]
+        refused = [message.text for message in page.console_messages if "onfreeze" in message.text]
+        assert refused == [
+            f"Only fetch keepalive is allowed during onfreeze: {url}"
+            for url in (server.url("/fetched"), "data:text/plain,x", server.url("/script"))
+        ]
+    assert without_favicon(server.paths()) == ["/a", "/b", "/kept"]
+
+
+def test_the_performance_timeline_has_the_visibility_of_a_kept_page(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    names = "performance.getEntriesByType('visibility-state').map(entry => entry.name).join()"
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            f"window.states = []; addEventListener('pagehide', () => states.push({names}));"
+            f" document.addEventListener('visibilitychange', () => states.push({names}));"
+            " performance.mark('before'); location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate(
+            "[states, performance.getEntriesByType('visibility-state').map(entry => [entry.startTime > 0,"
+            " entry.duration])]"
+        ) == [["visible", "visible,hidden", "visible,hidden,visible"], [[False, 0], [True, 0], [True, 0]]]
+
+
+def test_a_watch_that_a_resume_listener_clears_hears_no_timeout_that_waited(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        # Headless Chrome denies the permission before any timeout, so the values here are those of Blink's
+        # Geolocation::clearWatch().
+        page.evaluate(
+            "const watch = () => navigator.geolocation.watchPosition(() => {}, () => log.push('timeout'),"
+            " {timeout: 300}); const cleared = watch(); watch();"
+            " document.addEventListener('resume', () => navigator.geolocation.clearWatch(cleared));"
+            " location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        _wait(page, 600)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 100)
+        assert page.evaluate("log") == [*_KEPT_AND_BACK, "timeout"]
+
+
+def test_the_first_of_a_kept_page_s_responses_can_cancel_the_next(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    held = threading.Event()
+    for path in ("/1", "/2"):
+        server.routes[path] = Route(b"x", headers=[("Content-Type", "text/plain")], hold=held)
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "const controller = new AbortController();"
+            " fetch('/1').then(() => { log.push('first'); controller.abort(); });"
+            " fetch('/2', {signal: controller.signal}).then(() => log.push('second'), error => log.push(error.name));"
+            " window.marker = 1; setTimeout(() => { location.href = '/b'; }, 200); 0"
+        )
+        assert _next_document(page).url == second
+        assert server.wait_for_path("/1")
+        assert server.wait_for_path("/2")
+        held.set()
+        _wait(page, 500)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 200)
+        # Chrome's loaders go in no order, so it may be the other way round there, but each flushes its response in a
+        # task of its own.
+        assert page.evaluate("[window.marker, log]") == [1, [*_KEPT_AND_BACK, "first", "AbortError"]]
+
+
+@pytest.mark.parametrize(
+    ("size", "kept"),
+    [
+        # More than the Session sends without credit.
+        (300_000, True),
+        # More than BackForwardCacheBufferLimitTracker lets a process buffer.
+        (1_100_000, False),
+    ],
+)
+def test_a_body_that_comes_while_its_page_is_kept_waits_up_to_a_limit(
+    session: mitto.Session, server: RecordingServer, size: int, kept: bool
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    held = threading.Event()
+    server.routes["/big"] = Route(b"x" * size, headers=[("Content-Type", "text/plain")], hold=held)
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "fetch('/big').then(r => r.text()).then(text => log.push(text.length)); window.marker = 1;"
+            " setTimeout(() => { location.href = '/b'; }, 200); 0"
+        )
+        assert _next_document(page).url == second
+        assert server.wait_for_path("/big")
+        held.set()
+        _wait(page, 1000)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=kept)
+        _wait(page, 300)
+        assert page.evaluate("[window.marker ?? null, log]") == (
+            [1, [*_KEPT_AND_BACK, size]] if kept else [None, ["pageshow:false"]]
+        )
+
+
+@pytest.mark.parametrize(
+    ("ask", "persisted", "kept"),
+    [
+        # A request that its signal refuses reaches no service.
+        ("navigator.credentials.get({otp: {transport: ['sms']}, signal: AbortSignal.abort()})", True, True),
+        # WebOTP and the password store keep a page out for good.
+        ("navigator.credentials.get({otp: {transport: ['sms']}})", False, False),
+        ("navigator.credentials.get({password: true})", False, False),
+        # A WebAuthn request keeps it out while the browser has it, as it asks once the page has frozen.
+        ("navigator.credentials.get({publicKey: {challenge: new Uint8Array(16)}})", True, False),
+        (
+            "{ const controller = new AbortController(); addEventListener('pagehide', () => controller.abort());"
+            " navigator.credentials.get({signal: controller.signal, publicKey: {challenge: new Uint8Array(16)}})"
+            ".catch(() => {}); } Promise.resolve()",
+            True,
+            True,
+        ),
+    ],
+    ids=["aborted-otp", "otp", "password", "public-key", "aborted-public-key"],
+)
+def test_a_credential_request_keeps_a_page_out(
+    session: mitto.Session, server: RecordingServer, ask: str, persisted: bool, kept: bool
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING).replace("127.0.0.1", "localhost")
+    second = server.page("/b", "<title>B</title>").replace("127.0.0.1", "localhost")
+
+    with _open_page(session, first) as page:
+        page.evaluate(f"{ask}.catch(() => {{}}); new Promise(r => setTimeout(r, 100)).then(() => 0)")
+        page.evaluate("window.marker = 1; location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        assert page.evaluate("sessionStorage.hide") == ("true," if persisted else "false,")
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=kept)
+        assert page.evaluate("window.marker ?? null") == (1 if kept else None)

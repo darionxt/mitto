@@ -154,9 +154,19 @@ class PageRequests {
   // What the Session sends of the requests of a window that the back/forward
   // cache keeps frozen (ExecutionContext::IsInBackForwardCache()) waits, in
   // the order it came, as Blink's loaders buffer what comes for a frozen page
-  // (LoaderFreezeMode::kBufferIncoming). This hands over what waited for the
-  // windows that are no longer frozen, in that order.
-  void DeliverHeld();
+  // (LoaderFreezeMode::kBufferIncoming), and the bodies' connections go on
+  // meanwhile. The window's page goes once the bodies that wait are more than
+  // BackForwardCacheBufferLimitTracker lets a process buffer.
+  //
+  // The requests of `context` that something waits for, the oldest first.
+  std::vector<uint64_t> HeldRequestsOf(const ExecutionContext& context) const;
+  // Hands over what waits for request `number`, in the order it came, unless
+  // its window is frozen, as the task in which Blink's loader flushes what it
+  // deferred.
+  void DeliverHeld(uint64_t number);
+  // Whether a request of `context` is still open that its document's end would
+  // end with it.
+  bool IsLoading(const ExecutionContext& context) const;
   // Cancels each request of `context`, as when the back/forward cache drops
   // its window, which hears nothing more of them.
   void CancelAllOf(const ExecutionContext& context);
@@ -204,9 +214,12 @@ class PageRequests {
     ~Open();
 
     raw_ptr<Client> client;
-    // Bytes the Session has sent that the client has not taken yet: at most
-    // kBodyWindow.
+    // Bytes the Session has sent that the client has not taken yet, and that
+    // it has no credit for: at most kBodyWindow.
     size_t untaken = 0;
+    // Those that waited while its window was frozen, which gave the Session
+    // credit as they came.
+    size_t credited = 0;
     bool started = false;
     // For a body that streams: how much of it the Session has given credit
     // for, which it does first when it starts reading it, and how much the
@@ -223,6 +236,8 @@ class PageRequests {
     bool isolation_said = false;
     // Whether its response counts as a script's request's here: the favicon.
     bool script_request = false;
+    // Whether it outlives its document.
+    bool keepalive = false;
     // Whether it is a traversal that the Session may answer with a restore.
     bool may_restore = false;
   };
@@ -236,12 +251,16 @@ class PageRequests {
   // frozen, or something of it waits already.
   bool ShouldHold(uint64_t number) const;
   void HoldMessage(uint64_t number, Held message);
+  // Holds a part of a body, whose bytes give the Session credit now.
+  void HoldBody(PageResponseBody body);
+  void SendCredit(uint64_t number, size_t bytes);
   // Whether `open` is a request of a window that the back/forward cache keeps
   // frozen.
   static bool IsFrozen(const Open& open);
   // What the On...() methods do with what they do not hold.
   void ProcessResponseStarted(const PageResponseStarted& response);
-  void ProcessResponseBody(PageResponseBody body);
+  // Whose bytes gave the Session credit already if `credited`.
+  void ProcessResponseBody(PageResponseBody body, bool credited);
   void ProcessResponseEnded(const PageResponseEnded& ended);
   void ProcessRequestBodyCredit(const PageCredit& credit);
 
@@ -269,9 +288,10 @@ class PageRequests {
   const base::RepeatingCallback<void(std::string)> refuse_;
   const SessionSender::ResponseRoute route_;
   std::map<uint64_t, Open> open_;
-  std::deque<std::pair<uint64_t, Held>> held_;
-  // How many messages of each request wait in `held_`.
-  std::map<uint64_t, size_t> held_count_;
+  // What waits of each request, in the order it came, and the bytes of the
+  // bodies among it.
+  std::map<uint64_t, std::deque<Held>> held_;
+  size_t held_bytes_ = 0;
   raw_ptr<Client> navigation_client_ = nullptr;
   bool navigation_seen_ = false;
 };

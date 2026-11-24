@@ -74,6 +74,8 @@ constexpr size_t kTraversalOverhead = 4 * 8 + 2;
 constexpr size_t kBackForwardCacheSize = 6;
 constexpr base::TimeDelta kTimeToLive = base::Seconds(600);
 constexpr base::TimeDelta kNoStoreTimeToLive = base::Minutes(3);
+// MojoURLLoaderClient's kGracePeriodToFinishLoadingWhileInBackForwardCache.
+constexpr base::TimeDelta kLoadingGracePeriod = base::Seconds(60);
 
 // A parser's client that gives it no body, for a document that has none, as
 // an about:blank that a frame commits synchronously has.
@@ -184,6 +186,8 @@ struct PageFrame::StoredDocument {
   // The frame's name, which Chrome's frame of the page keeps with it.
   std::u16string name;
   base::OneShotTimer time_to_live;
+  // How long its requests may go on before it goes.
+  base::OneShotTimer loading_grace_period;
 };
 
 PageFrame::PageFrame(ScriptRunner& runner,
@@ -1328,13 +1332,16 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   idle_tasks_->Resume();
   animation_frames_->Resume();
   window_tasks_->Resume();
-  EventLoop::Get()
-      ->TaskRunner(TaskType::kNetworkingUnfreezable)
-      ->PostTask(FROM_HERE,
-                 base::BindOnce(
-                     &ScriptRunner::RunTask, base::Unretained(&*runner_),
-                     base::BindOnce(&PageRequests::DeliverHeld,
-                                    base::Unretained(&runner_->requests()))));
+  for (const uint64_t request : runner_->requests().HeldRequestsOf(window)) {
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kNetworkingUnfreezable)
+        ->PostTask(FROM_HERE,
+                   base::BindOnce(
+                       &ScriptRunner::RunTask, base::Unretained(&*runner_),
+                       base::BindOnce(&PageRequests::DeliverHeld,
+                                      base::Unretained(&runner_->requests()),
+                                      request)));
+  }
   // LocalFrame::DidResume()'s resume, then the page shows again, then its
   // pageshow, persisted, with the traversal's start as its time.
   Document& document = window.GetDocument();
@@ -1360,7 +1367,9 @@ bool PageFrame::LeaveForBackForwardCache(Document& document,
     const base::AutoReset<Leaving> freezing(&leaving_, Leaving::kCached);
     document.DispatchFreezeEvent();
   }
-  if (window_ && !left_page_evicted_ &&
+  // A feature that is not sticky counts only now, as the browser asks once the
+  // page has frozen: kWebAuthentication.
+  if (window_ && !left_page_evicted_ && !window_->HasPublicKeyRequest() &&
       CanStoreDocument(document, next_browsing_instance)) {
     return true;
   }
@@ -1382,10 +1391,11 @@ bool PageFrame::MayStoreDocument(const Document& document) const {
   // which each navigation of a Page is, and no unload listener, which the
   // window has where the seed does not deprecate unload for its document.
   // The sticky features that a Page has: a parser that was stopped while it
-  // parsed, and, for a no-store response, a script's request whose response
-  // said no-store too.
+  // parsed, WebOTP and the password store, and, for a no-store response, a
+  // script's request whose response said no-store too.
   return current_ && window_ && current_->status() == 200 &&
          !window_->HasEventListeners(u"unload") && !document.ParserAborted() &&
+         !window_->UsedBackForwardCacheBlocker() &&
          !(current_->no_store() && window_->ReceivedNoStoreForScriptRequest());
 }
 
@@ -1490,6 +1500,10 @@ void PageFrame::StoreDocument(std::unique_ptr<DocumentLoader> loader) {
                              no_store ? kNoStoreTimeToLive : kTimeToLive,
                              base::BindOnce(&PageFrame::EvictDocument,
                                             base::Unretained(this), document));
+  stored->loading_grace_period.Start(
+      FROM_HERE, kLoadingGracePeriod,
+      base::BindOnce(&PageFrame::EvictLoadingDocument, base::Unretained(this),
+                     document));
   stored_documents_.push_front(std::move(stored));
   // BackForwardCacheImpl::EnforceCacheSizeLimit(): the oldest go past the
   // limit, but one that a traversal may restore.
@@ -1521,6 +1535,16 @@ PageFrame::StoredDocument* PageFrame::FindStoredDocument(
     }
   }
   return nullptr;
+}
+
+void PageFrame::EvictLoadingDocument(uint64_t document) {
+  const auto found = std::ranges::find_if(
+      stored_documents_,
+      [document](const auto& stored) { return stored->document == document; });
+  if (found != stored_documents_.end() &&
+      runner_->requests().IsLoading(*(*found)->window)) {
+    EvictDocument(document);
+  }
 }
 
 void PageFrame::EvictDocument(uint64_t document) {
@@ -1557,7 +1581,6 @@ void PageFrame::EvictDocument(uint64_t document) {
     window.SetTasks(nullptr);
     window.SetWorkerStarter(nullptr);
   }
-  runner_->requests().DeliverHeld();
   stored->timers->Stop();
   stored->idle_tasks->Stop();
   stored->animation_frames->Stop();

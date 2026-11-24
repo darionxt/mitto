@@ -690,6 +690,10 @@ class Document : public Node {
   void HideForBackForwardCache();
   // Document::DispatchFreezeEvent(): freeze at the document.
   void DispatchFreezeEvent();
+  // FrameFetchContext::CanRequest(): whether the document's freeze event runs,
+  // in which no request but a keepalive one starts, as the console then says
+  // of the one for `url`.
+  bool RefusesRequestWhileFreezing(const GURL& url);
   // LocalFrame::DidResume()'s resume at the document, once the page thaws.
   void DispatchResumeEvent();
   // The page shows again, with visibilitychange at the document, as Page's
@@ -818,6 +822,9 @@ class Document : public Node {
   // visibilitychange and webkitvisibilitychange at the document, as the
   // page's visibility changes.
   void DispatchVisibilityChange();
+  // The page went hidden or shows again: its entry in the window's Performance
+  // Timeline, and visibilitychange.
+  void DidChangePageVisibility();
   // Document::BeginLifecycleUpdatesIfRenderingReady(): the window begins
   // rendering once no script blocks it.
   void BeginLifecycleUpdatesIfRenderingReady();
@@ -932,6 +939,8 @@ class Document : public Node {
   bool parser_aborted_ = false;
   // Whether the back/forward cache keeps the page, which is hidden then.
   bool page_hidden_ = false;
+  // Whether its freeze event runs.
+  bool freezing_in_progress_ = false;
   HeapVector<HTMLElement> popover_auto_stack_;
   HeapVector<HTMLElement> popover_hint_stack_;
   cppgc::Member<HTMLElement> popover_hint_stack_parent_;

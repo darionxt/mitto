@@ -3192,8 +3192,9 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
     Refuse("a referrer policy for a traversal to a navigation's entry");
     return;
   }
+  const auto stored = stored_documents_.find(traversal.stored_document);
   if (traversal.stored_document != kNoDocument &&
-      !stored_documents_.contains(traversal.stored_document)) {
+      stored == stored_documents_.end()) {
     Refuse("a traversal to the entry of a document that is not stored");
     return;
   }
@@ -3224,7 +3225,9 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
   // UpdateCanStoreToIncludeCacheControlNoStore() decides at the default
   // level, restore-unless-cookie-change. Then the traversal makes its
   // request, and the Page lets the document go.
-  if (traversal.stored_document != kNoDocument) {
+  // The document was at the entry's URL as it was stored, so one of another
+  // URL is another entry's.
+  if (stored != stored_documents_.end() && stored->second.context.url == url) {
     const auto watch = no_store_watches_.find(traversal.stored_document);
     if (watch == no_store_watches_.end() || !watch->second.cookie_changed) {
       pending_restore_ = PendingRestore{.number = traversal.number,

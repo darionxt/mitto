@@ -1,5 +1,6 @@
 #include "mitto/page/page_requests.h"
 
+#include <algorithm>
 #include <deque>
 #include <utility>
 #include <variant>
@@ -32,6 +33,9 @@
 namespace mitto {
 
 namespace {
+
+// BackForwardCacheBufferLimitTracker's kDefaultMaxBufferedBodyBytesPerProcess.
+constexpr size_t kMaxHeldBytes = 1024 * 1000;
 
 // Enters the context that a request of the Page's was made in, so that its
 // client hears of it there, as Blink's ResourceFetcher runs a resource's
@@ -130,6 +134,7 @@ uint64_t PageRequests::Start(PageRequest request,
   Open& open = open_[number];
   open.client = &client;
   open.streams_body = request.streams_body;
+  open.keepalive = request.keepalive;
   open.timed = std::move(timed);
   // The favicon that Chrome's renderer fetches for the browser, which a
   // ThreadableLoader loads as a script's request. A fetch() marks its
@@ -281,6 +286,8 @@ void PageRequests::Cancel(uint64_t number) {
   // meanwhile still counts against its credit.
   found->second.client = nullptr;
   sender_->SendForRequest(number, EncodeCancel(number));
+  // What waited of it goes nowhere, but for its end, if that came.
+  DeliverHeld(number);
 }
 
 void PageRequests::CancelAll() {
@@ -307,6 +314,7 @@ void PageRequests::LetGo(uint64_t number) {
   }
   found->second.client = nullptr;
   found->second.timed.reset();
+  DeliverHeld(number);
 }
 
 // static
@@ -370,8 +378,18 @@ void PageRequests::TookBody(uint64_t number, size_t bytes) {
   if (found == open_.end() || bytes == 0) {
     return;
   }
-  CHECK_LE(bytes, found->second.untaken);
-  found->second.untaken -= bytes;
+  Open& open = found->second;
+  CHECK_LE(bytes, open.untaken + open.credited);
+  const size_t credited = std::min(bytes, open.credited);
+  open.credited -= credited;
+  bytes -= credited;
+  open.untaken -= bytes;
+  if (bytes > 0) {
+    SendCredit(number, bytes);
+  }
+}
+
+void PageRequests::SendCredit(uint64_t number, size_t bytes) {
   PageCredit credit;
   credit.number = number;
   credit.bytes = base::checked_cast<uint32_t>(bytes);
@@ -417,40 +435,60 @@ void PageRequests::EndBody(uint64_t number, bool errored) {
   sender_->SendForRequest(number, EncodeRequestBodyEnded(ended));
 }
 
-void PageRequests::DeliverHeld() {
-  // What a client does may hold more, as a nested run loop of a synchronous
-  // request takes messages meanwhile, so this goes on until nothing that
-  // waits is for a window that runs.
-  bool delivered = true;
-  while (delivered) {
-    delivered = false;
-    std::deque<std::pair<uint64_t, Held>> waiting;
-    waiting.swap(held_);
-    while (!waiting.empty()) {
-      auto [number, message] = std::move(waiting.front());
-      waiting.pop_front();
-      // A request whose window is frozen again, or still, waits on.
-      const auto found = open_.find(number);
-      if (found != open_.end() && IsFrozen(found->second)) {
-        held_.emplace_back(number, std::move(message));
-        continue;
-      }
-      if (const auto count = held_count_.find(number);
-          count != held_count_.end() && --count->second == 0) {
-        held_count_.erase(count);
-      }
-      delivered = true;
-      if (auto* const started = std::get_if<PageResponseStarted>(&message)) {
-        ProcessResponseStarted(*started);
-      } else if (auto* const body = std::get_if<PageResponseBody>(&message)) {
-        ProcessResponseBody(std::move(*body));
-      } else if (auto* const ended = std::get_if<PageResponseEnded>(&message)) {
-        ProcessResponseEnded(*ended);
-      } else {
-        ProcessRequestBodyCredit(std::get<PageCredit>(message));
-      }
+std::vector<uint64_t> PageRequests::HeldRequestsOf(
+    const ExecutionContext& context) const {
+  std::vector<uint64_t> numbers;
+  for (const auto& [number, messages] : held_) {
+    const auto found = open_.find(number);
+    if (found != open_.end() && found->second.timed &&
+        found->second.timed->execution_context == &context) {
+      numbers.push_back(number);
     }
   }
+  return numbers;
+}
+
+void PageRequests::DeliverHeld(uint64_t number) {
+  // What a client does may hold more, as a nested run loop of a synchronous
+  // request takes messages meanwhile, so this goes on until nothing waits.
+  while (true) {
+    const auto held = held_.find(number);
+    if (held == held_.end()) {
+      return;
+    }
+    const auto found = open_.find(number);
+    if (found != open_.end() && IsFrozen(found->second)) {
+      return;
+    }
+    Held message = std::move(held->second.front());
+    held->second.pop_front();
+    if (held->second.empty()) {
+      held_.erase(held);
+    }
+    if (auto* const started = std::get_if<PageResponseStarted>(&message)) {
+      ProcessResponseStarted(*started);
+    } else if (auto* const body = std::get_if<PageResponseBody>(&message)) {
+      held_bytes_ -= body->bytes.size();
+      ProcessResponseBody(std::move(*body), /*credited=*/true);
+    } else if (auto* const ended = std::get_if<PageResponseEnded>(&message)) {
+      ProcessResponseEnded(*ended);
+    } else {
+      ProcessRequestBodyCredit(std::get<PageCredit>(message));
+    }
+  }
+}
+
+bool PageRequests::IsLoading(const ExecutionContext& context) const {
+  return std::ranges::any_of(open_, [&](const auto& entry) {
+    const auto& [number, open] = entry;
+    if (!open.client || open.keepalive || !open.timed ||
+        open.timed->execution_context != &context) {
+      return false;
+    }
+    const auto held = held_.find(number);
+    return held == held_.end() ||
+           !std::holds_alternative<PageResponseEnded>(held->second.back());
+  });
 }
 
 void PageRequests::CancelAllOf(const ExecutionContext& context) {
@@ -473,7 +511,7 @@ bool PageRequests::IsFrozen(const Open& open) {
 
 bool PageRequests::ShouldHold(uint64_t number) const {
   // What comes after a message that waits waits too, in order.
-  if (held_count_.contains(number)) {
+  if (held_.contains(number)) {
     return true;
   }
   const auto found = open_.find(number);
@@ -481,8 +519,36 @@ bool PageRequests::ShouldHold(uint64_t number) const {
 }
 
 void PageRequests::HoldMessage(uint64_t number, Held message) {
-  held_.emplace_back(number, std::move(message));
-  ++held_count_[number];
+  held_[number].push_back(std::move(message));
+}
+
+void PageRequests::HoldBody(PageResponseBody body) {
+  Open* const open = Find(body.number, "a body");
+  if (!open) {
+    return;
+  }
+  const uint64_t number = body.number;
+  const size_t size = body.bytes.size();
+  if (size > kBodyWindow - open->untaken) {
+    refuse_.Run(base::StrCat({"more of the body of request ",
+                              base::NumberToString(number),
+                              " than the Page has given credit for"}));
+    return;
+  }
+  if (!open->client) {
+    return;
+  }
+  // ResponseBodyLoader reads on while its page is frozen, so that the
+  // connection does not wait for it, up to the limit, past which the page
+  // goes: kNetworkExceedsBufferLimit.
+  SendCredit(number, size);
+  held_bytes_ += size;
+  HoldMessage(number, std::move(body));
+  if (held_bytes_ > kMaxHeldBytes && IsFrozen(*open) &&
+      open->timed->execution_context->IsWindow()) {
+    static_cast<Window*>(open->timed->execution_context.Get())
+        ->EvictFromBackForwardCache();
+  }
 }
 
 PageRequests::Open* PageRequests::Find(uint64_t number,
@@ -588,19 +654,19 @@ void PageRequests::ProcessResponseStarted(const PageResponseStarted& response) {
 
 void PageRequests::OnResponseBody(PageResponseBody body) {
   if (ShouldHold(body.number)) {
-    const uint64_t number = body.number;
-    HoldMessage(number, std::move(body));
+    HoldBody(std::move(body));
     return;
   }
-  ProcessResponseBody(std::move(body));
+  ProcessResponseBody(std::move(body), /*credited=*/false);
 }
 
-void PageRequests::ProcessResponseBody(PageResponseBody body) {
+void PageRequests::ProcessResponseBody(PageResponseBody body, bool credited) {
   Open* const open = Find(body.number, "a body");
   if (!open) {
     return;
   }
-  if (!open->started || body.bytes.size() > kBodyWindow - open->untaken) {
+  if (!open->started ||
+      (!credited && body.bytes.size() > kBodyWindow - open->untaken)) {
     refuse_.Run(base::StrCat({"more of the body of request ",
                               base::NumberToString(body.number),
                               " than the Page has given credit for"}));
@@ -613,7 +679,7 @@ void PageRequests::ProcessResponseBody(PageResponseBody body) {
   if (open->timed) {
     open->timed->decoded_body_size += body.bytes.size();
   }
-  open->untaken += body.bytes.size();
+  (credited ? open->credited : open->untaken) += body.bytes.size();
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
   const RequestContextScope context_scope(

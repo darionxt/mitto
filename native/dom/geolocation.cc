@@ -186,6 +186,16 @@ void Geolocation::StartRequest(GeoNotifier* notifier) {
   notifier->StartTimer();
 }
 
+bool Geolocation::Has(const GeoNotifier& notifier) const {
+  for (const GeoNotifier* current = first_.Get(); current;
+       current = current->next()) {
+    if (current == &notifier) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void Geolocation::Remove(GeoNotifier* notifier) {
   notifier->Stop();
   GeoNotifier* previous = nullptr;
@@ -230,7 +240,10 @@ void Geolocation::Fire(GeoNotifier* notifier) {
                      base::BindOnce(
                          [](cppgc::Persistent<Geolocation> geolocation,
                             cppgc::Persistent<GeoNotifier> notifier) {
-                           geolocation->Fire(notifier.Get());
+                           // Not for a watch that a script has cleared since.
+                           if (geolocation->Has(*notifier)) {
+                             geolocation->Fire(notifier.Get());
+                           }
                          },
                          cppgc::Persistent<Geolocation>(this),
                          cppgc::Persistent<GeoNotifier>(notifier)));
