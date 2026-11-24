@@ -424,9 +424,11 @@ def test_iterators_and_form_members_refuse_another_window_as_chrome_does(page_ur
           (w) => Response.prototype.formData.call(w), (w) => Request.prototype.formData.call(w),
         ];
         const outcome = (call, w) => {
-          try { return call(w).then(() => 'resolved', () => 'rejected'); } catch (e) { return 'threw'; }
+          let result;
+          try { result = call(w); } catch (e) { return 'threw'; }
+          return result instanceof Promise ? result.then(() => 'resolved', () => 'rejected') : 'returned';
         };
-        const outcomes = async (w) => [...new Set(await Promise.all(calls.map((call) => outcome(call, w))))].join();
+        const outcomes = async (w) => (await Promise.all(calls.map((call) => outcome(call, w)))).join(' ');
         const frame = () => { const f = document.createElement('iframe'); document.body.append(f); return f; };
         const own = frame();
         const other = frame();
@@ -442,9 +444,9 @@ def test_iterators_and_form_members_refuse_another_window_as_chrome_does(page_ur
         session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
     ):
         assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [
-            "threw",
-            "threw,rejected",
-            "threw,rejected",
+            " ".join(["threw"] * 12),
+            " ".join(["threw"] * 10 + ["rejected"] * 2),
+            " ".join(["threw"] * 10 + ["rejected"] * 2),
         ]
 
 
