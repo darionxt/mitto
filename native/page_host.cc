@@ -1985,9 +1985,8 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
     // A response that has come whole is one the context may name as the
     // referrer of what it imports.
     if (net_error == net::OK && request.started()) {
-      if (const auto context = contexts_.find(request.context());
-          context != contexts_.end()) {
-        context->second.response_urls.insert(request.response_url());
+      if (Context* const context = FindContext(request.context())) {
+        context->response_urls.insert(request.response_url());
       }
     }
     PageResponseEnded ended;
@@ -2744,10 +2743,17 @@ void PageHost::DeliverBroadcast(const url::Origin& origin,
   // has one. A message too large for a frame with its origin stays out, as
   // one too large for a frame stays in the Page that posts it.
   if (!channel_ || ended_ || refused_by_library_ ||
-      std::ranges::none_of(contexts_, [&origin](const auto& entry) {
-        return DocumentHasCookies(ContextUrl(entry.second)) &&
-               entry.second.origin.IsSameOriginWith(origin);
-      })) {
+      (std::ranges::none_of(
+           contexts_,
+           [&origin](const auto& entry) {
+             return DocumentHasCookies(ContextUrl(entry.second)) &&
+                    entry.second.origin.IsSameOriginWith(origin);
+           }) &&
+       std::ranges::none_of(stored_documents_, [&origin](const auto& entry) {
+         const Context& context = entry.second.context;
+         return DocumentHasCookies(ContextUrl(context)) &&
+                context.origin.IsSameOriginWith(origin);
+       }))) {
     return;
   }
   PageBroadcast received = broadcast;
@@ -3052,6 +3058,10 @@ void PageHost::OnDocumentEvicted(uint64_t document) {
     return;
   }
   no_store_watches_.erase(document);
+  // Its keepalive requests outlive it, and the Page, which let them go,
+  // hears that they ended.
+  const std::set<uint64_t> gone = {document};
+  LetKeepaliveRequestsGo(&gone);
   if (pending_restore_ && pending_restore_->document == document) {
     pending_restore_.reset();
   }
@@ -3288,8 +3298,21 @@ GURL PageHost::CookieUrlOf(const Context& context) {
                                        : ContextUrl(context);
 }
 
+PageHost::Context* PageHost::FindContext(uint64_t id) {
+  if (const auto found = contexts_.find(id); found != contexts_.end()) {
+    return &found->second;
+  }
+  const auto stored = stored_documents_.find(id);
+  return stored != stored_documents_.end() ? &stored->second.context : nullptr;
+}
+
 const PageHost::Context* PageHost::ContextOf(uint64_t id, uint32_t type) {
   const auto found = contexts_.find(id);
+  // What a document that the back/forward cache keeps sends while it is
+  // stored goes unheard, as Chrome's frozen page could send nothing.
+  if (found == contexts_.end() && stored_documents_.contains(id)) {
+    return nullptr;
+  }
   if (found == contexts_.end()) {
     Refuse(base::StrCat({"message type ", base::NumberToString(type),
                          " of context ", base::NumberToString(id),

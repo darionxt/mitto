@@ -75,6 +75,7 @@ void SessionCacheStorage::Send(const PageCacheStorageCall& call) {
 }
 
 void SessionCacheStorage::Ask(PageCacheStorageCall call, Answer answer) {
+  used_ = true;
   if (!CacheStorageCallFits(call)) {
     runner_->PostTask(FROM_HERE,
                       base::BindOnce(std::move(answer), TooLargeAnswer(call)));

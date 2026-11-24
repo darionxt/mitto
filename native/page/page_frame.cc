@@ -30,6 +30,7 @@
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/dom/page_reveal_event.h"
 #include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
@@ -995,7 +996,9 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   if (traversal.stored_entry) {
     restore_document_ = traversal.record;
   } else {
-    EvictDocument(traversal.record);
+    // EvictFramesInRelatedSiteInstances(): the pages whose browsing instance
+    // the traversal goes into, this one's entry among them.
+    EvictBrowsingInstance(traversal_browsing_instance_);
   }
   provisional_->SetNumber(
       runner_->requests().StartTraversal(std::move(traversal), *provisional_));
@@ -1138,6 +1141,9 @@ Document& PageFrame::CommitNavigation(
   bool store = CanStoreDocument(old_document, next_browsing_instance);
   if (store) {
     old_document.HideForBackForwardCache();
+    if (window_) {
+      old_document.DispatchFreezeEvent();
+    }
     store = window_ && CanStoreDocument(old_document, next_browsing_instance);
     if (!store && current_) {
       current_->StopLoading();
@@ -1247,6 +1253,9 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
     bool store = CanStoreDocument(old_document, stored->browsing_instance);
     if (store) {
       old_document.HideForBackForwardCache();
+      if (window_) {
+        old_document.DispatchFreezeEvent();
+      }
       store =
           window_ && CanStoreDocument(old_document, stored->browsing_instance);
       if (!store && current_) {
@@ -1287,10 +1296,14 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   window.SetNavigationClient(this);
   window.SetBackForwardCacheEviction(base::RepeatingClosure());
   runner_->sender()->SendDocumentRestored(window.DocumentId());
+  // The Session's storage answers the restored document again, as its hosts
+  // had followed the one before it.
+  SetStorageDocument(window.DocumentId());
   // The session history goes to the document's entry, and the Navigation API
   // takes the entries around it while the page is still frozen.
-  Navigation::EntryArrays arrays =
-      history().DidRestoreDocument(stored->item_sequence_number);
+  Navigation::EntryArrays arrays = history().DidRestoreDocument(
+      stored->item_sequence_number, *window.CurrentHistoryItem(),
+      window.DocumentId());
   window.Navigation()->SetEntriesForRestore(arrays);
   // RemoveBackForwardCacheEviction(), then SetPageFrozen(false): what waited
   // runs from its tasks, the responses that came meanwhile among them.
@@ -1315,6 +1328,10 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   document.DispatchResumeEvent();
   document.ShowFromBackForwardCache();
   document.DispatchPersistedPageshowEvent(traversal_start_);
+  // Document::EnqueuePageRevealEvent(): pagereveal in the page's first frame
+  // again, before its callbacks, as WebViewImpl enqueues it once the page
+  // shows.
+  window.EnqueueAnimationFrameEvent(window, *PageRevealEvent::CreateTrusted());
   ReleaseRecords(window.DocumentId());
 }
 
@@ -1443,37 +1460,6 @@ void PageFrame::StoreDocument(std::unique_ptr<DocumentLoader> loader) {
     }
     EvictDocument((*oldest)->document);
   }
-  // SetPageLifecycleState() once the browser has stored the page: freeze at
-  // the document, then HookBackForwardCacheEviction().
-  EventLoop::Get()
-      ->TaskRunner(TaskType::kInternalDefault)
-      ->PostTask(
-          FROM_HERE,
-          base::BindOnce(
-              &ScriptRunner::RunTask, base::Unretained(&*runner_),
-              base::BindOnce(
-                  [](base::WeakPtr<PageFrame> frame, uint64_t document) {
-                    if (!frame) {
-                      return;
-                    }
-                    const auto found = std::ranges::find_if(
-                        frame->stored_documents_,
-                        [document](const auto& stored) {
-                          return stored->document == document;
-                        });
-                    if (found == frame->stored_documents_.end()) {
-                      return;
-                    }
-                    StoredDocument& stored = **found;
-                    v8::Isolate* const isolate = frame->runner_->isolate();
-                    const v8::HandleScope handle_scope(isolate);
-                    const v8::Local<v8::Context> context =
-                        stored.context.Get(isolate);
-                    const v8::Context::Scope context_scope(context);
-                    const cppgc::Persistent<Window> window = stored.window;
-                    window->GetDocument().DispatchFreezeEvent();
-                  },
-                  weak_factory_.GetWeakPtr(), document)));
 }
 
 void PageFrame::Freeze(StoredDocument& stored) {
@@ -1518,6 +1504,9 @@ void PageFrame::EvictDocument(uint64_t document) {
     window.SetBackForwardCacheEviction(base::RepeatingClosure());
     window.SetIsInBackForwardCache(false);
     window.TakeHeldTasks();
+    // A keepalive request outlives the page, as it would outlive an unload,
+    // which its fetcher lets go, before what else the window asked for goes.
+    stored->fetcher->Stop();
     runner_->requests().CancelAllOf(window);
     window.SetTimers(nullptr);
     window.SetIdleTasks(nullptr);
@@ -1530,7 +1519,6 @@ void PageFrame::EvictDocument(uint64_t document) {
   stored->timers->Stop();
   stored->idle_tasks->Stop();
   stored->animation_frames->Stop();
-  stored->fetcher->Stop();
   stored->window_tasks->Stop();
   stored->loader->StopLoading();
   runner_->reporter().ContextDestroyed(context);
@@ -1539,6 +1527,18 @@ void PageFrame::EvictDocument(uint64_t document) {
   // What ran in it may be on the stack, so it goes from a later task.
   base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
                                                              std::move(stored));
+}
+
+void PageFrame::EvictBrowsingInstance(uint64_t browsing_instance) {
+  std::vector<uint64_t> documents;
+  for (const std::unique_ptr<StoredDocument>& stored : stored_documents_) {
+    if (stored->browsing_instance == browsing_instance) {
+      documents.push_back(stored->document);
+    }
+  }
+  for (const uint64_t document : documents) {
+    EvictDocument(document);
+  }
 }
 
 void PageFrame::EndRestore() {
@@ -1705,16 +1705,20 @@ uint64_t PageFrame::SendDocumentCommitted(PageDocumentCommitted committed) {
   }
   // What the frame's document before asked of the Session's storage goes
   // with it.
+  SetStorageDocument(committed.document);
+  return committed.document;
+}
+
+void PageFrame::SetStorageDocument(uint64_t document) {
   if (CacheStorageHost* const host = cache_storage_host()) {
-    host->DocumentCommitted(committed.document);
+    host->DocumentCommitted(document);
   }
   if (StorageBucketHost* const host = storage_bucket_host()) {
-    host->DocumentCommitted(committed.document);
+    host->DocumentCommitted(document);
   }
   if (IndexedDbHost* const host = indexed_db_host()) {
-    host->DocumentCommitted(committed.document);
+    host->DocumentCommitted(document);
   }
-  return committed.document;
 }
 
 v8::Local<v8::Value> PageFrame::TokenOfOpaqueOrigin(

@@ -14,6 +14,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_abort_signal.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/execution_context.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
@@ -424,11 +425,23 @@ void AbortSignal::StartTimeout(base::TimeDelta delay) {
 }
 
 void AbortSignal::TimeoutFired() {
-  // Let go of the signal once this returns.
-  const cppgc::Persistent<AbortSignal> self = std::move(kept_by_timeout_);
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = timeout_context_.Get(isolate);
+  // A window that the back/forward cache keeps hears of it once it comes
+  // back, as a task of its frozen queues does.
+  if (ExecutionContext* const frozen = ExecutionContext::From(isolate, context);
+      frozen && frozen->IsInBackForwardCache()) {
+    frozen->HoldTask(TaskType::kMiscPlatformAPI,
+                     base::BindOnce(
+                         [](cppgc::Persistent<AbortSignal> signal) {
+                           signal->TimeoutFired();
+                         },
+                         cppgc::Persistent<AbortSignal>(this)));
+    return;
+  }
+  // Let go of the signal once this returns.
+  const cppgc::Persistent<AbortSignal> self = std::move(kept_by_timeout_);
   timeout_context_.Reset();
   const v8::Context::Scope context_scope(context);
   ExecutionContext& execution_context = ExecutionContext::Current();

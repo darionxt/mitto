@@ -272,3 +272,209 @@ def test_a_kept_page_hears_of_its_request_once_it_comes_back(session: mitto.Sess
         assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
         _wait(page, 100)
         assert page.evaluate("[window.marker, log]") == [1, [*_KEPT_AND_BACK, "fetched:late"]]
+
+
+def test_a_freeze_listener_can_use_its_document_before_the_page_is_kept(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "document.cookie = 'k=1; path=/';"
+            " document.addEventListener('freeze', () => log.push('cookie:' + document.cookie));"
+            " window.marker = 1; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate("[window.marker, log]") == [
+            1,
+            [
+                "pageshow:false",
+                "pagehide:true",
+                "visibilitychange:hidden",
+                "freeze",
+                "cookie:k=1",
+                "resume",
+                "visibilitychange:visible",
+                "pageshow:true",
+            ],
+        ]
+
+
+def test_a_restored_page_uses_its_storage_and_has_pagereveal_before_its_frames(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page(
+        "/a",
+        "<title>A</title>"
+        + _LOGGING
+        + """<script>
+addEventListener('pagereveal', () => log.push('pagereveal'));
+addEventListener('pageshow', e => {
+  if (!e.persisted) return;
+  requestAnimationFrame(() => log.push('raf'));
+  caches.keys().then(keys => log.push('caches:' + keys.length));
+});
+</script>""",
+    )
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("log.length = 0; window.marker = 1; location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 300)
+        # The page's cache storage is its own again, and pagereveal comes in its first frame, before the frame's
+        # callbacks, as Chrome enqueues it once the page shows.
+        assert page.evaluate("[window.marker, log.filter(entry => entry != 'caches:0'), log.includes('caches:0')]") == [
+            1,
+            [
+                "pagehide:true",
+                "visibilitychange:hidden",
+                "freeze",
+                "resume",
+                "visibilitychange:visible",
+                "pageshow:true",
+                "pagereveal",
+                "raf",
+            ],
+            True,
+        ]
+
+
+def test_a_signal_that_times_out_while_its_page_is_kept_aborts_once_it_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "AbortSignal.timeout(300).addEventListener('abort', () => log.push('signal'));"
+            " window.marker = 1; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        # Its time comes while the cache keeps the page, frozen.
+        _wait(page, 900)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 100)
+        assert page.evaluate("[window.marker, log]") == [1, [*_KEPT_AND_BACK, "signal"]]
+
+
+def test_a_keepalive_request_outlives_the_eviction_of_its_page(session: mitto.Session, server: RecordingServer) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    held = threading.Event()
+    server.routes["/keep"] = Route(b"", 302, [("Location", "/kept-after")], hold=held)
+    server.route("/kept-after", b"kept", "text/plain")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "window.bc = new BroadcastChannel('x'); bc.onmessage = () => 0;"
+            " fetch('/keep', {keepalive: true}).catch(() => 0); window.marker = 1;"
+            " setTimeout(() => { location.href = '/b'; }, 200); 0"
+        )
+        assert _next_document(page).url == second
+        # A message of the channel evicts the page, whose keepalive request goes on, as at an unload.
+        page.evaluate("new BroadcastChannel('x').postMessage(1); new Promise(r => setTimeout(r, 400))")
+        held.set()
+        assert server.wait_for_path("/kept-after")
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200)
+        assert page.evaluate("window.marker ?? null") is None
+
+
+def test_a_traversal_lets_the_kept_pages_of_the_browsing_instance_it_goes_into_go(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/ns", "<title>NS</title>", _NO_STORE)
+    second = server.page("/b", "<title>B</title>" + _LOGGING)
+    third = server.page("/c", "<title>C</title>")
+    server.route("/fetched", b"", "text/plain", _NO_STORE)
+
+    with _open_page(session, first) as page:
+        # The first page is none that the cache keeps, so the second shares its browsing instance, and is kept in
+        # it, as the third page gets one of its own.
+        page.evaluate("fetch('/fetched').then(r => r.text()).then(() => { location.href = '/b'; return 0; })")
+        assert _next_document(page).url == second
+        page.evaluate("window.marker = 1; location.href = '/c'; 0")
+        assert _next_document(page).url == third
+        # A traversal past the second page to the first puts a new document in the browsing instance that the
+        # second shares, which goes, as Chrome evicts a page for kConflictingBrowsingInstance.
+        page.evaluate("history.go(-2)")
+        assert _next_document(page) == PageNavigation(url=first, status=200)
+        page.evaluate("history.forward()")
+        assert _next_document(page) == PageNavigation(url=second, status=200)
+        assert page.evaluate("[window.marker ?? null, log]") == [None, ["pageshow:false"]]
+
+
+def test_a_restored_page_s_activation_comes_from_the_entry_of_the_page_it_left(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        # The entry that it came from is the very object that entries() gives for it.
+        assert page.evaluate(
+            "[navigation.activation.from === navigation.entries()[1], navigation.activation.from.index,"
+            " navigation.entries().length]"
+        ) == [True, 1, 2]
+
+
+def test_a_restore_goes_on_though_a_listener_prunes_its_entry(session: mitto.Session, server: RecordingServer) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    state = (
+        "[location.pathname + location.search, window.marker ?? null,"
+        " navigation.entries().map(entry => new URL(entry.url).pathname + new URL(entry.url).search),"
+        " navigation.currentEntry.index]"
+    )
+    push = (
+        "navigation.addEventListener('navigate', event => {"
+        " if (event.navigationType == 'traverse') history.pushState(null, '', '?pushed'); }); history.forward(); 0"
+    )
+
+    with _open_page(session, first) as page:
+        page.evaluate("window.marker = 'A'; location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("window.marker = 'B'; history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        # The forward traversal's navigate listener makes an entry, which pruned the kept page's, and the page comes
+        # back all the same.
+        page.evaluate(push)
+        assert _next_document(page) == PageNavigation(url=second, status=200, restored=True)
+        assert page.evaluate("window.marker") == "B"
+        # The entry it made stays before it, and its document comes back from the cache, as in Chrome.
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first + "?pushed", status=200, restored=True)
+        assert page.evaluate(state) == ["/a?pushed", "A", ["/a", "/a?pushed", "/b"], 1]
+
+
+def test_a_message_of_another_page_evicts_a_kept_page_whose_origin_the_current_page_left(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    tab = server.page("/tab", "<title>Tab</title>")
+    other = server.page("/other", "<title>Other</title>").replace("127.0.0.1", "localhost")
+
+    with _open_page(session, first) as page, _open_page(session, tab) as sender:
+        page.evaluate(
+            "window.bc = new BroadcastChannel('x'); bc.onmessage = () => log.push('message');"
+            f" window.marker = 1; location.href = '{other}'; 0"
+        )
+        assert _next_document(page).url == other
+        # The Page's current document is of another origin, but the kept page of the channel's is let go all the same.
+        sender.evaluate("new BroadcastChannel('x').postMessage(1); new Promise(r => setTimeout(r, 400))")
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200)
+        assert page.evaluate("window.marker ?? null") is None

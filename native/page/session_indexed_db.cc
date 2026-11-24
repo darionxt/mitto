@@ -118,6 +118,7 @@ void SessionIndexedDb::Send(const PageIndexedDbCall& call) {
 }
 
 void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
+  used_ = true;
   if (call.op == IndexedDbCallOp::kOpen) {
     // The upgrade's transaction, if the open needs one.
     transaction_connections_.insert_or_assign(call.transaction,

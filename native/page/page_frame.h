@@ -236,19 +236,18 @@ class PageFrame final : public NavigationClient, public Frame {
   // entry of its puts the new document in, as Chrome's entry keeps its
   // SiteInstance.
   uint64_t BrowsingInstanceOf(uint64_t document);
-  // The current window, whose document has had its pagehide and
-  // visibilitychange, goes into the cache, frozen, with `loader`, and the
-  // Session hears of it before the next document. Its freeze event follows
-  // from a task, as Chrome's browser freezes a page once it has stored it.
+  // The current window, whose document has had its pagehide,
+  // visibilitychange and freeze, goes into the cache, frozen, with `loader`,
+  // and the Session hears of it before the next document.
   void StoreDocument(std::unique_ptr<DocumentLoader> loader);
-  // The current window goes, as its context does once the next document
-  // takes its place.
-  void DropCurrentWindow();
   // The stored document that a traversal to the entry of item
   // `item_sequence_number`, whose record is `record`, restores: the document
   // of the record, if the cache keeps it and stored it at that entry.
   StoredDocument* FindStoredDocument(uint64_t record,
                                      int64_t item_sequence_number);
+  // The stored documents of `browsing_instance` go, as the pages that a
+  // traversal takes a new page into, or out of, conflict with them.
+  void EvictBrowsingInstance(uint64_t browsing_instance);
   // The stored document `document` goes, with no event, as Chrome evicts a
   // page, and the Session hears of it, unless a traversal waits to restore
   // it, which takes it anyway.
@@ -301,6 +300,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // is made of, and returns its ID, before anything that it sends. What the
   // document before asked of the Session's storage goes with it.
   uint64_t SendDocumentCommitted(PageDocumentCommitted committed);
+  // Has the frame's storage, the Session's for the top-level frame, ask as
+  // document `document` from now on: what the one before it asked goes
+  // unheard.
+  void SetStorageDocument(uint64_t document);
   // What goes with the current window's context: its timers, idle callbacks,
   // animation frames, fetches, tasks and workers, and the inspector's and
   // window.chrome's hold on it. What runs them stops, and goes with the frame

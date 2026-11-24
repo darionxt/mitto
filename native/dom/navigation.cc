@@ -659,7 +659,9 @@ void Navigation::SetEntriesForRestore(const EntryArrays& arrays) {
     ongoing_tracker_ = nullptr;
   }
   NavigationHistoryEntry* const current = CurrentEntry();
-  std::vector<cppgc::Member<NavigationHistoryEntry>> entries;
+  // Rooted until they are among the entries, as a collection that the next
+  // one's allocation makes may come first.
+  std::vector<cppgc::Persistent<NavigationHistoryEntry>> entries;
   entries.reserve(arrays.back.size() + arrays.forward.size() + 1);
   for (const ApiEntry& entry : arrays.back) {
     entries.emplace_back(GetEntryForRestore(entry));
@@ -668,28 +670,41 @@ void Navigation::SetEntriesForRestore(const EntryArrays& arrays) {
   for (const ApiEntry& entry : arrays.forward) {
     entries.emplace_back(GetEntryForRestore(entry));
   }
-  NavigationHistoryEntry* const from =
-      arrays.previous ? GetEntryForRestore(*arrays.previous) : nullptr;
-  entries.swap(entries_);
-  current_index_ = static_cast<int64_t>(arrays.back.size());
-  if (activation_) {
-    activation_->Update(current, from, u"traverse");
-  } else {
-    activation_ = NavigationActivation::Create(current, u"traverse", from);
+  // The old entries, held until those that are not among the new ones have
+  // had their dispose events.
+  std::vector<cppgc::Persistent<NavigationHistoryEntry>> old_entries;
+  old_entries.reserve(entries_.size());
+  for (const cppgc::Member<NavigationHistoryEntry>& entry : entries_) {
+    old_entries.emplace_back(entry.Get());
   }
-  // `entries` now holds the old ones: those that are not among the new go,
-  // with their dispose events from a task, which waits while the window is
-  // frozen.
+  entries_.clear();
+  for (const cppgc::Persistent<NavigationHistoryEntry>& entry : entries) {
+    entries_.emplace_back(entry.Get());
+  }
+  current_index_ = static_cast<int64_t>(arrays.back.size());
+  // The entry it came from is one of the new ones, if it is among them, so
+  // it is looked up once they are in place.
+  const cppgc::Persistent<NavigationHistoryEntry> from(
+      arrays.previous ? GetEntryForRestore(*arrays.previous) : nullptr);
+  if (activation_) {
+    activation_->Update(current, from.Get(), u"traverse");
+  } else {
+    activation_ =
+        NavigationActivation::Create(current, u"traverse", from.Get());
+  }
   std::vector<cppgc::Persistent<NavigationHistoryEntry>> disposed;
-  for (const cppgc::Member<NavigationHistoryEntry>& entry : entries) {
+  for (const cppgc::Persistent<NavigationHistoryEntry>& entry : old_entries) {
     const int64_t index = IndexOfKey(entry->key());
-    if (index < 0 || entries_[static_cast<size_t>(index)] != entry) {
+    if (index < 0 ||
+        entries_[static_cast<size_t>(index)].Get() != entry.Get()) {
       disposed.emplace_back(entry.Get());
     }
   }
   if (disposed.empty() || !window_->GetTasks()) {
     return;
   }
+  // Their dispose events come from a task, which waits while the window is
+  // frozen.
   window_->GetTasks()->PostTask(
       TaskType::kInternalDefault,
       base::BindOnce(

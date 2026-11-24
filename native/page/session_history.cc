@@ -164,19 +164,28 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
 }
 
 Navigation::EntryArrays SessionHistory::DidRestoreDocument(
-    int64_t item_sequence_number) {
+    int64_t item_sequence_number,
+    const HistoryItem& item,
+    uint64_t record) {
+  // What it came from, before the current entry moves.
   const Entry& old = entries_[current_];
-  if (const std::optional<size_t> index = IndexOfItem(item_sequence_number)) {
-    current_ = *index;
-  }
-  const HistoryItem& item = entries_[current_].root->item();
-  const url::Origin origin = url::Origin::Create(item.url);
   Navigation::EntryArrays arrays;
   arrays.type = FrameLoadType::kBackForward;
+  const url::Origin origin = url::Origin::Create(item.url);
   if (!old.initial &&
       url::Origin::Create(old.root->item().url).IsSameOriginWith(origin)) {
     arrays.previous =
         ToApiEntry(old.root->item(), item.document_sequence_number);
+  }
+  if (const std::optional<size_t> index = IndexOfItem(item_sequence_number)) {
+    current_ = *index;
+  } else {
+    // The document comes back after the entry that a listener pushed, whose
+    // push took the place of those ahead of it, as Chrome ends.
+    Entry entry;
+    entry.root = base::MakeRefCounted<FrameNavigationEntry>(
+        std::string(), item, record, /*same_document_entry=*/false);
+    PushEntry(std::move(entry));
   }
   FillApiEntries(current_, origin, arrays);
   return arrays;

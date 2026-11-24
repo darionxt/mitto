@@ -441,8 +441,11 @@ class PageHost final : public PageChannel::Delegate {
                      int32_t status,
                      int32_t net_error,
                      bool restored = false);
+  // Context `id`, a stored document's included, or null.
+  Context* FindContext(uint64_t id);
   // Context `id`, or null after refusing a message of `type` that names a
-  // context that is not the Page's.
+  // context that is not the Page's. A message of a document that the
+  // back/forward cache keeps goes unheard.
   const Context* ContextOf(uint64_t id, uint32_t type);
   // The URL that what a context asks for is judged by: its own, or its
   // origin's for a frame's initial about:blank or a worker of a blob: URL.

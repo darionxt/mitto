@@ -14,6 +14,7 @@
 #include "mitto/dom/geolocation_position_error.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/garbage-collected.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -221,8 +222,21 @@ void Geolocation::Fire(GeoNotifier* notifier) {
     Remove(notifier);
     return;
   }
+  Window* const window = Window::From(isolate, context);
+  // A window that the back/forward cache keeps hears of it once it comes
+  // back, as a task of its frozen queues does.
+  if (window && window->IsInBackForwardCache()) {
+    window->HoldTask(TaskType::kMiscPlatformAPI,
+                     base::BindOnce(
+                         [](cppgc::Persistent<Geolocation> geolocation,
+                            cppgc::Persistent<GeoNotifier> notifier) {
+                           geolocation->Fire(notifier.Get());
+                         },
+                         cppgc::Persistent<Geolocation>(this),
+                         cppgc::Persistent<GeoNotifier>(notifier)));
+    return;
+  }
   const v8::Context::Scope context_scope(context);
-  const Window* const window = Window::From(isolate, context);
   if (!window || !window->HasContext()) {
     Remove(notifier);
     return;

@@ -87,7 +87,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 12
+ABI_VERSION = 13
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1

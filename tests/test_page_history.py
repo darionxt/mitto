@@ -1041,7 +1041,7 @@ def test_a_traversal_goes_on_though_a_listener_prunes_its_entry(
     session: mitto.Session, server: RecordingServer
 ) -> None:
     first = server.page("/a", "<title>A</title>")
-    second = server.page("/b", "<title>B</title>")
+    second = server.page("/b", "<title>B</title>", _NO_STORE)
     entries = (
         "[location.pathname + location.hash, history.length,"
         " navigation.entries().map(e => new URL(e.url).pathname + new URL(e.url).hash)]"
@@ -1050,7 +1050,7 @@ def test_a_traversal_goes_on_though_a_listener_prunes_its_entry(
     with _open_page(session, first) as page:
         page.evaluate("location.href = '/b'; 0")
         assert _next_document(page).url == second
-        page.evaluate("history.back()")
+        page.evaluate(_kept_out("history.back()"))
         assert _next_document(page).url == first
         # The navigate event's listener pushes an entry in place of the one that the traversal goes to, whose
         # document then takes the place of the pushed entry, as in Chrome.
@@ -1156,7 +1156,7 @@ def test_a_traversal_wins_over_what_its_navigate_listener_starts(
     session: mitto.Session, server: RecordingServer
 ) -> None:
     first = server.page("/a", "<title>A</title>")
-    second = server.page("/b", "<title>B</title>")
+    second = server.page("/b", "<title>B</title>", _NO_STORE)
     server.page("/c", "<title>C</title>")
     entries = (
         "[location.pathname + location.hash, history.length,"
@@ -1166,7 +1166,7 @@ def test_a_traversal_wins_over_what_its_navigate_listener_starts(
     with _open_page(session, first) as page:
         page.evaluate("location.href = '/b'; 0")
         assert _next_document(page).url == second
-        page.evaluate("history.back()")
+        page.evaluate(_kept_out("history.back()"))
         assert _next_document(page).url == first
         page.evaluate(
             "navigation.addEventListener('navigate', e => { if (e.navigationType == 'traverse') {"

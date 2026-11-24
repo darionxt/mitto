@@ -122,9 +122,13 @@ class SessionHistory final {
       uint64_t record,
       int64_t traversed_item_sequence_number = 0);
   // The back/forward cache restored the document of the entry of item
-  // `item_sequence_number`, which becomes the current one as it was. Returns
-  // the entries that the document's Navigation API takes again.
-  Navigation::EntryArrays DidRestoreDocument(int64_t item_sequence_number);
+  // `item_sequence_number`, which becomes the current one as it was, or, if a
+  // new entry pruned it meanwhile, a new entry of document `record` with
+  // `item` after the current one, as Chrome ends. Returns the entries that
+  // the document's Navigation API takes again.
+  Navigation::EntryArrays DidRestoreDocument(int64_t item_sequence_number,
+                                             const HistoryItem& item,
+                                             uint64_t record);
   // The top-level frame's document, document `record`, committed a
   // navigation within itself to `item`: a new entry for kStandard, the
   // current one replaced for kReplaceCurrentItem and kReload, and for
