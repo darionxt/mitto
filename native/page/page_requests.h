@@ -113,6 +113,10 @@ class PageRequests {
   // a document's, which gets no entry in the Performance Timeline of the
   // window that asked.
   uint64_t StartNavigation(PageRequest request, Client& client);
+  // The same for a traversal of the session history to an entry of another
+  // document, which the Session makes from what it kept of the navigation it
+  // repeats.
+  uint64_t StartTraversal(PageTraversalRequest traversal, Client& client);
 
   // Tells the Session that request `number` is no longer wanted. Its client
   // hears nothing more of it.

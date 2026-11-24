@@ -24,6 +24,7 @@
 #include <stdint.h>
 
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,7 @@
 #include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
+#include "mitto/page_messages.h"
 #include "url/origin.h"
 
 namespace mitto {
@@ -42,9 +44,12 @@ namespace mitto {
 class FrameNavigationEntry final
     : public base::RefCounted<FrameNavigationEntry> {
  public:
-  FrameNavigationEntry(std::string unique_name,
-                       HistoryItem item,
-                       uint64_t record);
+  FrameNavigationEntry(
+      std::string unique_name,
+      HistoryItem item,
+      uint64_t record,
+      bool same_document_entry,
+      PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument);
 
   FrameNavigationEntry(const FrameNavigationEntry&) = delete;
   FrameNavigationEntry& operator=(const FrameNavigationEntry&) = delete;
@@ -56,6 +61,12 @@ class FrameNavigationEntry final
   // The document whose navigation the Session made, which a traversal to the
   // entry repeats: its ID, 0 for none, as for the initial about:blank.
   uint64_t record() const { return record_; }
+  // Whether a navigation within that document made the entry, whose URL the
+  // Session heard of then.
+  bool same_document_entry() const { return same_document_entry_; }
+  // The policy that the record's Referer goes with for the entry: for one
+  // that a navigation within the document made, the document's policy then.
+  PageReferrerPolicy referrer_policy() const { return referrer_policy_; }
 
  private:
   friend class base::RefCounted<FrameNavigationEntry>;
@@ -64,6 +75,8 @@ class FrameNavigationEntry final
   const std::string unique_name_;
   HistoryItem item_;
   const uint64_t record_;
+  const bool same_document_entry_;
+  const PageReferrerPolicy referrer_policy_;
 };
 
 class SessionHistory final {
@@ -99,23 +112,31 @@ class SessionHistory final {
   // The top-level frame committed a new document of `item`, the response of
   // the navigation that made document `record`: a new entry, in place of
   // forward ones, for kStandard, unless the current one is the initial
-  // entry, and otherwise the current one replaced. Returns the entries that
-  // the new document's Navigation API starts with.
-  Navigation::EntryArrays DidCommitNavigation(const HistoryItem& item,
-                                              FrameLoadType type,
-                                              uint64_t record);
-  // The top-level frame's document committed a navigation within itself to
-  // `item`: a new entry for kStandard, the current one replaced for
-  // kReplaceCurrentItem and kReload, and for kBackForward the entry of its
-  // item became the current one.
+  // entry, for kBackForward the entry of item `traversed_item_sequence_number`
+  // that the traversal went to, which takes `item` and `record`, and
+  // otherwise the current one replaced. Returns the entries that the new
+  // document's Navigation API starts with.
+  Navigation::EntryArrays DidCommitNavigation(
+      const HistoryItem& item,
+      FrameLoadType type,
+      uint64_t record,
+      int64_t traversed_item_sequence_number = 0);
+  // The top-level frame's document, document `record`, committed a
+  // navigation within itself to `item`: a new entry for kStandard, the
+  // current one replaced for kReplaceCurrentItem and kReload, and for
+  // kBackForward the entry of its item became the current one.
   void DidCommitSameDocumentNavigation(const HistoryItem& item,
-                                       FrameLoadType type);
+                                       FrameLoadType type,
+                                       uint64_t record,
+                                       PageReferrerPolicy referrer_policy);
   // The current entry's item changed in place.
   void UpdateCurrentItem(const HistoryItem& item);
   // The Navigation API keys of the entries dropped past kMaxEntries since the
   // last call, which no entry has any more, for the documents that still show
   // them, as RemovedEntriesTracker collects them.
   std::vector<std::u16string> TakeRemovedKeys();
+  // The records that the entries hold.
+  std::set<uint64_t> RecordsHeld() const;
 
  private:
   struct Entry {

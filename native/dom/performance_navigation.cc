@@ -8,10 +8,11 @@
 namespace mitto {
 namespace {
 
-// PerformanceNavigation's TYPE_NAVIGATE, for kWebNavigationTypeOther, and
-// TYPE_RELOAD.
+// PerformanceNavigation's TYPE_NAVIGATE, for kWebNavigationTypeOther,
+// TYPE_RELOAD and TYPE_BACK_FORWARD.
 constexpr uint16_t kTypeNavigate = 0;
 constexpr uint16_t kTypeReload = 1;
+constexpr uint16_t kTypeBackForward = 2;
 
 }  // namespace
 
@@ -31,6 +32,9 @@ void PerformanceNavigation::Trace(cppgc::Visitor* visitor) const {
 }
 
 uint16_t PerformanceNavigation::Type() const {
+  if (timing_->is_back_forward) {
+    return kTypeBackForward;
+  }
   return timing_->is_reload ? kTypeReload : kTypeNavigate;
 }
 

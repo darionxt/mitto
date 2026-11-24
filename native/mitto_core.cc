@@ -669,6 +669,12 @@ class RequestJob final : public net::URLRequest::Delegate,
     if (options_.validate_cache) {
       request->SetLoadFlags(request->load_flags() | net::LOAD_VALIDATE_CACHE);
     }
+    // A history traversal takes what the cache holds, stale or not, as
+    // UpdateLoadFlagsWithCacheFlags() has it for HISTORY_DIFFERENT_DOCUMENT.
+    if (options_.skip_cache_validation) {
+      request->SetLoadFlags(request->load_flags() |
+                            net::LOAD_SKIP_CACHE_VALIDATION);
+    }
     return request;
   }
 

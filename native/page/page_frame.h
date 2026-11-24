@@ -27,6 +27,7 @@
 
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,7 @@
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame.h"
+#include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/navigation_rate_limiter.h"
 #include "mitto/page_messages.h"
@@ -57,6 +59,7 @@ class DOMTimerCoordinator;
 class Document;
 class DocumentLoadTiming;
 class DocumentLoader;
+class FrameNavigationEntry;
 class IdleTaskController;
 class PageFetcher;
 class HTMLFrameOwnerElement;
@@ -187,6 +190,19 @@ class PageFrame final : public NavigationClient, public Frame {
   // frames have entries of their own.
   SessionHistory& history() const;
   PageFrame& Top();
+  // A traversal to `entry`, of another document: the document's
+  // beforeunload, then its navigate event for an entry of its origin, which
+  // the page can neither cancel nor intercept, then the Session repeats the
+  // navigation that the entry holds, and its response takes the document's
+  // place with the entry's own state. Returns whether the Session was asked.
+  bool BeginTraversal(const FrameNavigationEntry& entry);
+  // Tells the Session of the records that no entry holds any more, nor the
+  // document `live_document`.
+  void ReleaseRecords(uint64_t live_document);
+  // Whether a traversal to another document waits for its response, or runs
+  // its beforeunload and navigate events, which Chrome's browser lets nothing
+  // that the page starts take the place of.
+  bool TraversalWaits() const;
 
   // Makes a new context, whose window has an empty document at `url`, the
   // response of navigation `navigation`, in place of the current one, tells
@@ -374,6 +390,16 @@ class PageFrame final : public NavigationClient, public Frame {
   // Whether the old document's unload events run, as a new one commits.
   bool unloading_for_commit_ = false;
   NavigationRateLimiter navigation_rate_limiter_;
+  // The entry that the navigation that waits goes to, for a traversal.
+  std::optional<HistoryItem> traversal_item_;
+  // The record of the document whose navigation the traversal that waits
+  // repeats, which the Session keeps until it ends.
+  std::optional<uint64_t> traversal_record_;
+  // The record of the traversal whose beforeunload and navigate events run,
+  // which the Session keeps whatever their listeners do.
+  std::optional<uint64_t> pinned_record_;
+  // The records that the Session keeps for the history.
+  std::set<uint64_t> held_records_;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };
 

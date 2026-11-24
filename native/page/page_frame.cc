@@ -59,6 +59,11 @@ namespace {
 // which it drops: kNavigationDuplicateDetectionTimeWindow.
 constexpr base::TimeDelta kDuplicateWindow = base::Milliseconds(3000);
 
+// What a traversal request's payload holds beside its URL: the document's ID,
+// the number and the record, each a 64-bit number, a byte of flags and one of
+// the referrer policy.
+constexpr size_t kTraversalOverhead = 3 * 8 + 2;
+
 // A parser's client that gives it no body, for a document that has none, as
 // an about:blank that a frame commits synchronously has.
 class EmptyBody final : public DocumentParser::Client {
@@ -634,6 +639,12 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
                                   weak_factory_.GetWeakPtr(), number));
     return;
   }
+  // Navigator::OnBeginNavigation(): the browser ignores a navigation that a
+  // renderer starts without the user's activation while a history
+  // navigation waits.
+  if (TraversalWaits()) {
+    return;
+  }
   const base::TimeTicks now = base::TimeTicks::Now();
   // RenderFrameImpl::BeginNavigationInternal(): a navigation the same as the
   // one that waits, which started less than 3 seconds before while no script
@@ -653,6 +664,8 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   }
   provisional_ = std::make_unique<DocumentLoader>(runner_->requests(),
                                                   runner_->send(), *this);
+  traversal_item_.reset();
+  traversal_record_.reset();
   provisional_request_ = request;
   provisional_start_ = now;
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
@@ -680,7 +693,20 @@ void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
   // A child frame's commits stay its own until frames have entries of their
   // own.
   if (!parent_) {
-    history().DidCommitSameDocumentNavigation(item, type);
+    // The document whose navigation the entry repeats, none for one that no
+    // navigation's response made, such as the tab's initial about:blank,
+    // whose entries no traversal goes to.
+    const uint64_t document = current_ ? window_->DocumentId() : kNoDocument;
+    // The document's policy, Chrome's own where it has none, as the referrer
+    // of a same-document commit goes with it.
+    const FetchReferrerPolicy policy =
+        window_->GetDocument().GetReferrerPolicy();
+    history().DidCommitSameDocumentNavigation(
+        item, type, document,
+        policy == FetchReferrerPolicy::kDefault
+            ? PageReferrerPolicy::kStrictOriginWhenCrossOrigin
+            : ToPageReferrerPolicy(policy));
+    ReleaseRecords(document);
     // A new entry discards the pending one, which a later go() no longer
     // counts from, as Chrome's controller discards it.
     if (type == FrameLoadType::kStandard) {
@@ -751,11 +777,27 @@ size_t PageFrame::CurrentEntryIndex() const {
   return static_cast<size_t>(history().Counts().index);
 }
 
+bool PageFrame::TraversalWaits() const {
+  // Also while its beforeunload and navigate events run, as Chrome's browser
+  // has started the traversal's request by then.
+  return (provisional_ && traversal_item_) || pinned_record_;
+}
+
 void PageFrame::NavigateBackForward(int offset) {
   // The joint session history moves, which only its top-level frame has
   // entries in so far.
   if (parent_) {
     Top().NavigateBackForward(offset);
+    return;
+  }
+  // Nothing traverses while a new document commits, as FrameLoader's
+  // FrameNavigationDisabler has it while the old document's frames unload.
+  if (!IsNavigationAllowed()) {
+    return;
+  }
+  // RenderFrameHostImpl::GoToEntryAtOffset(): ignored while a history
+  // navigation waits, without the user's activation.
+  if (TraversalWaits()) {
     return;
   }
   // GoToOffsetFromRenderer(): from the entry that a waiting traversal goes
@@ -769,6 +811,11 @@ void PageFrame::NavigateBackForward(int offset) {
 }
 
 void PageFrame::NavigateToNavigationApiKey(const std::u16string& key) {
+  // RenderFrameHostImpl::NavigateToNavigationApiKey(): ignored while a
+  // history navigation waits, without the user's activation.
+  if (Top().TraversalWaits() || !Top().IsNavigationAllowed()) {
+    return;
+  }
   // A child frame's entries are none of the session history's yet.
   const std::optional<size_t> index =
       parent_ ? std::nullopt : history().IndexOfKey(key, CurrentEntryIndex());
@@ -820,6 +867,12 @@ void PageFrame::GoToItem(int64_t item_sequence_number,
   if (--waiting_traversals_ == 0) {
     pending_traversal_index_.reset();
   }
+  // ShouldIgnoreIncomingRendererRequest(): the browser takes a traversal
+  // that the page asked for as it comes, and ignores it while one to another
+  // document that an earlier ask started waits for its response.
+  if (TraversalWaits()) {
+    return;
+  }
   const std::optional<size_t> index =
       history().IndexOfItem(item_sequence_number);
   if (!index) {
@@ -850,9 +903,90 @@ bool PageFrame::GoToIndex(size_t index) {
     CommitSameDocumentHistoryNavigation(window, target);
     return true;
   }
-  // An entry of another document: a Known Gap until traversals reach the
-  // Session.
-  return false;
+  return BeginTraversal(history().RootAt(index));
+}
+
+bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
+  // What the entry holds, before any listener can change the history.
+  const HistoryItem target = entry.item();
+  PageTraversalRequest traversal;
+  traversal.record = entry.record();
+  traversal.same_document_entry = entry.same_document_entry();
+  traversal.referrer_policy = entry.referrer_policy();
+  traversal.url = target.url.spec();
+  // The tab's initial entry holds no navigation, and no traversal goes there,
+  // nor to a URL that a Page message cannot carry, which no Chrome would have.
+  if (traversal.record == kNoDocument ||
+      traversal.url.size() > kMaxPayloadSize - kTraversalOverhead) {
+    return false;
+  }
+  // The Session keeps the record while the traversal needs it, though a
+  // listener's new entry prunes the entry meanwhile, or starts a navigation,
+  // as Chrome's request holds its FrameNavigationEntry.
+  const base::AutoReset<std::optional<uint64_t>> pinned(&pinned_record_,
+                                                        traversal.record);
+  Window& window = Window::Current();
+  Document& document = window.GetDocument();
+  if (document.PageDismissalEventBeingDispatched()) {
+    return false;
+  }
+  // Navigator::Navigate(): the browser runs the document's beforeunload
+  // first, which a page without the user's activation cannot cancel.
+  if (!document.DispatchBeforeUnloadEvent() || !window.HasContext()) {
+    return false;
+  }
+  // It takes the place of a navigation that waits, which ends with
+  // ERR_ABORTED. The document keeps loading until the response commits, as
+  // Chrome's browser tells its renderer nothing of the traversal till then.
+  if (provisional_) {
+    runner_->requests().Cancel(provisional_->number());
+    provisional_.reset();
+  }
+  provisional_ = std::make_unique<DocumentLoader>(runner_->requests(),
+                                                  runner_->send(), *this);
+  provisional_request_ = NavigationRequest();
+  provisional_request_.url = target.url;
+  provisional_start_ = base::TimeTicks::Now();
+  provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
+  traversal_item_ = target;
+  traversal_record_ = traversal.record;
+  provisional_->SetNumber(
+      runner_->requests().StartTraversal(std::move(traversal), *provisional_));
+  // MaybeDispatchNavigateEventForCrossDocumentTraversal(): for an entry of
+  // the document's origin only, once the request has started, as Chrome's
+  // browser tells the renderer of the traversal without waiting for it.
+  if (document.GetOrigin().IsSameOriginWith(url::Origin::Create(target.url))) {
+    Navigation::NavigateParams params;
+    params.url = target.url;
+    params.load_type = FrameLoadType::kBackForward;
+    params.destination_item = &target;
+    params.cross_document = true;
+    window.Navigation()->DispatchNavigateEvent(params);
+  }
+  return true;
+}
+
+void PageFrame::ReleaseRecords(uint64_t live_document) {
+  std::set<uint64_t> held = history().RecordsHeld();
+  if (live_document != kNoDocument) {
+    held.insert(live_document);
+  }
+  for (const std::optional<uint64_t>& record :
+       {traversal_record_, pinned_record_}) {
+    if (record) {
+      held.insert(*record);
+    }
+  }
+  std::vector<uint64_t> released;
+  for (const uint64_t record : held_records_) {
+    if (!held.contains(record)) {
+      released.push_back(record);
+    }
+  }
+  held_records_ = std::move(held);
+  if (!released.empty()) {
+    runner_->send().Run(EncodeRecordsReleased(released));
+  }
 }
 
 NavigationRateLimiter& PageFrame::GetNavigationRateLimiter() {
@@ -885,6 +1019,8 @@ void PageFrame::StopAllLoaders() {
     runner_->requests().Cancel(provisional_->number());
     provisional_.reset();
   }
+  traversal_item_.reset();
+  traversal_record_.reset();
   CancelLocalNavigation();
 }
 
@@ -908,7 +1044,16 @@ Document& PageFrame::CommitNavigation(
   // How the navigation goes in the session history, the opening one in
   // place of the initial entry, and the entry it comes from.
   FrameLoadType type = FrameLoadType::kReplaceCurrentItem;
+  // The entry that a traversal goes to, which the commit takes before any
+  // listener runs.
+  std::optional<HistoryItem> traversal_target;
   if (committing->number() != kNavigationRequest) {
+    traversal_target = std::exchange(traversal_item_, std::nullopt);
+  }
+  const bool traversal = traversal_target.has_value();
+  if (traversal) {
+    type = FrameLoadType::kBackForward;
+  } else if (committing->number() != kNavigationRequest) {
     type = provisional_request_.reload    ? FrameLoadType::kReload
            : provisional_request_.replace ? FrameLoadType::kReplaceCurrentItem
                                           : FrameLoadType::kStandard;
@@ -921,6 +1066,9 @@ Document& PageFrame::CommitNavigation(
   // nowhere, as Chrome's browser ignores a document that it is replacing, and
   // nothing after them runs a script.
   const base::AutoReset<bool> unloading(&unloading_for_commit_, true);
+  // DocumentLoader::CommitNavigation(): nothing navigates the frame
+  // meanwhile, whatever the old document or its frames' listeners ask.
+  const FrameNavigationDisabler navigation_disabler(*this);
   if (old_document.IsInitialEmptyDocument()) {
     // FrameLoader::DetachDocument(), for a frame that has committed no
     // navigation yet: the unload events first, then the loading stops.
@@ -950,26 +1098,50 @@ Document& PageFrame::CommitNavigation(
   timing.unload_event_end = unload_event_end;
   timing.has_same_origin_as_previous_document =
       url::IsSameOriginWith(old_url, url);
-  timing.is_reload =
-      current_->number() != kNavigationRequest && provisional_request_.reload;
+  timing.is_reload = !traversal && current_->number() != kNavigationRequest &&
+                     provisional_request_.reload;
+  timing.is_back_forward = traversal;
   // The new document's entry, which the session history takes, before any of
   // its scripts runs. The isolate's current context is the old document's
   // again here.
-  const HistoryItem item = HistoryItem::ForCommit(
-      old_history_item ? &*old_history_item : nullptr, url, type,
-      HistoryNavigationType::kDifferentDocument);
+  // A traversal's document takes the entry's own item, its state, key, ID and
+  // scrollRestoration among it, at the URL its response came from.
+  HistoryItem item;
+  int64_t traversed_item_sequence_number = 0;
+  if (traversal) {
+    traversed_item_sequence_number = traversal_target->item_sequence_number;
+    // A redirect leaves nothing of the entry for the response: no state, and
+    // a new key, ID and document, as Chrome's NavigationRequest resets the
+    // entry's page state on any redirect, also one that ends at its URL.
+    item = current_->redirected() ? HistoryItem::Create(url)
+                                  : *std::move(traversal_target);
+    item.url = url;
+    // Whether it protects its URL is the new document's, as its response's
+    // policy says once it commits, as for any new document in Chrome.
+    item.protect_url_in_navigation_api = false;
+    traversal_record_.reset();
+  } else {
+    item = HistoryItem::ForCommit(
+        old_history_item ? &*old_history_item : nullptr, url, type,
+        HistoryNavigationType::kDifferentDocument);
+  }
   Window& window = *document.DefaultView();
-  Navigation::EntryArrays arrays =
-      history().DidCommitNavigation(item, type, window.DocumentId());
+  Navigation::EntryArrays arrays = history().DidCommitNavigation(
+      item, type, window.DocumentId(), traversed_item_sequence_number);
   // The new document's entries come from the history as it is, without the
   // entries that it dropped, which no other document shows.
   history().TakeRemovedKeys();
   window.SetCurrentHistoryItem(item);
   window.Navigation()->InitializeForNewWindow(std::move(arrays));
+  ReleaseRecords(window.DocumentId());
   return document;
 }
 
 void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader) {
+  if (provisional_.get() == &loader) {
+    traversal_item_.reset();
+    traversal_record_.reset();
+  }
   // The loader is on the stack below this, so it goes from a later task.
   base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
                                                              Take(loader));

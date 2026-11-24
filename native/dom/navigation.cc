@@ -694,18 +694,21 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
     return DispatchResult::kAbort;
   }
   const bool traverse = params.load_type == FrameLoadType::kBackForward;
-  // A traversal goes to one of the entries, or nowhere.
+  // A traversal within the document goes to one of the entries, or nowhere.
+  // One to another document may go to an entry that the entries leave out,
+  // past one of another origin, whose destination then has none.
   NavigationHistoryEntry* destination_entry = nullptr;
+  const std::u16string key = traverse && params.destination_item
+                                 ? params.destination_item->navigation_api_key
+                                 : std::u16string();
   if (traverse) {
-    const std::u16string key = params.destination_item
-                                   ? params.destination_item->navigation_api_key
-                                   : std::u16string();
     const int64_t index = IndexOfKey(key);
-    if (index == -1) {
+    if (index != -1) {
+      destination_entry = entries_[static_cast<size_t>(index)].Get();
+    } else if (!params.cross_document) {
       TraverseCancelled(key, TraverseCancelledReason::kAbortedBeforeCommit);
       return DispatchResult::kAbort;
     }
-    destination_entry = entries_[static_cast<size_t>(index)].Get();
   }
   // PromoteUpcomingNavigationToOngoing(): a traversal's own tracker, by its
   // key, or the navigate() or reload() that waits.
@@ -713,7 +716,7 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
     ongoing_tracker_ = nullptr;
     for (auto it = upcoming_traverse_trackers_.begin();
          it != upcoming_traverse_trackers_.end(); ++it) {
-      if (it->first == destination_entry->key()) {
+      if (it->first == key) {
         ongoing_tracker_ = it->second;
         upcoming_traverse_trackers_.erase(it);
         break;
@@ -736,12 +739,17 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
   }
   NavigateEvent::Fields fields;
   fields.navigation_type = navigation_type;
-  fields.destination =
-      NavigationDestination::Create(base::UTF8ToUTF16(params.url.spec()),
-                                    params.fragment || params.history_api,
-                                    destination_state, destination_entry);
-  fields.can_intercept = CanChangeToUrlForHistoryApi(
-      params.url, window_->GetDocument().GetOrigin(), document_url);
+  fields.destination = NavigationDestination::Create(
+      base::UTF8ToUTF16(params.url.spec()),
+      !params.cross_document && (params.fragment || params.history_api),
+      destination_state, destination_entry);
+  // A traversal to another document can neither be canceled nor
+  // intercepted.
+  fields.can_intercept =
+      !(traverse && params.cross_document) &&
+      CanChangeToUrlForHistoryApi(
+          params.url, window_->GetDocument().GetOrigin(), document_url);
+  fields.cancelable = !(traverse && params.cross_document);
   fields.hash_change = params.fragment && params.url != document_url &&
                        EqualIgnoringFragment(params.url, document_url);
   fields.source_element = params.source_element;
