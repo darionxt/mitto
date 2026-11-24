@@ -60,6 +60,25 @@ parent.timingAtParse = {
   entries: performance.getEntriesByType('navigation').length,
 };
 </script>"""
+# Gives the document's title 3 seconds later.
+_AFTER_WAIT = "new Promise((resolve) => setTimeout(() => resolve(document.title), 3000))"
+# Gives the document's title once a collection of garbage has changed it, or 3 seconds after one that has not.
+_AFTER_COLLECTION = """
+  (async () => {
+    const task = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+    const collected = new WeakRef({});
+    const started = performance.now();
+    do {
+      await task(0);
+      for (let i = 0; i < 8; i++) new Uint8Array(1 << 24).fill(1);
+      await task(0);
+    } while (collected.deref() && performance.now() - started < 20000);
+    if (collected.deref()) return 'nothing collected';
+    const title = document.title;
+    for (let i = 0; i < 30 && document.title === title; i++) await task(100);
+    return document.title;
+  })()
+"""
 # The request headers that /echo gives back, which a frame's navigation sends.
 _ECHOED = (
     "accept",
@@ -632,30 +651,51 @@ def test_a_window_that_its_frame_left_reaches_only_a_window_of_its_origin(page_u
 
 @pytest.mark.usefixtures("page_program")
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
-def test_a_callback_of_a_page_that_went_reaches_only_a_document_of_its_origin(page_url: str, host: str) -> None:
-    # A frame's callback that runs after its page went, such as that of Atomics.waitAsync(), still holds the top-level
-    # window, which is then the next document's: it reads no document of another origin. One of its own origin shows
-    # that the callback runs, where Chrome 157 leaves the next document alone, whatever its origin.
+@pytest.mark.parametrize(
+    ("where", "callback"),
+    [("frame", "Atomics.waitAsync"), ("frame", "FinalizationRegistry"), ("page", "FinalizationRegistry")],
+)
+def test_a_callback_of_a_page_that_went_reaches_only_a_document_of_its_origin(
+    page_url: str, where: str, callback: str, host: str
+) -> None:
+    # A callback that runs after its page went, in a frame's window or the page's own, still holds the top-level window,
+    # which is then the next document's. The getter of `document` that it kept, called on that window, and the window's
+    # property throw for a document of another origin, where Chrome 157 leaves the next document alone. One of its own
+    # origin shows that the callback runs, which Chrome's does not reach either: a Known Gap.
     script = f"""
       const element = document.createElement('iframe');
       document.body.appendChild(element);
-      element.contentWindow.eval(`
+      const source = `{{
         const held = top, get = Object.getOwnPropertyDescriptor(window, 'document').get;
-        const cell = new Int32Array(new WebAssembly.Memory({{initial: 1, maximum: 1, shared: true}}).buffer);
-        Atomics.waitAsync(cell, 0, 0, 1500).value.then(() => {{
-          for (const read of [() => get.call(held), () => held.document, () => Reflect.get(window, 'document', held)]) {{
-            try {{ read().title += ' reached'; }} catch (e) {{}}
+        const read = () => {{
+          for (const f of [() => get.call(held), () => held.document]) {{
+            try {{ f().title += ' reached'; }} catch (e) {{}}
           }}
-        }});
-      `);
+        }};
+        const wait = (milliseconds, f) => {{
+          const cell = new Int32Array(new WebAssembly.Memory({{initial: 1, maximum: 1, shared: true}}).buffer);
+          Atomics.waitAsync(cell, 0, 0, milliseconds).value.then(f);
+        }};
+        if ('{callback}' === 'Atomics.waitAsync') {{
+          wait(1500, read);
+        }} else {{
+          // What waits keeps the registry, whose callback runs only while something does.
+          const registry = new FinalizationRegistry(read);
+          registry.register({{}}, 0);
+          wait(60000, () => registry);
+        }}
+      }}`;
+      ('{where}' === 'frame' ? element.contentWindow : window).eval(source);
       location.href = `http://{host}:${{location.port}}/child?next`;
     """
     with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         page.evaluate(script)
         page.wait_for_navigation(timeout=_TIMEOUT_SECONDS)
-        title = page.evaluate("new Promise((resolve) => setTimeout(() => resolve(document.title), 3000))")
+        title = page.evaluate(
+            _AFTER_COLLECTION if callback == "FinalizationRegistry" else _AFTER_WAIT, timeout=_TIMEOUT_SECONDS
+        )
 
-    assert title == ("child reached reached reached" if host == "127.0.0.1" else "child")
+    assert title == ("child reached reached" if host == "127.0.0.1" else "child")
 
 
 @pytest.mark.usefixtures("page_program")
