@@ -60,6 +60,10 @@ bool PerIsolateData::secure_context() const {
   return IsSecureContext(isolate_->GetCurrentContext());
 }
 
+bool PerIsolateData::cross_origin_isolated() const {
+  return IsCrossOriginIsolated(isolate_->GetCurrentContext());
+}
+
 v8::Local<v8::FunctionTemplate> PerIsolateData::InterfaceTemplate(
     v8::Isolate* isolate,
     const WrapperTypeInfo* info) {

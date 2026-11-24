@@ -203,6 +203,9 @@ NavigateEvent::NavigateEvent(Window* window,
       source_element_(fields.source_element),
       url_(fields.url),
       fragment_(fields.fragment),
+      load_type_(fields.load_type),
+      state_object_(fields.state_object),
+      destination_item_(fields.destination_item),
       controller_(controller) {
   if (!info.IsEmpty()) {
     info_.Reset(v8::Isolate::GetCurrent(), info);
@@ -414,13 +417,14 @@ void NavigateEvent::CommitNow() {
   }
   intercept_state_ = InterceptState::kCommitted;
   Navigation* const navigation = window_->Navigation();
-  // popstate for a navigation to a fragment that no navigate() asked for.
-  const bool fire_popstate = fragment_ && !navigation->HasOngoingTracker();
-  const FrameLoadType type =
-      navigation_type_ == u"replace"  ? FrameLoadType::kReplaceCurrentItem
-      : navigation_type_ == u"reload" ? FrameLoadType::kReload
-                                      : FrameLoadType::kStandard;
-  navigation->RunUrlAndHistoryUpdateSteps(url_, type, fire_popstate);
+  // popstate for a traversal, and for a navigation to a fragment that no
+  // navigate() asked for.
+  const bool traverse = load_type_ == FrameLoadType::kBackForward;
+  const bool fire_popstate =
+      traverse || (fragment_ && !navigation->HasOngoingTracker());
+  navigation->RunUrlAndHistoryUpdateSteps(
+      url_, destination_item_ ? &*destination_item_ : nullptr, state_object_,
+      load_type_, fire_popstate);
 }
 
 void NavigateEvent::FinalizeNavigationActionPromisesList() {

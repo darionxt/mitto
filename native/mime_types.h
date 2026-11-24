@@ -18,6 +18,11 @@ namespace mitto {
 // Chrome's viewer shows.
 bool IsSupportedMimeType(std::string_view mime_type);
 
+// download_utils::MustDownload()'s rule for MHTML: multipart/related and
+// message/rfc822, compared without case, are downloads of a response with
+// headers, which Chrome renders only from file: and content: URLs.
+bool MustDownloadMimeType(std::string_view mime_type);
+
 // blink::IsSupportedImageMimeType(): a type that a decoder of Chrome's
 // takes, JPEG XL among them, as kJXLImageFormat is on.
 bool IsSupportedImageMimeType(std::string_view mime_type);

@@ -101,6 +101,18 @@ bool IsDOMExceptionWrapper(v8::Isolate* isolate, v8::Local<v8::Object> object) {
       isolate, bindings::V8DOMException::kWrapperTypeInfo, object);
 }
 
+// FineTemporalHostSystemUTCEpochNanosecondsCallback(), for a cross-origin
+// isolated context, with a clamper of its own.
+int64_t FineTemporalNow(v8::Local<v8::Context> context) {
+  static const base::NoDestructor<TimeClamper> clamper;
+  const base::TimeDelta since_epoch =
+      base::Time::Now() - base::Time::UnixEpoch();
+  return clamper
+      ->ClampTimeResolution(since_epoch,
+                            /*cross_origin_isolated_capability=*/true)
+      .InNanoseconds();
+}
+
 // CoarseTemporalHostSystemUTCEpochNanosecondsCallback().
 int64_t CoarseTemporalNow(v8::Local<v8::Context> context) {
   static const base::NoDestructor<TimeClamper> clamper;
@@ -167,8 +179,14 @@ void InitializePageIsolate(v8::Isolate* isolate) {
 }
 
 void InitializePageContext(v8::Local<v8::Context> context) {
-  // V8Initializer::InitializeContext().
-  context->SetTemporalHostSystemUTCEpochNanosecondsCallback(&CoarseTemporalNow);
+  // V8Initializer::InitializeContext(): Temporal.Now reads a clock of the
+  // context's resolution.
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(v8::Isolate::GetCurrent(), context);
+  context->SetTemporalHostSystemUTCEpochNanosecondsCallback(
+      execution_context && execution_context->CrossOriginIsolatedCapability()
+          ? &FineTemporalNow
+          : &CoarseTemporalNow);
 }
 
 }  // namespace mitto

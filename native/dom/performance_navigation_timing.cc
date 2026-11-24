@@ -11,11 +11,13 @@ namespace mitto {
 PerformanceNavigationTiming::PerformanceNavigationTiming(
     DocumentLoadTiming* timing,
     base::TimeTicks time_origin,
-    uint64_t navigation_id)
+    uint64_t navigation_id,
+    bool cross_origin_isolated_capability)
     : PerformanceResourceTiming(timing->navigation,
                                 u"navigation",
                                 time_origin,
-                                navigation_id),
+                                navigation_id,
+                                cross_origin_isolated_capability),
       timing_(timing) {}
 
 PerformanceNavigationTiming::~PerformanceNavigationTiming() = default;
@@ -55,6 +57,9 @@ bool PerformanceNavigationTiming::ExposesRedirectTiming() const {
 }
 
 std::u16string PerformanceNavigationTiming::Type() const {
+  if (timing_->is_back_forward) {
+    return u"back_forward";
+  }
   return timing_->is_reload ? u"reload" : u"navigate";
 }
 

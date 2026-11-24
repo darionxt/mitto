@@ -18,6 +18,7 @@
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/v8_script_value_serializer.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/v8_script_value_deserializer.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/trailer_writer.cc
+// Upstream: third_party/blink/renderer/bindings/modules/v8/serialization/v8_script_value_serializer_for_modules.cc
 
 #ifndef MITTO_DOM_SERIALIZED_SCRIPT_VALUE_H_
 #define MITTO_DOM_SERIALIZED_SCRIPT_VALUE_H_
@@ -30,6 +31,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "mitto/dom/blob_data.h"
 #include "v8/include/cppgc/persistent.h"
@@ -155,6 +157,12 @@ class SerializedScriptValue {
   struct StreamChannels;
   std::shared_ptr<StreamChannels> streams_;
 };
+
+// A serialized value that several owners share and that keeps its identity,
+// such as the state of an entry of the session history, which history.state
+// gives as the same object while the entry keeps it, as Blink shares a
+// scoped_refptr<SerializedScriptValue>.
+using SharedSerializedScriptValue = base::RefCountedData<SerializedScriptValue>;
 
 }  // namespace mitto
 

@@ -30,28 +30,6 @@ bool AllowsScriptsAndOrigin(std::u16string_view sandbox) {
 
 }  // namespace
 
-bool NavigationRateLimiter::CanProceed(Window& window) {
-  const base::TimeTicks now = base::TimeTicks::Now();
-  if (now - period_start_ > kPeriod) {
-    period_start_ = now;
-    count_ = 0;
-  }
-  if (count_ < kStateUpdateLimit) {
-    ++count_;
-    return true;
-  }
-  if (!warned_period_start_ || *warned_period_start_ != period_start_) {
-    warned_period_start_ = period_start_;
-    window.AddConsoleMessage(
-        ConsoleLevel::kWarning,
-        "Throttling navigation to prevent the browser from hanging. See "
-        "https://crbug.com/1038223. Command line switch "
-        "--disable-ipc-flooding-protection can be used to bypass the "
-        "protection");
-  }
-  return false;
-}
-
 Frame& Frame::Top() {
   Frame* frame = this;
   while (Frame* const parent = frame->Parent()) {

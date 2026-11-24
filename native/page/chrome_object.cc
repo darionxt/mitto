@@ -33,9 +33,15 @@ namespace {
 
 // The navigation of a Page is the Session's, as a typed URL is: Blink's
 // kWebNavigationTypeOther, which loadTimes() calls "Other" and csi() gives as
-// the transition 15.
+// the transition 15, but for a traversal of the session history,
+// kWebNavigationTypeBackForward, "BackForward" and 6, and for a reload,
+// kWebNavigationTypeReload, "Reload" and 16.
 constexpr std::string_view kNavigationType = "Other";
 constexpr int kTransitionOther = 15;
+constexpr std::string_view kBackForwardNavigationType = "BackForward";
+constexpr int kTransitionBackForward = 6;
+constexpr std::string_view kReloadNavigationType = "Reload";
+constexpr int kTransitionReload = 16;
 
 // What the extensions system answers for a page that no installed app covers,
 // as extension_misc names the states.
@@ -139,7 +145,11 @@ void LoadTimes(const v8::FunctionCallbackInfo<v8::Value>& info) {
   // A Page paints nothing, so its first paint has not come.
   load_times.Number("firstPaintTime", 0);
   load_times.Number("firstPaintAfterLoadTime", 0);
-  load_times.Text("navigationType", kNavigationType);
+  load_times.Text("navigationType", load_timing.is_back_forward
+                                        ? kBackForwardNavigationType
+                                    : load_timing.is_reload
+                                        ? kReloadNavigationType
+                                        : kNavigationType);
   load_times.Boolean("wasFetchedViaSpdy", load_timing.was_fetched_via_spdy);
   load_times.Boolean("wasNpnNegotiated", load_timing.was_alpn_negotiated);
   load_times.Text("npnNegotiatedProtocol",
@@ -168,7 +178,9 @@ void Csi(const v8::FunctionCallbackInfo<v8::Value>& info) {
              static_cast<double>(
                  dom_content_loaded_end.InMillisecondsSinceUnixEpoch()));
   csi.Number("pageT", (now - start).InMillisecondsF());
-  csi.Number("tran", kTransitionOther);
+  csi.Number("tran", data.load_timing->is_back_forward ? kTransitionBackForward
+                     : data.load_timing->is_reload      ? kTransitionReload
+                                                        : kTransitionOther);
   info.GetReturnValue().Set(csi.Result());
 }
 

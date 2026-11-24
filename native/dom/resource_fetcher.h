@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/resource.h"
@@ -107,8 +108,14 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // one of a document without a Session, or a data: URL that does not parse.
   Resource* RequestResource(const FetchParameters& params);
 
-  // The document's resource of `url`, its fragment aside, if it has one.
+  // The document's resource of `url`, an HTTP URL's fragment aside, if it has
+  // one that a request may take.
   Resource* CachedResource(const GURL& url) const;
+  // Lets the resources of `url`, its fragment aside, go from those a later
+  // request may take, as MemoryCache::RemoveURLFromCache() lets a revoked
+  // blob: URL's go: a load that has its resource goes on, and an unused
+  // preload, which Blink keeps apart, stays.
+  void RemoveUrlFromCache(const GURL& url);
 
   // Blink's MatchPreload() of a request whose response streams, as fetch()'s
   // does: the unused link preload of the URL and type, which the request now
@@ -135,10 +142,14 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   // Whether Blink's DetermineRevalidationPolicy() uses `existing` for
   // `params`.
   bool CanUse(const Resource& existing, const FetchParameters& params) const;
+  // Whether `resource` is of a blob: URL that a context has revoked, which a
+  // later request does not take, unless it is an unused preload.
+  static bool IsRevokedBlob(const Resource& resource);
   void StartLoad(Resource& resource, const FetchParameters& params);
   // ResourceLoader::Run(): the scheduler lets the fetch of `resource` start.
   void RunLoad(Resource& resource,
                FetchRequestData request,
+               std::optional<BlobUrlRegistry::Entry> blob,
                std::unique_ptr<ResourceLoader> loader);
   // The fetch of `resource` has ended, and lets the load event go if it held
   // it back.

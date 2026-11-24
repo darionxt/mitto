@@ -137,7 +137,8 @@ WorkerLocation* WorkerGlobalScope::Location() {
 
 mitto::Performance* WorkerGlobalScope::Performance() {
   if (!performance_) {
-    performance_ = Performance::CreateForWorker(TimeOrigin());
+    performance_ = Performance::CreateForWorker(
+        TimeOrigin(), CrossOriginIsolatedCapability());
   }
   return performance_.Get();
 }

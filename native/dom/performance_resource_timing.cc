@@ -39,17 +39,22 @@ PerformanceResourceTiming::PerformanceResourceTiming(
     ResourceTimingInfo info,
     std::u16string initiator_type,
     base::TimeTicks time_origin,
-    uint64_t navigation_id)
-    : PerformanceEntry(
-          info.name,
-          Performance::MonotonicTimeToDOMHighResTimeStamp(time_origin,
-                                                          info.start_time),
-          Performance::MonotonicTimeToDOMHighResTimeStamp(time_origin,
-                                                          info.response_end),
-          navigation_id),
+    uint64_t navigation_id,
+    bool cross_origin_isolated_capability)
+    : PerformanceEntry(info.name,
+                       Performance::MonotonicTimeToDOMHighResTimeStamp(
+                           time_origin,
+                           info.start_time,
+                           cross_origin_isolated_capability),
+                       Performance::MonotonicTimeToDOMHighResTimeStamp(
+                           time_origin,
+                           info.response_end,
+                           cross_origin_isolated_capability),
+                       navigation_id),
       info_(std::move(info)),
       initiator_type_(GetFilteredInitiatorType(std::move(initiator_type))),
-      time_origin_(time_origin) {
+      time_origin_(time_origin),
+      cross_origin_isolated_capability_(cross_origin_isolated_capability) {
   for (const ServerTimingInfo& metric : info_.server_timing) {
     server_timing_.push_back(
         bindings::MakeGarbageCollected<PerformanceServerTiming>(metric));
@@ -82,7 +87,8 @@ const ResourceTimingInfo& PerformanceResourceTiming::Info() const {
 
 double PerformanceResourceTiming::ToDOMHighResTimeStamp(
     base::TimeTicks time) const {
-  return Performance::MonotonicTimeToDOMHighResTimeStamp(time_origin_, time);
+  return Performance::MonotonicTimeToDOMHighResTimeStamp(
+      time_origin_, time, cross_origin_isolated_capability_);
 }
 
 // static

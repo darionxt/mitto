@@ -414,9 +414,20 @@ class PageHost final : public PageChannel::Delegate {
   void OnSameDocumentNavigation(uint64_t document, const std::string& url);
   // A navigation of document `document`'s frame to about:blank that document
   // `initiator` started.
-  void OnAboutBlankNavigation(uint64_t document, uint64_t initiator);
+  void OnAboutBlankNavigation(uint64_t document,
+                              uint64_t initiator,
+                              PageLocalNavigationKind kind);
   // Document `opener` of another window opened document `document`.
   void OnDocumentOpened(uint64_t document, uint64_t opener);
+  // A traversal of the session history that leaves document `document` for
+  // an entry of another document: the navigation that made the record's
+  // document again, from what the library kept of it, never from what the
+  // Page names, and taking what the cache holds, as Chrome's browser repeats
+  // an entry's navigation.
+  void OnTraversalRequest(const PageTraversalRequest& traversal,
+                          uint64_t document);
+  // Records that no entry of the session history holds any more.
+  void OnRecordsReleased(const std::vector<uint64_t>& records);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
   // with `net_error`, and `status` for one that kept the document.
   void PushNavigated(std::string url, int32_t status, int32_t net_error);
@@ -682,6 +693,7 @@ class PageHost final : public PageChannel::Delegate {
   // place of: the document that started it, and what of it the about:blank
   // takes.
   struct AboutBlankNavigation {
+    PageLocalNavigationKind kind = PageLocalNavigationKind::kAboutBlank;
     uint64_t initiator = kNoDocument;
     url::Origin origin;
     CrossOriginEmbedderPolicy coep;
@@ -707,8 +719,37 @@ class PageHost final : public PageChannel::Delegate {
     CrossOriginEmbedderPolicy coep;
     bool cross_origin_isolated = false;
     int coop_ignored = 0;
+    // What the navigation went as, and the Referer it sent last, which a
+    // traversal to its document repeats.
+    FetchParams fetch;
+    std::string referrer;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
+  // What the library kept of the navigation that made each document that an
+  // entry of the Page's session history may go back to, by the document's
+  // ID, as Chrome's FrameNavigationEntry keeps it: what the navigation went
+  // as, its URL after its redirects, the Referer it sent last, and the URLs
+  // that navigations within the document gave it, the most recent last, with
+  // how many bytes they hold.
+  struct NavigationRecord {
+    NavigationRecord();
+    NavigationRecord(NavigationRecord&&);
+    NavigationRecord& operator=(NavigationRecord&&);
+    ~NavigationRecord();
+
+    FetchParams fetch;
+    GURL url;
+    std::string referrer;
+    std::vector<GURL> same_document_urls;
+    size_t same_document_url_bytes = 0;
+    // Whether document.open() gave the document about:blank, or a traversal
+    // took it there, so that an entry of its may be at it.
+    bool had_about_blank = false;
+  };
+  std::map<uint64_t, NavigationRecord> records_;
+  // Whether an entry of the top-level document `context` may be at about:blank:
+  // a document of its origin whose record the Page still holds had it.
+  bool MayHaveAboutBlankEntry(const Context& context) const;
   // The documents whose CookieStores listen, by ID: what tells each of each
   // change, and what its cookie calls are made for.
   struct CookieStoreListener {

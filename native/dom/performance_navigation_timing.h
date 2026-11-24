@@ -27,7 +27,8 @@ class PerformanceNavigationTiming final : public PerformanceResourceTiming {
  public:
   PerformanceNavigationTiming(DocumentLoadTiming* timing,
                               base::TimeTicks time_origin,
-                              uint64_t navigation_id);
+                              uint64_t navigation_id,
+                              bool cross_origin_isolated_capability);
   ~PerformanceNavigationTiming() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;

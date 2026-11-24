@@ -58,12 +58,9 @@ class BlobUrlRegistry {
   // goes: true the first time for a context, and false after that.
   bool StartObserving(uint64_t context_id);
 
-  // The blob that `url` names, without its fragment, or null.
-  scoped_refptr<BlobDataHandle> Resolve(const GURL& url) const;
-  // The origin of the context that made `url`, if it is registered.
-  std::optional<url::Origin> OriginOf(const GURL& url) const;
-
- private:
+  // A registered URL: the blob that it names, null for a MediaSource's, and
+  // the origin of the context that made it, which a blob:null URL's origin
+  // is, as Blink's BlobURLNullOriginMap keeps it.
   struct Entry {
     Entry();
     Entry(const Entry&);
@@ -75,6 +72,12 @@ class BlobUrlRegistry {
     uint64_t context_id = 0;
   };
 
+  // What `url`, without its fragment, names, if it is registered.
+  std::optional<Entry> ResolveEntry(const GURL& url) const;
+  // The blob that `url` names, without its fragment, or null.
+  scoped_refptr<BlobDataHandle> Resolve(const GURL& url) const;
+
+ private:
   mutable base::Lock lock_;
   // By the URL's spec, without a fragment.
   std::map<std::string, Entry> entries_ GUARDED_BY(lock_);

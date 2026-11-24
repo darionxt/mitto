@@ -29,10 +29,13 @@ class PerformanceResourceTiming : public PerformanceEntry {
   // The size that Blink counts for a response's headers.
   static constexpr uint64_t kHeaderSize = 300;
 
+  // Its times are coarsened as those of a cross-origin isolated context are
+  // if `cross_origin_isolated_capability`, its context's.
   PerformanceResourceTiming(ResourceTimingInfo info,
                             std::u16string initiator_type,
                             base::TimeTicks time_origin,
-                            uint64_t navigation_id);
+                            uint64_t navigation_id,
+                            bool cross_origin_isolated_capability);
   ~PerformanceResourceTiming() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -97,6 +100,7 @@ class PerformanceResourceTiming : public PerformanceEntry {
   const ResourceTimingInfo info_;
   const std::u16string initiator_type_;
   const base::TimeTicks time_origin_;
+  const bool cross_origin_isolated_capability_;
   // Made once, as Blink makes them with the entry.
   HeapVector<PerformanceServerTiming> server_timing_;
 };

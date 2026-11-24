@@ -14,7 +14,11 @@ namespace mitto {
 
 class IdleDeadline final : public bindings::ScriptWrappable {
  public:
-  IdleDeadline(base::TimeTicks deadline, bool did_timeout);
+  // Its time remaining is coarsened as a cross-origin isolated context's is
+  // if `cross_origin_isolated_capability`.
+  IdleDeadline(base::TimeTicks deadline,
+               bool did_timeout,
+               bool cross_origin_isolated_capability);
   ~IdleDeadline() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -25,6 +29,7 @@ class IdleDeadline final : public bindings::ScriptWrappable {
 
  private:
   const base::TimeTicks deadline_;
+  const bool cross_origin_isolated_capability_;
   const bool did_timeout_;
 };
 

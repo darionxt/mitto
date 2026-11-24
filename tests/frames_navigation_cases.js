@@ -228,6 +228,86 @@
     return result;
   });
 
+  // A data: URL's document has an opaque origin, so its parent cannot see in:
+  // it reports what it sees by navigating itself to /echo?report=..., which
+  // also gives the headers of that navigation. Its character set follows the
+  // computer's locale, so no case reads it.
+  const reported = async (element) => {
+    for (let i = 0; i < 100; i++) {
+      await settle(50);
+      const d = element.contentDocument;
+      if (d && d.URL.includes('report=') && d.readyState === 'complete') {
+        return d;
+      }
+    }
+    return null;
+  };
+  const reporter = `<script>
+    const info = {
+      url: document.URL.slice(0, 15),
+      origin: window.origin,
+      referrer: document.referrer,
+      cookie: (() => { try { return document.cookie; } catch (e) { return e.name + ': ' + e.message; } })(),
+      contentType: document.contentType,
+      compatMode: document.compatMode,
+      secure: window.isSecureContext,
+      parentIsTop: parent === top,
+      length: frames.length,
+      parentAccess: (() => { try { return typeof parent.document; } catch (e) { return 'threw'; } })(),
+    };
+    location = '${location.origin}/echo?report=' + encodeURIComponent(JSON.stringify(info));
+  <\/script>`;
+
+  await caseOf('dataUrl', async () => {
+    const element = document.createElement('iframe');
+    let loads = 0;
+    element.addEventListener('load', () => loads++);
+    element.src = 'data:text/html,' + encodeURIComponent(reporter);
+    document.body.appendChild(element);
+    const atInsertion = element.contentDocument && element.contentDocument.URL;
+    const d = await reported(element);
+    const result = {
+      atInsertion,
+      loads,
+      report: JSON.parse(decodeURIComponent(d.URL.split('report=')[1])),
+      headers: JSON.parse(d.getElementById('h').textContent),
+      referrer: d.referrer,
+    };
+    element.remove();
+    return result;
+  });
+
+  await caseOf('dataUrlKinds', async () => {
+    const result = {};
+    for (const [name, src] of [['plain', 'data:text/plain,hello'],
+                               ['download', 'data:application/octet-stream,x'],
+                               ['invalid', 'data:text/html;base64,%%%'],
+                               ['image', 'data:image/png;base64,iVBORw0KGgo=']]) {
+      const element = document.createElement('iframe');
+      let loads = 0;
+      element.addEventListener('load', () => loads++);
+      element.src = src;
+      document.body.appendChild(element);
+      await settle(700);
+      result[name] = [loads, element.contentDocument && element.contentDocument.URL];
+      element.remove();
+    }
+    return result;
+  });
+
+  await caseOf('dataUrlFromLocation', async () => {
+    const element = frame('/child?beforedata');
+    document.body.appendChild(element);
+    await loaded(element);
+    let loads = 0;
+    element.addEventListener('load', () => loads++);
+    element.contentWindow.location = 'data:text/html,<p>x</p>';
+    await settle(700);
+    const result = [loads, element.contentDocument && element.contentDocument.URL];
+    element.remove();
+    return result;
+  });
+
   await caseOf('otherOrigin', async () => {
     const element = frame(`http://localhost:${location.port}/child?other`);
     document.body.appendChild(element);

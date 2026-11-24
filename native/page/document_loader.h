@@ -23,6 +23,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "mitto/dom/document_parser.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/page/page_requests.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
@@ -50,7 +51,28 @@ class DocumentLoader final : public PageRequests::Client,
   ~DocumentLoader() override;
 
   uint64_t number() const { return number_; }
+  // Whether the navigation's response came after a redirect, which its
+  // frame's commit reads.
+  bool redirected() const { return redirected_; }
   void SetNumber(uint64_t number) { number_ = number; }
+  // Makes this the loader of a response that the Page answers itself, a
+  // data: URL's, of which the Session hears nothing: no credit and no cancel.
+  void AnswerByPage() { answered_by_page_ = true; }
+  // The referrer policy of a local URL's document, which it takes from the
+  // initiator's policy container, as Chrome's browser gives it, unless its
+  // response says otherwise.
+  void SetInheritedReferrerPolicy(FetchReferrerPolicy policy) {
+    inherited_referrer_policy_ = policy;
+  }
+  // Whether the initiator's policy container has a Content-Security-Policy
+  // that a header gave, which hides the nonces of the document's elements.
+  void SetInheritedHeaderCsp(bool header_csp) {
+    inherited_header_csp_ = header_csp;
+  }
+  bool answered_by_page() const { return answered_by_page_; }
+  base::WeakPtr<DocumentLoader> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
   // DocumentLoader::StopLoading(), once another document takes the place of
   // this one's: the parser stops, and so does the body, if it still comes.
   void StopLoading();
@@ -74,11 +96,19 @@ class DocumentLoader final : public PageRequests::Client,
   void AppendDecoded(std::u16string text);
   // Tells the Session that the window's load event has been dispatched.
   void DidDispatchLoadEvent();
+  // Tells the Session that the parser has taken `size` bytes of the body.
+  void TookBody(size_t size);
 
   const raw_ref<PageRequests> requests_;
   const raw_ref<PageFrame> frame_;
   uint64_t number_;
+  bool answered_by_page_ = false;
+  FetchReferrerPolicy inherited_referrer_policy_ =
+      FetchReferrerPolicy::kDefault;
+  bool inherited_header_csp_ = false;
   bool response_started_ = false;
+  // Whether the response came after a redirect.
+  bool redirected_ = false;
   // Whether the document of the response is cross-origin isolated, which
   // its window's agent is, as Blink's agent cluster key from the browser
   // says.

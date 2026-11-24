@@ -88,11 +88,15 @@ class WindowDocumentScope {
     if (!window) {
       return;
     }
-    // A window's wrapper is its context's global proxy from the start.
+    // A window's wrapper is its context's global proxy from the start, until
+    // its frame's next window takes it, whose context is not this window's.
+    v8::Local<v8::Context> context;
     if (!window->ToV8(isolate())->GetCreationContext(isolate()).ToLocal(
-            &context_)) {
+            &context) ||
+        Window::From(isolate(), context) != window) {
       return;
     }
+    context_ = context;
     context_->Enter();
     wrapper_ = document.ToV8(isolate());
   }

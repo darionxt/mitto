@@ -1294,12 +1294,6 @@ mitto_bindings_interfaces = [
     name = "History"
     file = "history"
     made_by_known_gaps = true
-
-    # scrollRestoration keeps what a page sets, as a Known Gap does.
-    implemented = [
-      "length",
-      "state",
-    ]
   },
   {
     name = "IDBCursor"
@@ -1508,16 +1502,12 @@ mitto_bindings_interfaces = [
     file = "navigation"
     made_by_known_gaps = true
 
-    # Traversal and updateCurrentEntry() are #280's.
-    implemented = [
-      "currentEntry",
-      "transition",
-      "activation",
-      "canGoBack",
-      "canGoForward",
-      "entries",
-      "navigate",
-      "reload",
+    # The bindings run its event handler attributes.
+    missing = [
+      "onnavigate",
+      "onnavigatesuccess",
+      "onnavigateerror",
+      "oncurrententrychange",
     ]
   },
   {
@@ -1686,6 +1676,7 @@ mitto_bindings_interfaces = [
     file = "notification"
     made_by_known_gaps = true
     implemented = [
+      "constructor",
       "maxActions",
       "permission",
       "requestPermission",
@@ -2980,6 +2971,12 @@ mitto_bindings_interfaces = [
   {
     name = "TextEncoderStream"
     file = "text_encoder_stream"
+  },
+  {
+    name = "TimestampTrigger"
+    file = "timestamp_trigger"
+    made_by_known_gaps = true
+    implemented = []
   },
   {
     name = "ToggleEvent"

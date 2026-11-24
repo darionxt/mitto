@@ -54,8 +54,16 @@ void InstallIllegalConstructor(
     v8::Local<v8::FunctionTemplate> interface_template,
     v8::FunctionCallback callback);
 
-// `setter` is null for a read-only attribute. `data` is what the callbacks get
-// as their data, such as the member's entry of an interface table.
+// Whether V8 checks that a member's caller may access its receiver, when that
+// is a window, as IDLMemberInstaller's FlagCrossOriginCheck says: every member
+// does but those that Web IDL lets a caller of another origin reach, with
+// [CrossOrigin], and static ones, which take no receiver.
+enum class CrossOriginCheck { kCheck, kDoNotCheck };
+
+// `setter` is null for a read-only attribute, and is always checked.
+// `getter_check` and `check` are the getter's and the operation's. `data` is
+// what the callbacks get as their data, such as the member's entry of an
+// interface table.
 void InstallAttribute(v8::Isolate* isolate,
                       v8::Local<v8::Template> target,
                       v8::Local<v8::Signature> signature,
@@ -65,6 +73,7 @@ void InstallAttribute(v8::Isolate* isolate,
                       v8::FunctionCallback setter,
                       v8::PropertyAttribute attributes,
                       v8::SideEffectType getter_side_effect,
+                      CrossOriginCheck getter_check,
                       v8::Local<v8::Value> data = {});
 
 void InstallOperation(v8::Isolate* isolate,
@@ -76,6 +85,7 @@ void InstallOperation(v8::Isolate* isolate,
                       int length,
                       v8::PropertyAttribute attributes,
                       v8::SideEffectType side_effect,
+                      CrossOriginCheck check,
                       v8::Local<v8::Value> data = {});
 
 // The same, on an object that a context made, for what the context decides.
@@ -89,6 +99,7 @@ void InstallAttributeOnObject(v8::Isolate* isolate,
                               v8::FunctionCallback setter,
                               v8::PropertyAttribute attributes,
                               v8::SideEffectType getter_side_effect,
+                              CrossOriginCheck getter_check,
                               v8::Local<v8::Value> data = {});
 void InstallOperationOnObject(v8::Isolate* isolate,
                               v8::Local<v8::Context> context,
@@ -100,6 +111,7 @@ void InstallOperationOnObject(v8::Isolate* isolate,
                               int length,
                               v8::PropertyAttribute attributes,
                               v8::SideEffectType side_effect,
+                              CrossOriginCheck check,
                               v8::Local<v8::Value> data = {});
 
 // Gives the prototype its @@unscopables, an object with a null prototype that

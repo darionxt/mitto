@@ -97,6 +97,8 @@ executable("mitto_page") {
     "session_channel.h",
     "session_cookie_jar.cc",
     "session_cookie_jar.h",
+    "session_history.cc",
+    "session_history.h",
     "session_storage_backend.cc",
     "session_storage_backend.h",
     "session_storage_buckets.cc",

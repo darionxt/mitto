@@ -200,6 +200,9 @@ class Document : public Node {
   // of Blink's documents has one SecurityOrigin.
   url::Origin GetOrigin() const;
   void SetOrigin(const url::Origin& origin) { origin_ = origin; }
+  // Whether it keeps the origin that an earlier URL of its said, which its URL
+  // does not (SetUrlKeepingOrigin()).
+  bool KeepsOriginOfEarlierUrl() const { return keeps_origin_of_earlier_url_; }
   std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
   bool InDesignMode() const { return design_mode_; }
   void SetDesignMode(const std::u16string& value);
@@ -397,6 +400,10 @@ class Document : public Node {
   void SetWindow(Window* window) { window_ = window; }
   // The URL of the document, serialized, which URL and documentURI give.
   void SetUrl(std::u16string url);
+  // The same for a URL that document.open() or a navigation within it gives
+  // the document, which keeps its origin, as Blink's window keeps its security
+  // origin, though about:blank does not say it.
+  void SetUrlKeepingOrigin(std::u16string url);
   // The canonical name of the encoding that the document's body decodes with,
   // as text_encoding_registry.h has it: UTF-8 for a document that no body
   // has decoded into yet, as Blink's DocumentEncodingData starts.
@@ -529,7 +536,13 @@ class Document : public Node {
   // initiator, as Chrome's browser hands it over.
   void SetReferrerPolicy(FetchReferrerPolicy policy) {
     referrer_policy_ = policy;
+    policy_container_referrer_policy_ = policy;
   }
+  // Whether a new entry of the document in the session history keeps its URL
+  // from other documents' Navigation API entries, as Chrome's browser takes
+  // it from the policy container: for a policy of no-referrer or origin that
+  // the response gave.
+  bool ProtectsUrlInNavigationApi() const;
 
   // What fetches the document's subresources, such as its images.
   ResourceFetcher& Fetcher();
@@ -763,6 +776,9 @@ class Document : public Node {
   // CloneDocumentWithoutChildren() makes it.
   virtual Document* CloneDocumentWithoutChildren() const;
  private:
+  // The document's policy changed, which the entry it is at in the session
+  // history takes.
+  void DidChangeReferrerPolicy();
   std::u16string BodyAttribute(std::u16string_view name) const;
   // Blink's SetBodyAttribute(): nothing for a frameset, no body, or the value
   // it already has.
@@ -807,6 +823,7 @@ class Document : public Node {
   const bool is_html_;
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
+  bool keeps_origin_of_earlier_url_ = false;
   // The first opaque origin that its URL gave, which it keeps.
   mutable std::optional<url::Origin> opaque_origin_;
   std::u16string content_type_;
@@ -870,6 +887,9 @@ class Document : public Node {
   cppgc::Member<DocumentScriptRunner> script_runner_;
   cppgc::Member<ResourceFetcher> fetcher_;
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
+  // The response's policy, which the browser's policy container keeps.
+  FetchReferrerPolicy policy_container_referrer_policy_ =
+      FetchReferrerPolicy::kDefault;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;

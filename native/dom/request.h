@@ -18,12 +18,15 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/scoped_refptr.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/blob_data.h"
 #include "mitto/dom/body_mixin.h"
 #include "mitto/dom/fetcher.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
 
@@ -71,6 +74,16 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   FetchReferrerPolicy referrer_policy() const { return referrer_policy_; }
   FetchPriorityHint priority() const { return priority_; }
   bool keepalive() const { return keepalive_; }
+  // For a blob: URL, the blob that it named when the Request was made, as
+  // Blink resolves it then, so that a fetch works after the URL is revoked,
+  // and the origin of the context that made it; null and nullopt when it
+  // named none.
+  const scoped_refptr<BlobDataHandle>& blob_url_handle() const {
+    return blob_url_handle_;
+  }
+  const std::optional<url::Origin>& blob_url_origin() const {
+    return blob_url_origin_;
+  }
   // Takes its body for fetch(), as Blink's FetchRequestData::Pass() does,
   // leaving it a body that is closed, locked and disturbed; null for a null
   // body.
@@ -91,6 +104,8 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   FetchPriorityHint priority_ = FetchPriorityHint::kAuto;
   bool keepalive_ = false;
+  scoped_refptr<BlobDataHandle> blob_url_handle_;
+  std::optional<url::Origin> blob_url_origin_;
   cppgc::Member<AbortSignal> signal_;
 };
 

@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,7 @@ namespace mitto {
 class AnimationFrameController;
 class BarProp;
 class CrashReportContext;
+struct HistoryItem;
 class CacheStorage;
 class CacheStorageHost;
 class IndexedDbHost;
@@ -91,6 +93,14 @@ class Window final : public WindowProperties, public ExecutionContext {
   // outside a context.
   static Window* Entered();
   static Window* Incumbent();
+  // Whether `accessing_context` may access the window that `accessed_object`,
+  // a global proxy, gives, as bind_gen's AccessCheckCallback() of Window asks
+  // BindingSecurity::ShouldAllowAccessTo(): for a window of the same origin.
+  // V8 asks for contexts of different security tokens, such as that of a
+  // window that its frame navigated away from, which loses its token.
+  static bool AccessCheckCallback(v8::Local<v8::Context> accessing_context,
+                                  v8::Local<v8::Object> accessed_object,
+                                  v8::Local<v8::Value> data);
 
   Window();
   ~Window() override;
@@ -256,6 +266,18 @@ class Window final : public WindowProperties, public ExecutionContext {
   // LocalWindowProxy::SetupWindowPrototypeChain() does.
   void AssociateWithContext(v8::Isolate* isolate,
                             v8::Local<v8::Context> context);
+  // The entry of the session history that the window's document is at, as
+  // Blink's DocumentLoader holds its HistoryItem: what history.state and
+  // scrollRestoration read. None for a window that no Page program loaded,
+  // such as the one of a Known Gap.
+  const HistoryItem* CurrentHistoryItem() const {
+    return current_history_item_.get();
+  }
+  HistoryItem* MutableCurrentHistoryItem() {
+    return current_history_item_.get();
+  }
+  void SetCurrentHistoryItem(const HistoryItem& item);
+
   // The window's frame, which the Page sets while the window is its frame's,
   // and clears once another window takes its place.
   void SetFrame(mitto::Frame* frame) { frame_ = frame; }
@@ -350,6 +372,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   cppgc::Member<mitto::Event> current_event_;
   raw_ptr<NavigationClient> navigation_client_ = nullptr;
+  std::unique_ptr<HistoryItem> current_history_item_;
   raw_ptr<mitto::Frame> frame_ = nullptr;
   // The name of the Page program's own window, which has no frame to keep it.
   std::u16string frameless_name_;
