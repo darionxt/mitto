@@ -155,9 +155,10 @@ void Location::SetLocation(const std::u16string& url,
   FrameLoadRequest request;
   request.url = completed;
   request.reason = ClientNavigationReason::kFrameNavigation;
-  // A frame's navigation is the caller's, as an about:blank that it commits
-  // takes the caller's origin and URL. A top-level one stays its own
-  // document's, whose ID its request carries to the Session.
+  // A frame's navigation is the caller's: an about:blank that it commits
+  // takes the caller's origin and URL, and one through the Session names the
+  // caller's document as its Initiator. A top-level one stays its own
+  // document's.
   Window* const incumbent = Window::Incumbent();
   const Frame* const frame = window_->GetFrame();
   if (incumbent && incumbent->HasDocument() && frame && frame->Parent()) {

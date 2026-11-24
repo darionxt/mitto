@@ -677,6 +677,9 @@ class Document : public Node {
   // the event: Chrome asks the user to stay only on a page that the user has
   // activated, which a page in a Page never is, and says so in the console.
   bool DispatchBeforeUnloadEvent();
+  // Document::BeforeUnloadDoneWillUnload(): once no document has kept the
+  // navigation from going on, it will unload, so its load event never fires.
+  void BeforeUnloadDoneWillUnload();
   // Document::Abort(): CancelParsing(), so that nothing more of the body is
   // parsed, and the document is complete, with readystatechange, whose load
   // event then never fires, as a navigation that starts while it loads has

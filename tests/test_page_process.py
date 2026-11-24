@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 31
+_PROTOCOL_VERSION = 32
 
 
 def _script_request(number: int, url: str) -> str:
@@ -447,6 +447,13 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             "the library refused a message from the Page: a document that does not take the place of its frame's"
             " document",
             id="srcdoc-in-place-of-another-frames",
+        ),
+        pytest.param(
+            "top-level-error-page",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 4, 0, 1))",
+            "the library refused a message from the Page: a document that does not take the place of its frame's"
+            " document",
+            id="top-level-error-page",
         ),
         pytest.param(
             "about-blank-of-no-initiator",

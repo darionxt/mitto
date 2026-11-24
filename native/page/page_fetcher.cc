@@ -19,6 +19,9 @@ constexpr int kFailed = -2;
 // Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
 constexpr size_t kKeepaliveInflightBytesQuota = 64 * 1024;
 
+// net::ERR_ABORTED.
+constexpr int kNetErrorAborted = -3;
+
 PageRequestMode ToPageRequestMode(FetchMode mode) {
   switch (mode) {
     case FetchMode::kCors:
@@ -242,6 +245,19 @@ void PageFetcher::Stop() {
   }
   open_.clear();
   keepalive_bytes_ = 0;
+}
+
+void PageFetcher::Abort() {
+  std::vector<FetchClient*> clients;
+  for (auto& [number, request] : open_) {
+    clients.push_back(&request->client());
+  }
+  // The stopped requests keep their clients, and a keepalive one goes on in
+  // the Session.
+  Stop();
+  for (FetchClient* const client : clients) {
+    client->OnResponseEnded(kNetErrorAborted);
+  }
 }
 
 void PageFetcher::Fetch(FetchRequestData data,

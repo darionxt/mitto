@@ -1,0 +1,127 @@
+{
+  "chrome": "157.0.8103.79",
+  "how": "headless Chrome for Testing on macOS, on a page at ORIGIN/ on the server of tests/test_page_frames.py",
+  "record": {
+    "failed": {
+      "freshDocument": null,
+      "freshLoads": 1,
+      "laterDocument": null,
+      "laterLoads": 1,
+      "length": 2
+    },
+    "frameElement": [
+      "ORIGIN/child?frame",
+      true
+    ],
+    "headers": {
+      "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+      "referer": "ORIGIN/",
+      "sec-fetch-dest": "iframe",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "same-origin",
+      "upgrade-insecure-requests": "1"
+    },
+    "load": {
+      "characterSet": "windows-1252",
+      "compatMode": "CSS1Compat",
+      "contentType": "text/html",
+      "cookie": true,
+      "frameElement": true,
+      "length": 1,
+      "marker": "kept",
+      "navigationEntries": [
+        [
+          "ORIGIN/child?load",
+          "navigate"
+        ]
+      ],
+      "origin": "ORIGIN",
+      "parent": true,
+      "readyState": "complete",
+      "referrer": "ORIGIN/",
+      "sameProxy": true,
+      "seen": [
+        "inserted about:blank",
+        "load ORIGIN/child?load complete"
+      ],
+      "text": "/child?load",
+      "timeOriginKept": true,
+      "url": "ORIGIN/child?load"
+    },
+    "location": {
+      "fromFrame": [
+        "ORIGIN/child?fromframe",
+        "ORIGIN/child?fromparent"
+      ],
+      "fromParent": [
+        "ORIGIN/child?fromparent",
+        "ORIGIN/"
+      ]
+    },
+    "noContent": {
+      "freshLoads": 0,
+      "freshUrl": "about:blank",
+      "laterLoads": 0,
+      "laterUrl": "ORIGIN/child?first"
+    },
+    "otherOrigin": [
+      null,
+      1,
+      true
+    ],
+    "parentWaits": {
+      "innerParent": true,
+      "innerTop": true,
+      "innerUrl": "ORIGIN/slow?inner",
+      "order": [
+        "inner complete",
+        "nested complete",
+        "outer complete"
+      ]
+    },
+    "redirect": [
+      "ORIGIN/child?redirected",
+      "ORIGIN/",
+      "ORIGIN/child?redirected"
+    ],
+    "removedWhileLoading": [
+      0,
+      0,
+      null
+    ],
+    "reuseAfterBlank": {
+      "timing": {
+        "domComplete": 0,
+        "domContentLoadedEventStart": 0,
+        "domInteractive": 0,
+        "domLoading": true,
+        "entries": 1,
+        "fetchStart": true,
+        "loadEventEnd": 0,
+        "loadEventStart": 0,
+        "responseEnd": true
+      }
+    },
+    "srcChange": {
+      "newDocument": true,
+      "referrer": "ORIGIN/",
+      "sameProxy": true,
+      "seen": [
+        "set ORIGIN/child?a",
+        "pagehide false"
+      ],
+      "url": "ORIGIN/child?b"
+    },
+    "timingAtParse": {
+      "domComplete": 0,
+      "domContentLoadedEventStart": 0,
+      "domInteractive": 0,
+      "domLoading": true,
+      "entries": 1,
+      "fetchStart": true,
+      "loadEventEnd": 0,
+      "loadEventStart": 0,
+      "responseEnd": true
+    }
+  }
+}

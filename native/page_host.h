@@ -522,6 +522,9 @@ class PageHost final : public PageChannel::Delegate {
     // A navigation, whose response the Page makes a document of, unless it
     // is a 204, a 205 or a download.
     bool is_navigation = false;
+    // A navigation of the top-level frame, which the caller hears of, and
+    // whose COOP and COEP make the Page's agent cluster.
+    bool top_level = false;
     // A dedicated worker's script: its creator's embedder policy, which the
     // worker's has to be compatible with, as DedicatedWorkerHost::CheckCOEP()
     // holds it.
@@ -529,6 +532,9 @@ class PageHost final : public PageChannel::Delegate {
     // The embedder policy of the document or worker that asks, which the
     // Cross-Origin-Resource-Policy check of a request of mode no-cors reads.
     CrossOriginEmbedderPolicy embedder_policy;
+    // A frame's navigation: the URLs of the frame's ancestors' documents, from
+    // its parent's up, as they were when it started.
+    std::vector<GURL> frame_ancestor_urls;
   };
 
   // Starts a request numbered `number`, whose client is a Request that

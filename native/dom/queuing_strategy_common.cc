@@ -16,12 +16,14 @@ v8::Local<v8::Value> GetCachedSizeFunction(v8::Isolate* isolate,
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   const v8::Local<v8::Private> key = v8::Private::ForApi(
       isolate, v8::String::NewFromUtf8(isolate, cache_name).ToLocalChecked());
-  const v8::Local<v8::Object> global_proxy = context->Global();
+  // On an object of the context's own, as its global proxy is another
+  // context's once a frame has navigated.
+  const v8::Local<v8::Object> holder = context->GetExtrasBindingObject();
   v8::Local<v8::Value> function;
-  if (!global_proxy->GetPrivate(context, key).ToLocal(&function) ||
+  if (!holder->GetPrivate(context, key).ToLocal(&function) ||
       function->IsUndefined()) {
     function = factory(isolate);
-    std::ignore = global_proxy->SetPrivate(context, key, function);
+    std::ignore = holder->SetPrivate(context, key, function);
   }
   return function;
 }
