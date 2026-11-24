@@ -246,9 +246,10 @@ bool Navigation::HasEntriesAndEventsDisabled() const {
   if (!window_ || !window_->HasContext()) {
     return true;
   }
+  // Of the document's origin, not its URL's, which document.open() may have
+  // made about:blank, as Blink reads the window's security origin.
   const Document& document = window_->GetDocument();
-  return document.IsInitialEmptyDocument() ||
-         url::Origin::Create(GURL(document.UrlForBinding())).opaque();
+  return document.IsInitialEmptyDocument() || document.GetOrigin().opaque();
 }
 
 int64_t Navigation::DocumentSequence() const {
