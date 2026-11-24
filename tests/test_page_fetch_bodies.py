@@ -683,10 +683,11 @@ const attempt = (run) => { try { return run(); } catch (e) { return "threw " + e
 const all = async (run) => (await Promise.all(MAKERS.map(run))).join("; ");
 """
 
-_REALM_SCRIPTS |= {
-    "a frame's clone() of the window's body": (
-        _CLONE_PRELUDE
-        + """
+_REALM_SCRIPTS.update(
+    {
+        "a frame's clone() of the window's body": (
+            _CLONE_PRELUDE
+            + """
         const w = frame().contentWindow;
         return all(async ([kind, make]) => {
             const r = make(window); const c = prototypeOf(w, kind).clone.call(r);
@@ -694,14 +695,14 @@ _REALM_SCRIPTS |= {
                     await c.text() + await r.text()].join(" ");
         });
         """,
-        "string true/false true/false true/false object xx; blob true/false true/false true/false object xx; "
-        "stream true/false true/false true/false object xx; null true/false true/false object object ; "
-        "request true/false true/false true/false true/false xx; "
-        "request without a body true/false true/false object true/false ",
-    ),
-    "the window's clone() of a frame's body": (
-        _CLONE_PRELUDE
-        + """
+            "string true/false true/false true/false object xx; blob true/false true/false true/false object xx; "
+            "stream true/false true/false true/false object xx; null true/false true/false object object ; "
+            "request true/false true/false true/false true/false xx; "
+            "request without a body true/false true/false object true/false ",
+        ),
+        "the window's clone() of a frame's body": (
+            _CLONE_PRELUDE
+            + """
         const w = frame().contentWindow;
         return all(async ([kind, make]) => {
             const r = make(w); const c = prototypeOf(window, kind).clone.call(r);
@@ -709,14 +710,14 @@ _REALM_SCRIPTS |= {
                     await c.text() + await r.text()].join(" ");
         });
         """,
-        "string false/true false/true false/true object xx; blob false/true false/true false/true object xx; "
-        "stream false/true false/true false/true object xx; null false/true false/true object object ; "
-        "request false/true false/true false/true false/true xx; "
-        "request without a body false/true false/true object false/true ",
-    ),
-    "the clone() of a frame that goes after it": (
-        _CLONE_PRELUDE
-        + """
+            "string false/true false/true false/true object xx; blob false/true false/true false/true object xx; "
+            "stream false/true false/true false/true object xx; null false/true false/true object object ; "
+            "request false/true false/true false/true false/true xx; "
+            "request without a body false/true false/true object false/true ",
+        ),
+        "the clone() of a frame that goes after it": (
+            _CLONE_PRELUDE
+            + """
         return all(async ([kind, make]) => {
             const f = frame(); const r = make(window);
             const c = prototypeOf(f.contentWindow, kind).clone.call(r);
@@ -724,12 +725,12 @@ _REALM_SCRIPTS |= {
             return kind + " " + await outcome(c.text()) + " " + await outcome(r.text());
         });
         """,
-        "string ok x ok x; blob ok x ok x; stream ok x ok x; null ok  ok ; request ok x ok x; "
-        "request without a body ok  ok ",
-    ),
-    "the clone() of a frame that has gone": (
-        _CLONE_PRELUDE
-        + """
+            "string ok x ok x; blob ok x ok x; stream ok x ok x; null ok  ok ; request ok x ok x; "
+            "request without a body ok  ok ",
+        ),
+        "the clone() of a frame that has gone": (
+            _CLONE_PRELUDE
+            + """
         return all(async ([kind, make]) => {
             const f = frame(); const { clone } = prototypeOf(f.contentWindow, kind);
             f.remove();
@@ -737,12 +738,12 @@ _REALM_SCRIPTS |= {
             return kind + " " + await outcome(c.text()) + " " + await outcome(r.text());
         });
         """,
-        "string ok x ok x; blob ok x ok x; stream ok x ok x; null ok  ok ; request ok x ok x; "
-        "request without a body ok  ok ",
-    ),
-    "clone() of the body of a frame that has gone": (
-        _CLONE_PRELUDE
-        + """
+            "string ok x ok x; blob ok x ok x; stream ok x ok x; null ok  ok ; request ok x ok x; "
+            "request without a body ok  ok ",
+        ),
+        "clone() of the body of a frame that has gone": (
+            _CLONE_PRELUDE
+            + """
         return all(async ([kind, make]) => {
             const f = frame(); const r = make(f.contentWindow);
             f.remove();
@@ -750,18 +751,18 @@ _REALM_SCRIPTS |= {
             return kind + " " + (typeof c === "string" ? c : await outcome(c.text()));
         });
         """,
-        "string threw InvalidStateError: Failed to execute 'clone' on 'Response': "
-        "Cannot release body in a window or worker that has been detached; "
-        "blob threw InvalidStateError: Failed to execute 'clone' on 'Response': "
-        "Cannot release body in a window or worker that has been detached; "
-        "stream rejected InvalidStateError: Failed to execute 'text' on 'Response': "
-        "Cannot load body from a frame or worker than has been detached; null pending; "
-        "request threw InvalidStateError: Failed to execute 'clone' on 'Request': "
-        "Cannot release body in a window or worker that has been detached; request without a body pending",
-    ),
-    "bodies made after their frame has gone": (
-        _CLONE_PRELUDE
-        + """
+            "string threw InvalidStateError: Failed to execute 'clone' on 'Response': "
+            "Cannot release body in a window or worker that has been detached; "
+            "blob threw InvalidStateError: Failed to execute 'clone' on 'Response': "
+            "Cannot release body in a window or worker that has been detached; "
+            "stream rejected InvalidStateError: Failed to execute 'text' on 'Response': "
+            "Cannot load body from a frame or worker than has been detached; null pending; "
+            "request threw InvalidStateError: Failed to execute 'clone' on 'Request': "
+            "Cannot release body in a window or worker that has been detached; request without a body pending",
+        ),
+        "bodies made after their frame has gone": (
+            _CLONE_PRELUDE
+            + """
         return all(async ([kind, make]) => {
             const f = frame(); const { Response, Request, Blob, ReadableStream } = f.contentWindow;
             f.remove();
@@ -769,34 +770,34 @@ _REALM_SCRIPTS |= {
             return kind + " " + await outcome(c.text());
         });
         """,
-        "; ".join(
-            f"{kind} rejected InvalidStateError: Failed to execute 'text' on '{interface}': "
-            "Cannot load body from a frame or worker than has been detached"
-            if interface
-            else f"{kind} pending"
-            for kind, interface in (
-                ("string", "Response"),
-                ("blob", "Response"),
-                ("stream", "Response"),
-                ("null", None),
-                ("request", "Request"),
-                ("request without a body", None),
-            )
+            "; ".join(
+                f"{kind} rejected InvalidStateError: Failed to execute 'text' on '{interface}': "
+                "Cannot load body from a frame or worker than has been detached"
+                if interface
+                else f"{kind} pending"
+                for kind, interface in (
+                    ("string", "Response"),
+                    ("blob", "Response"),
+                    ("stream", "Response"),
+                    ("null", None),
+                    ("request", "Request"),
+                    ("request without a body", None),
+                )
+            ),
         ),
-    ),
-    "a Request made from a Request of a frame that had gone": (
-        """
+        "a Request made from a Request of a frame that had gone": (
+            """
         const f = frame(); const theirs = f.contentWindow.Request; f.remove();
         const r = new theirs("https://example.test/", { method: "POST", body: "x" });
         const copy = new theirs(r); const other = new theirs("https://example.test/", { method: "POST", body: "x" });
         const mine = new Request(other);
         return [r.bodyUsed, copy.bodyUsed, await outcome(copy.text()), other.bodyUsed, mine.bodyUsed].join("; ");
         """,
-        "true; false; rejected InvalidStateError: Failed to execute 'text' on 'Request': "
-        "Cannot load body from a frame or worker than has been detached; true; false",
-    ),
-    "a Request made from a Request of a frame that goes": (
-        """
+            "true; false; rejected InvalidStateError: Failed to execute 'text' on 'Request': "
+            "Cannot load body from a frame or worker than has been detached; true; false",
+        ),
+        "a Request made from a Request of a frame that goes": (
+            """
         const f = frame(); const w = f.contentWindow;
         const theirs = new w.Request("https://example.test/", { method: "POST", body: "x" });
         const mine = new Request(theirs); const used = theirs.bodyUsed;
@@ -804,21 +805,22 @@ _REALM_SCRIPTS |= {
         const attempt = (run) => { try { return run(); } catch (e) { return e.name + ": " + e.message; } };
         return [used, mine.bodyUsed, attempt(() => mine.clone()), await outcome(mine.text())].join("; ");
         """,
-        "true; false; InvalidStateError: Failed to execute 'clone' on 'Request': "
-        "Cannot release body in a window or worker that has been detached; "
-        "rejected InvalidStateError: Failed to execute 'text' on 'Request': "
-        "Cannot load body from a frame or worker than has been detached",
-    ),
-    "Response.error() and redirect() of a frame that goes": (
-        """
+            "true; false; InvalidStateError: Failed to execute 'clone' on 'Request': "
+            "Cannot release body in a window or worker that has been detached; "
+            "rejected InvalidStateError: Failed to execute 'text' on 'Request': "
+            "Cannot load body from a frame or worker than has been detached",
+        ),
+        "Response.error() and redirect() of a frame that goes": (
+            """
         const f = frame(); const w = f.contentWindow; const R = w.Response;
         const before = [of(R.error(), w), of(R.redirect("/a"), w), of(R.error.call(Response), w)];
         f.remove();
         return [...before, R.error().type, new URL(R.redirect("/a").headers.get("location")).pathname].join(" ");
         """,
-        "false/true false/true false/true error /a",
-    ),
-}
+            "false/true false/true false/true error /a",
+        ),
+    }
+)
 
 
 @pytest.mark.parametrize("name", _REALM_SCRIPTS)
