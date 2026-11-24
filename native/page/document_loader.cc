@@ -132,16 +132,17 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   timing.critical_ch_restart = TicksOf(response.critical_ch_restart);
   // CreateNavigationTimingInstance(): no start time, the document's URL, and
   // a response that always passes the TAO check, whose cache state the bytes
-  // that had come with its headers decide.
+  // that had come with its headers decide, but for one that the Page answered
+  // itself, which is from no cache.
   PageResponseStarted navigation_response = response;
   navigation_response.timing_allow_passed = true;
   timing.navigation = CreateResourceTimingInfo(
       base::TimeTicks(), base::UTF8ToUTF16(response.url), &navigation_response,
       base::TimeTicks::Now());
-  timing.navigation.cache_state = response.validated ? CacheState::kValidated
-                                  : response.received_bytes == 0
-                                      ? CacheState::kLocal
-                                      : CacheState::kNone;
+  timing.navigation.cache_state =
+      response.validated ? CacheState::kValidated
+      : response.received_bytes == 0 && !answered_by_page_ ? CacheState::kLocal
+                                                           : CacheState::kNone;
   timing.connection_info = response.connection_info;
   timing.alpn_negotiated_protocol = response.alpn_negotiated_protocol;
   timing.was_fetched_via_spdy = response.was_fetched_via_spdy;

@@ -1752,9 +1752,11 @@ def test_a_data_url_frame_that_reloads_counts_as_a_reload(origin: str) -> None:
 
 @pytest.mark.usefixtures("page_program")
 def test_a_data_url_frame_s_navigation_entry_counts_its_body(origin: str) -> None:
+    # A transfer is the encoded body and 300 bytes for the headers, for a response from no cache, of no connection.
     report = (
-        '\'const e = performance.getEntriesByType("navigation")[0];'
-        ' fetch(O + "/assets/sizes-" + e.encodedBodySize + "-" + e.decodedBodySize);\''
+        '\'const e = performance.getEntriesByType("navigation")[0], t = chrome.loadTimes();'
+        ' fetch(O + "/assets/sizes-" + [e.encodedBodySize, e.decodedBodySize, e.transferSize - e.encodedBodySize,'
+        ' e.deliveryType || "none", t.connectionInfo, t.npnNegotiatedProtocol || "none"].join("-"));\''
     )
     script = f"""
       (async () => {{
@@ -1762,7 +1764,7 @@ def test_a_data_url_frame_s_navigation_entry_counts_its_body(origin: str) -> Non
         {_SEEN}
         {_data_frame(report)}
         const size = decodeURIComponent(frame.src.slice(frame.src.indexOf(',') + 1)).length;
-        const path = '/assets/sizes-' + size + '-' + size;
+        const path = '/assets/sizes-' + size + '-' + size + '-300-none-unknown-none';
         for (let i = 0; i < 300 && (await seen(path)) === 'unseen'; i++) await settle(10);
         return (await seen(path)) !== 'unseen';
       }})()
@@ -1936,4 +1938,111 @@ def test_a_navigation_that_takes_a_waiting_data_url_s_place_wins(origin: str) ->
         "data blank data": [None, None, 2, "third last"],
         "data blank blank": ["about:blank?2", None, 2, "last"],
         "data open": ["/app/page", None, 2, "last"],
+    }
+
+
+# What a data: URL's document reaches of its parent and its own frames, which it reports by navigating to ORIGIN/app/report.
+_DATA_REACH = """
+  const tried = (f) => {
+    try {
+      const value = f();
+      return value === null ? 'null' : typeof value === 'object' ? 'object' : String(value);
+    } catch (e) {
+      return 'refused';
+    }
+  };
+  const get = (name) => Object.getOwnPropertyDescriptor(window, name).get;
+  (async () => {
+    const reached = {};
+    for (const [name, w] of [['parent', parent], ['top', top]]) {
+      reached[name] = [
+        () => w.document, () => get('document').call(w), () => Reflect.get(window, 'document', w),
+        () => get('localStorage').call(w), () => get('name').call(w), () => setTimeout.call(w, () => 1),
+        () => addEventListener.call(w, 'x', () => 1), () => w.eval('1'),
+      ].map(tried).join(' ');
+    }
+    reached.own = [
+      () => origin, () => frameElement, () => localStorage, () => document.cookie, () => isSecureContext,
+      () => get('document').call(undefined) === document, () => btoa.call(null, 'a'),
+    ].map(tried).join(' ');
+    const ways = {
+      blank: () => 1, srcdoc: (f) => { f.srcdoc = '<p>x'; }, network: (f) => { f.src = 'ORIGIN/app/page'; },
+      data: (f) => { f.src = 'data:text/html,<p>x'; },
+    };
+    for (const way in ways) {
+      const element = document.createElement('iframe');
+      const load = new Promise((resolve) => { element.onload = resolve; });
+      ways[way](element);
+      document.documentElement.append(element);
+      await load;
+      const w = element.contentWindow;
+      reached['a child of ' + way] = [
+        () => element.contentDocument, () => w.document, () => get('document').call(w), () => w.eval('origin'),
+      ].map(tried).join(' ');
+    }
+    location.href = 'ORIGIN/app/page?' + encodeURIComponent(JSON.stringify(reached));
+  })();
+"""
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_and_its_parent_reach_only_their_own_realms(origin: str) -> None:
+    # The document's opaque origin is of no other's: its window, also once its element is gone, refuses its parent's
+    # members and a window that the frame left, and its script reaches neither its parent nor a frame of its own of
+    # another origin, while the about:blank and the srcdoc that take its origin are its own.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const refused = (f) => {{ try {{ f(); return false; }} catch (e) {{ return true; }} }};
+        const get = (name) => Object.getOwnPropertyDescriptor(window, name).get;
+        const uses = {{
+          document: (w) => get('document').call(w), storage: (w) => get('localStorage').call(w),
+          name: (w) => get('name').call(w), fetch: (w) => fetch.call(w, '/app/page'), timer: (w) => setTimeout.call(w, () => 1),
+          listener: (w) => addEventListener.call(w, 'x', () => 1), property: (w) => w.document,
+        }};
+        const reached = (w) => Object.keys(uses).filter((name) => !refused(() => uses[name](w)));
+        const element = document.createElement('iframe');
+        element.src = '/app/page';
+        document.body.appendChild(element);
+        await loaded(element);
+        const oldDocument = element.contentDocument;
+        const old = element.contentWindow.eval(
+          '[() => x.id, () => document.URL.startsWith("data:") || name, () => window.document, () => localStorage, () => origin]'
+        );
+        element.src = 'data:text/html,<p id=x>secret';
+        await loaded(element);
+        const w = element.contentWindow;
+        const results = {{own: reached(w), left: old.map(refused).join(' '), document: element.contentDocument}};
+        window.ran = 0;
+        const child = oldDocument.createElement('script');
+        child.textContent = 'top.ran++';
+        Node.prototype.appendChild.call(oldDocument.body, child);
+        results.ran = window.ran;
+        element.remove();
+        results.removed = reached(w);
+        const reporter = document.createElement('iframe');
+        reporter.src = 'data:text/html,' + encodeURIComponent('<script>' + {_DATA_REACH!r}.replaceAll('ORIGIN', location.origin) + '<\\/script>');
+        document.body.appendChild(reporter);
+        for (let i = 0; i < 400 && !(reporter.contentDocument && reporter.contentDocument.URL.includes('?')); i++) await settle(25);
+        results.reports = JSON.parse(decodeURIComponent(reporter.contentDocument.URL.split('?')[1]));
+        return results;
+      }})()
+    """
+    refused = " ".join(["refused"] * 8)
+    assert _evaluate(origin, script) == {
+        "own": [],
+        "left": "true true true true true",
+        "document": None,
+        "ran": 0,
+        "removed": [],
+        "reports": {
+            "parent": refused,
+            "top": refused,
+            "own": "null null refused refused false true YQ==",
+            "a child of blank": "object object object null",
+            "a child of srcdoc": "object object object null",
+            "a child of network": "null refused refused refused",
+            "a child of data": "null refused refused refused",
+        },
     }

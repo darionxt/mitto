@@ -830,6 +830,8 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   response.status = 200;
   response.url = request.url.spec();
   response.headers = base::StrCat({"content-type: ", data->content_type, "\n"});
+  // Of no connection, and no protocol that ALPN chose.
+  response.connection_info = "unknown";
   response.navigation_start =
       (answer->start - base::TimeTicks()).InMicroseconds();
   // The network quality of no host, as a data: URL has none, not the old
