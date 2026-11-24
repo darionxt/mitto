@@ -93,11 +93,9 @@ class Frame {
   Frame();
   virtual ~Frame();
 
-  // The frame shows a document of `origin`, whose window takes the place of
+  // The frame shows the document of `window`, whose window takes the place of
   // the frame's remote one in its process.
-  void DidShowDocumentOf(const url::Origin& origin);
-  // The frame was removed, which its remote windows outlive.
-  void DetachRemoteWindows();
+  void DidShowDocument(Window& window);
 
  private:
   friend class FrameNavigationDisabler;

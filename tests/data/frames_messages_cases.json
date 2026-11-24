@@ -447,6 +447,38 @@
     ]
    }
   },
+  "a message as its document goes": {
+   "same origin": [
+    [
+     "pagehide",
+     "null"
+    ],
+    [
+     "hidden",
+     "null"
+    ]
+   ],
+   "same site": [
+    [
+     "pagehide",
+     "null"
+    ],
+    [
+     "hidden",
+     "null"
+    ]
+   ],
+   "another site": [
+    [
+     "pagehide",
+     "null"
+    ],
+    [
+     "hidden",
+     "null"
+    ]
+   ]
+  },
   "a sender that removed its own frame": {
    "same origin": [
     "before its own",

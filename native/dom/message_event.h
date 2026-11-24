@@ -62,8 +62,8 @@ class MessageEvent final : public Event {
                mitto::UserActivation* user_activation);
   ~MessageEvent() override;
 
-  // Says that the source, a window, is of another process than the event's:
-  // that process's window of it.
+  // A source that is a window of another process than the event's: its frame's
+  // in the event's.
   void SetRemoteSource(RemoteWindow* window);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;

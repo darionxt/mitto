@@ -46,31 +46,24 @@ RemoteWindow* Frame::RemoteWindowFor(const url::Origin& viewer) {
       return window.Get();
     }
   }
-  auto* const window = bindings::MakeGarbageCollected<RemoteWindow>(viewer);
+  auto* const window =
+      bindings::MakeGarbageCollected<RemoteWindow>(viewer, DomWindow());
   remote_windows_.emplace_back(window);
   return window;
 }
 
-void Frame::DidShowDocumentOf(const url::Origin& origin) {
+void Frame::DidShowDocument(Window& window) {
+  const url::Origin origin = window.GetSecurityOrigin();
   std::erase_if(remote_windows_,
-                [&origin](const cppgc::WeakPersistent<RemoteWindow>& window) {
-                  if (window && !IsInSameProcess(window->Viewer(), origin)) {
-                    return false;
+                [&](const cppgc::WeakPersistent<RemoteWindow>& remote_window) {
+                  if (!remote_window) {
+                    return true;
                   }
-                  if (window) {
-                    window->Replace();
-                  }
-                  return true;
+                  const bool replaced =
+                      IsInSameProcess(remote_window->Viewer(), origin);
+                  remote_window->SetCurrentWindow(replaced ? nullptr : &window);
+                  return replaced;
                 });
-}
-
-void Frame::DetachRemoteWindows() {
-  for (const cppgc::WeakPersistent<RemoteWindow>& window : remote_windows_) {
-    if (window) {
-      window->DetachFrame();
-    }
-  }
-  remote_windows_.clear();
 }
 
 Frame& Frame::Top() {

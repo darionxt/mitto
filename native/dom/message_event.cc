@@ -136,7 +136,7 @@ v8::Local<v8::Value> MessageEvent::Data() {
 
 EventTarget* MessageEvent::Source() const {
   if (remote_source_) {
-    return remote_source_->IsReplaced() ? nullptr : source_.Get();
+    return remote_source_->CurrentWindow();
   }
   Window* const window = source_ ? source_->ToWindow() : nullptr;
   return window && window->ContextOfGlobalProxy(v8::Isolate::GetCurrent())
@@ -180,7 +180,6 @@ void MessageEvent::InitMessageEvent(const std::u16string& type,
 }
 
 void MessageEvent::SetSource(EventTarget* source) {
-  source_ = source;
   remote_source_ = nullptr;
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const Window* const window = source ? source->ToWindow() : nullptr;
@@ -189,6 +188,8 @@ void MessageEvent::SetSource(EventTarget* source) {
   if (viewer) {
     remote_source_ = RemoteWindow::From(*window, viewer->GetSecurityOrigin());
   }
+  // A remote window stands for its frame, whichever document it shows.
+  source_ = remote_source_ ? nullptr : source;
 }
 
 void MessageEvent::SetPorts(const std::vector<MessagePort*>& ports) {

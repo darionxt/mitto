@@ -30,8 +30,13 @@ RemoteWindow* RemoteWindow::From(const Window& window,
              : nullptr;
 }
 
-RemoteWindow::RemoteWindow(url::Origin viewer) : viewer_(std::move(viewer)) {}
+RemoteWindow::RemoteWindow(url::Origin viewer, Window* window)
+    : viewer_(std::move(viewer)), window_(window) {}
 
 RemoteWindow::~RemoteWindow() = default;
+
+void RemoteWindow::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(window_);
+}
 
 }  // namespace mitto

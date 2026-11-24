@@ -410,7 +410,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     document->LockCompatibilityMode();
   }
   document->SetOrigin(origin);
-  DidShowDocumentOf(origin);
+  DidShowDocument(*window_);
   document->SetReferrer(navigation.referrer);
   document->SetReferrerPolicy(navigation.referrer_policy);
   document->SetAboutBaseUrl(navigation.about_base_url);
@@ -464,7 +464,6 @@ void PageFrame::Detach() {
   }
   going_ = true;
   DetachChildren();
-  DetachRemoteWindows();
   const uint64_t document = window_ ? window_->DocumentId() : kNoDocument;
   if (window_) {
     DetachWindow();
@@ -1518,7 +1517,6 @@ Document& PageFrame::CommitDocument(
   // The origin stays the one it was committed with, whatever URL an
   // about:blank frame that opens the document gives it, as Blink's does.
   document->SetOrigin(origin);
-  DidShowDocumentOf(origin);
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);
@@ -1529,6 +1527,7 @@ Document& PageFrame::CommitDocument(
     GiveStorage(*document);
   }
   Window::Current().SetDocument(document);
+  DidShowDocument(*window_);
   // The reused window's CookieStore listens as its new document.
   if (cookie_store) {
     cookie_store->DocumentChanged();

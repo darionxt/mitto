@@ -46,6 +46,10 @@ namespace {
 // Whom a message is for: any origin, or the one that the sender named, its own
 // for "/".
 struct TargetOrigin {
+  bool Includes(const url::Origin& recipient) const {
+    return any || origin.IsSameOriginWith(recipient);
+  }
+
   bool any = false;
   url::Origin origin;
 };
@@ -102,11 +106,18 @@ void DispatchPostMessage(Window& window,
                          SerializedScriptValue data,
                          std::vector<MessagePortChannel> channels,
                          Window* source,
-                         RemoteWindow* remote_source,
                          const url::Origin& source_origin,
                          const TargetOrigin& target,
                          UserActivation* user_activation,
                          SchedulerTaskContext* task_state) {
+  const url::Origin recipient = window.GetSecurityOrigin();
+  const bool is_remote = !IsInSameProcess(source_origin, recipient);
+  // Between processes it is the browser that drops a message for another
+  // origin, with its ports and without a word, as
+  // RenderFrameProxyHost::RouteMessageEvent() does.
+  if (is_remote && !target.Includes(recipient)) {
+    return;
+  }
   const std::vector<cppgc::Persistent<MessagePort>> ports =
       MessagePort::EntanglePorts(&window, std::move(channels));
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
@@ -114,29 +125,23 @@ void DispatchPostMessage(Window& window,
   if (task_state && !SchedulerTaskContext::Current(isolate)) {
     task_scope.emplace(isolate, task_state);
   }
-  const url::Origin recipient = window.GetSecurityOrigin();
-  const bool is_remote = !IsInSameProcess(source_origin, recipient);
-  if (!target.any && !target.origin.IsSameOriginWith(recipient)) {
-    // Between processes it is the browser that drops the message, without a
-    // word, as RenderFrameProxyHost::RouteMessageEvent() does.
-    if (!is_remote) {
-      window.AddConsoleMessage(
-          ConsoleLevel::kWarning,
-          base::StrCat({"Failed to execute 'postMessage' on 'DOMWindow': The "
-                        "target origin provided ('",
-                        target.origin.Serialize(),
-                        "') does not match the recipient window's origin ('",
-                        recipient.Serialize(), "')."}));
-    }
+  if (!target.Includes(recipient)) {
+    window.AddConsoleMessage(
+        ConsoleLevel::kWarning,
+        base::StrCat({"Failed to execute 'postMessage' on 'DOMWindow': The "
+                      "target origin provided ('",
+                      target.origin.Serialize(),
+                      "') does not match the recipient window's origin ('",
+                      recipient.Serialize(), "')."}));
     return;
   }
-  // A frame of another process that has gone, or that shows a document of this
-  // one by now, is no source, as SourceFrameForOptionalToken() finds no remote
-  // frame.
-  if (is_remote && (!remote_source || remote_source->IsFrameDetached() ||
-                    remote_source->IsReplaced())) {
+  // RemoteDOMWindow::ForwardPostMessage() names the frame that the sender is
+  // in by now, so a sender whose frame has gone or shows another document is
+  // no source.
+  RemoteWindow* const remote_source =
+      is_remote ? RemoteWindow::From(*source, recipient) : nullptr;
+  if (is_remote) {
     source = nullptr;
-    remote_source = nullptr;
   }
   const std::u16string origin = base::UTF8ToUTF16(source_origin.Serialize());
   // A value locked to its agent cluster, a SharedArrayBuffer's or a
@@ -202,22 +207,18 @@ void DoPostMessage(Window& window,
       base::BindOnce(
           [](cppgc::WeakPersistent<Window> window, SerializedScriptValue data,
              std::vector<MessagePortChannel> channels,
-             cppgc::Persistent<Window> source,
-             cppgc::Persistent<RemoteWindow> remote_source,
-             url::Origin source_origin, TargetOrigin target,
+             cppgc::Persistent<Window> source, url::Origin source_origin,
+             TargetOrigin target,
              cppgc::Persistent<UserActivation> user_activation,
              cppgc::Persistent<SchedulerTaskContext> task_state) {
             if (window) {
               DispatchPostMessage(*window, std::move(data), std::move(channels),
-                                  source.Get(), remote_source.Get(),
-                                  source_origin, target, user_activation.Get(),
-                                  task_state.Get());
+                                  source.Get(), source_origin, target,
+                                  user_activation.Get(), task_state.Get());
             }
           },
           cppgc::WeakPersistent<Window>(&window), std::move(data),
           *std::move(channels), cppgc::Persistent<Window>(&source),
-          cppgc::Persistent<RemoteWindow>(
-              RemoteWindow::From(source, window.GetSecurityOrigin())),
           source.GetSecurityOrigin(), *std::move(target),
           cppgc::Persistent<UserActivation>(user_activation),
           cppgc::Persistent<SchedulerTaskContext>(

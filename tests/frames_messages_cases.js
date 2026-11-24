@@ -307,6 +307,16 @@
     }
     return results;
   });
+  await section('a message as its document goes', async () => {
+    const results = {};
+    for (const kind in CHILD_OF) {
+      const element = await add(`${CHILD_OF[kind]}?hide`);
+      const events = await heard(2, () => load(element, `${CHILD_OF[kind]}?next`));
+      results[kind] = events.filter((event) => event.data !== 'unload').map((event) => [event.data, named(event.source, element)]);
+      element.remove();
+    }
+    return results;
+  });
   await section('a sender that removed its own frame', async () => {
     const results = {};
     for (const kind in CHILD_OF) {
