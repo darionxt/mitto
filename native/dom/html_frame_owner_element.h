@@ -90,9 +90,9 @@ class HTMLFrameOwnerElement : public HTMLElement {
   url::Origin OriginForPermissionsPolicy() const;
   // What that document's permissions policy would allow.
   std::unique_ptr<PermissionsPolicyState> FrameState(Window& window) const;
-  // The window of its document's execution context, its creator's for one of
-  // no window.
-  Window& PolicyWindow() const;
+  // The window of its document's execution context, or for a document of no
+  // window the one whose script runs, if any, as for its event handlers.
+  Window* PolicyWindow() const;
   // HTMLFrameElementBase::SetLocation(): the URL the frame is to show, which
   // it navigates to now if the element is connected.
   void SetLocation(std::u16string location);

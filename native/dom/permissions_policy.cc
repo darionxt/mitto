@@ -17,6 +17,7 @@
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_permissions_policy.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/string_hash_table_order.h"
 #include "mitto/dom/window.h"
@@ -386,6 +387,10 @@ const PolicyFeature* PermissionsPolicy::FindOrWarn(const std::u16string& name) {
 }
 
 void PermissionsPolicy::Warn(std::string message) {
+  // One that an allow attribute does not say again.
+  if (mitto::Frame* const frame = window_->GetFrame()) {
+    frame->Top().AddOneTimeMessage(message);
+  }
   window_->AddConsoleMessage(ConsoleLevel::kWarning, std::move(message));
 }
 

@@ -261,6 +261,16 @@ bool AllowsUnloadListener(EventTarget& target, const std::u16string& type) {
   Window* window = target.ToWindow();
   if (Node* const node = target.ToNode()) {
     window = node->GetDocument().DefaultView();
+  } else if (!window) {
+    // Another target's execution context is the one that made it.
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    v8::Local<v8::Context> context;
+    if (bindings::ToV8(isolate, &target)
+            .As<v8::Object>()
+            ->GetCreationContext(isolate)
+            .ToLocal(&context)) {
+      window = Window::From(isolate, context);
+    }
   }
   return (window ? *window : Window::Current())
       .GetDocument()

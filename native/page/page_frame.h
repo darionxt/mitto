@@ -250,7 +250,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // of its parent's permissions policy, and gives `document` that.
   ContainerPolicy PendingContainerPolicy() const;
   void InheritPermissionsPolicy(Document& document,
-                                const ContainerPolicy& container_policy);
+                                ContainerPolicy container_policy);
   // Warns of a sandbox that its frame's document can take away.
   void WarnIfSandboxIneffective();
   // Gives the current context's window its timers, what its fetch() goes

@@ -14,6 +14,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mitto/bindings/per_context_data.h"
+#include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
@@ -32,6 +33,7 @@
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/dom/permissions_policy_parser.h"
 #include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
@@ -1593,14 +1595,23 @@ ContainerPolicy PageFrame::PendingContainerPolicy() const {
   return owner ? owner->GetContainerPolicy() : ContainerPolicy();
 }
 
-void PageFrame::InheritPermissionsPolicy(
-    Document& document,
-    const ContainerPolicy& container_policy) {
-  if (parent_) {
-    document.InheritPermissionsPolicy(
-        parent_->window_->GetDocument(), container_policy,
-        runner_->start().features.deprecated_unload);
+void PageFrame::InheritPermissionsPolicy(Document& document,
+                                         ContainerPolicy container_policy) {
+  if (!parent_) {
+    return;
   }
+  // SecurityContextInit::ApplyPermissionsPolicy(): a sandboxed frame has it
+  // only if its element says so.
+  if (document.IsSandboxed(SandboxFlags::kNavigation) &&
+      bindings::PerIsolateData::From(runner_->isolate())
+          ->features()
+          .IsEnabled(
+              bindings::RuntimeFeature::kBlockingFocusWithoutUserActivation)) {
+    DisallowIfNotPresent("focus-without-user-activation", container_policy);
+  }
+  document.InheritPermissionsPolicy(
+      parent_->window_->GetDocument(), container_policy,
+      runner_->start().features.deprecated_unload);
 }
 
 // DocumentLoader::WarnIfSandboxIneffective().

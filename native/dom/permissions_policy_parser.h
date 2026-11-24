@@ -34,6 +34,9 @@ ContainerPolicy ParseAllowAttribute(std::u16string_view allow,
 bool AllowEverywhereIfNotPresent(std::string_view feature,
                                  ContainerPolicy& policy);
 
+// DisallowFeatureIfNotPresent().
+void DisallowIfNotPresent(std::string_view feature, ContainerPolicy& policy);
+
 }  // namespace mitto
 
 #endif  // MITTO_DOM_PERMISSIONS_POLICY_PARSER_H_

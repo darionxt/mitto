@@ -152,4 +152,11 @@ bool AllowEverywhereIfNotPresent(std::string_view feature,
   return true;
 }
 
+void DisallowIfNotPresent(std::string_view feature, ContainerPolicy& policy) {
+  const PolicyFeature& named = PolicyFeatureNamed(feature);
+  if (!IsDeclared(named, policy)) {
+    policy.push_back({.feature = base::raw_ref(named)});
+  }
+}
+
 }  // namespace mitto
