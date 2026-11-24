@@ -1120,25 +1120,26 @@ base::expected<PageBroadcast, std::string> ReadBroadcast(
   return broadcast;
 }
 
-// In the byte of a document's source: PageDocumentCommitted's
-// sandboxed_origin.
-constexpr uint8_t kSandboxedOriginBit = 0x80;
+// In a document's byte of flags: PageDocumentCommitted's sandboxed_origin.
+constexpr uint8_t kSandboxedOriginFlag = 1;
 
-// A document that the Page has made: its ID, a byte for its source, its
-// parent, and for a navigation's response the navigation's number.
+// A document that the Page has made: its ID, a byte for its source, a byte of
+// flags, its parent, and for a navigation's response the navigation's number.
 base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     std::string_view payload) {
-  // The ID, the source and the parent, then what the source names.
-  constexpr size_t kFixedSize = 8 + 1 + 8;
+  // The ID, the source, the flags and the parent, then what the source names.
+  constexpr size_t kFixedSize = 8 + 1 + 1 + 8;
   if (payload.size() < kFixedSize) {
     return base::unexpected(WrongSize("document", payload.size()));
   }
   PageDocumentCommitted committed;
   committed.document = DecodeUint64(payload.substr(0, 8));
-  committed.sandboxed_origin =
-      (static_cast<uint8_t>(payload[8]) & kSandboxedOriginBit) != 0;
-  const uint8_t source =
-      static_cast<uint8_t>(payload[8]) & ~kSandboxedOriginBit;
+  const uint8_t source = static_cast<uint8_t>(payload[8]);
+  const uint8_t flags = static_cast<uint8_t>(payload[9]);
+  if ((flags & ~kSandboxedOriginFlag) != 0) {
+    return base::unexpected("a document that is not valid");
+  }
+  committed.sandboxed_origin = (flags & kSandboxedOriginFlag) != 0;
   size_t named = 0;
   switch (source) {
     case static_cast<uint8_t>(PageDocumentSource::kInitialEmpty):
@@ -1169,7 +1170,7 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     return base::unexpected("a document numbered 0");
   }
   committed.source = static_cast<PageDocumentSource>(source);
-  committed.parent = DecodeUint64(payload.substr(9, 8));
+  committed.parent = DecodeUint64(payload.substr(10, 8));
   if (committed.parent == committed.document) {
     return base::unexpected("a document that is its own parent");
   }
@@ -1177,24 +1178,24 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     case PageDocumentSource::kInitialEmpty:
       break;
     case PageDocumentSource::kNavigationResponse:
-      committed.navigation = DecodeUint64(payload.substr(17, 8));
+      committed.navigation = DecodeUint64(payload.substr(18, 8));
       break;
     case PageDocumentSource::kAboutBlank:
-      committed.initiator = DecodeUint64(payload.substr(17, 8));
-      committed.replaces = DecodeUint64(payload.substr(25, 8));
+      committed.initiator = DecodeUint64(payload.substr(18, 8));
+      committed.replaces = DecodeUint64(payload.substr(26, 8));
       break;
     case PageDocumentSource::kDataUrl:
     case PageDocumentSource::kBlob:
-      committed.initiator = DecodeUint64(payload.substr(17, 8));
-      committed.replaces = DecodeUint64(payload.substr(25, 8));
-      committed.url = std::string(payload.substr(33));
+      committed.initiator = DecodeUint64(payload.substr(18, 8));
+      committed.replaces = DecodeUint64(payload.substr(26, 8));
+      committed.url = std::string(payload.substr(34));
       if (!IsText(committed.url)) {
         return base::unexpected("a document that is not valid");
       }
       break;
     case PageDocumentSource::kSrcdoc:
     case PageDocumentSource::kErrorPage:
-      committed.replaces = DecodeUint64(payload.substr(17, 8));
+      committed.replaces = DecodeUint64(payload.substr(18, 8));
       break;
   }
   return committed;
@@ -2149,11 +2150,11 @@ std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
 }
 
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
-  const char source =
-      static_cast<char>(static_cast<uint8_t>(committed.source) |
-                        (committed.sandboxed_origin ? kSandboxedOriginBit : 0));
+  const char bytes[] = {
+      static_cast<char>(committed.source),
+      static_cast<char>(committed.sandboxed_origin ? kSandboxedOriginFlag : 0)};
   std::string payload = base::StrCat({EncodeUint64(committed.document),
-                                      std::string_view(&source, 1),
+                                      std::string_view(bytes, sizeof(bytes)),
                                       EncodeUint64(committed.parent)});
   switch (committed.source) {
     case PageDocumentSource::kInitialEmpty:

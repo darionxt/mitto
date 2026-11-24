@@ -169,6 +169,16 @@
         shown.remove();
       }
     }
+    // A module of a data: URL's document with a base URL.
+    for (const outer of ['scripts', 'none']) {
+      heard.length = 0;
+      const markup = `<base href="${location.origin}/app/"><script type=module>import '${location.origin}/cors?data ${outer}'; postMessage.call(top, ['module', origin], '*')</script>`;
+      const shown = make(SANDBOXES[outer], {src: `data:text/html,${encodeURIComponent(markup)}`});
+      await show(shown);
+      await until(() => heard.length);
+      results[`a module of a data: URL ${outer}`] = heard.slice();
+      shown.remove();
+    }
     // Navigations that fail, under a sandbox.
     for (const outer of ['', 'allow-scripts']) {
       for (const inner of ['/closed', 'data:text/html;base64,%', 'http://127.0.0.1:1/', 'data:text/unknown,x']) {
@@ -286,6 +296,16 @@
     link.click();
     await settle(250);
     results.ran = ran.slice().sort();
+    // A refresh, which only a meta element's is an automatic feature.
+    results.refresh = {};
+    for (const sandbox of ['origin', 'both']) {
+      for (const src of ['/refresh', '/refresh-header']) {
+        const refreshing = await show(make(SANDBOXES[sandbox], {src}));
+        await Promise.race([until(() => seen(refreshing).includes('refreshed')), settle(1000)]);
+        results.refresh[`${src} ${sandbox}`] = seen(refreshing);
+        refreshing.remove();
+      }
+    }
     const parsed = new DOMParser().parseFromString('<noscript><p></p></noscript>', 'text/html');
     results.parsed = parsed.querySelector('noscript').children.length;
     element.remove();

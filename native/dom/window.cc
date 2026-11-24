@@ -528,6 +528,10 @@ url::Origin Window::GetSecurityOrigin() const {
   return GetDocument().GetOrigin();
 }
 
+bool Window::IsInFrame() const {
+  return frame_ && frame_->Parent();
+}
+
 bool Window::CanExecuteScripts(bool about_to_execute) {
   if (!HasDocument() || !GetDocument().IsSandboxed(SandboxFlags::kScripts)) {
     return true;

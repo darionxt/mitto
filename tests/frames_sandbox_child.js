@@ -38,19 +38,19 @@
     persisted: await later(() => navigator.storage.persisted()), buckets: await later(() => navigator.storageBuckets.keys()),
     channel: text(() => { new BroadcastChannel('sandbox').close(); return 'made'; }), blob: text(() => URL.createObjectURL(new Blob(['x'])).slice(0, 10)),
     worker: await later(() => new Promise((resolve) => {
-      const worker = new Worker('/worker.js');
+      const worker = new Worker(`/worker.js?worker&${encodeURIComponent(key)}`);
       worker.onmessage = () => resolve('ran');
       worker.onerror = () => resolve('error');
     })),
-    fetch: await later(() => fetch('/seen?fetch').then(({type}) => type)),
-    cors: await later(() => fetch('/cors?cors', {credentials: 'include'}).then(({type}) => type)),
-    noCors: await later(() => fetch('/seen?no-cors', {mode: 'no-cors', credentials: 'include'}).then(({type}) => type)),
-    sameOrigin: await later(() => fetch('/seen?same-origin', {mode: 'same-origin'}).then(({type}) => type)),
-    image: await later(() => loading(new Image(), (image) => { image.src = '/seen.svg?image'; })),
-    script: await later(() => loading(document.createElement('script'), (script) => { script.src = '/seen?script'; })),
-    crossorigin: await later(() => loading(document.createElement('script'), (script) => { script.crossOrigin = ''; script.src = '/seen?crossorigin'; })),
-    module: await later(() => import('/cors?module')),
-    timing: text(() => performance.getEntriesByType('resource').filter(({name}) => /image|script$/.test(name))
+    fetch: await later(() => fetch(`/seen?fetch&${encodeURIComponent(key)}`).then(({type}) => type)),
+    cors: await later(() => fetch(`/cors?cors&${encodeURIComponent(key)}`, {credentials: 'include'}).then(({type}) => type)),
+    noCors: await later(() => fetch(`/seen?no-cors&${encodeURIComponent(key)}`, {mode: 'no-cors', credentials: 'include'}).then(({type}) => type)),
+    sameOrigin: await later(() => fetch(`/seen?same-origin&${encodeURIComponent(key)}`, {mode: 'same-origin'}).then(({type}) => type)),
+    image: await later(() => loading(new Image(), (image) => { image.src = `/seen.svg?image&${encodeURIComponent(key)}`; })),
+    script: await later(() => loading(document.createElement('script'), (script) => { script.src = `/seen?script&${encodeURIComponent(key)}`; })),
+    crossorigin: await later(() => loading(document.createElement('script'), (script) => { script.crossOrigin = ''; script.src = `/seen?crossorigin&${encodeURIComponent(key)}`; })),
+    module: await later(() => import(`/cors?module&${encodeURIComponent(key)}`)),
+    timing: text(() => performance.getEntriesByType('resource').filter(({name}) => /[?](image|script)&/.test(name))
       .map(({responseStart, transferSize, decodedBodySize}) => [responseStart > 0, transferSize > 0, decodedBodySize]).join(' ')),
     navigation: text(() => performance.getEntriesByType('navigation').map(({responseStart, decodedBodySize}) => [responseStart > 0, decodedBodySize > 0]).join(' ')),
     pushed: text(() => { history.replaceState(1, '', '#hash'); return 'replaced'; }),

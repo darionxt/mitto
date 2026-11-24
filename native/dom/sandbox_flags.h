@@ -24,6 +24,7 @@ enum class SandboxFlags : int32_t {
   kScripts = 1 << 4,
   kTopNavigation = 1 << 5,
   kPopups = 1 << 6,
+  // Withheld with kScripts.
   kAutomaticFeatures = 1 << 7,
   kPointerLock = 1 << 8,
   kDocumentDomain = 1 << 9,

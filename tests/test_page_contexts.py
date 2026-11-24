@@ -76,9 +76,9 @@ _FAKE_PAGE = textwrap.dedent(
                 return
 
     send(1, struct.pack("<I", {version}))
-    send(70, struct.pack("<QBQ", 1, 0, 0))
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
-    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
     send(12, struct.pack("<Q", 2))
     while True:
         message_type, payload = receive()
@@ -86,10 +86,10 @@ _FAKE_PAGE = textwrap.dedent(
             call = struct.unpack_from("<Q", payload)[0]
             break
     # The frame's initial about:blank, then its navigation, of Kind iframe, whose document takes its place.
-    send(70, struct.pack("<QBQ", 3, 0, 2))
+    send(70, struct.pack("<QBBQ", 3, 0, 0, 2))
     send(8, request(2, 1, 11, "{frame}", target=3))
     wait_for_end(1)
-    send(70, struct.pack("<QBQQ", 4, 1, 2, 1))
+    send(70, struct.pack("<QBBQQ", 4, 1, 0, 2, 1))
     send(8, request(4, 2, 2, "{frame_fetch}"))
     wait_for_end(2)
     # A worker of the top-level document, from its script's response, which fetches.
@@ -100,7 +100,7 @@ _FAKE_PAGE = textwrap.dedent(
     wait_for_end(4)
     # A frame's initial about:blank, of the top-level document's origin, whose CookieStore listens beside the
     # top-level document's. Each hears of a change, until the frame goes.
-    send(70, struct.pack("<QBQ", 6, 0, 2))
+    send(70, struct.pack("<QBBQ", 6, 0, 0, 2))
     send(21, struct.pack("<QB", 2, 1))
     send(21, struct.pack("<QB", 6, 1))
     changes = []
@@ -134,10 +134,10 @@ _FAKE_PAGE_HELPERS = _FAKE_PAGE[: _FAKE_PAGE.index('send(1, struct.pack("<I", {v
 _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
     send(1, struct.pack("<I", {version}))
-    send(70, struct.pack("<QBQ", 1, 0, 0))
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
-    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
-    send(70, struct.pack("<QBQ", 3, 0, 2))
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(70, struct.pack("<QBBQ", 3, 0, 0, 2))
     send(71, struct.pack("<Q", 3) + b"{other}")
     while channel.recv(65536):
         pass
@@ -149,19 +149,19 @@ _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
 _FAKE_PAGE_OF_A_SANDBOX = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
     send(1, struct.pack("<I", {version}))
-    send(70, struct.pack("<QBQ", 1, 0, 0))
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
-    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
     send(12, struct.pack("<Q", 2))
     while True:
         message_type, payload = receive()
         if message_type == 4:
             call = struct.unpack_from("<Q", payload)[0]
             break
-    send(70, struct.pack("<QBQ", 3, 0x80, 2))
+    send(70, struct.pack("<QBBQ", 3, 0, 1, 2))
     send(8, request(2, 1, 11, "{frame}", target=3))
     wait_for_end(1)
-    send(70, struct.pack("<QBQQ", 4, 0x81, 2, 1))
+    send(70, struct.pack("<QBBQQ", 4, 1, 1, 2, 1))
     send(8, request(4, 2, 2, "{fetch}"))
     wait_for_end(2)
     answers = []

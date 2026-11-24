@@ -440,9 +440,11 @@ v8::Local<v8::Promise> Document::HasStorageAccess() const {
   }
   // Blink answers false for an opaque origin and outside a secure context, and
   // otherwise whether the document's cookies are enabled, which they are in a
-  // new profile.
-  const bool access =
-      window_ && !GetOrigin().opaque() && window_->IsSecureContextForBindings();
+  // new profile. The top-level about:blank, whose scripts are those of the
+  // standalone program, has a page's.
+  const bool access = window_ &&
+                      !(GetOrigin().opaque() && window_->IsInFrame()) &&
+                      window_->IsSecureContextForBindings();
   ResolveFromTask(isolate, resolver, v8::Boolean::New(isolate, access));
   return resolver->GetPromise();
 }

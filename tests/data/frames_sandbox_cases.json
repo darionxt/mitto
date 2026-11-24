@@ -273,7 +273,7 @@
     "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
     "channel": "made",
     "blob": "blob:null/",
-    "worker": "SecurityError: Failed to construct 'Worker': Script at 'ORIGIN/worker.js' cannot be accessed from origin 'null'.",
+    "worker": "SecurityError: Failed to construct 'Worker': Script at 'ORIGIN/worker.js?worker&srcdoc%20scripts' cannot be accessed from origin 'null'.",
     "fetch": "TypeError: Failed to fetch",
     "cors": "cors",
     "noCors": "opaque",
@@ -310,7 +310,7 @@
     "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
     "channel": "made",
     "blob": "blob:null/",
-    "worker": "SecurityError: Failed to construct 'Worker': Script at 'ORIGIN/worker.js' cannot be accessed from origin 'null'.",
+    "worker": "SecurityError: Failed to construct 'Worker': Script at 'ORIGIN/worker.js?worker&same%20scripts' cannot be accessed from origin 'null'.",
     "fetch": "TypeError: Failed to fetch",
     "cors": "cors",
     "noCors": "opaque",
@@ -347,7 +347,7 @@
     "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
     "channel": "made",
     "blob": "blob:null/",
-    "worker": "SecurityError: Failed to construct 'Worker': Script at 'OTHER/worker.js' cannot be accessed from origin 'null'.",
+    "worker": "SecurityError: Failed to construct 'Worker': Script at 'OTHER/worker.js?worker&other%20scripts' cannot be accessed from origin 'null'.",
     "fetch": "TypeError: Failed to fetch",
     "cors": "cors",
     "noCors": "opaque",
@@ -718,6 +718,24 @@
      ]
     ]
    },
+   "a module of a data: URL scripts": [
+    [
+     [
+      "module",
+      "null"
+     ],
+     "null"
+    ]
+   ],
+   "a module of a data: URL none": [
+    [
+     [
+      "module",
+      "null"
+     ],
+     "null"
+    ]
+   ],
    "/closed in ''": "loaded",
    "data:text/html;base64,% in ''": "loaded",
    "http://127.0.0.1:1/ in ''": "loaded",
@@ -840,483 +858,768 @@
     "the page's handler",
     "the page's listener"
    ],
+   "refresh": {
+    "/refresh origin": "ORIGIN/refresh",
+    "/refresh-header origin": "ORIGIN/empty?refreshed",
+    "/refresh both": "ORIGIN/empty?refreshed",
+    "/refresh-header both": "ORIGIN/empty?refreshed"
+   },
    "parsed": 0
   }
  },
  "requests": {
-  "/worker.js": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "worker",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "fetch": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "cors": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "no-cors": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same-origin": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "image": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "image",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "script": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "crossorigin": {
-   "cookie": "top=1; set=1",
-   "origin": "ORIGIN",
-   "referer": "PAGE",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "module": {
-   "cookie": "top=1; set=1",
-   "origin": "ORIGIN",
-   "referer": "PAGE",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: /child": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "iframe",
-   "sec-fetch-mode": "navigate",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: /worker.js": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "worker",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: fetch": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: cors": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: no-cors": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: same-origin": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: image": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "image",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: script": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: crossorigin": {
-   "cookie": "top=1; set=1",
-   "origin": "ORIGIN",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same none: module": {
-   "cookie": "top=1; set=1",
-   "origin": "ORIGIN",
-   "referer": "ORIGIN/child?key=same%20none",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "other none: /child": {
-   "referer": "ORIGIN/",
-   "sec-fetch-dest": "iframe",
-   "sec-fetch-mode": "navigate",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "other none: /worker.js": {
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "worker",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "other none: fetch": {
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "other none: cors": {
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin",
-   "sec-fetch-storage-access": "active"
-  },
-  "other none: no-cors": {
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin",
-   "sec-fetch-storage-access": "active"
-  },
-  "other none: same-origin": {
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "other none: image": {
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "image",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin",
-   "sec-fetch-storage-access": "active"
-  },
-  "other none: script": {
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin",
-   "sec-fetch-storage-access": "active"
-  },
-  "other none: crossorigin": {
-   "origin": "OTHER",
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "other none: module": {
-   "origin": "OTHER",
-   "referer": "OTHER/child?key=other%20none",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same scripts: /child": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "iframe",
-   "sec-fetch-mode": "navigate",
-   "sec-fetch-site": "same-origin"
-  },
-  "same scripts: fetch": {
-   "origin": "null",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "cross-site"
-  },
-  "same scripts: cors": {
-   "origin": "null",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "same scripts: no-cors": {
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "same scripts: image": {
-   "sec-fetch-dest": "image",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "same scripts: script": {
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "same scripts: crossorigin": {
-   "origin": "null",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "cross-site"
-  },
-  "same scripts: module": {
-   "origin": "null",
-   "referer": "ORIGIN/child?key=same%20scripts",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "cross-site"
-  },
-  "other scripts: /child": {
-   "referer": "ORIGIN/",
-   "sec-fetch-dest": "iframe",
-   "sec-fetch-mode": "navigate",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "other scripts: fetch": {
-   "origin": "null",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "cross-site"
-  },
-  "other scripts: cors": {
-   "origin": "null",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "other scripts: no-cors": {
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "other scripts: image": {
-   "sec-fetch-dest": "image",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "other scripts: script": {
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "other scripts: crossorigin": {
-   "origin": "null",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "cross-site"
-  },
-  "other scripts: module": {
-   "origin": "null",
-   "referer": "OTHER/child?key=other%20scripts",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "cross-site"
-  },
-  "other scripts: /worker.js": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "worker",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "other scripts: same-origin": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: /child": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "iframe",
-   "sec-fetch-mode": "navigate",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: /worker.js": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "worker",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: fetch": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: cors": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: no-cors": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: same-origin": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: image": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "image",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: script": {
-   "cookie": "top=1; set=1",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: crossorigin": {
-   "cookie": "top=1; set=1",
-   "origin": "ORIGIN",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "same both: module": {
-   "cookie": "top=1; set=1",
-   "origin": "ORIGIN",
-   "referer": "ORIGIN/child?key=same%20both",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "other both: /child": {
-   "referer": "ORIGIN/",
-   "sec-fetch-dest": "iframe",
-   "sec-fetch-mode": "navigate",
-   "sec-fetch-site": "cross-site",
-   "sec-fetch-storage-access": "active"
-  },
-  "other both: /worker.js": {
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "worker",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "other both: fetch": {
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "other both: cors": {
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin",
-   "sec-fetch-storage-access": "active"
-  },
-  "other both: no-cors": {
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin",
-   "sec-fetch-storage-access": "active"
-  },
-  "other both: same-origin": {
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "empty",
-   "sec-fetch-mode": "same-origin",
-   "sec-fetch-site": "same-origin"
-  },
-  "other both: image": {
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "image",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin",
-   "sec-fetch-storage-access": "active"
-  },
-  "other both: script": {
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin",
-   "sec-fetch-storage-access": "active"
-  },
-  "other both: crossorigin": {
-   "origin": "OTHER",
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "other both: module": {
-   "origin": "OTHER",
-   "referer": "OTHER/child?key=other%20both",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "other both: noscript": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "image",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  },
-  "other both: /ran.js": {
-   "cookie": "top=1; set=1",
-   "referer": "PAGE",
-   "sec-fetch-dest": "script",
-   "sec-fetch-mode": "no-cors",
-   "sec-fetch-site": "same-origin"
-  }
+  "/worker.js?worker&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?no-cors&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?same-origin&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?script&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?crossorigin&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/child?key=same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/worker.js?worker&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?no-cors&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?same-origin&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?script&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?crossorigin&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/child?key=other%20none": [
+   {
+    "referer": "ORIGIN/",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/worker.js?worker&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?same-origin&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&other%20none": [
+   {
+    "origin": "OTHER",
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&other%20none": [
+   {
+    "origin": "OTHER",
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&srcdoc%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?cors&srcdoc%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&srcdoc%20scripts": [
+   {
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen.svg?image&srcdoc%20scripts": [
+   {
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&srcdoc%20scripts": [
+   {
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&srcdoc%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?module&srcdoc%20scripts": [
+   {
+    "origin": "null",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/child?key=same%20scripts": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&same%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?cors&same%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&same%20scripts": [
+   {
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen.svg?image&same%20scripts": [
+   {
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&same%20scripts": [
+   {
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&same%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?module&same%20scripts": [
+   {
+    "origin": "null",
+    "referer": "ORIGIN/child?key=same%20scripts",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/child?key=other%20scripts": [
+   {
+    "referer": "ORIGIN/",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?fetch&other%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?cors&other%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&other%20scripts": [
+   {
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen.svg?image&other%20scripts": [
+   {
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&other%20scripts": [
+   {
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&other%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?module&other%20scripts": [
+   {
+    "origin": "null",
+    "referer": "OTHER/child?key=other%20scripts",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/worker.js?worker&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?no-cors&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?same-origin&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?script&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?crossorigin&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/child?key=same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/worker.js?worker&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?no-cors&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?same-origin&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?script&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?crossorigin&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/child?key=other%20both": [
+   {
+    "referer": "ORIGIN/",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/worker.js?worker&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?same-origin&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&other%20both": [
+   {
+    "origin": "OTHER",
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&other%20both": [
+   {
+    "origin": "OTHER",
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?data%20scripts": [
+   {
+    "origin": "null",
+    "referer": "ORIGIN/app/",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?data%20none": [
+   {
+    "origin": "null",
+    "referer": "ORIGIN/app/",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/seen.svg?noscript": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/ran.js": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ]
  },
  "console": [
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
@@ -1351,6 +1654,11 @@
   "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
   "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
   "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
-  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set."
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Refused to execute the redirect specified via '<meta http-equiv='refresh' content='...'>'. The document is sandboxed, and the 'allow-scripts' keyword is not set.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing."
  ]
 }

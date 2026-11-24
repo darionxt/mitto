@@ -14,6 +14,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/window.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
@@ -42,9 +43,12 @@ v8::Local<v8::Promise> ResolvedFromTask(v8::Isolate* isolate,
   return resolver->GetPromise();
 }
 
-// Each of its operations is for a context whose origin is not opaque.
+// Each of its operations is for a context whose origin is not opaque, but for
+// the top-level about:blank, whose scripts are those of the standalone program.
 bool ThrowIfOpaque(bindings::ExceptionState& exception_state) {
-  if (!ExecutionContext::Current().GetSecurityOrigin().opaque()) {
+  ExecutionContext& context = ExecutionContext::Current();
+  if (!context.GetSecurityOrigin().opaque() ||
+      (context.IsWindow() && !static_cast<Window&>(context).IsInFrame())) {
     return false;
   }
   exception_state.ThrowTypeError(

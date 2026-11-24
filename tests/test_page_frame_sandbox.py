@@ -89,7 +89,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             body = "<script>postMessage.call(top, ['inner', location.protocol, isSecureContext], '*')</script>"
         elif path.startswith("/times"):
             body = _TIMES
-        elif path == "/worker.js":
+        elif path == "/refresh":
+            body = "<!doctype html><meta http-equiv=refresh content='0; url=/empty?refreshed'>"
+        elif path == "/refresh-header":
+            more = {"Refresh": "0; url=/empty?refreshed"}
+        elif path.startswith("/worker.js"):
             kind, body = "text/javascript", "postMessage(1)"
         elif path == "/ran.js":
             kind, body = "text/javascript", "parent.ran.push('external')"
@@ -146,13 +150,10 @@ def test_what_a_sandbox_withholds_is_chrome_s(server: _Server) -> None:
         assert record[section] == expected, section
     assert console == set(_AS_CHROME["console"])
 
-    # What the server got from each document, by the key of the /child document that came before it.
-    requests: dict[str, dict[str, str]] = {}
-    document = ""
+    # What the server got, by the URL, which names the document that asked.
+    requests: dict[str, list[dict[str, str]]] = {}
     for path, headers in server.seen:
-        if path.startswith("/child?"):
-            document = path.partition("key=")[2].replace("%20", " ")
-        what = path.partition("?")[0] if path.startswith(("/child", "/worker", "/ran")) else path.partition("?")[2]
-        key = f"{document}: {what}" if document else what
-        requests.setdefault(key, {name: _plain(value, port) for name, value in sorted(headers.items())})
+        sent = {name: _plain(value, port) for name, value in sorted(headers.items())}
+        if sent not in requests.setdefault(path, []):
+            requests[path].append(sent)
     assert requests == _AS_CHROME["requests"]

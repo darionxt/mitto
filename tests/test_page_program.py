@@ -925,7 +925,7 @@ def test_a_page_tells_its_session_of_each_document_before_anything_the_document_
 
     # about:blank's first, as the Page's initial document, then the navigation's, each before its own messages.
     assert session.receive()[0] == _CREDIT
-    assert session.documents == [struct.pack("<QBQ", 1, 0, 0), struct.pack("<QBQQ", 2, 1, 0, 0)]
+    assert session.documents == [struct.pack("<QBBQ", 1, 0, 0, 0), struct.pack("<QBBQQ", 2, 1, 0, 0, 0)]
     assert session.receive() == (_REQUEST, _request(1, _SCRIPT_KIND, "http://www.example.test/app.js"))
     assert session.close() == 0
 
@@ -2060,7 +2060,7 @@ def test_a_document_starts_a_navigation_that_its_session_makes_and_whose_respons
     _respond(session, 1, "http://www.example.test/next", "text/html")
     _body(session, 1, document)
     assert session.receive() == (_CREDIT, struct.pack("<QI", 1, len(document)))
-    assert session.documents[-1] == struct.pack("<QBQQ", 3, 1, 0, 1)
+    assert session.documents[-1] == struct.pack("<QBBQQ", 3, 1, 0, 0, 1)
     _end(session, 1)
     assert session.receive() == (_LOADED, struct.pack("<Q", 3))
     assert session.evaluate("[document.URL, document.title]", call=2) == (
@@ -2089,7 +2089,7 @@ def test_a_navigation_that_ends_with_no_response_keeps_the_document(session: _Se
     assert session.evaluated() == (1, False, '"/nothing"')
     session.send(_RESPONSE_ENDED, _ended(1, _ERR_ABORTED))
     assert session.evaluate("[window.marker, document.URL]", call=2) == (False, f'["kept","{_DOCUMENT_URL}"]')
-    assert session.documents == [struct.pack("<QBQ", 1, 0, 0), struct.pack("<QBQQ", 2, 1, 0, 0)]
+    assert session.documents == [struct.pack("<QBBQ", 1, 0, 0, 0), struct.pack("<QBBQQ", 2, 1, 0, 0, 0)]
     assert session.close() == 0
 
 

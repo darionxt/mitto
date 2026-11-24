@@ -1548,11 +1548,12 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   GURL referrer;
   if (!asked.referrer.empty()) {
     referrer = GURL(asked.referrer);
-    // A sandboxed document's origin is made for the one that its URL has.
-    const bool own = document_origin.IsSameOriginWith(referrer) ||
-                     (context.sandboxed_origin &&
-                      context.origin.GetTupleOrPrecursorTupleIfOpaque() ==
-                          url::SchemeHostPort(referrer));
+    // A document's opaque origin, which a sandbox or a data: URL gives it, is
+    // made for one whose URLs it may name.
+    const bool own = context.is_worker
+                         ? document_origin.IsSameOriginWith(referrer)
+                         : document_origin.GetTupleOrPrecursorTupleIfOpaque() ==
+                               url::SchemeHostPort(referrer);
     if (!referrer.is_valid() ||
         (!own && !context.response_urls.contains(referrer))) {
       Refuse(
@@ -2970,11 +2971,11 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         // opaque.
         context.url = GURL(kErrorPageUrl);
       } else {
-        // So is a data: URL's, whose requests send no Referer and no cookies.
-        // It takes the policy container, with the embedder policy, of the
-        // document that started its navigation, as it was when the navigation
-        // started, as a local URL's document does, and keeps its URL, which a
-        // navigation to a fragment then changes.
+        // So is a data: URL's, made for its initiator's, whose requests send no
+        // Referer and no cookies. It takes the policy container, with the
+        // embedder policy, of the document that started its navigation, as it
+        // was when the navigation started, as a local URL's document does, and
+        // keeps its URL, which a navigation to a fragment then changes.
         const auto started = about_blank_navigations_.find(committed.replaces);
         const GURL url(committed.url);
         if (started == about_blank_navigations_.end() ||
@@ -2984,6 +2985,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           Refuse("a data: URL's document whose navigation did not start");
           return;
         }
+        context.origin = url::Origin::Resolve(url, started->second.origin);
         context.coep = started->second.coep;
         about_blank_navigations_.erase(started);
         context.url = url;
