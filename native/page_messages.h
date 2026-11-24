@@ -33,7 +33,11 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 29;
+inline constexpr uint32_t kPageProtocolVersion = 30;
+
+// What the padding of an opaque response is below, as Chrome's kPaddingRange
+// (response_padding.h).
+inline constexpr int64_t kResponsePaddingRange = 14431 * 1024;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -840,6 +844,9 @@ struct PageResponseStarted {
   int64_t first_request_start = 0;
   int64_t last_redirect_end = 0;
   int64_t critical_ch_restart = 0;
+  // an opaque response's padding, which the Cache API counts beside its size
+  // (response_padding.h), 0 for any other.
+  int64_t padding = 0;
 };
 
 // Bytes of a response's body.

@@ -30,6 +30,7 @@
 #include "mitto/page_indexed_db.h"
 #include "mitto/preconnect_manager.h"
 #include "mitto/ready_requests.h"
+#include "mitto/response_padding.h"
 #include "mitto/sec_header_helpers.h"
 #include "mitto/storage/storage_area_impl.h"
 #include "mitto/storage/storage_context.h"
@@ -1863,6 +1864,17 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
     response.timing = PageLoadTimingOf(event.load_timing);
     response.timing_allow_passed = request.timing_allow_passed();
     response.opaque = request.opaque();
+    if (response.opaque) {
+      // FetchResponseData::InitFromResourceResponse(): one from the HTTP cache
+      // came before its request started.
+      const bool was_cached =
+          !event.load_timing.request_start_time.is_null() &&
+          event.response_time < event.load_timing.request_start_time;
+      response.padding = was_cached ? ComputeStableResponsePadding(
+                                          request.document_origin(), event.url,
+                                          event.response_time, event.method)
+                                    : ComputeRandomResponsePadding();
+    }
     response.validated = event.validated;
     response.received_bytes = event.received_bytes;
     response.redirect_count = request.redirect_count();

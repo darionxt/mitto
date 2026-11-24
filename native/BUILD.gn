@@ -176,6 +176,8 @@ shared_library("mitto_core") {
     "request_client.h",
     "request_options.cc",
     "request_options.h",
+    "response_padding.cc",
+    "response_padding.h",
     "sec_header_helpers.cc",
     "sec_header_helpers.h",
     "session_settings.cc",

@@ -122,6 +122,7 @@ class PageFetcher::Request final : public PageRequests::Client,
     head.cors = response.cors;
     head.opaque = response.opaque;
     head.headers = response.headers;
+    head.padding = response.padding;
     client_->OnResponseStarted(head);
   }
   void OnResponseBody(std::string bytes) override {

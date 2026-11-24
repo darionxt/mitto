@@ -176,16 +176,22 @@ Response* Response::CreateFetched(ResponseType type,
                                   BodyStreamBuffer* body) {
   Response* const response = bindings::MakeGarbageCollected<Response>();
   response->type_ = type;
+  if (type == ResponseType::kOpaque) {
+    // Blink's CreateOpaqueFilteredResponse(): the response goes behind an
+    // empty view.
+    response->internal_response_ =
+        CreateFetched(ResponseType::kDefault, status, std::move(status_text),
+                      std::move(url), redirected, headers, body);
+    response->status_ = 0;
+    response->headers_ = mitto::Headers::Create(Headers::Guard::kImmutable);
+    return response;
+  }
   response->status_ = status;
   response->status_text_ = std::move(status_text);
   response->url_ = std::move(url);
   response->redirected_ = redirected;
   response->headers_ = headers;
-  if (type == ResponseType::kOpaque) {
-    response->internal_body_buffer_ = body;
-  } else {
-    response->body_buffer_ = body;
-  }
+  response->body_buffer_ = body;
   return response;
 }
 
@@ -231,35 +237,47 @@ Response* Response::Clone(bindings::ExceptionState& exception_state) {
     exception_state.ThrowTypeError("Response body is already used");
     return nullptr;
   }
-  // FetchResponseData::Clone(): the body goes to both through a tee, and so
-  // does an opaque response's internal body, which each of them keeps loading.
+  // FetchResponseData::Clone(): the body goes to both through a tee, and an
+  // opaque response's internal response is cloned with it.
   Response* const response = bindings::MakeGarbageCollected<Response>();
   response->type_ = type_;
   response->status_ = status_;
   response->status_text_ = status_text_;
   response->url_ = url_;
   response->redirected_ = redirected_;
+  response->padding_ = padding_;
   response->headers_ = headers_->Clone();
-  for (const auto member :
-       {&Response::body_buffer_, &Response::internal_body_buffer_}) {
-    BodyStreamBuffer* const body = (this->*member).Get();
-    if (!body) {
-      continue;
-    }
-    BodyStreamBuffer* branch1 = nullptr;
-    BodyStreamBuffer* branch2 = nullptr;
-    body->Tee(&branch1, &branch2, exception_state);
+  if (internal_response_) {
+    response->internal_response_ = internal_response_->Clone(exception_state);
     if (exception_state.HadException()) {
       return nullptr;
     }
-    this->*member = branch1;
-    response->*member = branch2;
+  }
+  if (body_buffer_) {
+    BodyStreamBuffer* branch1 = nullptr;
+    BodyStreamBuffer* branch2 = nullptr;
+    body_buffer_->Tee(&branch1, &branch2, exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+    body_buffer_ = branch1;
+    response->body_buffer_ = branch2;
   }
   return response;
 }
 
 std::string Response::ContentType() const {
   return headers_->GetValue("content-type").value_or("");
+}
+
+bool Response::IsBodyUsed() const {
+  const BodyStreamBuffer* const body_buffer = InternalBodyBuffer();
+  return body_buffer && body_buffer->IsStreamDisturbed();
+}
+
+BodyStreamBuffer* Response::InternalBodyBuffer() const {
+  return internal_response_ ? internal_response_->body_buffer_.Get()
+                            : body_buffer_.Get();
 }
 
 BodyStreamBuffer* Response::BodyBuffer() const {
@@ -274,7 +292,7 @@ void Response::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(headers_);
   visitor->Trace(body_buffer_);
-  visitor->Trace(internal_body_buffer_);
+  visitor->Trace(internal_response_);
 }
 
 std::u16string Response::Type() const {
@@ -295,7 +313,8 @@ std::u16string Response::Type() const {
 void Response::ReadAll(base::OnceCallback<void(std::optional<std::string> body,
                                                bool aborted)> done) {
   CHECK(!IsBodyLocked() && !IsBodyUsed());
-  if (!body_buffer_) {
+  BodyStreamBuffer* const body_buffer = InternalBodyBuffer();
+  if (!body_buffer) {
     std::move(done).Run(std::string(), /*aborted=*/false);
     return;
   }
@@ -304,8 +323,8 @@ void Response::ReadAll(base::OnceCallback<void(std::optional<std::string> body,
       bindings::MakeGarbageCollected<ReadAllClient>(std::move(done));
   bindings::ExceptionState exception_state(isolate);
   const v8::TryCatch try_catch(isolate);
-  body_buffer_->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(),
-                             client, exception_state);
+  body_buffer->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(),
+                            client, exception_state);
   if (exception_state.HadException()) {
     client->DidFetchDataLoadFailed();
   }

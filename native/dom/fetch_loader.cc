@@ -206,11 +206,13 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
       BodyStreamBuffer::Create(isolate_, body_consumer, signal_.Get());
   if (head.opaque) {
     // Upstream: third_party/blink/renderer/core/fetch/fetch_response_data.cc
-    // An opaque filtered response, whose body no script reads.
-    Headers* const headers = Headers::Create(Headers::Guard::kImmutable);
+    // An opaque filtered response, whose body no script reads, over the
+    // response with every line that the library sends.
+    all->set_guard(Headers::Guard::kImmutable);
     Response* const response = Response::CreateFetched(
-        Response::ResponseType::kOpaque, /*status=*/0, /*status_text=*/"",
-        /*url=*/u"", /*redirected=*/false, headers, body);
+        Response::ResponseType::kOpaque, head.status, head.status_text,
+        base::UTF8ToUTF16(head.url), head.redirected, all, body);
+    response->SetPadding(head.padding);
     std::ignore = resolver_.Get(isolate_)->Resolve(
         context, bindings::ToV8(isolate_, response));
     resolver_.Reset();
