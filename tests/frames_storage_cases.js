@@ -97,6 +97,8 @@
     });
   }
   await section('locks', async () => {
+    // A navigator's locks are its window's, even where a document of another storage key was the first to read them.
+    record.borrowed = await answerOf('other_same', {act: 'borrow'});
     await answerOf('same', {act: 'lock'});
     await until(async () => (await act({act: 'locks'})).length);
     return all({act: 'locks'});

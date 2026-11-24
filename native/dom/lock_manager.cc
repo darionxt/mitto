@@ -45,6 +45,18 @@ void Post(base::OnceClosure task) {
                                                               std::move(task));
 }
 
+// The context of a window or a worker, whose wrapper is its global proxy.
+v8::Local<v8::Context> ContextOf(v8::Isolate* isolate,
+                                 ExecutionContext& context) {
+  v8::Local<v8::Context> of_proxy;
+  return context.ErrorEventTarget()
+                 ->ToV8(isolate)
+                 ->GetCreationContext(isolate)
+                 .ToLocal(&of_proxy)
+             ? of_proxy
+             : isolate->GetCurrentContext();
+}
+
 bool ContextIsAlive(v8::Isolate* isolate, v8::Local<v8::Context> context) {
   const ExecutionContext* const execution_context =
       ExecutionContext::From(isolate, context);
@@ -260,7 +272,7 @@ LockManager::LockManager(ExecutionContext& context)
       client_id_(base::UnguessableToken::Create().ToString()),
       connection_(base::MakeRefCounted<Connection>(
           v8::Isolate::GetCurrent(),
-          v8::Isolate::GetCurrent()->GetCurrentContext(),
+          ContextOf(v8::Isolate::GetCurrent(), context),
           this,
           group_)) {
   if (context.HasContext()) {

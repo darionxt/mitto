@@ -450,7 +450,7 @@ CustomElementRegistry* Window::CustomElements() {
 
 mitto::Navigator* Window::Navigator() {
   if (!navigator_) {
-    navigator_ = mitto::Navigator::Create(Start(), Connection());
+    navigator_ = mitto::Navigator::Create(Start(), Connection(), this);
   }
   return navigator_.Get();
 }

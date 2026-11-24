@@ -627,6 +627,7 @@
     ]
    ]
   },
+  "borrowed": "function",
   "locks": {
    "page": [
     "frames"

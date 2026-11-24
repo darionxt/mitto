@@ -26,6 +26,8 @@
     get: ({kind, key}) => text(() => window[kind].getItem(key)),
     heard: () => { const all = [heard, events]; heard = []; events = []; return all; },
     count: () => [heard.length, events.length],
+    // The getter of this document's realm, on the top-level document's navigator.
+    borrow: () => text(() => typeof Object.getOwnPropertyDescriptor(Navigator.prototype, 'locks').get.call(top.navigator).query),
     lock: () => text(() => { navigator.locks.request('frames', () => new Promise(() => {})); return 'asked'; }),
     locks: async () => {
       try {

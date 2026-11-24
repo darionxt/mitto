@@ -2,6 +2,7 @@
 
 #include <iterator>
 #include <string_view>
+#include <utility>
 
 #include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
@@ -62,9 +63,12 @@ Storage* WindowStorage(Window& window,
   }
   // Documents of one origin in two partitions, as a top-level document's and
   // a frame's of the same origin under another site, have an area each.
-  slot = Storage::Create(
-      window, StorageController::Get().GetCachedArea(kind, window.StorageKey(),
-                                                     window.DocumentId()));
+  scoped_refptr<CachedStorageArea> area =
+      StorageController::Get().GetCachedArea(kind, window.StorageKey(),
+                                             window.DocumentId());
+  if (area) {
+    slot = Storage::Create(window, std::move(area));
+  }
   return slot.Get();
 }
 
@@ -103,12 +107,20 @@ scoped_refptr<CachedStorageArea> StorageController::GetCachedArea(
     const std::string& storage_key,
     uint64_t document) {
   ClearAreasIfNeeded();
-  scoped_refptr<CachedStorageArea>& area = areas_[{kind, storage_key}];
-  if (!area) {
-    area = base::MakeRefCounted<CachedStorageArea>(kind, document,
-                                                   *StorageBackend::Get());
+  const std::pair<PageStorageKind, std::string> key(kind, storage_key);
+  const auto found = areas_.find(key);
+  if (found != areas_.end()) {
+    return found->second;
   }
-  return area;
+  // Only the windows of frames that a script holds on to once they have gone
+  // can take up the areas that the Session lets a Page bind.
+  if (areas_.size() >= kMaxPageStorageAreas) {
+    return nullptr;
+  }
+  return areas_
+      .emplace(key, base::MakeRefCounted<CachedStorageArea>(
+                        kind, document, *StorageBackend::Get()))
+      .first->second;
 }
 
 void StorageController::ClearAreasIfNeeded() {

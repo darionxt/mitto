@@ -288,10 +288,10 @@ enum class PageMessage : uint32_t {
 inline constexpr size_t kPerStorageAreaQuota = 10 * 1024 * 1024;
 
 // How many storage areas a Page may have bound at once. A document binds at
-// most one of localStorage and one of sessionStorage, and a Page lets go of
-// those that no document uses once it has half as many bound, so a Page that
-// binds more is refused.
-inline constexpr size_t kMaxPageStorageAreas = 1000;
+// most one of localStorage and one of sessionStorage, and a Page, which has at
+// most 1,001 documents, lets go of those that no document uses once it has half
+// as many bound, so a Page that binds more is refused.
+inline constexpr size_t kMaxPageStorageAreas = 4096;
 
 // The most that the payload of a storage event, joined from its parts, holds:
 // more than the largest that a change to an area of the quota makes, with its

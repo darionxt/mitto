@@ -15,7 +15,7 @@ WorkerNavigator* WorkerNavigator::Create(const PageStart& start,
 
 WorkerNavigator::WorkerNavigator(const PageStart& start,
                                  const PageConnection& connection)
-    : navigator_(Navigator::Create(start, connection)) {}
+    : navigator_(Navigator::Create(start, connection, nullptr)) {}
 
 WorkerNavigator::~WorkerNavigator() = default;
 

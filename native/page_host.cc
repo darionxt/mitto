@@ -2779,7 +2779,8 @@ void PageHost::DeliverBroadcast(const StorageKey& storage_key,
   // too large for a frame stays in the Page that posts it.
   if (!channel_ || ended_ || refused_by_library_ ||
       std::ranges::none_of(contexts_, [&](const auto& entry) {
-        return DocumentStorageKey(entry.first) == storage_key;
+        return entry.second.origin.IsSameOriginWith(storage_key.origin()) &&
+               DocumentStorageKey(entry.first) == storage_key;
       })) {
     return;
   }

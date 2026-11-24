@@ -40,7 +40,8 @@ def page_program(native_library: Any) -> None:
 
 @pytest.fixture
 def ports() -> Iterator[tuple[int, int]]:
-    """The ports of two servers on 127.0.0.1 of an empty page, the child script, and documents at /child that run it."""
+    """The ports of two servers on 127.0.0.1 of an empty page, the child script, documents at /child that run it, and one at
+    /listen with a listener of storage events."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -51,6 +52,8 @@ def ports() -> Iterator[tuple[int, int]]:
                 kind, body = "text/javascript", _CHILD
             elif self.path.startswith("/child"):
                 body = f"<!doctype html><body><script>{_CHILD}</script>"
+            elif self.path == "/listen":
+                body = "<!doctype html><script>addEventListener('storage', () => {})</script>"
             self.send_response(200)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(body)))
@@ -124,3 +127,24 @@ def test_what_the_frames_of_a_session_s_pages_share_is_chrome_s(ports: tuple[int
             page.close()
 
     assert record == _AS_CHROME["tabs"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_frames_of_many_origins_listen_to_storage_events(ports: tuple[int, int]) -> None:
+    # Each binds two storage areas of its own, which a Page of Chrome's 1000 frames has room for.
+    script = """
+      (async () => {
+        for (let index = 0; index < 600; index++) {
+          const element = document.createElement('iframe');
+          const loaded = new Promise((resolve) => { element.onload = resolve; });
+          element.src = `http://f${index}.localhost:${location.port}/listen`;
+          document.body.append(element);
+          if (index % 8 === 7) await loaded;
+        }
+        return frames.length;
+      })()
+    """
+    url = f"http://127.0.0.1:{ports[0]}/app/page"
+    with mitto.Session() as session, session._open_page(url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == 600
+        assert page.evaluate("localStorage.length", timeout=_TIMEOUT_SECONDS) == 0
