@@ -293,22 +293,17 @@ std::u16string Response::Type() const {
 }
 
 void Response::ReadAll(base::OnceCallback<void(std::optional<std::string> body,
-                                               bool aborted)> done) {
+                                               bool aborted)> done,
+                       bindings::ExceptionState& exception_state) {
   CHECK(!IsBodyLocked() && !IsBodyUsed());
   if (!body_buffer_) {
     std::move(done).Run(std::string(), /*aborted=*/false);
     return;
   }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  auto* const client =
-      bindings::MakeGarbageCollected<ReadAllClient>(std::move(done));
-  bindings::ExceptionState exception_state(isolate);
-  const v8::TryCatch try_catch(isolate);
-  body_buffer_->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(),
-                             client, exception_state);
-  if (exception_state.HadException()) {
-    client->DidFetchDataLoadFailed();
-  }
+  body_buffer_->StartLoading(
+      FetchDataLoader::CreateLoaderAsArrayBuffer(),
+      bindings::MakeGarbageCollected<ReadAllClient>(std::move(done)),
+      exception_state);
 }
 
 }  // namespace mitto

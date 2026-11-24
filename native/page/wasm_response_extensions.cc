@@ -13,6 +13,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_response.h"
 #include "mitto/dom/headers.h"
@@ -108,7 +109,12 @@ void StreamFromResponse(const v8::FunctionCallbackInfo<v8::Value>& info) {
   }
   const std::string url = base::UTF16ToUTF8(response->Url());
   streaming->SetUrl(url.data(), url.size());
-  response->ReadAll(base::BindOnce(&OnBody, std::move(streaming)));
+  // What reading throws, as for a body whose frame has gone, reaches nothing,
+  // and the compilation stays pending, as in Chrome.
+  bindings::ExceptionState exception_state(isolate);
+  const v8::TryCatch try_catch(isolate);
+  response->ReadAll(base::BindOnce(&OnBody, std::move(streaming)),
+                    exception_state);
 }
 
 }  // namespace

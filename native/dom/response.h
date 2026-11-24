@@ -100,9 +100,11 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
   // Uses the body, as a read by a script does, and calls `done` with all of it
   // once it has come, or with nullopt if it failed, and whether its signal
   // aborted it. A null body reads as empty. Its body must be neither locked
-  // nor used.
+  // nor used. A body that cannot be read, such as one whose frame has gone,
+  // throws, and `done` hears of nothing.
   void ReadAll(base::OnceCallback<void(std::optional<std::string> body,
-                                       bool aborted)> done);
+                                       bool aborted)> done,
+               bindings::ExceptionState& exception_state);
 
  private:
   // BodyMixin:

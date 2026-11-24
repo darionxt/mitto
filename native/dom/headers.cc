@@ -149,6 +149,7 @@ void Headers::Append(const std::string& name,
     return;
   }
   AppendLine(name, std::string(normalized));
+  RemovePrivilegedNoCorsLines();
 }
 
 void Headers::Remove(const std::string& name,
@@ -171,10 +172,13 @@ void Headers::Remove(const std::string& name,
   if (guard_ == Guard::kResponse && IsForbiddenResponseHeaderName(name)) {
     return;
   }
-  std::erase_if(list_, [&name](const auto& line) {
-    return base::EqualsCaseInsensitiveASCII(line.first, name);
-  });
+  if (!std::erase_if(list_, [&name](const auto& line) {
+        return base::EqualsCaseInsensitiveASCII(line.first, name);
+      })) {
+    return;
+  }
   DidChangeList();
+  RemovePrivilegedNoCorsLines();
 }
 
 std::optional<std::string> Headers::Get(
@@ -250,6 +254,16 @@ void Headers::Set(const std::string& name,
     list_.emplace_back(name, std::string(normalized));
   }
   DidChangeList();
+  RemovePrivilegedNoCorsLines();
+}
+
+void Headers::RemovePrivilegedNoCorsLines() {
+  if (guard_ != Guard::kRequestNoCors) {
+    return;
+  }
+  std::erase_if(list_, [](const auto& line) {
+    return IsPrivilegedNoCorsHeaderName(line.first);
+  });
 }
 
 bindings::PairIterationSource* Headers::CreateIterationSource() {

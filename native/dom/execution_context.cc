@@ -30,6 +30,7 @@
 #include "mitto/dom/request.h"
 #include "mitto/dom/resource.h"
 #include "mitto/dom/resource_fetcher.h"
+#include "mitto/dom/script_forbidden_scope.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/worker_global_scope.h"
 #include "v8/include/v8-context.h"
@@ -189,7 +190,9 @@ void ExecutionContext::SetTimers(DOMTimerCoordinator* timers) {
     return;
   }
   // The context goes, and with it the signals' timers and what else goes
-  // with it.
+  // with it, which run no script, as what Blink's NotifyContextDestroyed()
+  // tells runs none.
+  const ScriptForbiddenScope forbid_script;
   std::map<uint64_t, base::OnceClosure> signal_timers;
   signal_timers.swap(signal_timers_);
   for (auto& [id, cancel] : signal_timers) {

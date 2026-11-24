@@ -607,12 +607,23 @@ void Cache::OnResponse(uint64_t barrier,
     return;
   }
   // The body loads as a blob, from the tasks that bring it.
-  response->ReadAll(base::BindOnce(
-      [](cppgc::Persistent<Cache> self, uint64_t barrier, size_t index,
-         std::optional<std::string> body, bool aborted) {
-        self->CompletedResponse(barrier, index, std::move(body), aborted);
-      },
-      cppgc::Persistent<Cache>(this), barrier, index));
+  bindings::ExceptionState exception_state(isolate);
+  v8::TryCatch try_catch(isolate);
+  response->ReadAll(
+      base::BindOnce(
+          [](cppgc::Persistent<Cache> self, uint64_t barrier, size_t index,
+             std::optional<std::string> body, bool aborted) {
+            self->CompletedResponse(barrier, index, std::move(body), aborted);
+          },
+          cppgc::Persistent<Cache>(this), barrier, index),
+      exception_state);
+  if (!exception_state.HadException()) {
+    return;
+  }
+  // A body that cannot be read, such as one whose frame has gone.
+  const v8::Local<v8::Value> exception = try_catch.Exception();
+  try_catch.Reset();
+  FailBarrier(barrier, exception);
 }
 
 void Cache::CompletedResponse(uint64_t barrier,

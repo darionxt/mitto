@@ -604,6 +604,8 @@ source_set("dom") {
     "script_element_base.h",
     "script_fetch_options.cc",
     "script_fetch_options.h",
+    "script_forbidden_scope.cc",
+    "script_forbidden_scope.h",
     "script_loader.cc",
     "script_loader.h",
     "script_values.cc",

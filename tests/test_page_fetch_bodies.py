@@ -974,6 +974,61 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
         """,
         "null,true,about:client",
     ),
+    "a cache's put of a body whose frame goes while it is read": (
+        """
+        const cache = await caches.open("leaving"); const log = []; const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const remove = (f) => f.remove();
+        const navigate = (f) => new Promise((resolve) => { f.onload = resolve; f.srcdoc = "<p>"; });
+        const run = async (name, of, leave) => {
+            const f = document.createElement("iframe"); document.body.append(f); const w = f.contentWindow;
+            let controller; let cancelled = ""; const url = location.origin + "/" + name;
+            const source = { start(c) { controller = c; }, cancel() { cancelled = " cancelled"; } };
+            const put = cache.put(url, of(w, source)).then(() => "put", (e) => e.name);
+            controller.enqueue(new TextEncoder().encode("part")); await wait(30);
+            await leave(f); await wait(30);
+            let sent = "sent"; try { controller.enqueue(new TextEncoder().encode("more")); controller.close(); } catch (e) { sent = e.name; }
+            const settled = await Promise.race([put, wait(100).then(() => "pending")]);
+            log.push(name + " " + settled + cancelled + " " + sent + " " + (await cache.match(url) ? "stored" : "not stored"));
+        };
+        for (const [way, leave] of [["removed", remove], ["navigated", navigate]]) {
+            await run(way + "-theirs", (w, source) => new w.Response(new w.ReadableStream(source)), leave);
+            await run(way + "-mine", (w, source) => new w.Response(new ReadableStream(source)), leave);
+            await run(way + "-clone", (w, source) => new w.Response(new w.ReadableStream(source)).clone(), leave);
+        }
+        return log.join("; ");
+        """,
+        "removed-theirs pending sent not stored; removed-mine pending sent not stored; "
+        "removed-clone pending sent not stored; navigated-theirs pending sent not stored; "
+        "navigated-mine pending sent not stored; navigated-clone pending sent not stored",
+    ),
+    "a cache's put of a body whose frame has gone": (
+        """
+        const cache = await caches.open("gone"); const log = [];
+        for (const of of [(w) => new w.Response("x"), (w) => new w.Response(new w.ReadableStream()), (w) => new w.Response(null)]) {
+            const f = document.createElement("iframe"); document.body.append(f); const response = of(f.contentWindow);
+            f.remove();
+            log.push(await cache.put(location.origin + "/gone", response).then(() => "put", (e) => e.name + ": " + e.message));
+        }
+        return log.join("; ");
+        """,
+        "InvalidStateError: Failed to execute 'put' on 'Cache': Cannot load body from a frame or worker than has been "
+        "detached; InvalidStateError: Failed to execute 'put' on 'Cache': Cannot load body from a frame or worker than has "
+        "been detached; put",
+    ),
+    "the Range line of a copy of a cache's request": (
+        """
+        const cache = await caches.open("range");
+        await cache.put(new Request(location.origin + "/range", { headers: { Range: "bytes=0-1", Accept: "a/b" } }), new Response("x"));
+        const key = (await cache.keys())[0];
+        return [(h) => {}, (h) => h.set("accept", "c/d"), (h) => h.append("accept", "c/d"), (h) => h.delete("accept"),
+                (h) => h.delete("x-none"), (h) => h.set("accept", "x".repeat(200)), (h) => h.set("range", "bytes=1-2"),
+                (h) => h.delete("range"), (h) => h.delete("cookie")].map((change) => {
+            const request = new Request(key); change(request.headers); return [...request.headers].join();
+        }).join(" / ");
+        """,
+        "accept,a/b,range,bytes=0-1 / accept,c/d / accept,a/b, c/d /  / accept,a/b,range,bytes=0-1 / "
+        "accept,a/b,range,bytes=0-1 / accept,a/b,range,bytes=0-1 / accept,a/b / accept,a/b,range,bytes=0-1",
+    ),
     "the referrers of an initial about:blank frame's requests": (
         """
         const f = document.createElement("iframe"); document.body.append(f);

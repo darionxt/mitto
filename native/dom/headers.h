@@ -94,6 +94,11 @@ class Headers final : public bindings::ScriptWrappable {
  private:
   class IterationSource;
 
+  // Headers::RemovePrivilegedNoCorsRequestHeaders(): a change to the list of
+  // a request of mode no-cors takes its Range line, which a Request from a
+  // cache can have.
+  void RemovePrivilegedNoCorsLines();
+
   // Each change to the list, which tells an iterator to sort and combine
   // again.
   void DidChangeList() { ++changes_; }
