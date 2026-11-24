@@ -556,8 +556,7 @@ def test_a_frame_s_cookie_store_and_its_parent_s_each_hear_of_changes(page_url: 
 def test_a_page_s_own_members_do_not_reach_a_frame_of_another_origin(page_url: str) -> None:
     # A getter, a setter or a method of the page's window, called on the window of a frame of another origin, throws, as
     # in Chrome 157 but for the members that another origin may reach. Chrome lets it have the Location, whose members
-    # it then refuses, and send a message: Known Gaps, where the Location would refuse nothing and the message would name
-    # its target as its source.
+    # it then refuses: a Known Gap, where the Location would refuse nothing.
     script = """
       (async () => {
         const threw = (f) => { try { f(); return false; } catch (e) { return true; } };
@@ -577,12 +576,12 @@ def test_a_page_s_own_members_do_not_reach_a_frame_of_another_origin(page_url: s
           structuredClone: () => structuredClone.call(w, 1), stop: () => stop.call(w), open: () => open.call(w, 'about:blank', '_self'),
           addEventListener: () => addEventListener.call(w, 'x', () => 1), dispatchEvent: () => dispatchEvent.call(w, new Event('x')),
           getComputedStyle: () => getComputedStyle.call(w, document.body), property: () => w.document,
-          postMessage: () => postMessage.call(w, 1, '*'),
         };
         const reached = {
           window: () => get('window') === w, self: () => get('self') === w, frames: () => get('frames') === w,
           parent: () => get('parent') === window, top: () => get('top') === window, opener: () => get('opener') === null,
-          length: () => get('length') === 0, closed: () => get('closed') === false, blur: () => blur.call(w) === undefined,
+          length: () => get('length') === 0, closed: () => get('closed') === false,
+          postMessage: () => postMessage.call(w, 1, '*') === undefined, blur: () => blur.call(w) === undefined,
         };
         const notRefused = Object.keys(refused).filter((name) => !threw(refused[name]));
         const notReached = Object.keys(reached).filter((name) => threw(reached[name]) || !reached[name]());

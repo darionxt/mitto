@@ -1,8 +1,9 @@
 // The window's structuredClone() and postMessage(), as Blink's
-// UniversalGlobalScope and DOMWindow run them. A Page has one window, its
-// top-level one, so a message goes to the window that posts it, from a task of
-// its own, as LocalDOMWindow::SchedulePostMessage() posts it, and carries the
-// task state of the task that posted it.
+// UniversalGlobalScope and DOMWindow run them. A message goes to the window
+// that it is posted on from a task of that window's, as
+// LocalDOMWindow::SchedulePostMessage() posts it, and names the window that
+// posted it, the incumbent one, and that window's origin. One that a window
+// posts to itself carries the task state of the task that posted it.
 //
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc
 // Upstream: third_party/blink/renderer/core/frame/dom_window.cc
@@ -37,21 +38,21 @@
 namespace mitto {
 namespace {
 
-// Whom a message is for: any origin, the sender's own, or the origin that the
-// sender named.
+// Whom a message is for: any origin, or the one that the sender named, its own
+// for "/".
 struct TargetOrigin {
   bool any = false;
-  bool own = false;
   url::Origin origin;
 };
 
 // PostMessageHelper::GetTargetOrigin(), or nullopt after throwing.
 std::optional<TargetOrigin> GetTargetOrigin(
     const std::u16string& target_origin,
+    const Window& source,
     bindings::ExceptionState& exception_state) {
   TargetOrigin target;
   if (target_origin == u"/") {
-    target.own = true;
+    target.origin = source.GetSecurityOrigin();
     return target;
   }
   if (target_origin == u"*") {
@@ -95,35 +96,41 @@ bool CheckDelegatedCapability(const std::u16string& capability,
 void DispatchPostMessage(Window& window,
                          SerializedScriptValue data,
                          std::vector<MessagePortChannel> channels,
-                         const std::u16string& source_origin,
+                         Window* source,
+                         const url::Origin& source_origin,
                          const TargetOrigin& target,
                          UserActivation* user_activation,
                          SchedulerTaskContext* task_state) {
   const std::vector<cppgc::Persistent<MessagePort>> ports =
       MessagePort::EntanglePorts(&window, std::move(channels));
-  MessageEvent* const event = MessageEvent::CreateForMessage(
-      std::move(data), source_origin, &window, MessagePort::PortsOf(ports),
-      user_activation);
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   std::optional<SchedulerTaskScope> task_scope;
   if (task_state && !SchedulerTaskContext::Current(isolate)) {
     task_scope.emplace(isolate, task_state);
   }
-  if (!target.any && !target.own) {
-    const url::Origin recipient = url::Origin::Create(
-        GURL(base::UTF16ToUTF8(window.GetDocument().UrlForBinding())));
-    if (!target.origin.IsSameOriginWith(recipient)) {
-      window.AddConsoleMessage(
-          ConsoleLevel::kWarning,
-          base::StrCat({"Failed to execute 'postMessage' on 'DOMWindow': The "
-                        "target origin provided ('",
-                        target.origin.Serialize(),
-                        "') does not match the recipient window's origin ('",
-                        recipient.Serialize(), "')."}));
-      return;
-    }
+  const url::Origin recipient = window.GetSecurityOrigin();
+  if (!target.any && !target.origin.IsSameOriginWith(recipient)) {
+    window.AddConsoleMessage(
+        ConsoleLevel::kWarning,
+        base::StrCat({"Failed to execute 'postMessage' on 'DOMWindow': The "
+                      "target origin provided ('",
+                      target.origin.Serialize(),
+                      "') does not match the recipient window's origin ('",
+                      recipient.Serialize(), "')."}));
+    return;
   }
-  window.DispatchEvent(event);
+  const std::u16string origin = base::UTF8ToUTF16(source_origin.Serialize());
+  // A value locked to its agent cluster, a SharedArrayBuffer's or a
+  // WebAssembly module's, is an error in another, and a window's cluster is
+  // keyed by its origin, as Chrome keys it.
+  if (data.IsLockedToAgentCluster() &&
+      !source_origin.IsSameOriginWith(recipient)) {
+    window.DispatchEvent(MessageEvent::CreateError(origin, source));
+    return;
+  }
+  window.DispatchEvent(MessageEvent::CreateForMessage(
+      std::move(data), origin, source, MessagePort::PortsOf(ports),
+      user_activation));
 }
 
 // DOMWindow::DoPostMessage().
@@ -131,13 +138,14 @@ void DoPostMessage(Window& window,
                    SerializedScriptValue data,
                    const std::vector<cppgc::Persistent<MessagePort>>& ports,
                    const bindings::WindowPostMessageOptions& options,
+                   Window& source,
                    bindings::ExceptionState& exception_state) {
   if (!window.HasContext()) {
     return;
   }
   // Worked out at once, for its SyntaxError.
   std::optional<TargetOrigin> target =
-      GetTargetOrigin(options.target_origin, exception_state);
+      GetTargetOrigin(options.target_origin, source, exception_state);
   if (!target) {
     return;
   }
@@ -171,20 +179,23 @@ void DoPostMessage(Window& window,
       base::BindOnce(
           [](cppgc::WeakPersistent<Window> window, SerializedScriptValue data,
              std::vector<MessagePortChannel> channels,
-             std::u16string source_origin, TargetOrigin target,
+             cppgc::Persistent<Window> source, url::Origin source_origin,
+             TargetOrigin target,
              cppgc::Persistent<UserActivation> user_activation,
              cppgc::Persistent<SchedulerTaskContext> task_state) {
             if (window) {
               DispatchPostMessage(*window, std::move(data), std::move(channels),
-                                  source_origin, target, user_activation.Get(),
-                                  task_state.Get());
+                                  source.Get(), source_origin, target,
+                                  user_activation.Get(), task_state.Get());
             }
           },
           cppgc::WeakPersistent<Window>(&window), std::move(data),
-          *std::move(channels), window.Origin(), *std::move(target),
+          *std::move(channels), cppgc::Persistent<Window>(&source),
+          source.GetSecurityOrigin(), *std::move(target),
           cppgc::Persistent<UserActivation>(user_activation),
           cppgc::Persistent<SchedulerTaskContext>(
-              SchedulerTaskContext::Current(isolate))));
+              &source == &window ? SchedulerTaskContext::Current(isolate)
+                                 : nullptr)));
 }
 
 }  // namespace
@@ -234,8 +245,10 @@ void Window::PostMessage(v8::Local<v8::Value> message,
   if (!serialized) {
     return;
   }
+  // The incumbent window, whose script posts the message.
+  Window* const incumbent = Incumbent();
   DoPostMessage(*this, *std::move(serialized), transferables.message_ports,
-                options, exception_state);
+                options, incumbent ? *incumbent : *this, exception_state);
 }
 
 }  // namespace mitto

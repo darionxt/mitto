@@ -609,6 +609,16 @@ void Window::SetDocument(mitto::Document* document) {
   AddNamedItemProperties(*document_);
 }
 
+v8::MaybeLocal<v8::Context> Window::ContextOfGlobalProxy(
+    v8::Isolate* isolate) {
+  v8::Local<v8::Context> context;
+  if (!ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context) ||
+      From(isolate, context) != this) {
+    return v8::MaybeLocal<v8::Context>();
+  }
+  return context;
+}
+
 void Window::AssociateWithContext(v8::Isolate* isolate,
                                   v8::Local<v8::Context> context) {
   AssociateWithGlobalProxy(isolate, context->Global());

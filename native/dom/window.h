@@ -266,6 +266,10 @@ class Window final : public WindowProperties, public ExecutionContext {
   // LocalWindowProxy::SetupWindowPrototypeChain() does.
   void AssociateWithContext(v8::Isolate* isolate,
                             v8::Local<v8::Context> context);
+  // The context of the global proxy that is the window's wrapper, or empty
+  // once the frame's next window has it, so that nothing takes that window's
+  // context for this one's. A removed frame's window keeps it.
+  v8::MaybeLocal<v8::Context> ContextOfGlobalProxy(v8::Isolate* isolate);
   // The entry of the session history that the window's document is at, as
   // Blink's DocumentLoader holds its HistoryItem: what history.state and
   // scrollRestoration read. None for a window that no Page program loaded,

@@ -48,7 +48,8 @@ class MessageEvent final : public Event {
                                         std::vector<MessagePort*> ports,
                                         mitto::UserActivation* user_activation);
   // The messageerror event of a message that cannot be read where it came.
-  static MessageEvent* CreateError(std::optional<std::u16string> origin);
+  static MessageEvent* CreateError(std::optional<std::u16string> origin,
+                                   EventTarget* source = nullptr);
 
   MessageEvent(const std::u16string& type,
                const bindings::MessageEventInit& init);
@@ -67,7 +68,9 @@ class MessageEvent final : public Event {
   v8::Local<v8::Value> Data();
   std::u16string OriginForBindings() const { return origin_; }
   std::u16string LastEventId() const { return last_event_id_; }
-  EventTarget* Source() const { return source_.Get(); }
+  // Null for a window that its frame has left for another, whose WindowProxy
+  // is the other's. A removed frame's window stays the source, as in Chrome.
+  EventTarget* Source() const;
   v8::Local<v8::Value> Ports();
   mitto::UserActivation* UserActivation() const {
     return user_activation_.Get();

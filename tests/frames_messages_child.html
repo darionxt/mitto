@@ -1,0 +1,20 @@
+<!doctype html>
+<title>child</title>
+<script>
+// The frame's document of tests/frames_messages_cases.js, which does what its query says. It calls its own postMessage() on
+// its parent's window, which a frame of another origin may.
+const told = (data) => postMessage.call(parent, data, '*');
+const plain = (text) => text.replaceAll('http://localhost:' + location.port, 'OTHER')
+  .replaceAll('http://127.0.0.1:' + location.port, 'ORIGIN');
+const tell = (event) => told({
+  type: event.type, data: event.data, origin: plain(event.origin), parent: event.source === parent, ports: event.ports.length,
+  trusted: event.isTrusted,
+});
+if (location.search === '?send') told({hello: ['child']});
+if (location.search === '?answer') onmessage = tell;
+if (location.search === '?collect') onmessage = (event) => { top.got.push(`collected ${event.data}`); };
+if (location.search === '?modules') {
+  onmessage = (event) => told([event.type, event.data instanceof WebAssembly.Module, plain(event.origin), event.source === parent]);
+  onmessageerror = (event) => told([event.type, event.data, plain(event.origin), event.source === parent, event.ports.length]);
+}
+</script>

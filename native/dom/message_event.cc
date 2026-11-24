@@ -11,6 +11,7 @@
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/user_activation.h"
+#include "mitto/dom/window.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-primitive.h"
@@ -62,9 +63,10 @@ MessageEvent* MessageEvent::CreateForMessage(
 }
 
 // static
-MessageEvent* MessageEvent::CreateError(std::optional<std::u16string> origin) {
+MessageEvent* MessageEvent::CreateError(std::optional<std::u16string> origin,
+                                        EventTarget* source) {
   auto* const event = bindings::MakeGarbageCollected<MessageEvent>(
-      u"messageerror", std::nullopt, std::move(origin), nullptr,
+      u"messageerror", std::nullopt, std::move(origin), source,
       std::vector<MessagePort*>(), nullptr);
   event->SetTrusted(true);
   return event;
@@ -124,6 +126,14 @@ v8::Local<v8::Value> MessageEvent::Data() {
     return v8::Null(isolate);
   }
   return data_.Get(isolate);
+}
+
+EventTarget* MessageEvent::Source() const {
+  Window* const window = source_ ? source_->ToWindow() : nullptr;
+  return window && window->ContextOfGlobalProxy(v8::Isolate::GetCurrent())
+                       .IsEmpty()
+             ? nullptr
+             : source_.Get();
 }
 
 v8::Local<v8::Value> MessageEvent::Ports() {

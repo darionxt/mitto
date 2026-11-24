@@ -1,0 +1,348 @@
+{
+ "chrome": "157.0.8103.79",
+ "how": "headless Chrome for Testing on macOS, on the server of tests/test_page_frame_messages.py",
+ "record": {
+  "from a frame": {
+   "same": [
+    [
+     "message",
+     {
+      "hello": [
+       "child"
+      ]
+     },
+     "ORIGIN",
+     "frame",
+     true,
+     0,
+     "",
+     false,
+     false
+    ]
+   ],
+   "same data": [
+    true
+   ],
+   "other": [
+    [
+     "message",
+     {
+      "hello": [
+       "child"
+      ]
+     },
+     "OTHER",
+     "frame",
+     true,
+     0,
+     "",
+     false,
+     false
+    ]
+   ],
+   "other data": [
+    true
+   ],
+   "opaque": [
+    [
+     "message",
+     "data:",
+     "null",
+     "frame",
+     true,
+     0,
+     "",
+     false,
+     false
+    ]
+   ]
+  },
+  "to a frame": {
+   "same": {
+    "any": [
+     {
+      "type": "message",
+      "data": {
+       "target": "any"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "own": [
+     {
+      "type": "message",
+      "data": {
+       "target": "own"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "page": [
+     {
+      "type": "message",
+      "data": {
+       "target": "page"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "frame": [
+     {
+      "type": "message",
+      "data": {
+       "target": "frame"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "path": [
+     {
+      "type": "message",
+      "data": {
+       "target": "path"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "elsewhere": [],
+    "options": [
+     {
+      "type": "message",
+      "data": "o",
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "none": [
+     {
+      "type": "message",
+      "data": "n",
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ]
+   },
+   "other": {
+    "any": [
+     {
+      "type": "message",
+      "data": {
+       "target": "any"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "own": [],
+    "page": [],
+    "frame": [
+     {
+      "type": "message",
+      "data": {
+       "target": "frame"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "path": [
+     {
+      "type": "message",
+      "data": {
+       "target": "path"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "elsewhere": [],
+    "options": [
+     {
+      "type": "message",
+      "data": "o",
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "none": []
+   },
+   "thrown": [
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'nowhere' in a call to 'postMessage'.",
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'about:blank' in a call to 'postMessage'.",
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'data:text/html,x' in a call to 'postMessage'.",
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin '' in a call to 'postMessage'."
+   ]
+  },
+  "incumbent": {
+   "the frame calls its parent": [
+    [
+     "a",
+     "frame"
+    ]
+   ],
+   "the frame applies": [
+    [
+     "b",
+     "frame"
+    ]
+   ],
+   "the frame applies its parent's": [
+    [
+     "c",
+     "frame"
+    ]
+   ],
+   "the frame calls the page's function": [
+    [
+     "d",
+     "page"
+    ]
+   ],
+   "the page calls the frame's method": [
+    [
+     "e",
+     "page"
+    ]
+   ],
+   "the page calls the frame's function": [
+    [
+     "f",
+     "frame"
+    ]
+   ],
+   "a bound method in the frame's timer": [
+    [
+     "g",
+     "frame"
+    ]
+   ],
+   "a bound method in the frame's microtask": [
+    [
+     "h",
+     "page"
+    ]
+   ],
+   "itself": [
+    [
+     "j",
+     "page"
+    ]
+   ],
+   "to the frame": [
+    "k",
+    true,
+    false
+   ],
+   "the frame to itself": [
+    "l",
+    false,
+    true
+   ],
+   "the frame calls the page's function to it": [
+    "m",
+    true,
+    false
+   ]
+  },
+  "a sender that goes": {
+   "removed": [
+    1,
+    false,
+    true,
+    "ORIGIN"
+   ],
+   "navigated": [
+    1,
+    true,
+    false,
+    "ORIGIN"
+   ],
+   "removed later": [
+    1,
+    false,
+    true,
+    "ORIGIN"
+   ],
+   "to a frame that goes": [],
+   "to a document that goes": [
+    "to a document that goes"
+   ]
+  },
+  "carried": {
+   "port": [
+    "through the port",
+    null,
+    ""
+   ],
+   "seen": [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    8,
+    1,
+    true,
+    true,
+    true
+   ],
+   "detached": 0,
+   "module same": [
+    [
+     "message",
+     true,
+     "ORIGIN",
+     true
+    ]
+   ],
+   "module other": [
+    [
+     "messageerror",
+     null,
+     "ORIGIN",
+     true,
+     0
+    ]
+   ],
+   "uncloneable": [
+    "DataCloneError",
+    false
+   ]
+  },
+  "order": [
+   "task",
+   "microtask",
+   "1",
+   "2",
+   "3"
+  ]
+ }
+}
