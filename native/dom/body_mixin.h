@@ -42,7 +42,7 @@ class BodyMixin {
   ReadableStream* BodyStream() const;
 
   // Whether its body's stream is disturbed, and whether it is locked.
-  virtual bool IsBodyUsed() const;
+  bool IsBodyUsed() const;
   bool IsBodyLocked() const;
 
  protected:

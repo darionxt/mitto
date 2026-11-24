@@ -18,7 +18,6 @@
 #include <string>
 
 #include "base/functional/callback.h"
-#include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -42,7 +41,7 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
     kDefault,
     // A fetch's of mode no-cors from another origin: status 0, no URL, no
     // header lines and a null body, as the Fetch Standard's opaque filtered
-    // response, with the response it filters behind it.
+    // response.
     kOpaque,
     // Response.error()'s, a network error: status 0, no URL, no header lines
     // and a null body.
@@ -64,10 +63,9 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
                             uint16_t status,
                             bindings::ExceptionState& exception_state);
   // One that fetch() got, or that the Cache API stored, whose body is `body`,
-  // or none for a null body. An opaque one shows status 0, no URL, no header
-  // lines and a null body, and keeps the others, `body` among them, in its
-  // internal response, which no script reads, as Blink's opaque filtered
-  // response holds it.
+  // or none for a null body. An opaque one's body is null, and `body` is
+  // that of its internal response, which no script reads, as Blink's opaque
+  // filtered response holds it.
   static Response* CreateFetched(ResponseType type,
                                  int32_t status,
                                  std::string status_text,
@@ -97,31 +95,16 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
   // What the Runtime reads of it itself, as Blink's FetchDataLoader reads a
   // body, such as Cache.put() does.
   //
-  // Whether its body is null, of an opaque response its internal body, as
-  // Blink's HasBody() reads it.
-  bool HasNullBody() const { return !InternalBodyBuffer(); }
-  // The response that an opaque one filters, with its status, URL and header
-  // lines, as Blink's FetchResponseData keeps it, or null for any other.
-  const Response* InternalResponse() const { return internal_response_.Get(); }
-  // When it came, or was made, which the Cache API stores.
-  base::Time ResponseTime() const { return response_time_; }
-  void SetResponseTime(base::Time response_time);
-  // Uses the body, of an opaque response its internal body, as a read by a
-  // script does, and calls `done` with all of it once it has come, or with
-  // nullopt if it failed, and whether its signal aborted it. A null body reads
-  // as empty. Its body must be neither locked nor used.
+  // Whether its body is null, as an opaque response's is.
+  bool HasNullBody() const { return !body_buffer_; }
+  // Uses the body, as a read by a script does, and calls `done` with all of it
+  // once it has come, or with nullopt if it failed, and whether its signal
+  // aborted it. A null body reads as empty. Its body must be neither locked
+  // nor used.
   void ReadAll(base::OnceCallback<void(std::optional<std::string> body,
                                        bool aborted)> done);
 
-  // BodyMixin:
-  // An opaque response's says whether its internal body was read, as
-  // Cache.put() reads it.
-  bool IsBodyUsed() const override;
-
  private:
-  // The body, or an opaque response's internal one, or null for a null body.
-  BodyStreamBuffer* InternalBodyBuffer() const;
-
   // BodyMixin:
   BodyStreamBuffer* BodyBuffer() const override;
   std::string ContentType() const override;
@@ -131,11 +114,10 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
   std::string status_text_;
   std::u16string url_;
   bool redirected_ = false;
-  base::Time response_time_ = base::Time::Now();
   cppgc::Member<mitto::Headers> headers_;
   cppgc::Member<BodyStreamBuffer> body_buffer_;
-  // An opaque response's internal response, whose body goes on loading.
-  cppgc::Member<Response> internal_response_;
+  // An opaque response's internal body, which goes on loading.
+  cppgc::Member<BodyStreamBuffer> internal_body_buffer_;
 };
 
 }  // namespace mitto

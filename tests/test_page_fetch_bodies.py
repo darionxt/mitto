@@ -785,8 +785,6 @@ def test_body_reads_are_of_the_realm_chrome_has_them_of(page_url: str, name: str
 
 
 _MEMBERS_PRELUDE = """
-const opaque = (init) => fetch(location.origin.replace("127.0.0.1", "localhost") + "/x", { mode: "no-cors", ...init });
-const settle = (p) => p.then((v) => "fulfilled " + v, (e) => "rejected " + e.name + ": " + e.message);
 const members = (r) => ["method", "destination", "referrer", "referrerPolicy", "mode", "credentials", "cache",
     "redirect", "integrity", "keepalive", "isHistoryNavigation", "isReloadNavigation", "duplex"].map((m) => r[m]).join();
 """
@@ -803,49 +801,6 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
         """,
         "GET,,,,no-cors,omit,default,follow,,false,false,false,half / "
         "GET,,,,no-cors,omit,default,follow,,false,false,false,half",
-    ),
-    "an opaque response put twice": (
-        """
-        const cache = await caches.open("opaque");
-        const r = await opaque(); const out = [r.type, r.bodyUsed];
-        out.push(await settle(cache.put("/a", r)), r.bodyUsed, await settle(cache.put("/b", r)));
-        try { r.clone(); out.push("cloned"); } catch (e) { out.push(e.message); }
-        out.push(await settle(r.text()));
-        const m = await cache.match("/a"); const c = m.clone();
-        out.push(m.type, m.status, m.url, [...m.headers].length, m.body, await m.text());
-        out.push(await settle(cache.put("/c", m)), await settle(cache.put("/d", c)));
-        return out.join("; ");
-        """,
-        "opaque; false; fulfilled undefined; true; rejected TypeError: Failed to execute 'put' on 'Cache': "
-        "Response body is already used; Failed to execute 'clone' on 'Response': Response body is already used; "
-        "rejected TypeError: Failed to execute 'text' on 'Response': body stream already read; opaque; 0; ; 0; ; ; "
-        "fulfilled undefined; fulfilled undefined",
-    ),
-    "an opaque response whose signal aborts": (
-        """
-        const cache = await caches.open("aborted");
-        const controller = new AbortController(); const r = await opaque({ signal: controller.signal });
-        controller.abort();
-        return [await settle(cache.put("/a", r)), r.bodyUsed].join("; ");
-        """,
-        "rejected AbortError: Failed to execute 'put' on 'Cache': Cache.put() was aborted; false",
-    ),
-    "what opaque responses count in the usage": (
-        """
-        const cache = await caches.open("padded");
-        const used = async () => (await navigator.storage.estimate()).usageDetails?.caches ?? 0;
-        let last = await used(); const grew = [];
-        const put = async (url, response) => {
-            await cache.put(url, response); const now = await used(); grew.push(now - last); last = now;
-        };
-        const r = await opaque(); const c = r.clone();
-        await put("/r", r); await put("/c", c); await put("/m", await cache.match("/r"));
-        for (let i = 0; i < 6; ++i) await put("/" + i, await opaque());
-        const same = grew.slice(0, 3).every((size) => Math.abs(size - grew[0]) < 256);
-        return [same, new Set(grew.slice(3).map((size) => Math.round(size / 1024))).size > 1,
-                Math.max(...grew) > 100 * 1024, Math.max(...grew) < 14500 * 1024].join();
-        """,
-        "true,true,true,true",
     ),
     "the referrers of an initial about:blank frame's requests": (
         """
