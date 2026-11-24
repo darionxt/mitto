@@ -298,10 +298,14 @@ BODIES = {
 MEMBERS = {
     "a Request's members": (
         "const r = new Request('https://example.test/'); const k = new Request('https://example.test/', { method: 'POST',"
-        " body: 'x', mode: 'same-origin', credentials: 'include', referrer: '', referrerPolicy: 'Origin', keepalive: true });"
+        " body: 'x', mode: 'same-origin', credentials: 'include', referrer: '', referrerPolicy: 'origin', keepalive: true });"
         " return [r, k].map((q) => [JSON.stringify(q.destination), q.referrer, JSON.stringify(q.referrerPolicy), q.mode,"
         " q.credentials, q.cache, q.redirect, JSON.stringify(q.integrity), q.keepalive, q.isHistoryNavigation,"
         " q.isReloadNavigation].join()).join(' / ')",
+        'value: "",about:client,"",cors,same-origin,default,follow,"",false,false,false / "",,"origin",same-origin,include,default,follow,"",true,false,false',
+    ),
+    "a Request's referrer policy that is none": (
+        "return new Request('https://example.test/', { referrerPolicy: 'Origin' }).referrerPolicy",
         "threw: TypeError: Failed to construct 'Request': Failed to read the 'referrerPolicy' property from 'RequestInit': The provided value 'Origin' is not a valid enum value of type ReferrerPolicy.",
     ),
     "a Request made from another keeps its members": (
@@ -763,4 +767,45 @@ def test_body_reads_are_of_the_realm_chrome_has_them_of(page_url: str, name: str
         session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
     ):
         wrapped = f"(async () => {{ {_REALM_PRELUDE} {script} }})()"
+        assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == expected
+
+
+_MEMBERS_PRELUDE = """
+const members = (r) => ["method", "destination", "referrer", "referrerPolicy", "mode", "credentials", "cache",
+    "redirect", "integrity", "keepalive", "isHistoryNavigation", "isReloadNavigation", "duplex"].map((m) => r[m]).join();
+"""
+
+# Scripts of a page of its own origin, with what Chrome 157.0.8103.79 gave for each.
+_PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
+    "the requests that a cache gives": (
+        """
+        const cache = await caches.open("requests");
+        await cache.put("/a", new Response("x"));
+        await cache.put(new Request("/b", { mode: "same-origin", credentials: "include", referrer: "",
+                                            referrerPolicy: "origin", keepalive: true }), new Response("x"));
+        return (await cache.keys()).map(members).join(" / ");
+        """,
+        "GET,,,,no-cors,omit,default,follow,,false,false,false,half / "
+        "GET,,,,no-cors,omit,default,follow,,false,false,false,half",
+    ),
+    "the referrers of an initial about:blank frame's requests": (
+        """
+        const f = document.createElement("iframe"); document.body.append(f);
+        return [location.origin + "/ref", "https://other.test/ref", "/relative", "", "about:client", "about:blank"]
+            .map((referrer) => new f.contentWindow.Request(location.origin + "/x", { referrer }).referrer
+                .replace(location.origin, "here")).join();
+        """,
+        "here/ref,about:client,here/relative,,about:client,about:client",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", _PAGE_SCRIPTS)
+def test_requests_of_a_page_have_the_members_chrome_gives_them(page_url: str, name: str) -> None:
+    script, expected = _PAGE_SCRIPTS[name]
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        wrapped = f"(async () => {{ {_MEMBERS_PRELUDE} {script} }})()"
         assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == expected

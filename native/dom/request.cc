@@ -249,8 +249,7 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
                              parsed.host().empty() &&
                              parsed.path() == "client";
       request->referrer_ =
-          is_client || !url::Origin::Create(GURL(document.Url()))
-                            .IsSameOriginWith(parsed)
+          is_client || !document.GetSecurityOrigin().IsSameOriginWith(parsed)
               ? std::string(kClientReferrer)
               : parsed.spec();
     }
@@ -428,6 +427,10 @@ Request* Request::CreateFromStored(
   Request* const request = bindings::MakeGarbageCollected<Request>();
   request->url_ = std::move(url);
   request->method_ = std::move(method);
+  // The rest is what network.mojom.FetchAPIRequest has where nothing sets it.
+  request->mode_ = FetchMode::kNoCors;
+  request->credentials_ = FetchCredentialsMode::kOmit;
+  request->referrer_ = kNoReferrer;
   request->signal_ = AbortSignal::CreateComposite({});
   request->headers_ = Headers::Create(Headers::Guard::kRequest);
   for (const auto& [name, value] : headers) {

@@ -1,12 +1,11 @@
 #include "mitto/dom/bytes_consumer_tee.h"
 
-#include <deque>
-#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/check_op.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/blob_bytes_consumer.h"
@@ -14,9 +13,12 @@
 #include "mitto/dom/bytes_consumer.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/form_data_bytes_consumer.h"
+#include "mitto/dom/heap_deque.h"
 #include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-external-memory-accounter.h"
+#include "v8/include/v8-isolate.h"
 
 namespace mitto {
 namespace {
@@ -27,8 +29,27 @@ class NoopClient final : public cppgc::GarbageCollected<NoopClient>,
   void OnStateChange() override {}
 };
 
-// A piece of the source's bytes, which both destinations share.
-using Chunk = std::shared_ptr<const std::string>;
+// A piece of the source's bytes, which both destinations share, and which V8
+// counts as memory outside its heap.
+class Chunk final : public cppgc::GarbageCollected<Chunk> {
+ public:
+  explicit Chunk(base::span<const char> bytes)
+      : isolate_(v8::Isolate::GetCurrent()),
+        bytes_(bytes.begin(), bytes.end()) {
+    accounter_.Increase(isolate_, bytes_.size());
+  }
+  ~Chunk() { accounter_.Decrease(isolate_, bytes_.size()); }
+
+  base::span<const char> bytes() const { return bytes_; }
+  size_t size() const { return bytes_.size(); }
+
+  void Trace(cppgc::Visitor* visitor) const {}
+
+ private:
+  const raw_ptr<v8::Isolate> isolate_;
+  const std::string bytes_;
+  v8::ExternalMemoryAccounter accounter_;
+};
 
 class TeeHelper;
 
@@ -55,11 +76,11 @@ class Destination final : public BytesConsumer {
   void Cancel() override;
   PublicState GetPublicState() const override;
 
-  void Enqueue(Chunk chunk) {
+  void Enqueue(Chunk* chunk) {
     if (is_cancelled_) {
       return;
     }
-    chunks_.push_back(std::move(chunk));
+    chunks_.push_back(chunk);
   }
 
   bool IsEmpty() const { return chunks_.empty(); }
@@ -80,9 +101,9 @@ class Destination final : public BytesConsumer {
   cppgc::WeakMember<ExecutionContext> execution_context_;
   cppgc::Member<TeeHelper> tee_;
   cppgc::Member<BytesConsumer::Client> client_;
-  std::deque<Chunk> chunks_;
+  HeapDeque<Chunk> chunks_;
   // The piece that a two-phase read holds.
-  Chunk chunk_in_use_;
+  cppgc::Member<Chunk> chunk_in_use_;
   size_t offset_ = 0;
   bool is_cancelled_ = false;
   bool is_closed_ = false;
@@ -121,10 +142,9 @@ class TeeHelper final : public cppgc::GarbageCollected<TeeHelper>,
         }
         return;
       }
-      Chunk chunk;
+      Chunk* chunk = nullptr;
       if (result == BytesConsumer::Result::kOk) {
-        chunk =
-            std::make_shared<const std::string>(buffer.begin(), buffer.end());
+        chunk = bindings::MakeGarbageCollected<Chunk>(buffer);
         result = src_->EndRead(buffer.size());
       }
       switch (result) {
@@ -197,9 +217,9 @@ BytesConsumer::Result Destination::BeginRead(base::span<const char>& buffer) {
     return Result::kDone;
   }
   if (!chunks_.empty()) {
-    const Chunk& chunk = chunks_.front();
+    Chunk* const chunk = chunks_.front();
     DCHECK_LE(offset_, chunk->size());
-    buffer = base::span<const char>(*chunk).subspan(offset_);
+    buffer = chunk->bytes().subspan(offset_);
     chunk_in_use_ = chunk;
     return Result::kOk;
   }
@@ -226,7 +246,7 @@ BytesConsumer::Result Destination::EndRead(size_t read) {
     DCHECK_EQ(PublicState::kErrored, GetPublicState());
     return Result::kOk;
   }
-  const Chunk& chunk = chunks_.front();
+  Chunk* const chunk = chunks_.front();
   DCHECK_LE(offset_ + read, chunk->size());
   offset_ += read;
   if (chunk->size() == offset_) {
@@ -301,6 +321,8 @@ void Destination::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(execution_context_);
   visitor->Trace(tee_);
   visitor->Trace(client_);
+  chunks_.Trace(visitor);
+  visitor->Trace(chunk_in_use_);
   BytesConsumer::Trace(visitor);
 }
 
