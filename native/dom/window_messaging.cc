@@ -115,10 +115,11 @@ void DispatchPostMessage(Window& window,
     task_scope.emplace(isolate, task_state);
   }
   const url::Origin recipient = window.GetSecurityOrigin();
+  const bool is_remote = !IsInSameProcess(source_origin, recipient);
   if (!target.any && !target.origin.IsSameOriginWith(recipient)) {
     // Between processes it is the browser that drops the message, without a
     // word, as RenderFrameProxyHost::RouteMessageEvent() does.
-    if (IsInSameProcess(source_origin, recipient)) {
+    if (!is_remote) {
       window.AddConsoleMessage(
           ConsoleLevel::kWarning,
           base::StrCat({"Failed to execute 'postMessage' on 'DOMWindow': The "
@@ -129,11 +130,11 @@ void DispatchPostMessage(Window& window,
     }
     return;
   }
-  // A frame of another process that has gone meanwhile, or that shows a
-  // document of this one, is no source, as SourceFrameForOptionalToken() finds
-  // no remote frame.
-  if (remote_source &&
-      (remote_source->IsFrameDetached() || remote_source->IsReplaced())) {
+  // A frame of another process that has gone, or that shows a document of this
+  // one by now, is no source, as SourceFrameForOptionalToken() finds no remote
+  // frame.
+  if (is_remote && (!remote_source || remote_source->IsFrameDetached() ||
+                    remote_source->IsReplaced())) {
     source = nullptr;
     remote_source = nullptr;
   }

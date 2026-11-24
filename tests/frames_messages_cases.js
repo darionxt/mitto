@@ -16,14 +16,19 @@
     if (src) await loaded(element);
     return element;
   };
-  // The messages that come to the page while `run` runs and 150 ms after.
-  const heard = async (run) => {
+  // Waits for what a case expects, long enough for a slow machine.
+  const until = async (done) => {
+    for (const end = performance.now() + 15000; !done() && performance.now() < end;) await settle(10);
+  };
+  // The messages that come to the page while `run` runs, until there are `count` of them and for 50 ms more.
+  const heard = async (count, run) => {
     const events = [];
     const listener = (event) => events.push(event);
     addEventListener('message', listener);
     addEventListener('messageerror', listener);
-    await run();
-    await settle(150);
+    await run(events);
+    await until(() => events.length >= count);
+    await settle(50);
     removeEventListener('message', listener);
     removeEventListener('messageerror', listener);
     return events;
@@ -49,14 +54,14 @@
     const results = {};
     for (const [name, src] of [['same', '/child?send'], ['other', `${OTHER}/child?send`]]) {
       let element;
-      const events = await heard(async () => { element = await add(src); });
+      const events = await heard(1, async () => { element = await add(src); });
       results[name] = events.map((event) => told(event, element));
       results[`${name} data`] = events.map((event) => event.data && event.data instanceof Object);
       element.remove();
     }
     const opaque = document.createElement('iframe');
     opaque.src = `data:text/html,<script>postMessage.call(parent, 'data:', '*')</script>`;
-    results.opaque = (await heard(() => { document.body.appendChild(opaque); })).map((event) => told(event, opaque));
+    results.opaque = (await heard(1, () => { document.body.appendChild(opaque); })).map((event) => told(event, opaque));
     opaque.remove();
     return results;
   });
@@ -72,12 +77,20 @@
         path: (name === 'same' ? location.origin : OTHER) + '/some/path?query#fragment', elsewhere: 'https://example.com',
       };
       results[name] = {};
+      // What the frame answers to a message, before its answer to one that comes after it.
+      const answers = async (send) => {
+        const events = await heard(1, async (events) => {
+          send();
+          postMessage.call(w, 'last', '*');
+          await until(() => events.some((event) => event.data.data === 'last'));
+        });
+        return events.map((event) => event.data).filter((data) => data.data !== 'last');
+      };
       for (const target in targets) {
-        const events = await heard(() => postMessage.call(w, {target}, targets[target]));
-        results[name][target] = events.map((event) => event.data);
+        results[name][target] = await answers(() => postMessage.call(w, {target}, targets[target]));
       }
-      results[name].options = (await heard(() => postMessage.call(w, 'o', {targetOrigin: '*'}))).map((event) => event.data);
-      results[name].none = (await heard(() => postMessage.call(w, 'n'))).map((event) => event.data);
+      results[name].options = await answers(() => postMessage.call(w, 'o', {targetOrigin: '*'}));
+      results[name].none = await answers(() => postMessage.call(w, 'n'));
       element.remove();
     }
     const thrown = [];
@@ -112,13 +125,13 @@
       'a bound method in the frame\'s microtask': () => w.eval(`Promise.resolve().then(parent.postMessage.bind(parent, 'h', '*'))`),
       'itself': () => window.postMessage('j', '*'),
     };
-    for (const way in ways) results[way] = (await heard(ways[way])).map((event) => [event.data, named(event.source, element)]);
+    for (const way in ways) results[way] = (await heard(1, ways[way])).map((event) => [event.data, named(event.source, element)]);
     w.eval(`onmessage = (event) => parent.heardIn = [event.data, event.source === parent, event.source === window]`);
     for (const [way, run] of [['to the frame', () => w.postMessage('k', '*')], ['the frame to itself', () => w.eval(`postMessage('l', '*')`)],
                               ['the frame calls the page\'s function to it', () => w.eval(`parent.sendToFrame('m')`)]]) {
       window.heardIn = null;
       run();
-      await settle(80);
+      await until(() => window.heardIn);
       results[way] = window.heardIn;
     }
     element.remove();
@@ -132,7 +145,7 @@
       const element = await add('/child');
       const proxy = element.contentWindow;
       let kept = null;
-      const events = await heard(async () => {
+      const events = await heard(1, async (events) => {
         proxy.eval(`parent.postMessage('x', '*')`);
         if (way === 'removed') element.remove();
         if (way === 'navigated') {
@@ -140,7 +153,7 @@
           await loaded(element);
         }
         if (way === 'removed later') {
-          await settle(50);
+          await until(() => events.length);
           element.remove();
         }
       });
@@ -192,7 +205,7 @@
     const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
     for (const [name, src] of [['same', '/child?modules'], ['other', `${OTHER}/child?modules`]]) {
       const frame = await add(src);
-      results[`module ${name}`] = (await heard(() => postMessage.call(frame.contentWindow, module, '*'))).map((event) => event.data);
+      results[`module ${name}`] = (await heard(1, () => postMessage.call(frame.contentWindow, module, '*'))).map((event) => event.data);
       frame.remove();
     }
     let uncloneable;
@@ -211,15 +224,17 @@
     const element = await add('/child');
     const w = element.contentWindow;
     const order = [];
-    addEventListener('message', (event) => order.push(event.data), {signal: AbortSignal.timeout(200)});
+    const listener = (event) => order.push(event.data);
+    addEventListener('message', listener);
     postMessage('1', '*');
     w.eval(`parent.postMessage('2', '*')`);
     postMessage('3', '*');
     Promise.resolve().then(() => order.push('microtask'));
     order.push('task');
-    await settle(100);
+    await until(() => order.length >= 5);
+    removeEventListener('message', listener);
     element.remove();
-    return order.slice();
+    return order;
   });
 
   // Chrome has a frame of another site in another process. The page's window of such a frame stays the frame's from document
@@ -284,11 +299,32 @@
         addEventListener('message', listener);
         element.src = `${CHILD_OF[kind]}?${way === 'navigated by itself' ? 'threeAndGo' : 'three'}`;
         document.body.appendChild(element);
-        await settle(250);
+        await until(() => events.length >= 3);
         removeEventListener('message', listener);
         element.remove();
         results[kind][way] = events;
       }
+    }
+    return results;
+  });
+  await section('a sender that removed its own frame', async () => {
+    const results = {};
+    for (const kind in CHILD_OF) {
+      const element = document.createElement('iframe');
+      const sources = [];
+      const inner = (event) => event.source === null ? 'null' : event.source === element.contentWindow ? 'its parent' : 'its own';
+      await new Promise((resolve) => {
+        addEventListener('message', function listener(event) {
+          if (sources.push(`${event.data} ${inner(event)}`) === 3) {
+            removeEventListener('message', listener);
+            resolve();
+          }
+        });
+        element.src = `${CHILD_OF[kind]}?outer`;
+        document.body.appendChild(element);
+      });
+      element.remove();
+      results[kind] = sources;
     }
     return results;
   });
@@ -325,17 +361,17 @@
           back.push([event.type, event.data instanceof WebAssembly.Module ? 'module' : event.data, event.origin, event.source, event.ports.length]);
         });
       }
-      results[kind] = [];
-      const events = await heard(async () => {
+      const events = await heard(5, async (events) => {
         channel.port1.postMessage(module);
         channel.port1.postMessage('before');
         channel.port1.postMessage({module}, [new MessageChannel().port1]);
         postMessage.call(element.contentWindow, 'port', '*', [channel.port2]);
         channel.port1.start();
-        await settle(100);
+        await until(() => events.length >= 3);
         channel.port1.postMessage(module);
         channel.port1.postMessage('after');
         postMessage.call(element.contentWindow, 'send back', '*');
+        await until(() => back.length >= 2);
       });
       results[kind] = {there: events.map((event) => event.data), back};
       element.remove();
@@ -344,13 +380,14 @@
       const made = new Worker(url);
       const channel = new MessageChannel();
       const got = [];
-      const say = (event) => got.push(event.data instanceof WebAssembly.Module ? `${event.type} module` : event.data);
-      made.onmessage = made.onmessageerror = say;
-      channel.port1.onmessage = channel.port1.onmessageerror = (event) => got.push(`port back ${event.type}`);
+      const end = () => { made.terminate(); resolve(got.sort()); };
+      const say = (text) => { if (got.push(text) === 4) end(); };
+      made.onmessage = made.onmessageerror = (event) => say(event.data instanceof WebAssembly.Module ? `${event.type} module` : event.data);
+      channel.port1.onmessage = channel.port1.onmessageerror = (event) => say(`port back ${event.type}`);
       made.postMessage('port', [channel.port2]);
       made.postMessage(module);
       channel.port1.postMessage(module);
-      setTimeout(() => { made.terminate(); resolve(got.sort()); }, 400);
+      setTimeout(end, 15000);
     });
     const source = `const bytes = new Uint8Array([${bytes}]);
       onmessage = (event) => {

@@ -14,6 +14,20 @@ if (location.search === '?elsewhere') postMessage.call(parent, 'elsewhere', 'htt
 if (location.search === '?hello') told('hello');
 if (location.search.startsWith('?three')) for (const number of [1, 2, 3]) told(`number ${number}`);
 if (location.search === '?threeAndGo') location.href = '/child?gone';
+if (location.search === '?outer') {
+  addEventListener('DOMContentLoaded', () => {
+    const element = document.createElement('iframe');
+    element.src = '/child?inner';
+    document.body.appendChild(element);
+  });
+}
+if (location.search === '?inner') {
+  const page = top, post = postMessage;
+  post.call(page, 'before', '*');
+  parent.document.querySelector('iframe').remove();
+  post.call(page, 'after', '*');
+  Promise.resolve().then(() => post.call(page, 'microtask', '*'));
+}
 if (location.search === '?port') {
   const module = () => new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
   let port;

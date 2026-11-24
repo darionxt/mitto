@@ -19,7 +19,7 @@ import mitto
 from mitto import _native
 from tests.local_server import QuietServer
 
-_TIMEOUT_SECONDS = 60
+_TIMEOUT_SECONDS = 120
 _TESTS = Path(__file__).parent
 _CASES = (_TESTS / "frames_messages_cases.js").read_text()
 _CHILD = (_TESTS / "frames_messages_child.html").read_bytes()

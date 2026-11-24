@@ -70,7 +70,7 @@ class Frame {
   virtual NavigationRateLimiter& GetNavigationRateLimiter() = 0;
 
   // The frame's window in the process of `viewer`'s documents, another than
-  // its own document's, made the first time.
+  // its own document's, the same for as long as a message holds it.
   RemoteWindow* RemoteWindowFor(const url::Origin& viewer);
   // The top-level frame of this one's tree.
   Frame& Top();
@@ -104,7 +104,7 @@ class Frame {
 
   int navigation_disable_count_ = 0;
   // One for each process, for the frame's document now.
-  std::vector<cppgc::Persistent<RemoteWindow>> remote_windows_;
+  std::vector<cppgc::WeakPersistent<RemoteWindow>> remote_windows_;
 };
 
 // Blink's FrameNavigationDisabler: while a frame's document commits, a script

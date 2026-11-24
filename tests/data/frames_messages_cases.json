@@ -447,6 +447,23 @@
     ]
    }
   },
+  "a sender that removed its own frame": {
+   "same origin": [
+    "before its own",
+    "after its own",
+    "microtask its own"
+   ],
+   "same site": [
+    "before its own",
+    "after its own",
+    "microtask its own"
+   ],
+   "another site": [
+    "before null",
+    "after null",
+    "microtask null"
+   ]
+  },
   "an event that a page makes": {
    "same origin": [
     "frame frame",

@@ -366,8 +366,10 @@ void MessagePort::PostMessage(v8::Local<v8::Value> message,
   }
   TransferableMessage sent(*std::move(serialized));
   sent.ports = *std::move(ports);
-  // A port may outlive its context, whose value then no other may read.
-  if (const ExecutionContext* const context = context_.Get()) {
+  // Only a value that some contexts may not read is checked where it comes. A
+  // port may outlive its context, whose value then no other may read.
+  if (const ExecutionContext* const context = context_.Get();
+      context && sent.message.IsLockedToAgentCluster()) {
     sent.sender_origin = context->GetSecurityOrigin();
     sent.sender_agent_cluster = context->AgentClusterOrigin();
   }
@@ -583,7 +585,7 @@ void MessagePort::ReadAvailableMessage() {
 // CreateMessageEvent(): a messageerror event for a value that this context may
 // not read, a WebAssembly module of another origin or a SharedArrayBuffer of
 // another agent cluster, wherever the port was when it was sent.
-MessageEvent* MessagePort::CreateMessageEvent(TransferableMessage message) {
+MessageEvent* MessagePort::CreateMessageEvent(TransferableMessage& message) {
   ExecutionContext* const context = context_.Get();
   if ((message.message.IsOriginCheckRequired() &&
        !message.sender_origin.IsSameOriginWith(context->GetSecurityOrigin())) ||
@@ -601,14 +603,13 @@ MessageEvent* MessagePort::CreateMessageEvent(TransferableMessage message) {
 }
 
 void MessagePort::DispatchMessageEvent(TransferableMessage message) {
-  SchedulerTaskContext* const task_state = message.task_state.Get();
-  MessageEvent* const event = CreateMessageEvent(std::move(message));
+  MessageEvent* const event = CreateMessageEvent(message);
   // The task state of a channel that schedules within the window.
   std::optional<SchedulerTaskScope> task_scope;
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (initially_entangled_port_ && task_state &&
+  if (initially_entangled_port_ && message.task_state &&
       !SchedulerTaskContext::Current(isolate)) {
-    task_scope.emplace(isolate, task_state);
+    task_scope.emplace(isolate, message.task_state.Get());
   }
   DispatchEvent(event);
 }

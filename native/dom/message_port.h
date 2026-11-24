@@ -73,9 +73,8 @@ struct TransferableMessage {
 
   SerializedScriptValue message;
   std::vector<MessagePortChannel> ports;
-  // The origin of the context that sent it, and the one that keys that
-  // context's agent cluster, which say whether the context that it comes to
-  // may read it.
+  // For a value that some contexts may not read, the origin of the context
+  // that sent it, and the one that keys that context's agent cluster.
   url::Origin sender_origin;
   url::Origin sender_agent_cluster;
   // Whether the message carries a snapshot of the sender's user activation.
@@ -196,7 +195,7 @@ class MessagePort final : public EventTarget {
       uint64_t generation,
       bool counted);
   void ReadAvailableMessage();
-  MessageEvent* CreateMessageEvent(TransferableMessage message);
+  MessageEvent* CreateMessageEvent(TransferableMessage& message);
   void DispatchMessageEvent(TransferableMessage message);
   // OnConnectionError(): the other end has closed and nothing waits.
   void OnConnectionError();

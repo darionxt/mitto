@@ -37,30 +37,38 @@ Frame::Frame() = default;
 Frame::~Frame() = default;
 
 RemoteWindow* Frame::RemoteWindowFor(const url::Origin& viewer) {
-  for (const cppgc::Persistent<RemoteWindow>& window : remote_windows_) {
+  std::erase_if(remote_windows_,
+                [](const cppgc::WeakPersistent<RemoteWindow>& window) {
+                  return !window;
+                });
+  for (const cppgc::WeakPersistent<RemoteWindow>& window : remote_windows_) {
     if (IsInSameProcess(window->Viewer(), viewer)) {
       return window.Get();
     }
   }
-  return remote_windows_
-      .emplace_back(bindings::MakeGarbageCollected<RemoteWindow>(viewer))
-      .Get();
+  auto* const window = bindings::MakeGarbageCollected<RemoteWindow>(viewer);
+  remote_windows_.emplace_back(window);
+  return window;
 }
 
 void Frame::DidShowDocumentOf(const url::Origin& origin) {
   std::erase_if(remote_windows_,
-                [&origin](const cppgc::Persistent<RemoteWindow>& window) {
-                  if (!IsInSameProcess(window->Viewer(), origin)) {
+                [&origin](const cppgc::WeakPersistent<RemoteWindow>& window) {
+                  if (window && !IsInSameProcess(window->Viewer(), origin)) {
                     return false;
                   }
-                  window->Replace();
+                  if (window) {
+                    window->Replace();
+                  }
                   return true;
                 });
 }
 
 void Frame::DetachRemoteWindows() {
-  for (const cppgc::Persistent<RemoteWindow>& window : remote_windows_) {
-    window->DetachFrame();
+  for (const cppgc::WeakPersistent<RemoteWindow>& window : remote_windows_) {
+    if (window) {
+      window->DetachFrame();
+    }
   }
   remote_windows_.clear();
 }

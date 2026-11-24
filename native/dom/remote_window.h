@@ -21,7 +21,9 @@ namespace mitto {
 class Window;
 
 // Whether Chrome has documents of the two origins in one process: those of one
-// site, where an opaque origin counts as the one it was made for.
+// site, where an opaque origin counts as the one it was made for. Known Gap: a
+// document that asks for a process of its origin's own, with an
+// Origin-Agent-Cluster header, counts with its site's.
 bool IsInSameProcess(const url::Origin& a, const url::Origin& b);
 
 // The window of a frame in the process of `viewer`'s documents, which is not
