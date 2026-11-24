@@ -96,6 +96,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if path.startswith(("/seen", "/cors", "/child?", "/worker.js", "/ran.js")):
             headers = {name.lower(): value for name, value in self.headers.items() if name.lower() in _HEADERS}
             self.server.seen.append((path, headers))
+        # The documents whose times are read later than the clock's resolution, and those that wait.
+        if path.startswith("/times"):
+            time.sleep(0.02)
         if path.startswith("/empty?slow"):
             time.sleep(0.3)
         if path == "/closed":
