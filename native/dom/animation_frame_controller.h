@@ -76,6 +76,11 @@ class AnimationFrameController {
   void DeferLifecycleUpdates() { lifecycle_updates_deferred_ = true; }
   void BeginLifecycleUpdates();
 
+  // ScriptedAnimationController::ContextDestroyed(): nothing runs in a frame
+  // again, not even in the frame that runs now, whose callback may have ended
+  // the context. What waits goes with the controller.
+  void Stop() { weak_factory_.InvalidateWeakPtrs(); }
+
  private:
   struct FrameCallback;
   struct QueuedEvent;

@@ -17,6 +17,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/containers/span.h"
@@ -44,11 +45,8 @@ class MultipartPartHeaders {
     return content_type_.value;
   }
 
-  // Parses the header fields at the start of `bytes`, which end with an empty
-  // line, and sets `end` to where they end. False if `bytes` holds no empty
-  // line yet.
-  static std::optional<MultipartPartHeaders> Parse(base::span<const char> bytes,
-                                                   size_t* end);
+  // Parses a part's header fields, with the empty line that ends them.
+  static MultipartPartHeaders Parse(std::string_view text);
 
  private:
   struct Field {
@@ -150,7 +148,12 @@ class MultipartParser final : public cppgc::GarbageCollected<MultipartParser> {
   void ParseTransportPadding(base::span<const char>& bytes) const;
 
   Matcher matcher_;
+  // The start of a header block that comes in pieces.
   std::vector<char> buffered_header_bytes_;
+  // What LocateEndOfAdditionalHeaders()'s scan carries from one piece to the
+  // next, so that each byte is scanned once.
+  char header_scan_last_c_ = '\n';
+  bool header_scan_was_lf_ = true;
   const cppgc::Member<Client> client_;
   // "\r\n--" and the boundary.
   const std::string delimiter_;

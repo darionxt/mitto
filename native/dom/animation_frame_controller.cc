@@ -12,6 +12,7 @@
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/event_target.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/scheduler_task_context.h"
 #include "mitto/dom/time_clamper.h"
@@ -24,9 +25,6 @@
 
 namespace mitto {
 namespace {
-
-// A Page is never cross-origin isolated.
-constexpr bool kCrossOriginIsolated = false;
 
 EventLoop& EventLoopOfPage() {
   // The Page program always makes one before it runs a script.
@@ -153,8 +151,12 @@ void AnimationFrameController::ServiceScriptedAnimations(
   if (worker_time_origin_) {
     // WorkerAnimationFrameProvider::BeginFrame(): a microtask runs the
     // callbacks, with the frame's time as performance.now() would give it.
+    const v8::HandleScope handle_scope(isolate_);
+    const ExecutionContext* const context =
+        ExecutionContext::From(isolate_, context_->Get(isolate_));
     const double time = Performance::MonotonicTimeToDOMHighResTimeStamp(
-        *worker_time_origin_, frame_time);
+        *worker_time_origin_, frame_time,
+        context && context->CrossOriginIsolatedCapability());
     isolate_->EnqueueMicrotask(
         &AnimationFrameController::RunWorkerFrameCallbacks,
         new WorkerFrame{weak_factory_.GetWeakPtr(), time});
@@ -165,14 +167,16 @@ void AnimationFrameController::ServiceScriptedAnimations(
   DocumentLoadTiming& timing = Window::Current().GetDocumentLoadTiming();
   const base::TimeTicks zero_time = timing.navigation_start;
   if (frame_time > zero_time) {
-    animation_time_ = std::max(
-        animation_time_, AnimationTimeClamper().ClampTimeResolution(
-                             frame_time - zero_time, kCrossOriginIsolated));
+    animation_time_ =
+        std::max(animation_time_,
+                 AnimationTimeClamper().ClampTimeResolution(
+                     frame_time - zero_time,
+                     Window::Current().CrossOriginIsolatedCapability()));
   }
   const base::WeakPtr<AnimationFrameController> self =
       weak_factory_.GetWeakPtr();
   DispatchEvents();
-  // A listener may have ended the window's context, and this with it.
+  // A listener may have ended the window's context, which stopped this.
   if (!self) {
     return;
   }
@@ -250,14 +254,16 @@ void AnimationFrameController::ExecuteFrameCallbacks(
     v8::Local<v8::Value> argument = v8::Number::New(
         isolate_, frame_callback.use_legacy_time_base ? high_res_now_ms_legacy
                                                       : high_res_now_ms);
-    std::ignore = frame_callback.callback.Get(isolate_)->Call(
-        context, v8::Undefined(isolate_), 1, &argument);
-    // As InvokeAndReportException() reports it, from a verbose TryCatch.
+    const v8::Local<v8::Function> callback =
+        frame_callback.callback.Get(isolate_);
+    std::ignore =
+        callback->Call(context, v8::Undefined(isolate_), 1, &argument);
+    // As InvokeAndReportException() reports it, from a verbose TryCatch, in
+    // the callback's realm.
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
-      bindings::ReportException(isolate_, try_catch.Exception(),
-                                try_catch.Message());
+      bindings::ReportExceptionInCallbackRealm(isolate_, callback, try_catch);
     }
-    // The callback may have ended the window's context, and this with it.
+    // The callback may have ended the window's context, which stopped this.
     if (!self) {
       return;
     }

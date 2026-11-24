@@ -24,9 +24,9 @@
 #include "base/memory/weak_ptr.h"
 #include "mitto/dom/blob_data.h"
 #include "mitto/dom/fetcher.h"
+#include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
 
-class GURL;
 
 namespace mitto {
 
@@ -44,7 +44,19 @@ class LocalSchemeFetch final : public FetchController {
     // 0 for a response, and otherwise why it fails.
     int net_error = 0;
     FetchResponseHead head;
+    // The body: bytes of its own, or `blob_length` bytes of `blob` from
+    // `blob_offset`, which are copied a piece at a time as they go.
     std::string body;
+    scoped_refptr<BlobDataHandle> blob;
+    size_t blob_offset = 0;
+    size_t blob_length = 0;
+
+    // A data: URL and its method, which the task decodes, with nothing else.
+    std::optional<GURL> data_url;
+    std::string method;
+
+    // All of the body at once, for a worker's script, which reads it whole.
+    std::string TakeBody();
     // Whether the browser answers it, after a hop there and back, in pieces
     // of at most `pipe_capacity` bytes, each from a task of its own.
     bool from_browser = false;
@@ -80,27 +92,47 @@ class LocalSchemeFetch final : public FetchController {
   LocalSchemeFetch& operator=(const LocalSchemeFetch&) = delete;
   ~LocalSchemeFetch() override;
 
-  // FetchController: the bytes are all here, so taking them lets nothing
-  // more come.
-  void TookBody(size_t bytes) override {}
+  // FetchController: taking a blob's bytes makes room in the pipe for more.
+  void TookBody(size_t bytes) override;
   void Cancel() override;
 
  private:
+  // What AnswerDataUrl() gives once the URL is decoded.
+  static Answer DecodeDataUrl(const GURL& url, std::string_view method);
+
   LocalSchemeFetch(Answer answer,
                    std::unique_ptr<FetchClient> client,
                    ExecutionContext& context);
 
+  // The context's going, which cancels the fetch, once any call to the
+  // client has returned.
+  void OnContextDestroyed();
+  // After a call to the client: whether the fetch goes on, or was cancelled
+  // under the call, which destroys it now.
+  bool ReturnedFromClient();
   // Posts `step` to run from a later task of the context.
   void Post(void (LocalSchemeFetch::*step)());
   // The browser's answer, from the task after this one's.
   void PostRespond();
   void Respond();
   void SendResponseBody();
+  size_t BodySize() const {
+    return answer_.blob ? answer_.blob_length : answer_.body.size();
+  }
 
   Answer answer_;
   std::unique_ptr<FetchClient> client_;
   cppgc::WeakPersistent<ExecutionContext> context_;
+  uint64_t context_destroyed_callback_ = 0;
   size_t body_sent_ = 0;
+  // The bytes of a blob that the client has been given and not taken, at most
+  // the pipe's capacity, and whether a piece waits for room.
+  size_t in_pipe_ = 0;
+  bool waiting_for_room_ = false;
+  // Whether the client is being called, and whether the fetch was cancelled
+  // under the call.
+  bool calling_client_ = false;
+  bool cancel_pending_ = false;
   base::WeakPtrFactory<LocalSchemeFetch> weak_factory_{this};
 };
 

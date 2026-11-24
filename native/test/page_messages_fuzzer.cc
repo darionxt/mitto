@@ -275,6 +275,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kIndexedDbCallback:
         case mitto::PageMessage::kStorageBucketsAnswer:
         case mitto::PageMessage::kRequestBodyCredit:
+        case mitto::PageMessage::kIsolation:
           // Only a Session sends these.
           NOTREACHED();
       }

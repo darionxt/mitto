@@ -49,7 +49,12 @@ class PairIterationSource
 
   // The iterator's next(): {done, value} of the next pair, as `kind` has it,
   // or of undefined once there is none.
-  v8::Local<v8::Object> Next(v8::Isolate* isolate, PairIterationKind kind);
+  // The pair of an entries() iterator is an array of the realm of the next()
+  // that asks, and the result an object of `result_context`, the iterator's
+  // realm, as Blink's ESCreateIterResultObject() makes them.
+  v8::Local<v8::Object> Next(v8::Isolate* isolate,
+                             PairIterationKind kind,
+                             v8::Local<v8::Context> result_context);
   // forEach(): calls `callback` with each value, its key and `object`, and
   // `this_arg` as this, until there is no pair left. Returns false if a call
   // threw, which leaves the exception for the caller.
@@ -63,9 +68,11 @@ class PairIterationSource
  protected:
   PairIterationSource();
 
-  // The next pair, as the page sees its key and value, or false if there is
-  // none left.
+  // The next pair, as the page sees the key and value that `kind` has of it,
+  // or false if there is none left. The other one is left as it is, so that
+  // keys() converts no value.
   virtual bool FetchNextItem(v8::Isolate* isolate,
+                             PairIterationKind kind,
                              v8::Local<v8::Value>* key,
                              v8::Local<v8::Value>* value) = 0;
 };

@@ -27,12 +27,12 @@ class NavigationDestination final : public bindings::ScriptWrappable {
   static NavigationDestination* Create(
       std::u16string url,
       bool same_document,
-      std::optional<SerializedScriptValue> state,
+      scoped_refptr<const SharedSerializedScriptValue> state,
       NavigationHistoryEntry* entry = nullptr);
 
   NavigationDestination(std::u16string url,
                         bool same_document,
-                        std::optional<SerializedScriptValue> state,
+                        scoped_refptr<const SharedSerializedScriptValue> state,
                         NavigationHistoryEntry* entry);
   ~NavigationDestination() override;
 
@@ -51,7 +51,7 @@ class NavigationDestination final : public bindings::ScriptWrappable {
  private:
   const std::u16string url_;
   const bool same_document_;
-  const std::optional<SerializedScriptValue> state_;
+  const scoped_refptr<const SharedSerializedScriptValue> state_;
   cppgc::Member<NavigationHistoryEntry> entry_;
 };
 

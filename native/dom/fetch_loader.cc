@@ -22,6 +22,7 @@
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/response.h"
 #include "mitto/header_rules.h"
+#include "url/gurl.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -245,8 +246,11 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   headers->set_guard(Headers::Guard::kImmutable);
   Response* const response = Response::CreateFetched(
       cors ? Response::ResponseType::kCors : Response::ResponseType::kBasic,
-      head.status, head.status_text, base::UTF8ToUTF16(head.url),
-      head.redirected, headers, body);
+      head.status, head.status_text,
+      // The getter of Response's url leaves out the fragment that a data: or
+      // a blob: URL's response keeps.
+      base::UTF8ToUTF16(GURL(head.url).GetWithoutRef().spec()), head.redirected,
+      headers, body);
   std::ignore = resolver_.Get(isolate_)->Resolve(
       context, bindings::ToV8(isolate_, response));
   resolver_.Reset();
@@ -331,11 +335,17 @@ void FetchLoader::Abort() {
     uploader_->Detach();
     uploader_.Clear();
   }
-  if (ReadableStream* const stream = upload_stream_.Get()) {
-    upload_stream_.Clear();
-    std::ignore = ReadableStream::Cancel(isolate_, stream, signal_->Reason());
-  }
+  // The request goes first, which destroys this, so that the stream's
+  // cancel, whose source may run a script that lets the context go, finds
+  // nothing of this to touch.
+  const cppgc::Persistent<ReadableStream> stream = upload_stream_.Get();
+  upload_stream_.Clear();
+  const v8::Local<v8::Value> reason = signal_->Reason();
+  v8::Isolate* const isolate = isolate_;
   Cancel();
+  if (stream) {
+    std::ignore = ReadableStream::Cancel(isolate, stream.Get(), reason);
+  }
 }
 
 void FetchLoader::Cancel() {

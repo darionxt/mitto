@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/task_observer.h"
@@ -28,6 +29,7 @@
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/modulator.h"
@@ -222,8 +224,6 @@ void DedicatedWorkerThread::Scope::Start() {
   isolate_->Enter();
   data_ = bindings::PerIsolateData::Create(isolate_, params_.features);
   data_->set_worker();
-  data_->set_secure_context(params_.secure_context);
-  data_->set_time_origin(base::TimeTicks::Now());
   const SendFrame send =
       base::BindRepeating(&SessionSender::Send, params_.sender);
   reporter_ = std::make_unique<PageReporter>(isolate_, send);
@@ -232,6 +232,11 @@ void DedicatedWorkerThread::Scope::Start() {
       base::BindRepeating(&Scope::ReportUncaught, base::Unretained(this)));
   data_->SetExceptionReporter(base::BindRepeating(
       &PageReporter::ReportException, base::Unretained(reporter_.get())));
+  data_->SetConsoleWarningReporter(
+      base::BindRepeating([](std::string_view message) {
+        ExecutionContext::Current().AddConsoleMessage(ConsoleLevel::kWarning,
+                                                      std::string(message));
+      }));
   data_->SetKnownGapReporter(base::BindRepeating(
       [](const SendFrame& send, std::string_view name) {
         send.Run(EncodeKnownGap(name));
@@ -239,8 +244,13 @@ void DedicatedWorkerThread::Scope::Start() {
       send));
 
   const v8::HandleScope handle_scope(isolate_);
+  ContextInit init;
+  // A worker's performance timeline starts when its thread does.
+  init.time_origin = base::TimeTicks::Now();
+  init.secure_context = params_.secure_context;
+  init.cross_origin_isolated = params_.cross_origin_isolated;
   const v8::Local<v8::Context> context = NewWorkerContext(
-      isolate_, params_.name, [this](v8::Local<v8::Context> context) {
+      isolate_, init, params_.name, [this](v8::Local<v8::Context> context) {
         InitializePageContext(context);
         reporter_->ContextCreated(context);
       });
@@ -258,7 +268,7 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetTasks(tasks_.get());
   if (params_.begin_frames) {
     animation_frames_ = std::make_unique<AnimationFrameController>(
-        isolate_, context, data_->time_origin());
+        isolate_, context, init.time_origin);
     scope_->SetAnimationFrames(animation_frames_.get());
   }
   // The worker's requests are its own, and their responses come to this
@@ -304,13 +314,16 @@ void DedicatedWorkerThread::Scope::Start() {
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
         PageConsoleMessage message;
         message.level = level;
-        message.text = std::move(text);
+        // A message may hold what a page gave, such as the value that an
+        // enumeration lacks, and goes no further than a Page message can.
+        base::TruncateUTF8ToByteSize(text, kMaxConsoleTextSize, &message.text);
         send.Run(EncodeConsole(message));
       },
       send));
   scope_->SetObjectProxy(params_.object_proxy.get());
   scope_->SetModule(params_.module);
   scope_->SetOutsideReferrerPolicy(params_.referrer_policy);
+  scope_->SetOutsideOrigin(params_.outside_origin);
   scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.
@@ -653,7 +666,7 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
     script.url = url;
     script.status = answer.head.status;
     script.headers = std::move(answer.head.headers);
-    script.body = std::move(answer.body);
+    script.body = answer.TakeBody();
     return script;
   }
   if (!url.SchemeIsHTTPOrHTTPS()) {
@@ -719,8 +732,7 @@ void DedicatedWorkerThread::Scope::ReportRejections(
     return;
   }
   const v8::HandleScope handle_scope(isolate_);
-  reporter_->ReportUnhandledRejections(context_.Get(isolate_),
-                                       std::move(rejections));
+  reporter_->ReportUnhandledRejections(std::move(rejections));
 }
 
 void DedicatedWorkerThread::Scope::ReportUncaught(

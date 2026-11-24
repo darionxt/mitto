@@ -822,7 +822,10 @@ mitto_bindings_interfaces = [
     name = "HTMLFrameElement"
     file = "html_frame_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "contentDocument",
+      "contentWindow",
+    ]
   },
   {
     name = "HTMLFrameSetElement"
@@ -864,6 +867,8 @@ mitto_bindings_interfaces = [
     implemented = [
       "sandbox",
       "srcdoc",
+      "contentDocument",
+      "contentWindow",
     ]
   },
   {
@@ -1295,12 +1300,6 @@ mitto_bindings_interfaces = [
     name = "History"
     file = "history"
     made_by_known_gaps = true
-
-    # scrollRestoration keeps what a page sets, as a Known Gap does.
-    implemented = [
-      "length",
-      "state",
-    ]
   },
   {
     name = "IDBCursor"
@@ -1509,16 +1508,12 @@ mitto_bindings_interfaces = [
     file = "navigation"
     made_by_known_gaps = true
 
-    # Traversal and updateCurrentEntry() are #280's.
-    implemented = [
-      "currentEntry",
-      "transition",
-      "activation",
-      "canGoBack",
-      "canGoForward",
-      "entries",
-      "navigate",
-      "reload",
+    # The bindings run its event handler attributes.
+    missing = [
+      "onnavigate",
+      "onnavigatesuccess",
+      "onnavigateerror",
+      "oncurrententrychange",
     ]
   },
   {
@@ -3113,11 +3108,17 @@ mitto_bindings_interfaces = [
       "devicePixelRatio",
       "matchMedia",
       "frames",
+      "length",
+      "indexed getter",
       "top",
       "parent",
+      "frameElement",
+      "name",
+      "closed",
       "opener",
       "origin",
       "isSecureContext",
+      "crossOriginIsolated",
       "originAgentCluster",
       "offscreenBuffering",
       "crashReport",
@@ -3207,6 +3208,7 @@ mitto_bindings_interfaces = [
       "navigator",
       "origin",
       "isSecureContext",
+      "crossOriginIsolated",
       "performance",
       "crypto",
       "scheduler",

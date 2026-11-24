@@ -21,6 +21,7 @@
 #include "mitto/bindings/idl_member_installer.h"
 #include "mitto/bindings/interface_table.h"
 #include "mitto/bindings/pair_iterable.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
@@ -1013,7 +1014,11 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
   if (!asynchronous && !(member.flags & kMemberIteratorReturn)) {
     if (PairIterationSource* const source =
             PairIterationSourceOf(isolate, info.This(), &kind)) {
-      info.GetReturnValue().Set(source->Next(isolate, kind));
+      // The result is of the iterator's realm, whatever realm next() comes
+      // from, as Blink makes it with the receiver's ScriptState.
+      const ReceiverRealmScope receiver_realm(isolate, info.This());
+      info.GetReturnValue().Set(source->Next(
+          isolate, kind, ReceiverRealmScope::CreationContext(isolate)));
       return;
     }
   }
@@ -1130,12 +1135,18 @@ void KnownGapAttributeSetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Value> value;
   if (member.type->kind == IdlTypeKind::kEnumeration) {
     // Web IDL: an attribute's setter ignores a string that is not one of the
-    // enumeration's values, as bind_gen's setters do.
+    // enumeration's values, as bind_gen's setters do, with Blink's warning in
+    // the console (ReportInvalidEnumSetToAttribute()).
     v8::Local<v8::String> string;
     if (!info[0]->ToString(isolate->GetCurrentContext()).ToLocal(&string)) {
       return;
     }
     if (!IsEnumerationValue(isolate, *member.type, string)) {
+      const v8::String::Utf8Value text(isolate, string);
+      PerIsolateData::From(isolate)->ReportConsoleWarning(base::StrCat(
+          {"The provided value '",
+           std::string_view(*text, static_cast<size_t>(text.length())),
+           "' is not a valid enum value of type ", member.type->name, "."}));
       return;
     }
     value = string;

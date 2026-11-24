@@ -40,24 +40,32 @@ class PairIterator final : public v8::Object::Wrappable {
 PairIterationSource::PairIterationSource() = default;
 PairIterationSource::~PairIterationSource() = default;
 
-v8::Local<v8::Object> PairIterationSource::Next(v8::Isolate* isolate,
-                                                PairIterationKind kind) {
+v8::Local<v8::Object> PairIterationSource::Next(
+    v8::Isolate* isolate,
+    PairIterationKind kind,
+    v8::Local<v8::Context> result_context) {
   v8::Local<v8::Value> key;
   v8::Local<v8::Value> value;
-  if (!FetchNextItem(isolate, &key, &value)) {
+  if (!FetchNextItem(isolate, kind, &key, &value)) {
+    const v8::Context::Scope result_scope(result_context);
     return CreateIterResultObject(isolate, v8::Undefined(isolate), true);
   }
+  v8::Local<v8::Value> result;
   switch (kind) {
     case PairIterationKind::kKey:
-      return CreateIterResultObject(isolate, key, false);
-    case PairIterationKind::kValue:
-      return CreateIterResultObject(isolate, value, false);
-    case PairIterationKind::kKeyValue:
+      result = key;
       break;
+    case PairIterationKind::kValue:
+      result = value;
+      break;
+    case PairIterationKind::kKeyValue: {
+      v8::Local<v8::Value> pair[] = {key, value};
+      result = v8::Array::New(isolate, pair, 2);
+      break;
+    }
   }
-  v8::Local<v8::Value> pair[] = {key, value};
-  return CreateIterResultObject(isolate, v8::Array::New(isolate, pair, 2),
-                                false);
+  const v8::Context::Scope result_scope(result_context);
+  return CreateIterResultObject(isolate, result, false);
 }
 
 bool PairIterationSource::ForEach(v8::Isolate* isolate,
@@ -65,15 +73,19 @@ bool PairIterationSource::ForEach(v8::Isolate* isolate,
                                   v8::Local<v8::Value> this_arg,
                                   v8::Local<v8::Value> object) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  v8::Local<v8::Value> key;
-  v8::Local<v8::Value> value;
-  while (FetchNextItem(isolate, &key, &value)) {
+  while (true) {
+    // Each pair and what the callback gives back go once it has been called.
+    const v8::HandleScope handle_scope(isolate);
+    v8::Local<v8::Value> key;
+    v8::Local<v8::Value> value;
+    if (!FetchNextItem(isolate, PairIterationKind::kKeyValue, &key, &value)) {
+      return true;
+    }
     v8::Local<v8::Value> arguments[] = {value, key, object};
     if (callback->Call(context, this_arg, 3, arguments).IsEmpty()) {
       return false;
     }
   }
-  return true;
 }
 
 v8::MaybeLocal<v8::Value> NewPairIterator(v8::Local<v8::Context> context,

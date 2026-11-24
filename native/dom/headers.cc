@@ -30,6 +30,7 @@ class Headers::IterationSource final : public bindings::PairIterationSource {
 
  protected:
   bool FetchNextItem(v8::Isolate* isolate,
+                     bindings::PairIterationKind kind,
                      v8::Local<v8::Value>* key,
                      v8::Local<v8::Value>* value) override {
     // Blink's Headers resets each iterator's list when its own changes.
@@ -41,8 +42,12 @@ class Headers::IterationSource final : public bindings::PairIterationSource {
       return false;
     }
     const auto& [name, line_value] = (*lines_)[current_++];
-    *key = bindings::ToV8ByteString(isolate, name);
-    *value = bindings::ToV8ByteString(isolate, line_value);
+    if (kind != bindings::PairIterationKind::kValue) {
+      *key = bindings::ToV8ByteString(isolate, name);
+    }
+    if (kind != bindings::PairIterationKind::kKey) {
+      *value = bindings::ToV8ByteString(isolate, line_value);
+    }
     return true;
   }
 
@@ -274,21 +279,29 @@ std::optional<std::string> Headers::GetValue(std::string_view name) const {
 
 std::vector<std::pair<std::string, std::string>> Headers::SortAndCombine()
     const {
-  std::vector<std::string> names;
-  for (const auto& line : list_) {
-    names.push_back(base::ToLowerASCII(line.first));
+  // Blink's FetchHeaderList::SortAndCombine() over its list sorted by name:
+  // the values of each name in their order, joined, but Set-Cookie's, each a
+  // line of its own, in one pass over the lines in a stable order of names.
+  std::vector<std::pair<std::string, const std::string*>> sorted;
+  sorted.reserve(list_.size());
+  for (const auto& [name, value] : list_) {
+    sorted.emplace_back(base::ToLowerASCII(name), &value);
   }
-  std::ranges::sort(names);
-  names.erase(std::ranges::unique(names).begin(), names.end());
+  std::ranges::stable_sort(sorted, {},
+                           &std::pair<std::string, const std::string*>::first);
   std::vector<std::pair<std::string, std::string>> lines;
-  for (const std::string& name : names) {
-    if (name != "set-cookie") {
-      lines.emplace_back(name, *GetValue(name));
+  for (size_t i = 0; i < sorted.size();) {
+    const std::string& name = sorted[i].first;
+    if (name == "set-cookie") {
+      lines.emplace_back(name, *sorted[i].second);
+      ++i;
       continue;
     }
-    for (std::string& value : GetSetCookie()) {
-      lines.emplace_back(name, std::move(value));
+    std::string combined = *sorted[i].second;
+    for (++i; i < sorted.size() && sorted[i].first == name; ++i) {
+      base::StrAppend(&combined, {", ", *sorted[i].second});
     }
+    lines.emplace_back(name, std::move(combined));
   }
   return lines;
 }

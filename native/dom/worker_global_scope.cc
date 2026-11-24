@@ -11,7 +11,6 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
-#include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_worker_global_scope.h"
 #include "mitto/dom/cache_storage.h"
 #include "mitto/dom/classic_pending_script.h"
@@ -139,8 +138,7 @@ WorkerLocation* WorkerGlobalScope::Location() {
 mitto::Performance* WorkerGlobalScope::Performance() {
   if (!performance_) {
     performance_ = Performance::CreateForWorker(
-        bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-            ->time_origin());
+        TimeOrigin(), CrossOriginIsolatedCapability());
   }
   return performance_.Get();
 }
@@ -151,9 +149,8 @@ std::u16string WorkerGlobalScope::Origin() const {
 
 bool WorkerGlobalScope::IsSecureContextForBindings() const {
   // A worker is a secure context if its creator is, which the Page decides
-  // for its isolate when it starts the worker.
-  return bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-      ->secure_context();
+  // for its context when it starts the worker.
+  return IsSecureContext();
 }
 
 // WorkerGlobalScope::ImportScriptsInternal().

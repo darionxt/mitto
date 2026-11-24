@@ -44,13 +44,19 @@ class Performance final : public EventTarget {
   // Counts from `time_origin`: the start of the navigation that loaded the
   // window's document, or when the window was made. `timing` is the window's,
   // which its document's loading fills.
+  // Its times are coarsened as those of a cross-origin isolated context are
+  // if `cross_origin_isolated_capability`.
   static Performance* Create(base::TimeTicks time_origin,
-                             DocumentLoadTiming* timing);
+                             DocumentLoadTiming* timing,
+                             bool cross_origin_isolated_capability);
   // A worker's, as WorkerPerformance, which counts from when the worker
   // started: no navigation, no timing, and no entry of the page's visibility.
-  static Performance* CreateForWorker(base::TimeTicks time_origin);
+  static Performance* CreateForWorker(base::TimeTicks time_origin,
+                                      bool cross_origin_isolated_capability);
 
-  Performance(base::TimeTicks time_origin, DocumentLoadTiming* timing);
+  Performance(base::TimeTicks time_origin,
+              DocumentLoadTiming* timing,
+              bool cross_origin_isolated_capability);
   ~Performance() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -98,14 +104,18 @@ class Performance final : public EventTarget {
 
   // Blink's Performance::ClampTimeResolution(): `time` in milliseconds,
   // coarsened as every time that a page reads is, with the process's one
-  // secret, so that two readings of one moment agree.
-  static double ClampTimeResolution(base::TimeDelta time);
+  // secret, so that two readings of one moment agree: to 5 microseconds for
+  // a context that is cross-origin isolated, and 100 for any other.
+  static double ClampTimeResolution(base::TimeDelta time,
+                                    bool cross_origin_isolated_capability);
 
   // Blink's MonotonicTimeToDOMHighResTimeStamp(): `time` in milliseconds since
   // `time_origin`, each coarsened before the difference, and 0 for a time
   // before it.
-  static double MonotonicTimeToDOMHighResTimeStamp(base::TimeTicks time_origin,
-                                                   base::TimeTicks time);
+  static double MonotonicTimeToDOMHighResTimeStamp(
+      base::TimeTicks time_origin,
+      base::TimeTicks time,
+      bool cross_origin_isolated_capability);
 
  private:
   using EntryList = std::vector<PerformanceEntry*>;
@@ -139,6 +149,7 @@ class Performance final : public EventTarget {
   void FireResourceTimingBufferFull();
 
   const base::TimeTicks time_origin_;
+  const bool cross_origin_isolated_capability_;
   // The Unix time at the zero of base::TimeTicks, from which timeOrigin is
   // given as a Unix time.
   const base::Time unix_at_zero_monotonic_;

@@ -63,6 +63,9 @@ class BodyMixin {
     kFormData,
     kFailure,
     kJson,
+    // Rejects without reading the body, as formData() of a multipart type
+    // without a boundary.
+    kNothing,
     kText,
     kUrlEncodedFormData,
   };

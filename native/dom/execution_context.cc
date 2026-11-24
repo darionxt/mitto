@@ -172,15 +172,22 @@ void ExecutionContext::SetTimers(DOMTimerCoordinator* timers) {
   for (auto& [id, cancel] : signal_timers) {
     std::move(cancel).Run();
   }
-  std::vector<base::OnceClosure> callbacks;
+  std::map<uint64_t, base::OnceClosure> callbacks;
   callbacks.swap(context_destroyed_callbacks_);
-  for (base::OnceClosure& callback : callbacks) {
+  for (auto& [id, callback] : callbacks) {
     std::move(callback).Run();
   }
 }
 
-void ExecutionContext::AddContextDestroyedCallback(base::OnceClosure callback) {
-  context_destroyed_callbacks_.push_back(std::move(callback));
+uint64_t ExecutionContext::AddContextDestroyedCallback(
+    base::OnceClosure callback) {
+  const uint64_t id = ++next_context_destroyed_callback_;
+  context_destroyed_callbacks_.emplace(id, std::move(callback));
+  return id;
+}
+
+void ExecutionContext::RemoveContextDestroyedCallback(uint64_t id) {
+  context_destroyed_callbacks_.erase(id);
 }
 
 uint64_t ExecutionContext::AddSignalTimer(base::OnceClosure cancel) {
@@ -238,6 +245,12 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     const bindings::RequestOrUSVString& input,
     const bindings::RequestInit& init,
     bindings::ExceptionState& exception_state) {
+  // GlobalFetch's ScopedFetcher: a context that the Page has let go, such as
+  // a detached frame's window, whose fetch() a script kept, fetches nothing.
+  if (!HasContext()) {
+    exception_state.ThrowTypeError("The global scope is shutting down.");
+    return v8::Local<v8::Promise>();
+  }
   Request* const request = Request::Create(input, init, exception_state);
   if (!request) {
     return v8::Local<v8::Promise>();
@@ -246,6 +259,12 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   // used, as Blink's PassRequestData() leaves it.
   BodyStreamBuffer* const body = request->PassBody(exception_state);
   if (exception_state.HadException()) {
+    return v8::Local<v8::Promise>();
+  }
+  // A script that making the Request ran, such as a body's conversion to a
+  // string, may have let the context go, which ScopedFetcher checks again.
+  if (!HasContext()) {
+    exception_state.ThrowTypeError("The global scope is shutting down.");
     return v8::Local<v8::Promise>();
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
@@ -265,19 +284,47 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   // as Blink's FetchManager::Loader::PerformSchemeFetch() fetches it.
   const GURL& url = request->url();
   if (url.SchemeIs(url::kDataScheme) || url.SchemeIs(url::kBlobScheme)) {
-    auto loader = std::make_unique<FetchLoader>(
-        isolate, context, resolver, /*credentials=*/false, signal,
-        /*upload_body=*/nullptr, /*upload_stream=*/nullptr);
+    const bool readable = url.SchemeIs(url::kDataScheme) ||
+                          request->blob_url_origin()
+                              .value_or(url::Origin::Create(url))
+                              .IsSameOriginWith(GetSecurityOrigin());
+    // FetchLoaderBase::Start(): a blob: URL of another origin is a network
+    // error at once in mode same-origin, and in mode cors, whose scheme does
+    // not support the Fetch API, so an abort after fetch() returns changes
+    // nothing.
+    if (!readable && request->mode() != FetchMode::kNoCors) {
+      std::ignore = resolver->Reject(
+          context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                       isolate, "Failed to fetch")));
+      return resolver->GetPromise();
+    }
+    // A stream body goes nowhere, but an abort cancels it, as the Fetch
+    // Standard's abort steps cancel a request's body that is readable. A
+    // blob: URL's fetch takes Blink's HTTP fetch, which locks the stream with
+    // a reader of its own, though the Page's blob reads none of it; a data:
+    // URL's does not.
+    ReadableStream* const stream =
+        body && body->IsMadeFromReadableStream() ? body->Stream() : nullptr;
+    BytesConsumer* const upload_body =
+        stream && url.SchemeIs(url::kBlobScheme)
+            ? bindings::MakeGarbageCollected<ReadableStreamBytesConsumer>(
+                  isolate, stream)
+            : nullptr;
+    auto loader = std::make_unique<FetchLoader>(isolate, context, resolver,
+                                                /*credentials=*/false, signal,
+                                                upload_body, stream);
+    if (Resource* const preload = MatchFetchPreload(*request)) {
+      PreloadedFetch::Start(*preload, std::move(loader), *this);
+      return resolver->GetPromise();
+    }
     LocalSchemeFetch::Answer answer;
     if (url.SchemeIs(url::kDataScheme)) {
       // A data: URL's content can always be read, whatever the mode.
       answer = LocalSchemeFetch::AnswerDataUrl(url, request->Method());
-    } else if (!request->blob_url_origin()
-                    .value_or(url::Origin::Create(url))
-                    .IsSameOriginWith(GetSecurityOrigin())) {
-      // A blob: URL of another origin: a network error in mode same-origin
-      // or cors, and one that the browser's partition check gives in mode
-      // no-cors, since another origin's blob is of another storage key.
+    } else if (!readable) {
+      // A blob: URL of another origin in mode no-cors: the network error
+      // that the browser's partition check gives, since another origin's
+      // blob is of another storage key.
       answer = LocalSchemeFetch::AnswerRefusedBlobUrl();
     } else {
       answer = LocalSchemeFetch::AnswerBlobUrl(
@@ -343,35 +390,40 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
       isolate, context, resolver,
       /*credentials=*/request->credentials() == FetchCredentialsMode::kInclude,
       signal, upload_body, upload_body ? body->Stream() : nullptr);
+  if (Resource* const preload = MatchFetchPreload(*request)) {
+    PreloadedFetch::Start(*preload, std::move(loader), *this);
+    return resolver->GetPromise();
+  }
+  fetcher->Fetch(std::move(data), std::move(loader));
+  return resolver->GetPromise();
+}
+
+Resource* ExecutionContext::MatchFetchPreload(const Request& request) {
   // A window's GET takes what a link preloaded as fetch, as Blink's
   // ThreadableLoader asks the document's ResourceFetcher for a resource of
   // type kRaw, with what Resource::CanReuse() wants of the request beside its
   // mode and credentials mode: no keepalive, and no header of a conditional
-  // request.
-  WindowTasks* const tasks = GetTasks();
-  const Headers& headers = *request->GetHeaders();
-  if (IsWindow() && tasks && data.method == "GET" && !data.keepalive &&
-      std::ranges::none_of(
-          std::to_array<std::string_view>({"if-match", "if-modified-since",
-                                           "if-none-match", "if-range",
-                                           "if-unmodified-since"}),
-          [&headers](std::string_view name) {
-            return headers.GetValue(name).has_value();
-          })) {
-    FetchParameters params;
-    params.url = request->url();
-    params.type = ResourceType::kRaw;
-    params.mode = request->mode();
-    params.credentials = request->credentials();
-    if (Resource* const preload =
-            static_cast<Window*>(this)->GetDocument().Fetcher().MatchPreload(
-                params)) {
-      PreloadedFetch::Start(*preload, std::move(loader), *this);
-      return resolver->GetPromise();
-    }
+  // request. A data: or a blob: URL's too, which Blink fetches through the
+  // same, so a preload of a blob: URL serves a fetch after the URL is
+  // revoked.
+  const Headers& headers = *request.GetHeaders();
+  if (!IsWindow() || !GetTasks() || request.Method() != "GET" ||
+      request.keepalive() ||
+      std::ranges::any_of(std::to_array<std::string_view>(
+                              {"if-match", "if-modified-since", "if-none-match",
+                               "if-range", "if-unmodified-since"}),
+                          [&headers](std::string_view name) {
+                            return headers.GetValue(name).has_value();
+                          })) {
+    return nullptr;
   }
-  fetcher->Fetch(std::move(data), std::move(loader));
-  return resolver->GetPromise();
+  FetchParameters params;
+  params.url = request.url();
+  params.type = ResourceType::kRaw;
+  params.mode = request.mode();
+  params.credentials = request.credentials();
+  return static_cast<Window*>(this)->GetDocument().Fetcher().MatchPreload(
+      params);
 }
 
 // Upstream: third_party/blink/renderer/platform/wtf/text/base64.cc

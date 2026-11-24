@@ -205,6 +205,8 @@ source_set("bindings") {
     "known_gap.h",
     "pair_iterable.cc",
     "pair_iterable.h",
+    "per_context_data.cc",
+    "per_context_data.h",
     "per_isolate_data.cc",
     "per_isolate_data.h",
     "runtime_feature_set.cc",

@@ -25,6 +25,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._errors import ScriptError
+from tests.inherited_descriptors import child_holding_descriptors_of
 from tests.local_server import QuietServer
 
 _TIMEOUT_SECONDS = 60
@@ -345,6 +346,20 @@ def test_one_session_at_a_time_has_a_storage_directory(native_library: Any, tmp_
         assert error.value.errno == errno.EBUSY
     with mitto.Session(_storage=storage):
         pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a child process on Windows gets no handle that it is not given")
+def test_a_child_process_with_copies_of_a_sessions_descriptors_holds_none_of_its_storage(
+    native_library: Any, tmp_path: Path
+) -> None:
+    # As a Page's process that another thread starts holds them while it starts, when the Session closes.
+    storage = tmp_path / "storage"
+    with mitto.Session(_storage=storage) as session, child_holding_descriptors_of(storage) as descriptors:
+        assert descriptors
+        session.close()
+        mitto.Session(_storage=storage).close()
+
+    assert (storage / "mitto.lock").is_file()
 
 
 def test_a_storage_directory_of_a_later_version_is_refused(native_library: Any, tmp_path: Path) -> None:

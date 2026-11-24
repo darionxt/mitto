@@ -5,14 +5,23 @@ blob's bytes made from strings, buffers and other blobs, slices, reads as text, 
 FileReader's reads and events, blobs in structured clones, and blobs as the bodies of Response and Request. Each
 expected value is what Chrome 157.0.8103.79 gave for the same script, in a page of its own, but where a comment says
 that Windows Chrome differs from the Mac's, since every Persona is of Windows. These run where MITTO_PAGE_PROGRAM names
-the Page program, as tests/test_page_program.py does.
+the Page program, as tests/test_page_program.py does, but the cases that need frames or a document that loads, which run
+in a Page that a Session opens on a local server, with the Page program beside the native library.
 """
 
+import http.server
 import os
 import subprocess
+import threading
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+import mitto
+from mitto import _native
+from tests.local_server import QuietServer
 
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
 _TIMEOUT_SECONDS = 120
@@ -448,10 +457,121 @@ LOCAL_SCHEMES = {
         " await new Promise((r) => setTimeout(r, 50)); return performance.getEntriesByType('resource').length",
         "value: 0",
     ),
+    "a blob: URL's type without the spaces around it": (
+        "const u = blobUrl(['hi'], { type: ' text/plain ' }); const r = await fetch(u);"
+        " return JSON.stringify([r.headers.get('content-type'), (await fetch(u)).headers.get('content-length'),"
+        " new Blob([], { type: ' a/b ' }).type])",
+        'value: ["text/plain","2"," a/b "]',
+    ),
+    "a blob: URL of another origin fails at once in mode same-origin or cors": (
+        "const other = 'blob:https://example.test/0b4ef5e5-0000-4000-8000-000000000000'; const out = [];"
+        " for (const mode of ['same-origin', 'cors', 'no-cors']) { const c = new AbortController();"
+        " const p = fetch(other, { mode, signal: c.signal }); c.abort(); out.push(await settle(p)); }"
+        " return out.join(' // ')",
+        "value: rejected TypeError: Failed to fetch // rejected TypeError: Failed to fetch"
+        " // rejected DOMException: signal is aborted without reason",
+    ),
+    "an abort cancels a stream body": (
+        "const out = []; for (const url of ['data:,x', blobUrl(['hi'])]) { let cancelled = 'not cancelled';"
+        " const body = new ReadableStream({ cancel(reason) { cancelled = 'cancelled ' + reason; } });"
+        " const c = new AbortController();"
+        " const p = fetch(url, { method: 'POST', body, duplex: 'half', signal: c.signal });"
+        " c.abort('why'); out.push(await settle(p) + ', ' + cancelled); } return out.join(' // ')",
+        "value: rejected String: undefined, cancelled why // rejected String: undefined, cancelled why",
+    ),
+    "a blob: URL after a same-document navigation": (
+        "const u = blobUrl(['hi']); location.hash = 'moved'; await new Promise((r) => setTimeout(r, 0));"
+        " return settle(fetch(u).then((r) => r.text()))",
+        "value: fulfilled hi",
+    ),
+    "an abort as the promise resolves": (
+        "const c = new AbortController(); let got = 'no getter'; Object.defineProperty(Response.prototype,"
+        " 'then', { configurable: true, get() { got = 'getter'; c.abort('why'); return undefined; } }); const"
+        " outcome = await settle(fetch('data:,x', { signal: c.signal }).then((r) => r.status)); delete"
+        " Response.prototype.then; return got + ', ' + outcome",
+        "value: getter, fulfilled 200",
+    ),
+    "a stream body of a local fetch is locked only for a blob: URL": (
+        "const out = []; for (const url of ['data:,x', blobUrl(['hi'])]) { const body = new ReadableStream({"
+        " pull(c) { c.enqueue(new Uint8Array([1])); c.close(); } }); const p = fetch(url, { method: 'POST', body,"
+        " duplex: 'half' }); const locked = body.locked; out.push(locked + ' ' + await settle(p.then((r) =>"
+        " r.status)) + ' ' + body.locked); } return out.join(' // ')",
+        "value: false fulfilled 200 false // true rejected TypeError: Failed to fetch true",
+    ),
     "a large blob: URL's body": (
         "const u = blobUrl([new Uint8Array(5 * 1024 * 1024)]); const r = await fetch(u);"
         " return [r.headers.get('content-length'), (await r.arrayBuffer()).byteLength].join()",
         "value: 5242880,5242880",
+    ),
+}
+
+
+# What needs a Page that a Session opens, with frames and a document that loads: each case runs in a Page of its own.
+IN_A_PAGE = {
+    "a detached frame's fetch": (
+        "const f = document.createElement('iframe'); document.body.append(f);"
+        " const fetchOf = f.contentWindow.fetch.bind(f.contentWindow); f.remove(); const out = [];"
+        " for (const url of ['data:,x', blobUrl(['hi'])]) { out.push(await settle(fetchOf(url))); }"
+        " return out.join(' // ')",
+        "value: rejected TypeError: Failed to execute 'fetch' on 'Window': The global scope is shutting down."
+        " // rejected TypeError: Failed to execute 'fetch' on 'Window': The global scope is shutting down.",
+    ),
+    "a frame that goes as its fetch's promise resolves": (
+        "const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow;"
+        " let got = 'no getter'; Object.defineProperty(w.Response.prototype, 'then', { configurable: true,"
+        " get() { got = 'getter'; f.remove(); return undefined; } });"
+        " const p = w.fetch('data:,x'); const outcome = await Promise.race([p.then(() => 'fulfilled', () => 'rejected'),"
+        " new Promise((r) => setTimeout(() => r('pending'), 500))]); return got + ', ' + outcome",
+        "value: getter, fulfilled",
+    ),
+    "a preload of a revoked blob: URL serves a fetch": (
+        "const u = blobUrl(['hi'], { type: 'text/plain' }); const l = document.createElement('link');"
+        " l.rel = 'preload'; l.as = 'fetch'; l.crossOrigin = 'anonymous'; l.href = u;"
+        " const loaded = new Promise((r) => { l.onload = () => r('load'); l.onerror = () => r('error'); });"
+        " document.head.append(l); const event = await loaded; URL.revokeObjectURL(u);"
+        " return event + ', ' + await settle(fetch(u).then((r) => r.text()))",
+        "value: load, fulfilled hi",
+    ),
+    "a revoked blob: URL in another document": (
+        "const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='),"
+        " (c) => c.charCodeAt(0)); const u = blobUrl([png], { type: 'image/png' });"
+        " const f = document.createElement('iframe'); document.body.append(f);"
+        " const load = (doc) => new Promise((r) => { const i = doc.createElement('img');"
+        " i.onload = () => r('load'); i.onerror = () => r('error'); i.src = u; doc.body.append(i); });"
+        " const first = await load(f.contentDocument); URL.revokeObjectURL(u); const second = await load(f.contentDocument);"
+        " return first + ', ' + second",
+        "value: load, error",
+    ),
+    "a frame that its stream body's cancel removes": (
+        "const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow; const"
+        " body = new w.ReadableStream({ cancel() { f.remove(); } }); const c = new w.AbortController(); const p ="
+        " w.fetch('data:,x', { method: 'POST', body, duplex: 'half', signal: c.signal }); c.abort('why'); return"
+        " await Promise.race([settle(p), new Promise((r) => setTimeout(() => r('pending'), 500))])",
+        "value: rejected String: undefined",
+    ),
+    "a frame that its body's conversion removes": (
+        "const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow; const"
+        " out = []; for (const url of ['data:,x', blobUrl(['hi'])]) { const g = document.createElement('iframe');"
+        " document.body.append(g); const gw = g.contentWindow; out.push(await Promise.race([settle(gw.fetch(url,"
+        " { method: 'POST', body: { toString() { g.remove(); return 'x'; } } })), new Promise((r) =>"
+        " setTimeout(() => r('pending'), 500))])); } return out.join(' // ')",
+        "value: rejected TypeError: Failed to execute 'fetch' on 'Window': The global scope is shutting down. // rejected TypeError: Failed to execute 'fetch' on 'Window': The global scope is shutting down.",
+    ),
+    "two imports of a blob: URL with other fragments": (
+        "const u = blobUrl(['export const u = import.meta.url;'], { type: 'text/javascript' }); const [a, b] ="
+        " await Promise.all([import(u + '#a'), import(u + '#b')]); return [a.u === u + '#a', b.u === u +"
+        " '#b'].join()",
+        "value: true,true",
+    ),
+    "a revoked blob: URL that srcset would prefer": (
+        "const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgG"
+        "AWjR9awAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0)); const u = blobUrl([png], { type: 'image/png' });"
+        " const v = blobUrl([png], { type: 'image/png' }); const f = document.createElement('iframe');"
+        " document.body.append(f); const d = f.contentDocument; const load = (set) => new Promise((r) => { const"
+        " i = d.createElement('img'); i.onload = () => r('load ' + (i.currentSrc === u ? 'u' : 'v')); i.onerror ="
+        " () => r('error'); i.srcset = set; d.body.append(i); }); const first = await load(u + ' 2x');"
+        " URL.revokeObjectURL(u); const second = await load(u + ' 2x, ' + v + ' 1x'); return first + ', ' + second",
+        "value: load u, load v",
     ),
 }
 
@@ -490,3 +610,51 @@ def test_the_file_api_does_what_chrome_does(program: Path, script: str, chrome: 
 @pytest.mark.parametrize(("script", "chrome"), LOCAL_SCHEMES.values(), ids=LOCAL_SCHEMES.keys())
 def test_data_and_blob_urls_load_as_in_chrome(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script, LOCAL_SCHEMES_PRELUDE) == chrome
+
+
+@pytest.fixture
+def page_url(native_library: Any) -> Iterator[str]:
+    """The URL of an empty page on 127.0.0.1, or skip if no Page program lies beside the library."""
+    library_path = _native.find_library()
+    assert library_path is not None
+    if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
+        pytest.skip("no Page program beside the library")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            body = b"<!doctype html><title>t</title><body>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
+
+    server = QuietServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}/"
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.mark.parametrize(("script", "chrome"), IN_A_PAGE.values(), ids=IN_A_PAGE.keys())
+def test_data_and_blob_urls_load_in_a_page_as_in_chrome(page_url: str, script: str, chrome: str) -> None:
+    wrapped = f"""(async () => {{
+        try {{
+            const value = await (async () => {{ {LOCAL_SCHEMES_PRELUDE} {script} }})();
+            return "value: " + String(value);
+        }} catch (error) {{
+            return "threw: " + error;
+        }}
+    }})()"""
+    # At a device pixel ratio of 1, Chrome's, which srcset's choice goes by: a Session draws its Machine's otherwise.
+    machine = mitto.Machine.draw(seed=1, display_width=1920, display_height=1080, scale=1.0)
+    with (
+        mitto.Session(machine=machine) as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == chrome
