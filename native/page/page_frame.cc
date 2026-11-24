@@ -1348,6 +1348,9 @@ Document& PageFrame::CommitDocument(
     document->SetLoadTiming(&document_load_timing());
   }
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
+  // The origin stays the one it was committed with, whatever URL an
+  // about:blank frame that opens the document gives it, as Blink's does.
+  document->SetOrigin(origin);
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);

@@ -541,8 +541,9 @@ def test_a_frame_s_cookie_store_and_its_parent_s_each_hear_of_changes(page_url: 
 @pytest.mark.usefixtures("page_program")
 def test_a_page_s_own_members_do_not_reach_a_frame_of_another_origin(page_url: str) -> None:
     # A getter, a setter or a method of the page's window, called on the window of a frame of another origin, throws, as
-    # in Chrome 157 but for the members that another origin may reach, and so does postMessage(), which Chrome sends: a
-    # message of another origin names its target as its source yet, a Known Gap.
+    # in Chrome 157 but for the members that another origin may reach. Chrome lets it have the Location, whose members
+    # it then refuses, and send a message: Known Gaps, where the Location would refuse nothing and the message would name
+    # its target as its source.
     script = """
       (async () => {
         const threw = (f) => { try { f(); return false; } catch (e) { return true; } };
@@ -554,7 +555,7 @@ def test_a_page_s_own_members_do_not_reach_a_frame_of_another_origin(page_url: s
         const get = (name) => Object.getOwnPropertyDescriptor(window, name).get.call(w);
         const set = (name, value) => Object.getOwnPropertyDescriptor(window, name).set.call(w, value);
         const refused = {
-          document: () => get('document'), reflect: () => Reflect.get(window, 'document', w), location: () => get('location').href,
+          document: () => get('document'), reflect: () => Reflect.get(window, 'document', w), location: () => get('location'),
           localStorage: () => get('localStorage'), name: () => get('name'), origin: () => get('origin'), navigator: () => get('navigator'),
           frameElement: () => get('frameElement'), onload: () => get('onload'), setName: () => set('name', 'x'),
           setOnload: () => set('onload', () => 1), setSelf: () => set('self', 1), setOpener: () => set('opener', 1),
@@ -627,6 +628,75 @@ def test_a_window_that_its_frame_left_reaches_only_a_window_of_its_origin(page_u
         *("refused", "refused", "refused", "refused", "refused", "refused", True, True, 0, False),
         *("refused", "refused", "refused"),
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+def test_a_callback_of_a_page_that_went_reaches_only_a_document_of_its_origin(page_url: str, host: str) -> None:
+    # A frame's callback that runs after its page went, such as that of Atomics.waitAsync(), still holds the top-level
+    # window, which is then the next document's: it reads no document of another origin. One of its own origin shows
+    # that the callback runs, where Chrome 157 leaves the next document alone, whatever its origin.
+    script = f"""
+      const element = document.createElement('iframe');
+      document.body.appendChild(element);
+      element.contentWindow.eval(`
+        const held = top, get = Object.getOwnPropertyDescriptor(window, 'document').get;
+        const cell = new Int32Array(new WebAssembly.Memory({{initial: 1, maximum: 1, shared: true}}).buffer);
+        Atomics.waitAsync(cell, 0, 0, 1500).value.then(() => {{
+          for (const read of [() => get.call(held), () => held.document, () => Reflect.get(window, 'document', held)]) {{
+            try {{ read().title += ' reached'; }} catch (e) {{}}
+          }}
+        }});
+      `);
+      location.href = `http://{host}:${{location.port}}/child?next`;
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        page.evaluate(script)
+        page.wait_for_navigation(timeout=_TIMEOUT_SECONDS)
+        title = page.evaluate("new Promise((resolve) => setTimeout(() => resolve(document.title), 3000))")
+
+    assert title == ("child reached reached reached" if host == "127.0.0.1" else "child")
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_document_keeps_its_origin_when_an_about_blank_frame_opens_it(page_url: str) -> None:
+    # An about:blank frame's timer that opens another frame's document gives it its own URL, and the document keeps its
+    # origin, so a function of its window still reaches the window of its origin that the frame then goes to, as in
+    # Chrome 157.
+    script = """
+      (async () => {
+        const tried = (f) => { try { return f(); } catch (e) { return e.name + ': ' + e.message; } };
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const element = document.createElement('iframe');
+        element.src = '/child?old';
+        document.body.appendChild(element);
+        await loaded(element);
+        const blank = document.createElement('iframe');
+        document.body.appendChild(blank);
+        const w = element.contentWindow;
+        const f = w.eval("[() => btoa('a'), () => origin, () => window.document.URL]");
+        await new Promise((resolve) => {
+          blank.contentWindow.opened = resolve;
+          blank.contentWindow.setTimeout(blank.contentWindow.eval(`() => {
+            const target = parent.frames[0].document;
+            target.open();
+            target.write('<p>opened');
+            target.close();
+            opened();
+          }`));
+        });
+        const opened = [w.document.URL, w.document.body.textContent, w.origin, w.location.href, ...f.map(tried)];
+        element.src = '/child?new';
+        await loaded(element);
+        return [opened, f.map(tried)];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        opened, left = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    origin = page_url.rstrip("/")
+    assert opened == ["about:blank", "opened", origin, "about:blank", "YQ==", origin, "about:blank"]
+    assert left == ["YQ==", origin, f"{page_url}child?new"]
 
 
 @pytest.mark.usefixtures("page_program")
