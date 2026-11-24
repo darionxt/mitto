@@ -170,6 +170,12 @@ CacheStorageHost* Cache::Host() const {
   if (!context || !context->HasContext()) {
     return nullptr;
   }
+  // A cache that a document before opened went with it, though its window,
+  // a frame's initial about:blank's that the next document of its origin
+  // kept, remains, where Chrome's keeps working.
+  if (!host_ || !host_->HasCache(cache_)) {
+    return nullptr;
+  }
   return host_;
 }
 

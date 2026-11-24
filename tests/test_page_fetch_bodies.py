@@ -286,6 +286,16 @@ BODIES = {
         " seen.add(await run([...bytes].map((b) => Uint8Array.of(b)))); return [...seen].join(' / ')",
         'value: [["a","1"],["c","File","d","text/plain",6,"2\\n\\n3\\r\\n"]]',
     ),
+    "a body whose conversion throws": (
+        "const value = { toString() { throw new Error('mine'); } };"
+        " const proxy = new Proxy({}, { get() { throw new Error('proxy'); } });"
+        " const tried = (make) => { try { return 'made ' + make(); } catch (e) { return 'threw ' + e; } };"
+        " return [value, proxy, [value], Symbol()].map((body) => tried(() => new Response(body)) + ' / '"
+        " + tried(() => new Request('https://a.test/', { method: 'POST', body }))).join(' / ')",
+        "value: threw Error: mine / threw Error: mine / threw Error: proxy / threw Error: proxy / threw Error: mine"
+        " / threw Error: mine / threw TypeError: Failed to construct 'Response': Cannot convert a Symbol value to a string"
+        " / threw TypeError: Failed to construct 'Request': Cannot convert a Symbol value to a string",
+    ),
     "formData() after the body is used": (
         "const r = new Response('a=1', { headers: { 'content-type': 'application/x-www-form-urlencoded' } });"
         " await r.text(); try { return await settle(r.formData()); } catch (e) { return 'threw ' + e; }",
@@ -482,6 +492,84 @@ def test_form_datas_get_all_gives_an_array_of_the_receivers_realm(page_url: str)
         session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
     ):
         assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "true,false,true,false"
+
+
+def test_iterators_and_form_members_refuse_another_window_as_chrome_does(page_url: str) -> None:
+    # As Chrome 157 gave it: a member called on the window of a frame of another origin throws, one that returns a promise
+    # too, and on one of its own origin, or whose frame has gone, throws a TypeError, or rejects with it. The first throw
+    # is Chrome's SecurityError, where the Page throws V8's own TypeError so far (docs/runtime.md, "What the bindings run
+    # on").
+    script = """
+      (async () => {
+        const iteratorOf = (c) => Object.getPrototypeOf(new c().entries());
+        const calls = [
+          (w) => Headers.prototype.entries.call(w), (w) => Headers.prototype.forEach.call(w, () => 1),
+          (w) => Headers.prototype[Symbol.iterator].call(w), (w) => iteratorOf(Headers).next.call(w),
+          (w) => URLSearchParams.prototype.values.call(w), (w) => iteratorOf(URLSearchParams).next.call(w),
+          (w) => FormData.prototype.append.call(w, 'a', 'b'), (w) => FormData.prototype.getAll.call(w, 'a'),
+          (w) => FormData.prototype.keys.call(w), (w) => iteratorOf(FormData).next.call(w),
+          (w) => Response.prototype.formData.call(w), (w) => Request.prototype.formData.call(w),
+        ];
+        const outcome = (call, w) => {
+          let result;
+          try { result = call(w); } catch (e) { return 'threw'; }
+          return result instanceof Promise ? result.then(() => 'resolved', () => 'rejected') : 'returned';
+        };
+        const outcomes = async (w) => (await Promise.all(calls.map((call) => outcome(call, w)))).join(' ');
+        const frame = () => { const f = document.createElement('iframe'); document.body.append(f); return f; };
+        const own = frame();
+        const other = frame();
+        await new Promise((resolve) => { other.onload = resolve; other.src = 'data:text/html,x'; });
+        const gone = frame();
+        const goneWindow = gone.contentWindow;
+        gone.remove();
+        return [await outcomes(other.contentWindow), await outcomes(own.contentWindow), await outcomes(goneWindow)];
+      })()
+    """
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [
+            " ".join(["threw"] * 12),
+            " ".join(["threw"] * 10 + ["rejected"] * 2),
+            " ".join(["threw"] * 10 + ["rejected"] * 2),
+        ]
+
+
+@pytest.mark.parametrize(
+    "leave", ["f.remove();", "await new Promise((r) => { f.onload = r; f.src = 'data:text/html,x'; });"]
+)
+def test_what_a_frames_old_window_made_still_iterates_once_the_frame_has_left_it(page_url: str, leave: str) -> None:
+    # As Chrome 157 gave it, for a frame that has gone and one that shows another origin's document.
+    script = """
+      (async () => {
+        const f = document.createElement('iframe'); document.body.append(f); const w = f.contentWindow;
+        const [H, P, F] = [w.Headers, w.URLSearchParams, w.FormData];
+        const headers = new H([['a', '1'], ['b', '2']]); const iterator = headers.entries(); iterator.next();
+        const params = new P('a=1&b=2'); const keys = params.keys();
+        const form = new F(); form.append('a', '1'); const values = form.values();
+        LEAVE
+        const own = new Headers([['c', '3']]);
+        const pairs = (list) => { const all = []; list.forEach((value, key) => all.push(key + value)); return all.join(); };
+        const theirNext = Object.getPrototypeOf(headers.entries()).next;
+        return JSON.stringify([
+          iterator.next(), keys.next(), values.next(), [...headers], pairs(headers), pairs(params), pairs(form),
+          [...Headers.prototype.entries.call(headers)], [...H.prototype.entries.call(own)], theirNext.call(own.entries()),
+          [...new H([['z', '9']])], form.getAll('a'),
+        ]);
+      })()
+    """.replace("LEAVE", leave)
+    expected = (
+        '[{"done":false,"value":["b","2"]},{"done":false,"value":"a"},{"done":false,"value":"1"},'
+        '[["a","1"],["b","2"]],"a1,b2","a1,b2","a1",'
+        '[["a","1"],["b","2"]],[["c","3"]],{"done":false,"value":["c","3"]},[["z","9"]],["1"]]'
+    )
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == expected
 
 
 # Helpers of the realm scripts below: a frame, which realm a value is of ("the window's/the frame's"), the outcome of a

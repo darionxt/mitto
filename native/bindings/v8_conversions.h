@@ -6,6 +6,7 @@
 // Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/script_iterator.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_buffer_sources.cc
+// Upstream: third_party/blink/renderer/platform/wtf/vector.h
 
 #ifndef MITTO_BINDINGS_V8_CONVERSIONS_H_
 #define MITTO_BINDINGS_V8_CONVERSIONS_H_
@@ -26,6 +27,7 @@
 #include "base/functional/function_ref.h"
 #include "base/memory/raw_ref.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/idl_type_info.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/wrapper_type_info.h"
@@ -299,6 +301,12 @@ bool FromV8Enumeration(v8::Isolate* isolate,
                        std::string_view type_name,
                        std::u16string* result);
 
+// The most items that Blink's Vector of a sequence's items holds, as
+// Vector::MaxCapacity() works it out: PartitionAlloc's largest allocation over
+// the size of Blink's item of `item_kind`, nullable or not, on a 64-bit
+// desktop, whose Oilpan compresses its pointers.
+size_t SequenceCapacity(IdlTypeKind item_kind, bool item_nullable);
+
 // bind_gen's setter of an attribute of an enumeration: converts `value` to a
 // DOMString, and returns true if it is one of `values`, the strings of the
 // enumeration named `type_name`. Another string adds Blink's warning to the
@@ -311,12 +319,15 @@ bool FromV8EnumerationForSetter(v8::Isolate* isolate,
                                 std::u16string* result);
 
 // Web IDL's conversion of `value` to a sequence: gets its @@iterator and calls
-// `each` with each item, until `each` returns false. Throws a TypeError if
+// `each` with each item, until `each` returns false. An array is read by its
+// indices instead, as Blink reads one, after Blink's RangeError for more than
+// `capacity` items, which SequenceCapacity() gives. Throws a TypeError if
 // `value` is not an object or has no @@iterator, and returns false if
 // anything threw.
 bool IterateSequence(v8::Isolate* isolate,
                      v8::Local<v8::Value> value,
                      ExceptionState& exception_state,
+                     size_t capacity,
                      base::FunctionRef<bool(v8::Local<v8::Value>)> each);
 
 // The same, with the @@iterator method that a union's conversion got.

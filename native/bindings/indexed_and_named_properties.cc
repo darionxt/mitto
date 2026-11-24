@@ -369,6 +369,14 @@ v8::Intercepted NamedPropertiesObjectGetter(
   if (!info.Holder()->GetCreationContext(isolate).ToLocal(&context)) {
     return v8::Intercepted::kNo;
   }
+  // A window that its frame navigated away from has no named properties, as
+  // Blink's WindowProperties gives none without a frame, and the global proxy
+  // that its scripts still hold is another window's, maybe of another origin.
+  v8::Local<v8::Context> current;
+  if (!context->Global()->GetCreationContext(isolate).ToLocal(&current) ||
+      current != context) {
+    return v8::Intercepted::kNo;
+  }
   const ReceiverRealmScope receiver_realm(isolate, context->Global());
   const v8::Local<v8::Value> value = NamedPropertiesObjectOf(info).named_getter(
       isolate, context->Global(), StringOf(isolate, name));

@@ -68,8 +68,17 @@ struct FetchParams {
   std::optional<net::ReferrerPolicy> referrer_policy;
 
   // The URL that Referer starts from, of the initiator's origin, in place of
-  // the initiator itself, as fetch()'s `referrer` asks. Always valid.
+  // the initiator itself, as fetch()'s `referrer` asks, or, for a traversal
+  // of a Page's session history, the Referer that the entry keeps, of any
+  // origin, as Chrome's browser keeps it, which the referrer policy applies
+  // to again for the request's URL. Always valid.
   std::optional<GURL> referrer_source;
+
+  // A request of a context whose outgoing referrer is none, as an
+  // about:blank document's or a worker's of a blob: or data: URL is, which
+  // sends no Referer under any referrer policy, as Blink's
+  // SecurityPolicy::GenerateReferrer() gives none for an empty one.
+  bool no_referrer_source = false;
 
   // For a request of a Page's frame, or a frame's navigation, whose top-level
   // frame is not the initiator: the top-level frame's origin, which
@@ -124,6 +133,11 @@ struct RequestOptions {
   // A Page's reload, which validates what the cache holds: //net's
   // LOAD_VALIDATE_CACHE. No option of the C API's sets it.
   bool validate_cache = false;
+
+  // A Page's traversal of its session history to another document, which
+  // takes what the cache holds without validating it: //net's
+  // LOAD_SKIP_CACHE_VALIDATION. No option of the C API's sets it.
+  bool skip_cache_validation = false;
 
   // A stream body follows, of `stream_body_size` bytes if that is known, as
   // mitto_request_start() describes.

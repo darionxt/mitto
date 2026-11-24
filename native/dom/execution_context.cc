@@ -34,6 +34,7 @@
 #include "mitto/dom/worker_global_scope.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
+#include "v8/include/v8-external.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
@@ -44,6 +45,12 @@
 namespace mitto {
 
 namespace {
+
+// The context's embedder data that holds the execution context bound to it.
+// Index 0 is Chrome's debugger's, 1 the objects of its constructs, 2 whether
+// it is a secure context and 3 whether it is cross-origin isolated
+// (per_context_data.cc).
+constexpr int kBoundExecutionContextIndex = 4;
 
 // The string's code units as bytes, or nullopt if one is beyond Latin-1.
 std::optional<std::string> ToLatin1(const std::u16string& text) {
@@ -71,11 +78,27 @@ ExecutionContext& ExecutionContext::Current() {
 // static
 ExecutionContext* ExecutionContext::From(v8::Isolate* isolate,
                                          v8::Local<v8::Context> context) {
+  if (context->GetNumberOfEmbedderDataFields() >
+      static_cast<uint32_t>(kBoundExecutionContextIndex)) {
+    const v8::Local<v8::Data> data =
+        context->GetEmbedderDataV2(kBoundExecutionContextIndex);
+    if (data->IsValue() && data.As<v8::Value>()->IsExternal()) {
+      return static_cast<ExecutionContext*>(
+          data.As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault));
+    }
+  }
   if (Window* const window =
           bindings::V8Window::ToWrappable(isolate, context->Global())) {
     return window;
   }
   return bindings::V8WorkerGlobalScope::ToWrappable(isolate, context->Global());
+}
+
+void ExecutionContext::BindToContext(v8::Isolate* isolate,
+                                     v8::Local<v8::Context> context) {
+  context->SetEmbedderDataV2(
+      kBoundExecutionContextIndex,
+      v8::External::New(isolate, this, v8::kExternalPointerTypeTagDefault));
 }
 
 ExecutionContext::ExecutionContext() = default;

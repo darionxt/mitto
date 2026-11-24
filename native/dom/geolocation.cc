@@ -222,8 +222,7 @@ void Geolocation::Fire(GeoNotifier* notifier) {
     return;
   }
   const v8::Context::Scope context_scope(context);
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
+  const Window* const window = Window::From(isolate, context);
   if (!window || !window->HasContext()) {
     Remove(notifier);
     return;

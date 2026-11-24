@@ -55,6 +55,23 @@ def test_a_document_with_no_icon_asks_for_its_origins_favicon(session: mitto.Ses
     assert page_lines == caller_lines
 
 
+def test_a_frame_of_another_origin_that_loads_last_leaves_the_icon_to_the_top_level_document(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # The frame's load, at localhost, is the page's last, and fires the top-level document's: the icon that the
+    # top-level document's load asks for still goes from the top-level document.
+    server.image("/favicon.ico", png(16, 16))
+    child = server.page("/child", "<p>child</p>").replace("127.0.0.1", "localhost")
+    url = server.page("/framed", f'<iframe src="{child}"></iframe>')
+
+    with _open_page(session, url):
+        assert server.wait_for_path("/favicon.ico", _ICON_SECONDS)
+
+    session.get(server.url("/favicon.ico"), kind="favicon", initiator=url)
+    page_lines, caller_lines = server.headers_of("/favicon.ico")
+    assert page_lines == caller_lines
+
+
 def test_the_last_icon_link_wins_and_the_next_is_tried_if_no_image_comes(
     session: mitto.Session, server: RecordingServer
 ) -> None:

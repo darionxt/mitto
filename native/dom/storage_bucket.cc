@@ -79,6 +79,12 @@ StorageBucketHost* StorageBucket::Host() const {
   if (!context || !context->HasContext()) {
     return nullptr;
   }
+  // A bucket that a document before was given went with it, though its
+  // window, a frame's initial about:blank's that the next document of its
+  // origin kept, remains, where Chrome's keeps working.
+  if (!host_ || !host_->HasBucket(bucket_)) {
+    return nullptr;
+  }
   return host_;
 }
 

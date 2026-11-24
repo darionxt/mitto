@@ -680,6 +680,8 @@ source_set("dom") {
     "text_encoder_stream.h",
     "time_clamper.cc",
     "time_clamper.h",
+    "timestamp_trigger.cc",
+    "timestamp_trigger.h",
     "toggle_event.cc",
     "toggle_event.h",
     "transferable_streams.cc",
