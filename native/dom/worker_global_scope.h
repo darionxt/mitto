@@ -91,6 +91,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   EventTarget* ErrorEventTarget() override;
   url::Origin GetSecurityOrigin() const override;
   url::Origin AgentClusterOrigin() const override;
+  std::string StorageKey() const override;
   GURL CompleteUrl(std::u16string_view url) const override;
   GURL BaseUrl() const override;
   CacheStorageHost* GetCacheStorageHost() const override;
@@ -136,6 +137,8 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   void SetAgentClusterOrigin(url::Origin origin) {
     agent_cluster_origin_ = std::move(origin);
   }
+  // Its creator's StorageKey(), or an opaque origin's own.
+  void SetStorageKey(std::string key) { storage_key_ = std::move(key); }
   // What importScripts() fetches through. Without one, as in the Page program
   // given a script, each script fails to load.
   void SetImportedScriptLoader(ImportedScriptLoader* loader) {
@@ -172,6 +175,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   FetchReferrerPolicy outside_referrer_policy_ = FetchReferrerPolicy::kDefault;
   url::Origin outside_origin_;
   url::Origin agent_cluster_origin_;
+  std::string storage_key_;
   bool closing_ = false;
 };
 

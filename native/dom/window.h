@@ -250,6 +250,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   EventTarget* ErrorEventTarget() override;
   url::Origin GetSecurityOrigin() const override;
   url::Origin AgentClusterOrigin() const override;
+  std::string StorageKey() const override;
   GURL CompleteUrl(std::u16string_view url) const override;
   GURL BaseUrl() const override;
   // The timers of geolocation's requests count too.
@@ -339,6 +340,9 @@ class Window final : public WindowProperties, public ExecutionContext {
   Modulator* GetModulator() override;
 
  private:
+  // EventTarget:
+  void ListenersChanged(std::u16string_view type) override;
+
   // The window's bars, each an object of its own, as Blink's are.
   enum BarKind : size_t {
     kLocationbar,

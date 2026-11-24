@@ -1,0 +1,874 @@
+{
+ "chrome": "157.0.8103.79",
+ "how": "headless Chrome for Testing on macOS, on the servers of tests/test_page_frame_storage.py, the tabs opened by window.open()",
+ "record": {
+  "listening": {
+   "page": "listens",
+   "same": "listens",
+   "blank": "listens",
+   "srcdoc": "listens",
+   "data": "listens",
+   "data2": "listens",
+   "site": "listens",
+   "other": "listens",
+   "other2": "listens",
+   "same_same": "listens",
+   "site_same": "listens",
+   "other_same": "listens",
+   "other_other": "listens",
+   "data_srcdoc": "listens",
+   "data_top": "listens"
+  },
+  "BroadcastChannel": {
+   "page": [
+    "posted",
+    "same blank srcdoc same_same site_same",
+    [
+     [
+      "message",
+      "page",
+      "ORIGIN",
+      null
+     ]
+    ]
+   ],
+   "same": [
+    "posted",
+    "page blank srcdoc same_same site_same",
+    [
+     [
+      "message",
+      "same",
+      "ORIGIN",
+      null
+     ]
+    ]
+   ],
+   "blank": [
+    "posted",
+    "page same srcdoc same_same site_same",
+    [
+     [
+      "message",
+      "blank",
+      "ORIGIN",
+      null
+     ]
+    ]
+   ],
+   "srcdoc": [
+    "posted",
+    "page same blank same_same site_same",
+    [
+     [
+      "message",
+      "srcdoc",
+      "ORIGIN",
+      null
+     ]
+    ]
+   ],
+   "data": [
+    "posted",
+    ""
+   ],
+   "data2": [
+    "posted",
+    ""
+   ],
+   "site": [
+    "posted",
+    ""
+   ],
+   "other": [
+    "posted",
+    "other2 other_other",
+    [
+     [
+      "message",
+      "other",
+      "OTHER",
+      null
+     ]
+    ]
+   ],
+   "other2": [
+    "posted",
+    "other other_other",
+    [
+     [
+      "message",
+      "other2",
+      "OTHER",
+      null
+     ]
+    ]
+   ],
+   "same_same": [
+    "posted",
+    "page same blank srcdoc site_same",
+    [
+     [
+      "message",
+      "same_same",
+      "ORIGIN",
+      null
+     ]
+    ]
+   ],
+   "site_same": [
+    "posted",
+    "page same blank srcdoc same_same",
+    [
+     [
+      "message",
+      "site_same",
+      "ORIGIN",
+      null
+     ]
+    ]
+   ],
+   "other_same": [
+    "posted",
+    ""
+   ],
+   "other_other": [
+    "posted",
+    "other other2",
+    [
+     [
+      "message",
+      "other_other",
+      "OTHER",
+      null
+     ]
+    ]
+   ],
+   "data_srcdoc": [
+    "posted",
+    "data_top",
+    [
+     [
+      "message",
+      "data_srcdoc",
+      "null",
+      null
+     ]
+    ]
+   ],
+   "data_top": [
+    "posted",
+    "data_srcdoc",
+    [
+     [
+      "message",
+      "data_top",
+      "null",
+      null
+     ]
+    ]
+   ]
+  },
+  "localStorage": {
+   "page": [
+    "set",
+    "same blank srcdoc same_same site_same",
+    [
+     [
+      "k",
+      null,
+      "page",
+      "PAGE",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "same": [
+    "set",
+    "page blank srcdoc same_same site_same",
+    [
+     [
+      "k",
+      "page",
+      "same",
+      "ORIGIN/child",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "blank": [
+    "set",
+    "page same srcdoc same_same site_same",
+    [
+     [
+      "k",
+      "same",
+      "blank",
+      "about:blank",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "srcdoc": [
+    "set",
+    "page same blank same_same site_same",
+    [
+     [
+      "k",
+      "blank",
+      "srcdoc",
+      "about:srcdoc",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "data": [
+    "SecurityError: Failed to read the 'localStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    ""
+   ],
+   "data2": [
+    "SecurityError: Failed to read the 'localStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    ""
+   ],
+   "site": [
+    "set",
+    ""
+   ],
+   "other": [
+    "set",
+    "other2 other_other",
+    [
+     [
+      "k",
+      null,
+      "other",
+      "OTHER/child",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "other2": [
+    "set",
+    "other other_other",
+    [
+     [
+      "k",
+      "other",
+      "other2",
+      "OTHER/child",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "same_same": [
+    "set",
+    "page same blank srcdoc site_same",
+    [
+     [
+      "k",
+      "srcdoc",
+      "same_same",
+      "ORIGIN/child",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "site_same": [
+    "set",
+    "page same blank srcdoc same_same",
+    [
+     [
+      "k",
+      "same_same",
+      "site_same",
+      "ORIGIN/child",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "other_same": [
+    "set",
+    ""
+   ],
+   "other_other": [
+    "set",
+    "other other2",
+    [
+     [
+      "k",
+      "other2",
+      "other_other",
+      "OTHER/child",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "data_srcdoc": [
+    "SecurityError: Failed to read the 'localStorage' property from 'Window': Access is denied for this document.",
+    ""
+   ],
+   "data_top": [
+    "SecurityError: Failed to read the 'localStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    ""
+   ],
+   "values": {
+    "page": "site_same",
+    "same": "site_same",
+    "blank": "site_same",
+    "srcdoc": "site_same",
+    "data": "SecurityError: Failed to read the 'localStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    "data2": "SecurityError: Failed to read the 'localStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    "site": "site",
+    "other": "other_other",
+    "other2": "other_other",
+    "same_same": "site_same",
+    "site_same": "site_same",
+    "other_same": "other_same",
+    "other_other": "other_other",
+    "data_srcdoc": "SecurityError: Failed to read the 'localStorage' property from 'Window': Access is denied for this document.",
+    "data_top": "SecurityError: Failed to read the 'localStorage' property from 'Window': Storage is disabled inside 'data:' URLs."
+   },
+   "same_value": [
+    "set",
+    ""
+   ],
+   "removed": [
+    "removed",
+    "page same srcdoc same_same site_same",
+    [
+     [
+      "k",
+      "site_same",
+      null,
+      "about:blank",
+      "local",
+      true
+     ]
+    ]
+   ],
+   "cleared": [
+    "cleared",
+    "page same blank srcdoc same_same site_same",
+    [
+     [
+      "l",
+      null,
+      "1",
+      "about:blank",
+      "local",
+      true
+     ],
+     [
+      null,
+      null,
+      null,
+      "about:srcdoc",
+      "local",
+      true
+     ]
+    ],
+    [
+     [
+      null,
+      null,
+      null,
+      "about:srcdoc",
+      "local",
+      true
+     ]
+    ],
+    [
+     [
+      "l",
+      null,
+      "1",
+      "about:blank",
+      "local",
+      true
+     ]
+    ]
+   ]
+  },
+  "sessionStorage": {
+   "page": [
+    "set",
+    "same blank srcdoc same_same site_same",
+    [
+     [
+      "k",
+      null,
+      "page",
+      "PAGE",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "same": [
+    "set",
+    "page blank srcdoc same_same site_same",
+    [
+     [
+      "k",
+      "page",
+      "same",
+      "ORIGIN/child",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "blank": [
+    "set",
+    "page same srcdoc same_same site_same",
+    [
+     [
+      "k",
+      "same",
+      "blank",
+      "about:blank",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "srcdoc": [
+    "set",
+    "page same blank same_same site_same",
+    [
+     [
+      "k",
+      "blank",
+      "srcdoc",
+      "about:srcdoc",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "data": [
+    "SecurityError: Failed to read the 'sessionStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    ""
+   ],
+   "data2": [
+    "SecurityError: Failed to read the 'sessionStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    ""
+   ],
+   "site": [
+    "set",
+    ""
+   ],
+   "other": [
+    "set",
+    "other2 other_other",
+    [
+     [
+      "k",
+      null,
+      "other",
+      "OTHER/child",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "other2": [
+    "set",
+    "other other_other",
+    [
+     [
+      "k",
+      "other",
+      "other2",
+      "OTHER/child",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "same_same": [
+    "set",
+    "page same blank srcdoc site_same",
+    [
+     [
+      "k",
+      "srcdoc",
+      "same_same",
+      "ORIGIN/child",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "site_same": [
+    "set",
+    "page same blank srcdoc same_same",
+    [
+     [
+      "k",
+      "same_same",
+      "site_same",
+      "ORIGIN/child",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "other_same": [
+    "set",
+    ""
+   ],
+   "other_other": [
+    "set",
+    "other other2",
+    [
+     [
+      "k",
+      "other2",
+      "other_other",
+      "OTHER/child",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "data_srcdoc": [
+    "SecurityError: Failed to read the 'sessionStorage' property from 'Window': Access is denied for this document.",
+    ""
+   ],
+   "data_top": [
+    "SecurityError: Failed to read the 'sessionStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    ""
+   ],
+   "values": {
+    "page": "site_same",
+    "same": "site_same",
+    "blank": "site_same",
+    "srcdoc": "site_same",
+    "data": "SecurityError: Failed to read the 'sessionStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    "data2": "SecurityError: Failed to read the 'sessionStorage' property from 'Window': Storage is disabled inside 'data:' URLs.",
+    "site": "site",
+    "other": "other_other",
+    "other2": "other_other",
+    "same_same": "site_same",
+    "site_same": "site_same",
+    "other_same": "other_same",
+    "other_other": "other_other",
+    "data_srcdoc": "SecurityError: Failed to read the 'sessionStorage' property from 'Window': Access is denied for this document.",
+    "data_top": "SecurityError: Failed to read the 'sessionStorage' property from 'Window': Storage is disabled inside 'data:' URLs."
+   },
+   "same_value": [
+    "set",
+    ""
+   ],
+   "removed": [
+    "removed",
+    "page same srcdoc same_same site_same",
+    [
+     [
+      "k",
+      "site_same",
+      null,
+      "about:blank",
+      "session",
+      true
+     ]
+    ]
+   ],
+   "cleared": [
+    "cleared",
+    "page same blank srcdoc same_same site_same",
+    [
+     [
+      "l",
+      null,
+      "1",
+      "about:blank",
+      "session",
+      true
+     ],
+     [
+      null,
+      null,
+      null,
+      "about:srcdoc",
+      "session",
+      true
+     ]
+    ],
+    [
+     [
+      null,
+      null,
+      null,
+      "about:srcdoc",
+      "session",
+      true
+     ]
+    ],
+    [
+     [
+      "l",
+      null,
+      "1",
+      "about:blank",
+      "session",
+      true
+     ]
+    ]
+   ]
+  },
+  "locks": {
+   "page": [
+    "frames"
+   ],
+   "same": [
+    "frames"
+   ],
+   "blank": [
+    "frames"
+   ],
+   "srcdoc": [
+    "frames"
+   ],
+   "data": "TypeError: Cannot read properties of undefined (reading 'query')",
+   "data2": "TypeError: Cannot read properties of undefined (reading 'query')",
+   "site": [],
+   "other": [],
+   "other2": [],
+   "same_same": [
+    "frames"
+   ],
+   "site_same": [
+    "frames"
+   ],
+   "other_same": [],
+   "other_other": [],
+   "data_srcdoc": "TypeError: Cannot read properties of undefined (reading 'query')",
+   "data_top": "TypeError: Cannot read properties of undefined (reading 'query')"
+  },
+  "a document whose frame was removed": {
+   "localStorage": {
+    "length": "SecurityError: Failed to read the 'length' property from 'Storage': Access is denied for this document.",
+    "key": "SecurityError: Failed to execute 'key' on 'Storage': Access is denied for this document.",
+    "getItem": "SecurityError: Failed to execute 'getItem' on 'Storage': Access is denied for this document.",
+    "setItem": "SecurityError: Failed to execute 'setItem' on 'Storage': Access is denied for this document.",
+    "removeItem": "SecurityError: Failed to execute 'removeItem' on 'Storage': Access is denied for this document.",
+    "clear": "SecurityError: Failed to execute 'clear' on 'Storage': Access is denied for this document.",
+    "get": "SecurityError: Failed to read a named property 'k' from 'Storage': Access is denied for this document.",
+    "set": "SecurityError: Failed to set a named property 'k' on 'Storage': Access is denied for this document.",
+    "delete": "SecurityError: Failed to delete a named property 'k' from 'Storage': Access is denied for this document.",
+    "in": "SecurityError: Failed to read a named property 'k' from 'Storage': Access is denied for this document.",
+    "keys": "SecurityError: Failed to enumerate the properties of 'Storage': Access is denied for this document.",
+    "own": "SecurityError: Failed to read a named property 'a' from 'Storage': Access is denied for this document.",
+    "again": "false",
+    "kept": "bv"
+   },
+   "sessionStorage": {
+    "length": "SecurityError: Failed to read the 'length' property from 'Storage': Access is denied for this document.",
+    "key": "SecurityError: Failed to execute 'key' on 'Storage': Access is denied for this document.",
+    "getItem": "SecurityError: Failed to execute 'getItem' on 'Storage': Access is denied for this document.",
+    "setItem": "SecurityError: Failed to execute 'setItem' on 'Storage': Access is denied for this document.",
+    "removeItem": "SecurityError: Failed to execute 'removeItem' on 'Storage': Access is denied for this document.",
+    "clear": "SecurityError: Failed to execute 'clear' on 'Storage': Access is denied for this document.",
+    "get": "SecurityError: Failed to read a named property 'k' from 'Storage': Access is denied for this document.",
+    "set": "SecurityError: Failed to set a named property 'k' on 'Storage': Access is denied for this document.",
+    "delete": "SecurityError: Failed to delete a named property 'k' from 'Storage': Access is denied for this document.",
+    "in": "SecurityError: Failed to read a named property 'k' from 'Storage': Access is denied for this document.",
+    "keys": "SecurityError: Failed to enumerate the properties of 'Storage': Access is denied for this document.",
+    "own": "SecurityError: Failed to read a named property 'a' from 'Storage': Access is denied for this document.",
+    "again": "false",
+    "kept": "bv"
+   },
+   "post": "undefined",
+   "closed": "InvalidStateError: Failed to execute 'postMessage' on 'BroadcastChannel': Channel is closed",
+   "made": "undefined",
+   "heard": [
+    "gone heard 1"
+   ]
+  },
+  "a document whose frame was navigated": {
+   "localStorage": {
+    "length": "SecurityError: Failed to read the 'length' property from 'Storage': Access is denied for this document.",
+    "key": "SecurityError: Failed to execute 'key' on 'Storage': Access is denied for this document.",
+    "getItem": "SecurityError: Failed to execute 'getItem' on 'Storage': Access is denied for this document.",
+    "setItem": "SecurityError: Failed to execute 'setItem' on 'Storage': Access is denied for this document.",
+    "removeItem": "SecurityError: Failed to execute 'removeItem' on 'Storage': Access is denied for this document.",
+    "clear": "SecurityError: Failed to execute 'clear' on 'Storage': Access is denied for this document.",
+    "get": "SecurityError: Failed to read a named property 'k' from 'Storage': Access is denied for this document.",
+    "set": "SecurityError: Failed to set a named property 'k' on 'Storage': Access is denied for this document.",
+    "delete": "SecurityError: Failed to delete a named property 'k' from 'Storage': Access is denied for this document.",
+    "in": "SecurityError: Failed to read a named property 'k' from 'Storage': Access is denied for this document.",
+    "keys": "SecurityError: Failed to enumerate the properties of 'Storage': Access is denied for this document.",
+    "own": "SecurityError: Failed to read a named property 'a' from 'Storage': Access is denied for this document.",
+    "again": "false",
+    "kept": "bv"
+   },
+   "sessionStorage": {
+    "length": "SecurityError: Failed to read the 'length' property from 'Storage': Access is denied for this document.",
+    "key": "SecurityError: Failed to execute 'key' on 'Storage': Access is denied for this document.",
+    "getItem": "SecurityError: Failed to execute 'getItem' on 'Storage': Access is denied for this document.",
+    "setItem": "SecurityError: Failed to execute 'setItem' on 'Storage': Access is denied for this document.",
+    "removeItem": "SecurityError: Failed to execute 'removeItem' on 'Storage': Access is denied for this document.",
+    "clear": "SecurityError: Failed to execute 'clear' on 'Storage': Access is denied for this document.",
+    "get": "SecurityError: Failed to read a named property 'k' from 'Storage': Access is denied for this document.",
+    "set": "SecurityError: Failed to set a named property 'k' on 'Storage': Access is denied for this document.",
+    "delete": "SecurityError: Failed to delete a named property 'k' from 'Storage': Access is denied for this document.",
+    "in": "SecurityError: Failed to read a named property 'k' from 'Storage': Access is denied for this document.",
+    "keys": "SecurityError: Failed to enumerate the properties of 'Storage': Access is denied for this document.",
+    "own": "SecurityError: Failed to read a named property 'a' from 'Storage': Access is denied for this document.",
+    "again": "false",
+    "kept": "bv"
+   },
+   "post": "undefined",
+   "closed": "InvalidStateError: Failed to execute 'postMessage' on 'BroadcastChannel': Channel is closed",
+   "heard": [
+    "gone heard 1"
+   ]
+  },
+  "ways to listen": {
+   "listener": [
+    "localStorage listener true false",
+    "sessionStorage listener true false"
+   ],
+   "handler": [
+    "localStorage handler true false",
+    "sessionStorage handler true false"
+   ],
+   "body's handler": [
+    "localStorage body's handler true false",
+    "sessionStorage body's handler true false"
+   ],
+   "body's attribute": [
+    "localStorage body's attribute true false",
+    "sessionStorage body's attribute true false"
+   ],
+   "removed listener": [],
+   "on the document": [],
+   "none": [],
+   "an initial about:blank": [
+    "before"
+   ]
+  },
+  "locks of frames that go": [
+   "page",
+   "frame",
+   "about:blank"
+  ]
+ },
+ "tabs": {
+  "1 top": {
+   "channel": [
+    "1 same",
+    "2 top",
+    "2 same"
+   ],
+   "storage": [
+    "1 same",
+    "2 top",
+    "2 same"
+   ]
+  },
+  "1 same": {
+   "channel": [
+    "1 top",
+    "2 top",
+    "2 same"
+   ],
+   "storage": [
+    "1 top",
+    "2 top",
+    "2 same"
+   ]
+  },
+  "1 other": {
+   "channel": [
+    "2 other"
+   ],
+   "storage": [
+    "2 other"
+   ]
+  },
+  "1 other_same": {
+   "channel": [
+    "2 other_same"
+   ],
+   "storage": [
+    "2 other_same"
+   ]
+  },
+  "2 top": {
+   "channel": [
+    "1 top",
+    "1 same",
+    "2 same"
+   ],
+   "storage": [
+    "1 top",
+    "1 same",
+    "2 same"
+   ]
+  },
+  "2 same": {
+   "channel": [
+    "1 top",
+    "1 same",
+    "2 top"
+   ],
+   "storage": [
+    "1 top",
+    "1 same",
+    "2 top"
+   ]
+  },
+  "2 other": {
+   "channel": [
+    "1 other"
+   ],
+   "storage": [
+    "1 other"
+   ]
+  },
+  "2 other_same": {
+   "channel": [
+    "1 other_same"
+   ],
+   "storage": [
+    "1 other_same"
+   ]
+  },
+  "3 top": {
+   "channel": [
+    "3 same"
+   ],
+   "storage": [
+    "3 same"
+   ]
+  },
+  "3 same": {
+   "channel": [
+    "3 top"
+   ],
+   "storage": [
+    "3 top"
+   ]
+  },
+  "3 other": {
+   "channel": [],
+   "storage": []
+  },
+  "3 other_same": {
+   "channel": [],
+   "storage": []
+  }
+ }
+}

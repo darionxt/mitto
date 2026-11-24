@@ -155,11 +155,11 @@ class PageNetwork {
   // none.
   virtual const NetworkQuality* GetNetworkQuality() const = 0;
 
-  // Hands a BroadcastChannel message of the Page `from`, whose document is of
-  // `origin`, to each other Page of the Session, as Chrome's browser process
-  // hands it to the renderers of other tabs.
+  // Hands a BroadcastChannel message of a context of the Page `from`, whose
+  // storage key is `storage_key`, to each other Page of the Session, as
+  // Chrome's browser process hands it to the renderers of other tabs.
   virtual void BroadcastFromPage(const PageHost& from,
-                                 const url::Origin& origin,
+                                 const StorageKey& storage_key,
                                  const PageBroadcast& broadcast) = 0;
   // The Session's Cache API, which its Pages share, and the quota of its
   // storage.
@@ -310,10 +310,10 @@ class PageHost final : public PageChannel::Delegate {
 
   const scoped_refptr<PageProcess>& process() const { return process_; }
 
-  // Sends the Page a BroadcastChannel message of another Page of the Session
-  // whose document is of `origin`, if the Page's document is of that origin
-  // too: the storage key of the top-level document, the only one a Page has.
-  void DeliverBroadcast(const url::Origin& origin,
+  // Sends the Page a BroadcastChannel message of a context of another Page of
+  // the Session, whose storage key is `storage_key`, if the Page has a context
+  // of that key.
+  void DeliverBroadcast(const StorageKey& storage_key,
                         const PageBroadcast& broadcast);
 
   base::WeakPtr<PageHost> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
@@ -396,7 +396,7 @@ class PageHost final : public PageChannel::Delegate {
   // A message of one of the document's BroadcastChannels, for the Session's
   // other Pages of the document's origin, which the library takes from the
   // document it loaded, not from the Page.
-  void OnBroadcast(const PageBroadcast& broadcast, const GURL& document_url);
+  void OnBroadcast(const PageBroadcast& broadcast, uint64_t context_id);
   // A document that the Page has made, which takes the place of the
   // top-level one, or of its frame's document, or is a frame's first one.
   void OnDocumentCommitted(const PageDocumentCommitted& committed);

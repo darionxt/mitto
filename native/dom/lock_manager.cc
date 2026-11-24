@@ -16,13 +16,11 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_lock_manager.h"
 #include "mitto/dom/abort_signal.h"
-#include "mitto/dom/document.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/lock.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
-#include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
@@ -45,16 +43,6 @@ void Post(base::OnceClosure task) {
   // to no frame.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
                                                               std::move(task));
-}
-
-// A window's document's origin, and a worker's own, which is its creator's
-// or opaque for a data: URL's.
-url::Origin OriginOf(ExecutionContext& context) {
-  if (context.IsWindow()) {
-    return url::Origin::Create(GURL(base::UTF16ToUTF8(
-        static_cast<Window&>(context).GetDocument().UrlForBinding())));
-  }
-  return context.GetSecurityOrigin();
 }
 
 bool ContextIsAlive(v8::Isolate* isolate, v8::Local<v8::Context> context) {
@@ -95,12 +83,12 @@ class LockManager::Connection final : public LockService::Client {
   Connection(v8::Isolate* isolate,
              v8::Local<v8::Context> context,
              LockManager* manager,
-             std::string origin)
+             std::string group)
       : LockService::Client(EventLoop::Get()->TaskRunner(TaskType::kWebLocks)),
         isolate_(isolate),
         context_(isolate, context),
         manager_(manager),
-        origin_(std::move(origin)) {}
+        group_(std::move(group)) {}
 
   // Tells the service that the context let go of the lock or request of
   // `lock_id`, from a task after what the context asked before it, as a
@@ -119,7 +107,7 @@ class LockManager::Connection final : public LockService::Client {
   // worker that ends runs none of its tasks again.
   void Close() {
     for (const int64_t lock_id : releasing_) {
-      LockService::Get().ReleaseLockNow(origin_, lock_id);
+      LockService::Get().ReleaseLockNow(group_, lock_id);
     }
     releasing_.clear();
     context_.Reset();
@@ -150,7 +138,7 @@ class LockManager::Connection final : public LockService::Client {
             [lock_id](LockManager& manager) { manager.Granted(lock_id); })) {
       // The handle is dropped, which lets the lock go, at once, as the
       // context's thread may run no task again.
-      LockService::Get().ReleaseLockNow(origin_, lock_id);
+      LockService::Get().ReleaseLockNow(group_, lock_id);
     }
   }
   void Failed(int64_t lock_id) override {
@@ -166,14 +154,14 @@ class LockManager::Connection final : public LockService::Client {
   void DidLetGo(int64_t lock_id) {
     // None if Close() let it go already.
     if (releasing_.erase(lock_id) != 0) {
-      LockService::Get().ReleaseLockNow(origin_, lock_id);
+      LockService::Get().ReleaseLockNow(group_, lock_id);
     }
   }
 
   const raw_ptr<v8::Isolate> isolate_;
   v8::Global<v8::Context> context_;
   cppgc::WeakPersistent<LockManager> manager_;
-  const std::string origin_;
+  const std::string group_;
   // The locks and requests whose release is on the way to the service.
   std::set<int64_t> releasing_;
 };
@@ -267,13 +255,14 @@ class LockManager::AbortRequest final : public AbortSignal::Algorithm {
 };
 
 LockManager::LockManager(ExecutionContext& context)
-    : origin_(OriginOf(context).Serialize()),
+    : group_(context.StorageKey()),
+      is_opaque_(context.GetSecurityOrigin().opaque()),
       client_id_(base::UnguessableToken::Create().ToString()),
       connection_(base::MakeRefCounted<Connection>(
           v8::Isolate::GetCurrent(),
           v8::Isolate::GetCurrent()->GetCurrentContext(),
           this,
-          origin_)) {
+          group_)) {
   if (context.HasContext()) {
     context.AddContextDestroyedCallback(base::BindOnce(
         [](cppgc::WeakPersistent<LockManager> manager) {
@@ -307,7 +296,7 @@ bool LockManager::CheckAccess(bindings::ExceptionState& exception_state) const {
     return false;
   }
   // SecurityOrigin::CanAccessLocks(): not for an opaque origin.
-  if (origin_ == "null") {
+  if (is_opaque_) {
     exception_state.ThrowDOMException("SecurityError", kAccessDeniedMessage);
     return false;
   }
@@ -424,7 +413,7 @@ void LockManager::RequestImpl(LockRequest* request,
   // The lock's ID is known before the request reaches the service, and before
   // anything can abort it.
   request->set_lock_id(LockService::Get().RequestLock(
-      connection_, origin_, client_id_, base::UTF16ToUTF8(request->name()),
+      connection_, group_, client_id_, base::UTF16ToUTF8(request->name()),
       request->mode(), wait));
   if (signal) {
     AbortRequest* const algorithm =
@@ -524,7 +513,7 @@ void LockManager::Broken(int64_t lock_id) {
 void LockManager::OnLockReleased(Lock* lock) {
   held_locks_.EraseIf([lock](Lock* held) { return held == lock; });
   if (context_destroyed_) {
-    LockService::Get().ReleaseLockNow(origin_, lock->lock_id());
+    LockService::Get().ReleaseLockNow(group_, lock->lock_id());
     return;
   }
   connection_->LetGo(lock->lock_id());
@@ -565,7 +554,7 @@ v8::Local<v8::Promise> LockManager::Query(
                 },
                 std::move(connection), std::move(resolver)));
       },
-      connection_, origin_,
+      connection_, group_,
       v8::Global<v8::Promise::Resolver>(isolate, resolver)));
   return resolver->GetPromise();
 }
@@ -575,7 +564,7 @@ v8::Local<v8::Promise> LockManager::Query(
 void LockManager::ContextDestroyed() {
   context_destroyed_ = true;
   for (LockRequest* const request : pending_requests_.ToVector()) {
-    LockService::Get().ReleaseLockNow(origin_, request->lock_id());
+    LockService::Get().ReleaseLockNow(group_, request->lock_id());
   }
   pending_requests_.clear();
   for (Lock* const lock : held_locks_.ToVector()) {

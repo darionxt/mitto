@@ -2087,14 +2087,14 @@ bool BroadcastFits(const PageBroadcast& broadcast) {
 }
 
 bool BroadcastReceivedFits(const PageBroadcast& broadcast) {
-  // The origin and the name after their sizes, the byte that says whether it
-  // is locked, and the data.
+  // The storage key and the name after their sizes, the byte that says
+  // whether it is locked, and the data.
   const size_t fixed = 4 + 4 + 1;
-  return broadcast.origin.size() <= kMaxPayloadSize - fixed &&
+  return broadcast.storage_key.size() <= kMaxPayloadSize - fixed &&
          broadcast.name.size() <=
-             kMaxPayloadSize - fixed - broadcast.origin.size() &&
+             kMaxPayloadSize - fixed - broadcast.storage_key.size() &&
          broadcast.data.size() <= kMaxPayloadSize - fixed -
-                                      broadcast.origin.size() -
+                                      broadcast.storage_key.size() -
                                       broadcast.name.size();
 }
 
@@ -2137,7 +2137,7 @@ std::string EncodeStorageBucketsAnswer(const PageStorageBucketAnswer& answer) {
 
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
   return EncodeFrame(PageMessage::kBroadcastReceived,
-                     base::StrCat({EncodeSized(broadcast.origin),
+                     base::StrCat({EncodeSized(broadcast.storage_key),
                                    EncodeBroadcastPayload(broadcast)}));
 }
 
@@ -2898,8 +2898,8 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     }
     case PageMessage::kBroadcastReceived: {
       std::string_view bytes = payload;
-      std::string_view origin;
-      if (!TakeSized(bytes, origin) || !IsText(origin)) {
+      std::string_view storage_key;
+      if (!TakeSized(bytes, storage_key) || !IsText(storage_key)) {
         return base::unexpected("a received broadcast that is not valid");
       }
       base::expected<PageBroadcast, std::string> broadcast =
@@ -2908,7 +2908,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
         return base::unexpected(std::move(broadcast).error());
       }
       frame.broadcast = *std::move(broadcast);
-      frame.broadcast.origin = std::string(origin);
+      frame.broadcast.storage_key = std::string(storage_key);
       return frame;
     }
     case PageMessage::kCacheStorageAnswer: {

@@ -167,6 +167,9 @@ void NamedEnumerator(const v8::PropertyCallbackInfo<v8::Array>& info) {
   v8::Isolate* const isolate = info.GetIsolate();
   const std::vector<std::u16string> names =
       PropertiesOf(info).names(isolate, info.Holder());
+  if (isolate->HasPendingException()) {
+    return;
+  }
   info.GetReturnValue().Set(ToV8StringArray(isolate, names).As<v8::Array>());
 }
 

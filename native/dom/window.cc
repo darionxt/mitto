@@ -7,6 +7,7 @@
 #include <string_view>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/functional/bind.h"
@@ -47,6 +48,7 @@
 #include "mitto/dom/screen.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/storage.h"
+#include "mitto/dom/storage_key.h"
 #include "mitto/dom/style_media.h"
 #include "mitto/dom/viewport.h"
 #include "mitto/dom/visual_viewport.h"
@@ -522,6 +524,17 @@ url::Origin Window::GetSecurityOrigin() const {
 
 url::Origin Window::AgentClusterOrigin() const {
   return GetSecurityOrigin();
+}
+
+std::string Window::StorageKey() const {
+  std::vector<url::Origin> ancestors;
+  for (const mitto::Frame* ancestor = frame_ ? frame_->Parent() : nullptr;
+       ancestor; ancestor = ancestor->Parent()) {
+    if (const Window* const window = ancestor->DomWindow()) {
+      ancestors.push_back(window->GetSecurityOrigin());
+    }
+  }
+  return SerializeStorageKey(GetSecurityOrigin(), ancestors);
 }
 
 GURL Window::CompleteUrl(std::u16string_view url) const {

@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 33;
+inline constexpr uint32_t kPageProtocolVersion = 34;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -1053,10 +1053,10 @@ struct PageBroadcast {
   std::string name;
   bool locked = false;
   std::string data;
-  // For kBroadcastReceived: the serialized origin of the documents that sent
-  // it, whose channels alone it reaches. Its payload starts with it, after its
-  // size.
-  std::string origin;
+  // For kBroadcastReceived: the serialized storage key of the context that
+  // sent it, whose channels alone it reaches. Its payload starts with it, after
+  // its size.
+  std::string storage_key;
 };
 
 // Where a change to a storage area comes from, as Blink's StorageAreaSource

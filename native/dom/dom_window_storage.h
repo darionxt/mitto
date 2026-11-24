@@ -32,13 +32,14 @@ class Storage;
 class Window;
 
 // The window's Storage of `kind`, which `slot` keeps once made. Throws a
-// SecurityError for a document of an opaque origin, and gives null for a
-// window whose context has gone with its frame, or for a Page with no Session
-// to keep its storage, as Blink does for disabled storage.
+// SecurityError for a document of an opaque origin, unless `exception_state`
+// is null, and gives null for a window whose context has gone with its frame,
+// or for a Page with no Session to keep its storage, as Blink does for
+// disabled storage.
 Storage* WindowStorage(Window& window,
                        PageStorageKind kind,
                        cppgc::Member<Storage>& slot,
-                       bindings::ExceptionState& exception_state);
+                       bindings::ExceptionState* exception_state);
 
 class StorageController {
  public:

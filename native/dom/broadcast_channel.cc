@@ -74,7 +74,11 @@ void BroadcastChannel::PostMessage(v8::Local<v8::Value> message,
   if (!serialized) {
     return;
   }
-  BroadcastChannelService::Get().Post(connection_, *serialized);
+  // Serializing ran the page's scripts, which may have closed the channel.
+  if (connection_) {
+    BroadcastChannelService::Get().Post(connection_, context_->ContextId(),
+                                        *serialized);
+  }
 }
 
 bool BroadcastChannel::IsOfClosingWorker() const {

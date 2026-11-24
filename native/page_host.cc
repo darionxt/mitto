@@ -2388,17 +2388,22 @@ void PageHost::OnCookieStoreChange(uint64_t document,
 }
 
 void PageHost::OnBroadcast(const PageBroadcast& broadcast,
-                           const GURL& document_url) {
-  // Only a document of an origin that is not opaque sends one: one of an
-  // opaque origin shares its channels with no other.
-  const url::Origin origin = url::Origin::Create(document_url);
-  if (!DocumentHasCookies(document_url) || origin.opaque()) {
+                           uint64_t context_id) {
+  // Only a context of an origin that is not opaque sends one: one of an opaque
+  // origin shares its channels with no other Page's.
+  const Context& context = contexts_.at(context_id);
+  if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     Refuse(
         "a broadcast from a Page with no document of an origin that "
         "another can share");
     return;
   }
-  network_->BroadcastFromPage(*this, origin, broadcast);
+  // Nor does one under a top-level document of an opaque origin, whose key no
+  // other Page's context has.
+  if (const std::optional<StorageKey> storage_key =
+          DocumentStorageKey(context_id)) {
+    network_->BroadcastFromPage(*this, *storage_key, broadcast);
+  }
 }
 
 void PageHost::OnCacheStorage(PageCacheStorageCall call,
@@ -2767,20 +2772,19 @@ void PageHost::OnNetworkHint(const PageNetworkHint& hint, uint64_t document) {
   NOTREACHED();
 }
 
-void PageHost::DeliverBroadcast(const url::Origin& origin,
+void PageHost::DeliverBroadcast(const StorageKey& storage_key,
                                 const PageBroadcast& broadcast) {
-  // The Page hands it to the channels of its contexts of that origin, if it
-  // has one. A message too large for a frame with its origin stays out, as
-  // one too large for a frame stays in the Page that posts it.
+  // The Page hands it to the channels of its contexts of that storage key, if
+  // it has one. A message too large for a frame with its key stays out, as one
+  // too large for a frame stays in the Page that posts it.
   if (!channel_ || ended_ || refused_by_library_ ||
-      std::ranges::none_of(contexts_, [&origin](const auto& entry) {
-        return DocumentHasCookies(ContextUrl(entry.second)) &&
-               entry.second.origin.IsSameOriginWith(origin);
+      std::ranges::none_of(contexts_, [&](const auto& entry) {
+        return DocumentStorageKey(entry.first) == storage_key;
       })) {
     return;
   }
   PageBroadcast received = broadcast;
-  received.origin = origin.Serialize();
+  received.storage_key = storage_key.Serialize();
   if (!BroadcastReceivedFits(received)) {
     return;
   }
@@ -3668,7 +3672,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
                           CookieContextOf(frame->document));
       return;
     case PageMessage::kBroadcast:
-      OnBroadcast(frame->broadcast, document_url);
+      OnBroadcast(frame->broadcast, frame->document);
       return;
     case PageMessage::kDocumentCommitted:
       OnDocumentCommitted(frame->committed);

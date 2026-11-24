@@ -306,6 +306,10 @@ url::Origin WorkerGlobalScope::AgentClusterOrigin() const {
   return agent_cluster_origin_;
 }
 
+std::string WorkerGlobalScope::StorageKey() const {
+  return storage_key_;
+}
+
 GURL WorkerGlobalScope::BaseUrl() const {
   return url_;
 }
