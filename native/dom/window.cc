@@ -529,6 +529,12 @@ url::Origin Window::GetSecurityOrigin() const {
   return GetDocument().GetOrigin();
 }
 
+void Window::AddConsoleMessageOnce(ConsoleLevel level, std::string text) {
+  if (!frame_ || frame_->Top().AddOneTimeMessage(text)) {
+    AddConsoleMessage(level, std::move(text));
+  }
+}
+
 RendererProcess Window::Process() const {
   return {GetSecurityOrigin(),
           HasDocument() && GetDocument().IsInSandboxedProcess()};

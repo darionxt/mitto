@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -85,6 +86,12 @@ class Frame {
   // element's sandbox, and what its parent's document has withheld, as Chrome's
   // FrameTreeNode::SetPendingFramePolicy() puts them together.
   SandboxFlags PendingSandboxFlags() const;
+  // Whether the console has not been told `text` through this frame, the
+  // top-level one, before.
+  bool AddOneTimeMessage(const std::string& text) {
+    return one_time_messages_.insert(text).second;
+  }
+
   // Blink's LocalFrame::IsNavigationAllowed(): no navigation of the frame
   // starts while a FrameNavigationDisabler holds it.
   bool IsNavigationAllowed() const { return navigation_disable_count_ == 0; }
@@ -101,6 +108,7 @@ class Frame {
   friend class FrameNavigationDisabler;
 
   int navigation_disable_count_ = 0;
+  std::set<std::string> one_time_messages_;
   // One for each process, for the frame's document now.
   std::vector<cppgc::WeakPersistent<RemoteWindow>> remote_windows_;
 };

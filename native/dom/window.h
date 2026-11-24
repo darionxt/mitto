@@ -293,6 +293,9 @@ class Window final : public WindowProperties, public ExecutionContext {
   // and clears once another window takes its place.
   void SetFrame(mitto::Frame* frame) { frame_ = frame; }
   mitto::Frame* GetFrame() const { return frame_; }
+  // The same as AddConsoleMessage(), but for a message that the Page's frames
+  // have been told of so before, as FrameConsole discards a duplicate.
+  void AddConsoleMessageOnce(ConsoleLevel level, std::string text);
   // Whether its frame is under another.
   bool IsInFrame() const;
   // The process that Chrome has its document in.

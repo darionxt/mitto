@@ -218,6 +218,7 @@ void PageFrame::Start(const PageConnection& connection) {
     document.SetSandboxFlags(sandbox);
     document.SetInSandboxedProcess(
         parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
+    InheritPermissionsPolicy(document, PendingContainerPolicy());
     // Its about base URL is its creator's base URL, as Blink's
     // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
     // creator's too.
@@ -432,6 +433,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(navigation.sandbox);
   document->SetInSandboxedProcess(navigation.sandboxed_process);
+  InheritPermissionsPolicy(*document, navigation.container_policy);
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
   document->SetReferrer(navigation.referrer);
@@ -585,6 +587,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(old_document.GetSandboxFlags());
   document->SetInSandboxedProcess(old_document.IsInSandboxedProcess());
+  InheritPermissionsPolicy(*document, PendingContainerPolicy());
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
@@ -685,6 +688,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     // what the sandbox withholds now, and an opaque origin without
     // allow-same-origin.
     navigation.sandbox = PendingSandboxFlags();
+    navigation.container_policy = PendingContainerPolicy();
     navigation.sandboxed_process = request.url.IsAboutBlank()
                                        ? request.initiator_in_sandboxed_process
                                        : IsOriginSandboxed(navigation.sandbox);
@@ -751,6 +755,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   provisional_request_ = request;
   ++provisional_request_serial_;
   provisional_sandbox_ = sandbox;
+  provisional_container_policy_ = PendingContainerPolicy();
   provisional_start_ = now;
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
@@ -802,6 +807,7 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
   provisional_request_ = request;
   ++provisional_request_serial_;
   provisional_sandbox_ = PendingSandboxFlags();
+  provisional_container_policy_ = PendingContainerPolicy();
   provisional_start_ = base::TimeTicks::Now();
   auto answer = std::make_unique<DataUrlAnswer>();
   answer->number = ++last_data_url_answer_;
@@ -1435,6 +1441,7 @@ void PageFrame::CommitErrorPageSoon() {
   navigation.url = GURL(kErrorPageUrl);
   navigation.committed.source = PageDocumentSource::kErrorPage;
   navigation.sandbox = provisional_sandbox_;
+  navigation.container_policy = provisional_container_policy_;
   navigation.sandboxed_process = IsOriginSandboxed(navigation.sandbox);
   navigation.committed.sandboxed_origin = navigation.sandboxed_process;
   CommitWithoutNetworkSoon(std::move(navigation));
@@ -1558,6 +1565,7 @@ Document& PageFrame::CommitDocument(
   document->SetOrigin(origin);
   document->SetSandboxFlags(sandbox);
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
+  InheritPermissionsPolicy(*document, provisional_container_policy_);
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);
@@ -1575,6 +1583,20 @@ Document& PageFrame::CommitDocument(
     cookie_store->DocumentChanged();
   }
   return *document;
+}
+
+ContainerPolicy PageFrame::PendingContainerPolicy() const {
+  const HTMLFrameOwnerElement* const owner = owner_.Get();
+  return owner ? owner->GetContainerPolicy() : ContainerPolicy();
+}
+
+void PageFrame::InheritPermissionsPolicy(
+    Document& document,
+    const ContainerPolicy& container_policy) {
+  if (parent_) {
+    document.InheritPermissionsPolicy(parent_->window_->GetDocument(),
+                                      container_policy);
+  }
 }
 
 // DocumentLoader::WarnIfSandboxIneffective().

@@ -451,12 +451,50 @@ v8::Local<v8::Promise> Document::HasStorageAccess() const {
 
 PermissionsPolicy* Document::FeaturePolicy() {
   if (!feature_policy_ && window_) {
-    feature_policy_ = PermissionsPolicy::Create(
-        GetOrigin(),
-        IsUnloadDeprecated(window_->Start().features.deprecated_unload,
-                           GURL(url_)));
+    feature_policy_ = PermissionsPolicy::Create(*this);
   }
   return feature_policy_.Get();
+}
+
+const PermissionsPolicyState& Document::GetPermissionsPolicyState() {
+  if (!permissions_policy_state_) {
+    permissions_policy_state_ = NewPermissionsPolicyState(
+        /*parent=*/nullptr, ContainerPolicy(), GetOrigin());
+  }
+  return *permissions_policy_state_;
+}
+
+void Document::InheritPermissionsPolicy(
+    Document& parent,
+    const ContainerPolicy& container_policy) {
+  permissions_policy_state_ = NewPermissionsPolicyState(
+      &parent.GetPermissionsPolicyState(), container_policy, GetOrigin());
+}
+
+std::unique_ptr<PermissionsPolicyState> Document::NewPermissionsPolicyState(
+    const PermissionsPolicyState* parent,
+    const ContainerPolicy& container_policy,
+    const url::Origin& origin) const {
+  return std::make_unique<PermissionsPolicyState>(
+      parent, container_policy, origin,
+      window_ && IsUnloadDeprecated(window_->Start().features.deprecated_unload,
+                                    origin));
+}
+
+bool Document::IsFeatureEnabled(std::string_view feature) {
+  return window_ &&
+         GetPermissionsPolicyState().IsEnabled(PolicyFeatureNamed(feature));
+}
+
+bool Document::IsFeatureEnabledOrReport(std::string_view feature) {
+  const bool enabled = IsFeatureEnabled(feature);
+  if (!enabled && window_) {
+    window_->AddConsoleMessage(
+        ConsoleLevel::kError,
+        base::StrCat({"Permissions policy violation: ", feature,
+                      " is not allowed in this document."}));
+  }
+  return enabled;
 }
 
 void Document::SetReadiness(Readiness readiness) {

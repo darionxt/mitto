@@ -31,6 +31,7 @@
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
+#include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/sandbox_flags.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -234,11 +235,12 @@ class Document : public Node {
     return Hidden() ? u"hidden" : u"visible";
   }
   std::u16string VisibilityStateAsString() const { return VisibilityState(); }
-  // What a top-level page that permissions policy allows them reads, and a
-  // document of no window does not. It is never in full screen or in
-  // picture-in-picture.
-  bool FullscreenEnabled() const { return window_; }
-  bool PictureInPictureEnabled() const { return window_; }
+  // What a document that permissions policy allows them reads, and one of no
+  // window does not. It is never in full screen or in picture-in-picture.
+  bool FullscreenEnabled() { return IsFeatureEnabled("fullscreen"); }
+  bool PictureInPictureEnabled() {
+    return IsFeatureEnabledOrReport("picture-in-picture");
+  }
   Element* FullscreenElement() const { return nullptr; }
   // The window's custom elements, and none for a document of no window.
   mitto::CustomElementRegistry* CustomElementRegistry() const;
@@ -270,6 +272,19 @@ class Document : public Node {
   // a document without a window, as Blink has no execution context to make it
   // from.
   PermissionsPolicy* FeaturePolicy();
+  // What its permissions policy allows, which a frame's document inherits of
+  // its parent's with its frame's element's.
+  const PermissionsPolicyState& GetPermissionsPolicyState();
+  void InheritPermissionsPolicy(mitto::Document& parent,
+                                const ContainerPolicy& container_policy);
+  std::unique_ptr<PermissionsPolicyState> NewPermissionsPolicyState(
+      const PermissionsPolicyState* parent,
+      const ContainerPolicy& container_policy,
+      const url::Origin& origin) const;
+  // ExecutionContext::IsFeatureEnabled().
+  bool IsFeatureEnabled(std::string_view feature);
+  // The same, and the console reports the violation if not.
+  bool IsFeatureEnabledOrReport(std::string_view feature);
   // The document's own, the same object on every read.
   DOMImplementation* Implementation();
   Attr* CreateAttribute(const std::u16string& local_name,
@@ -890,6 +905,7 @@ class Document : public Node {
   cppgc::Member<HTMLCollection> applets_;
   cppgc::Member<HTMLAllCollection> all_;
   cppgc::Member<PermissionsPolicy> feature_policy_;
+  std::unique_ptr<PermissionsPolicyState> permissions_policy_state_;
   cppgc::Member<DOMImplementation> implementation_;
   cppgc::Member<AttachedTraversals> traversals_;
   cppgc::Member<Document> template_document_;

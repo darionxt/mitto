@@ -42,6 +42,7 @@
 #include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/navigation_rate_limiter.h"
+#include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/sandbox_flags.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
@@ -245,6 +246,11 @@ class PageFrame final : public NavigationClient, public Frame {
   // The security token of a context of the Page whose document has
   // `origin`, an opaque one, or an empty handle if no frame's document has it.
   v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
+  // What the frame's element lets a document that it navigates to now inherit
+  // of its parent's permissions policy, and gives `document` that.
+  ContainerPolicy PendingContainerPolicy() const;
+  void InheritPermissionsPolicy(Document& document,
+                                const ContainerPolicy& container_policy);
   // Warns of a sandbox that its frame's document can take away.
   void WarnIfSandboxIneffective();
   // Gives the current context's window its timers, what its fetch() goes
@@ -343,6 +349,7 @@ class PageFrame final : public NavigationClient, public Frame {
     SandboxFlags sandbox = SandboxFlags::kNone;
     bool trustworthy = false;
     bool sandboxed_process = false;
+    ContainerPolicy container_policy;
     std::u16string referrer;
     // Its document's about base URL, the parent document's base URL for a
     // srcdoc and the initiator's for an about:blank, and its cookie URL, the
@@ -439,8 +446,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // Counts the requests that have waited, so that a data: URL's navigation
   // lets its request go only while it is still the one that waits.
   uint64_t provisional_request_serial_ = 0;
-  // What the sandbox withheld as the navigation started.
+  // What the sandbox withheld, and the element's container policy, as the
+  // navigation started.
   SandboxFlags provisional_sandbox_ = SandboxFlags::kNone;
+  ContainerPolicy provisional_container_policy_;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,

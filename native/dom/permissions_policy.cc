@@ -11,11 +11,15 @@
 #include <string_view>
 
 #include "base/hash/hash.h"
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_permissions_policy.h"
+#include "mitto/dom/document.h"
+#include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/string_hash_table_order.h"
+#include "mitto/dom/window.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/scheme_host_port.h"
@@ -27,26 +31,8 @@ namespace mitto {
 namespace {
 
 using bindings::RuntimeFeature;
-
-// A feature's default allowlist, as PermissionsPolicyFeatureDefault has it.
-enum class Default { kEnableForAll, kEnableForSelf };
-
-// What a feature of the name map waits on, as the generated
-// GetDefaultFeatureNameMap() has it: nothing, a runtime-enabled feature, which
-// it is in the map only with, or an origin trial, which leaves it in the map
-// but out of what a page sees while its runtime-enabled feature is off.
-enum class Gate { kNone, kRuntimeFeature, kOriginTrial };
-
-}  // namespace
-
-struct PolicyFeature {
-  std::string_view name;
-  Default default_allowlist;
-  Gate gate;
-  std::optional<RuntimeFeature> feature;
-};
-
-namespace {
+using Default = PolicyFeature::Default;
+using Gate = PolicyFeature::Gate;
 
 // permissions_policy_features.json5 of the Engine Release has 104 features,
 // which the name map reserves room for.
@@ -216,7 +202,6 @@ constexpr PolicyFeature kPolicyFeatures[] = {
 // The only feature whose state is measured but never shown,
 // IsFeatureForMeasurementOnly().
 constexpr std::string_view kMeasurementOnly = "web-share";
-constexpr std::string_view kUnload = "unload";
 
 // The features of the window's name map in the order that the map iterates
 // them, which ReserveCapacityForSize() sized for every feature of the json5.
@@ -242,7 +227,16 @@ std::vector<const PolicyFeature*> FeaturesInMapOrder(
 
 }  // namespace
 
-bool IsUnloadDeprecated(const DeprecatedUnload& seed, const GURL& url) {
+base::span<const PolicyFeature> PolicyFeatures() {
+  return kPolicyFeatures;
+}
+
+const PolicyFeature& PolicyFeatureNamed(std::string_view name) {
+  return *std::ranges::find(kPolicyFeatures, name, &PolicyFeature::name);
+}
+
+bool IsUnloadDeprecated(const DeprecatedUnload& seed,
+                        const url::Origin& origin) {
   if (!seed.enabled) {
     return false;
   }
@@ -251,9 +245,7 @@ bool IsUnloadDeprecated(const DeprecatedUnload& seed, const GURL& url) {
   if (!seed.allow_list && !seed.by_bucket) {
     return true;
   }
-  // Only on http(s) pages, with an opaque origin's precursor for it. The
-  // tuple is the origin's, which has to outlive it.
-  const url::Origin origin = url::Origin::Create(url);
+  // Only on http(s) pages, with an opaque origin's precursor for it.
   const url::SchemeHostPort& tuple = origin.GetTupleOrPrecursorTupleIfOpaque();
   if (tuple.scheme() != url::kHttpScheme &&
       tuple.scheme() != url::kHttpsScheme) {
@@ -288,15 +280,22 @@ bool IsUnloadDeprecated(const DeprecatedUnload& seed, const GURL& url) {
 }
 
 // static
-PermissionsPolicy* PermissionsPolicy::Create(const url::Origin& origin,
-                                             bool unload_deprecated) {
-  return bindings::MakeGarbageCollected<PermissionsPolicy>(origin,
-                                                           unload_deprecated);
+PermissionsPolicy* PermissionsPolicy::Create(Document& document) {
+  return bindings::MakeGarbageCollected<PermissionsPolicy>(document, nullptr);
 }
 
-PermissionsPolicy::PermissionsPolicy(const url::Origin& origin,
-                                     bool unload_deprecated)
-    : origin_(origin), unload_deprecated_(unload_deprecated) {
+// static
+PermissionsPolicy* PermissionsPolicy::Create(
+    Document& document,
+    std::unique_ptr<PermissionsPolicyState> state) {
+  return bindings::MakeGarbageCollected<PermissionsPolicy>(document,
+                                                           std::move(state));
+}
+
+PermissionsPolicy::PermissionsPolicy(
+    Document& document,
+    std::unique_ptr<PermissionsPolicyState> state)
+    : document_(document), frame_state_(std::move(state)) {
   const bindings::RuntimeFeatureSet& features =
       bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features();
   // FeatureAvailable(): a feature of the map that no origin trial hides and
@@ -319,23 +318,30 @@ const bindings::WrapperTypeInfo* PermissionsPolicy::GetWrapperTypeInfo() const {
   return &bindings::V8PermissionsPolicy::kWrapperTypeInfo;
 }
 
+void PermissionsPolicy::Trace(cppgc::Visitor* visitor) const {
+  ScriptWrappable::Trace(visitor);
+  visitor->Trace(document_);
+}
+
 bool PermissionsPolicy::AllowsFeature(
     const std::u16string& feature,
-    const std::optional<std::u16string>& origin) const {
+    const std::optional<std::u16string>& origin) {
   if (!origin) {
-    const PolicyFeature* const found = Find(feature);
-    return found && IsEnabledForOrigin(*found, origin_);
+    const PolicyFeature* const found = FindOrWarn(feature);
+    return found && State().IsEnabled(*found);
   }
   // SecurityOrigin::CreateFromString(): a URL that does not parse has an
-  // opaque origin. Blink warns on the console of either refusal, which a Page
-  // does not keep.
+  // opaque origin.
   const url::Origin other =
       url::Origin::Create(GURL(base::UTF16ToUTF8(*origin)));
   if (other.opaque()) {
+    Warn(base::StrCat({"Invalid origin url for feature '",
+                       base::UTF16ToUTF8(feature),
+                       "': ", base::UTF16ToUTF8(*origin), "."}));
     return false;
   }
-  const PolicyFeature* const found = Find(feature);
-  return found && IsEnabledForOrigin(*found, other);
+  const PolicyFeature* const found = FindOrWarn(feature);
+  return found && State().IsEnabledFor(*found, other);
 }
 
 std::vector<std::u16string> PermissionsPolicy::Features() const {
@@ -347,9 +353,10 @@ std::vector<std::u16string> PermissionsPolicy::Features() const {
 }
 
 std::vector<std::u16string> PermissionsPolicy::AllowedFeatures() const {
+  const PermissionsPolicyState& state = State();
   std::vector<std::u16string> names;
   for (const PolicyFeature* feature : available_) {
-    if (IsEnabledForOrigin(*feature, origin_)) {
+    if (state.IsEnabled(*feature)) {
       names.push_back(base::ASCIIToUTF16(feature->name));
     }
   }
@@ -357,45 +364,30 @@ std::vector<std::u16string> PermissionsPolicy::AllowedFeatures() const {
 }
 
 std::vector<std::u16string> PermissionsPolicy::GetAllowlistForFeature(
-    const std::u16string& feature) const {
-  const PolicyFeature* const found = Find(feature);
-  if (!found || IsDisabled(*found)) {
-    return {};
-  }
-  if (found->default_allowlist == Default::kEnableForAll) {
-    return {u"*"};
-  }
-  // OriginWithPossibleWildcards::FromOrigin() has none of an opaque origin.
-  if (origin_.opaque()) {
-    return {};
-  }
-  return {base::UTF8ToUTF16(origin_.Serialize())};
+    const std::u16string& feature) {
+  const PolicyFeature* const found = FindOrWarn(feature);
+  return found ? State().AllowlistFor(*found) : std::vector<std::u16string>();
 }
 
-const PolicyFeature* PermissionsPolicy::Find(const std::u16string& name) const {
+const PermissionsPolicyState& PermissionsPolicy::State() const {
+  return frame_state_ ? *frame_state_ : document_->GetPermissionsPolicyState();
+}
+
+const PolicyFeature* PermissionsPolicy::FindOrWarn(const std::u16string& name) {
   for (const PolicyFeature* feature : available_) {
     if (base::ASCIIToUTF16(feature->name) == name) {
       return feature;
     }
   }
+  Warn(
+      base::StrCat({"Unrecognized feature: '", base::UTF16ToUTF8(name), "'."}));
   return nullptr;
 }
 
-bool PermissionsPolicy::IsDisabled(const PolicyFeature& feature) const {
-  // GetPermissionsPolicyFeatureList(): the seed's kDeprecateUnload gives
-  // unload no origin at all.
-  return unload_deprecated_ && feature.name == kUnload;
-}
-
-bool PermissionsPolicy::IsEnabledForOrigin(const PolicyFeature& feature,
-                                           const url::Origin& origin) const {
-  // A top-level document with no Permissions-Policy header inherits every
-  // feature and declares none, so the default allowlist decides.
-  if (IsDisabled(feature)) {
-    return false;
+void PermissionsPolicy::Warn(std::string message) {
+  if (Window* const window = document_->DefaultView()) {
+    window->AddConsoleMessage(ConsoleLevel::kWarning, std::move(message));
   }
-  return feature.default_allowlist == Default::kEnableForAll ||
-         origin_.IsSameOriginWith(origin);
 }
 
 }  // namespace mitto

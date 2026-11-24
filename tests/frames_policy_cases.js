@@ -1,0 +1,117 @@
+// What an iframe's allow, allowfullscreen and allowpaymentrequest attributes, and its sandbox, let its documents inherit of the page's
+// permissions policy. The page is at /app/page; /child runs tests/frames_policy_child.js. The value is a promise for a record of
+// sections, which tests/data/frames_policy_cases.json holds as Chrome gave it.
+(async () => {
+  const OTHER = `http://localhost:${location.port}`;
+  const plain = (value) => JSON.parse(JSON.stringify(value).replaceAll(OTHER, 'OTHER').replaceAll(location.origin, 'ORIGIN'));
+  const settle = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const child = await (await fetch('/child.js')).text();
+  const fill = (text) => text.replaceAll('OTHER', OTHER).replaceAll('ORIGIN', location.origin);
+  const heard = (element) => new Promise((resolve) => {
+    addEventListener('message', function listener({source, data}) {
+      if (source !== element.contentWindow) return;
+      removeEventListener('message', listener);
+      resolve(data);
+    });
+  });
+  const named = ['camera', 'fullscreen', 'gamepad', 'geolocation', 'payment', 'picture-in-picture'];
+  const ofElement = ({featurePolicy}) => named.map((name) => [featurePolicy.allowsFeature(name), featurePolicy.getAllowlistForFeature(name)]);
+  // What the frame's document says, only where it differs from `base`, and what the element's policy does.
+  const show = async (attributes, after = () => {}) => {
+    const element = document.createElement('iframe');
+    for (const name in attributes) if (attributes[name] !== null) element.setAttribute(name, fill(attributes[name]));
+    const said = heard(element);
+    document.body.append(element);
+    after(element);
+    const value = await Promise.race([said, settle(5000).then(() => 'never')]);
+    const result = [value, ofElement(element)];
+    element.remove();
+    return result;
+  };
+  const DOCUMENTS = {
+    same: {src: '/child'}, other: {src: 'OTHER/child'}, srcdoc: {srcdoc: `<script>${child}</script>`}, data: {src: `data:text/html,${encodeURIComponent(`<script>${child}</script>`)}`},
+    opaque: {src: '/child', sandbox: 'allow-scripts'},
+  };
+  const ALLOW = ['', 'camera', 'camera *', `camera 'none'`, `camera 'self'`, `camera 'SRC'`, 'camera OTHER', 'camera ORIGIN', 'camera ORIGIN OTHER', 'CAMERA; geolocation *', 'camera; camera *',
+    `camera *; camera 'none'`, 'camera, geolocation', `unknown *; gamepad 'none'`, 'camera https://*.example.com', `fullscreen 'none'`, ' camera\t*;;', 'camera nonsense', 'camera "self"',
+    'camera OTHER/path?x', 'camera http://localhost', 'camera HTTP://LOCALHOST:1', 'camera https:', 'camera http://localhost:x', `picture-in-picture 'none'`, 'camera \u00e9', 'web-share *'];
+  const record = {};
+  const section = async (name, run) => {
+    try {
+      record[name] = plain(await run());
+    } catch (error) {
+      record[name] = `threw ${error.name}: ${error.message}`;
+    }
+  };
+  for (const kind in DOCUMENTS) {
+    await section(`allow, ${kind}`, async () => {
+      const results = {none: await show(DOCUMENTS[kind])};
+      const [base] = results.none;
+      for (const allow of ALLOW) {
+        const [value, element] = await show({...DOCUMENTS[kind], allow});
+        const {allowed, ...more} = value;
+        results[allow] = [allowed.filter((name) => !base.allowed.includes(name)), base.allowed.filter((name) => !allowed.includes(name)), more.lists.camera, more.fullscreen, more.pictureInPicture, element];
+      }
+      return results;
+    });
+  }
+  await section('other attributes', async () => {
+    const results = {};
+    for (const [name, attributes] of Object.entries({
+      allowfullscreen: {allowfullscreen: ''}, 'allowfullscreen and none': {allowfullscreen: '', allow: `fullscreen 'none'`}, 'allowfullscreen and self': {allow: `fullscreen 'self'`, allowfullscreen: ''},
+      allowpaymentrequest: {allowpaymentrequest: ''}, 'allowpaymentrequest and src': {allowpaymentrequest: '', allow: `payment 'src'`}, webkitallowfullscreen: {webkitallowfullscreen: ''},
+    })) {
+      for (const kind of ['other', 'opaque']) {
+        const [{allowed, lists, fullscreen}, element] = await show({...DOCUMENTS[kind], ...attributes});
+        results[`${name}, ${kind}`] = [allowed, lists.fullscreen, fullscreen, element];
+      }
+    }
+    return results;
+  });
+  // Of the attribute as it was when the navigation started, and of its URL, whatever the document that comes.
+  await section('changes', async () => {
+    const results = {};
+    const of = async (...args) => (await show(...args))[0].allowed;
+    results['set at once'] = await of(DOCUMENTS.other, (element) => { element.allow = 'camera'; });
+    results['redirected'] = await of({src: `/redirect?OTHER/child`, allow: 'camera'});
+    results['redirected, for both'] = await of({src: `/redirect?OTHER/child`, allow: 'camera OTHER'});
+    results['redirected back'] = await of({src: `OTHER/redirect?ORIGIN/child`, allow: 'camera'});
+    const element = document.createElement('iframe');
+    element.src = `${OTHER}/child`;
+    let said = heard(element);
+    document.body.append(element);
+    results.first = (await said).allowed;
+    element.allow = 'camera';
+    results['the element, set'] = ofElement(element);
+    said = heard(element);
+    element.src = `${OTHER}/child?2`;
+    results['navigated'] = (await said).allowed;
+    said = heard(element);
+    element.src = `${OTHER}/goes?${location.origin}/child`;
+    results['elsewhere'] = (await said).allowed;
+    element.remove();
+    const nested = document.createElement('iframe');
+    nested.allow = 'camera; geolocation *';
+    nested.src = `${OTHER}/holds?${encodeURIComponent(location.origin)}`;
+    said = heard(nested);
+    document.body.append(nested);
+    results.nested = (await said).allowed;
+    nested.remove();
+    const frame = document.createElement('frame');
+    frame.setAttribute('allow', 'camera');
+    frame.src = '/child';
+    said = heard(frame);
+    document.body.append(frame);
+    const {allowed, fullscreen} = await said;
+    results['a frame element'] = [allowed, fullscreen];
+    frame.remove();
+    results['in no document'] = [document.createElement('iframe').featurePolicy !== null, new DOMParser().parseFromString('<iframe></iframe>', 'text/html').querySelector('iframe').featurePolicy !== null];
+    const made = document.createElement('iframe');
+    results['the same object'] = made.featurePolicy === made.featurePolicy;
+    results['its interface'] = made.featurePolicy.constructor.name;
+    results['unknown names'] = [made.featurePolicy.allowsFeature('unknown'), document.featurePolicy.allowsFeature('unknown'), document.featurePolicy.allowsFeature('camera', 'nonsense'),
+      document.featurePolicy.getAllowlistForFeature('unknown')];
+    return results;
+  });
+  return record;
+})()

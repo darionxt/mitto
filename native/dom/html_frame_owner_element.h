@@ -11,16 +11,22 @@
 #ifndef MITTO_DOM_HTML_FRAME_OWNER_ELEMENT_H_
 #define MITTO_DOM_HTML_FRAME_OWNER_ELEMENT_H_
 
+#include <memory>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
 #include "mitto/dom/html_element.h"
+#include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/sandbox_flags.h"
+#include "url/origin.h"
+#include "v8/include/cppgc/member.h"
+#include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
 
 class Document;
 class Frame;
+class PermissionsPolicy;
 class Window;
 
 class HTMLFrameOwnerElement : public HTMLElement {
@@ -41,11 +47,20 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // What its sandbox attribute withholds from the documents that its frame
   // navigates to, which is an iframe's alone.
   SandboxFlags GetSandboxFlags() const { return sandbox_flags_; }
+  // What it lets a document that its frame navigates to inherit of its own
+  // document's permissions policy, which an iframe's allow says.
+  const ContainerPolicy& GetContainerPolicy() const {
+    return container_policy_;
+  }
+  // iframe.featurePolicy.
+  PermissionsPolicy* FeaturePolicy();
   // The frame goes, as its documents have unloaded: the element holds none.
   void ClearContentFrame() { content_frame_ = nullptr; }
   // HTMLFrameOwnerElement::DispatchLoad(): load at the element, once its
   // frame's window's load event has been dispatched.
   void DispatchLoad();
+
+  void Trace(cppgc::Visitor* visitor) const override;
 
   // Node:
   InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
@@ -68,6 +83,14 @@ class HTMLFrameOwnerElement : public HTMLElement {
   void ParseFrameAttribute(const QualifiedName& name,
                            const std::u16string* old_value,
                            const std::u16string* new_value);
+  // Works out the container policy again, as Blink's UpdateContainerPolicy()
+  // does when an attribute that it comes from changes and before each load.
+  void UpdateContainerPolicy();
+  // The origin of the document that its frame is to show.
+  url::Origin OriginForPermissionsPolicy() const;
+  // What that document's permissions policy would allow.
+  std::unique_ptr<PermissionsPolicyState> FrameState(
+      mitto::Document& parent) const;
   // HTMLFrameElementBase::SetLocation(): the URL the frame is to show, which
   // it navigates to now if the element is connected.
   void SetLocation(std::u16string location);
@@ -86,6 +109,9 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // The name the frame gets when the element makes it: its name, or its ID.
   std::u16string frame_name_;
   SandboxFlags sandbox_flags_ = SandboxFlags::kNone;
+  ContainerPolicy container_policy_;
+  // An iframe's featurePolicy.
+  cppgc::Member<PermissionsPolicy> feature_policy_;
 };
 
 }  // namespace mitto

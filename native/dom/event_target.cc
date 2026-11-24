@@ -20,7 +20,6 @@
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/node.h"
-#include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
@@ -259,15 +258,7 @@ bool AllowsUnloadListener(const std::u16string& type) {
   if (type != u"unload" || !ExecutionContext::Current().IsWindow()) {
     return true;
   }
-  Window& window = Window::Current();
-  PermissionsPolicy* const policy = window.GetDocument().FeaturePolicy();
-  if (!policy || policy->AllowsFeature(u"unload", std::nullopt)) {
-    return true;
-  }
-  window.AddConsoleMessage(
-      ConsoleLevel::kError,
-      "Permissions policy violation: unload is not allowed in this document.");
-  return false;
+  return Window::Current().GetDocument().IsFeatureEnabledOrReport("unload");
 }
 
 // Runs an event handler attribute's handler, as Blink's
