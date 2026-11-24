@@ -2040,6 +2040,11 @@ void Document::Open(Window* entered_window,
     }
     const std::u16string spec = base::UTF8ToUTF16(url.possibly_invalid_spec());
     if (spec != url_) {
+      // The document keeps its origin, which its URL no longer says, as
+      // Blink's document keeps its security origin.
+      if (!origin_) {
+        origin_ = GetOrigin();
+      }
       SetUrl(spec);
     }
     // DidOpenDocumentInputStream(): the browser takes what the opener gave

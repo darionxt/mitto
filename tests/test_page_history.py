@@ -1318,7 +1318,9 @@ def test_a_traversal_s_request_does_not_wait_for_its_navigate_listeners(
         assert _next_document(page).url == second
 
 
-def test_window_chrome_says_a_traversal_is_back_forward(session: mitto.Session, server: RecordingServer) -> None:
+def test_window_chrome_says_a_traversal_is_back_forward_and_a_reload_reload(
+    session: mitto.Session, server: RecordingServer
+) -> None:
     first = server.page("/a", "<title>A</title>")
     second = server.page("/b", "<title>B</title>")
     kind = "[chrome.loadTimes().navigationType, chrome.csi().tran]"
@@ -1330,6 +1332,9 @@ def test_window_chrome_says_a_traversal_is_back_forward(session: mitto.Session, 
         page.evaluate("history.back()")
         assert _next_document(page).url == first
         assert page.evaluate(kind) == ["BackForward", 6]
+        page.evaluate("location.reload()")
+        assert _next_document(page).url == first
+        assert page.evaluate(kind) == ["Reload", 16]
 
 
 def test_a_document_keeps_loading_while_its_traversal_waits(session: mitto.Session, server: RecordingServer) -> None:
@@ -1355,3 +1360,30 @@ def test_a_document_keeps_loading_while_its_traversal_waits(session: mitto.Sessi
             "new Promise(r => setTimeout(() => r([location.pathname, !!document.getElementById('late'),"
             " document.readyState]), 300))"
         ) == ["/s", True, "complete"]
+
+
+def test_the_navigation_api_keeps_its_entries_after_document_open(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    opened = """new Promise(resolve => {
+      const frame = document.createElement('iframe');
+      document.body.append(frame);
+      window.done = resolve;
+      frame.contentWindow.setTimeout(frame.contentWindow.Function(`
+        const top = parent;
+        top.document.open();
+        top.document.write('<p>y</p>');
+        top.document.close();
+        top.done([top.location.href, top.self.origin, top.navigation.entries().length,
+                  top.navigation.currentEntry && top.navigation.currentEntry.url]);
+      `), 0);
+    })"""
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        # document.open() gives the document about:blank, but the document keeps its origin, and its entries stay,
+        # the current one at the URL that it had, as in Chrome.
+        assert page.evaluate(opened) == ["about:blank", server.origin, 2, second]
