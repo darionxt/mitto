@@ -1424,12 +1424,13 @@ void Document::SetUrl(std::u16string url) {
 }
 
 void Document::SetUrlKeepingOrigin(std::u16string url) {
-  if (!origin_) {
-    url::Origin origin = GetOrigin();
-    if (!url::Origin::Create(GURL(url)).IsSameOriginWith(origin)) {
-      origin_ = std::move(origin);
-      keeps_origin_of_earlier_url_ = true;
-    }
+  // Not one that its URL does not say already, which a frame's about:blank or
+  // srcdoc inherits, or a sandbox makes opaque.
+  url::Origin origin = GetOrigin();
+  if (url::Origin::Create(GURL(url_)).IsSameOriginWith(origin) &&
+      !url::Origin::Create(GURL(url)).IsSameOriginWith(origin)) {
+    origin_ = std::move(origin);
+    keeps_origin_of_earlier_url_ = true;
   }
   SetUrl(std::move(url));
 }
