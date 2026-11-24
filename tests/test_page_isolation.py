@@ -687,23 +687,31 @@ def test_a_frame_s_requests_are_held_to_its_own_embedder_policy(
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == "TypeError"
 
 
+# Whether the page reads that a frame is isolated: Chrome's page reads nothing of a document of an opaque origin.
+_ISOLATED_FRAME = (
+    "const isolated = (frame) => frame.contentDocument !== null && frame.contentWindow.crossOriginIsolated;"
+)
+
+
 def test_a_sandboxed_frame_is_isolated_only_where_it_keeps_its_origin(
     session: mitto.Session, server: RecordingServer
 ) -> None:
     # A sandbox with allow-same-origin keeps a frame's origin and so its isolation (Chrome for Testing 157). Without it
     # Chrome's frame has an opaque origin, which the default allowlist does not take: the Page does not make that
     # origin yet (#285), but gives such a frame no isolation either.
-    script = """(() => {
+    script = (
+        "(() => {"
+        + _ISOLATED_FRAME
+        + """
         const frame = (sandbox) => {
             const element = document.createElement('iframe');
             element.setAttribute('sandbox', sandbox);
             document.documentElement.appendChild(element);
-            return element.contentWindow;
+            return isolated(element);
         };
-        return [frame('allow-same-origin').crossOriginIsolated,
-                frame('allow-scripts allow-same-origin').crossOriginIsolated,
-                frame('allow-scripts').crossOriginIsolated];
+        return [frame('allow-same-origin'), frame('allow-scripts allow-same-origin'), frame('allow-scripts')];
     })()"""
+    )
 
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, False]
 
@@ -753,7 +761,10 @@ def test_a_frame_whose_response_sandboxes_it_is_not_isolated(session: mitto.Sess
         "text/html",
         [_COEP, ("Content-Security-Policy", "sandbox allow-scripts")],
     )
-    script = """(async () => {
+    script = (
+        "(async () => {"
+        + _ISOLATED_FRAME
+        + """
         const frame = document.createElement('iframe');
         frame.src = '/f-csp';
         document.documentElement.appendChild(frame);
@@ -761,8 +772,9 @@ def test_a_frame_whose_response_sandboxes_it_is_not_isolated(session: mitto.Sess
         const legacy = document.createElement('frame');
         legacy.setAttribute('sandbox', 'allow-scripts');
         document.documentElement.appendChild(legacy);
-        return [frame.contentWindow.crossOriginIsolated, legacy.contentWindow.crossOriginIsolated];
+        return [isolated(frame), isolated(legacy)];
     })()"""
+    )
 
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]
 
@@ -776,20 +788,22 @@ def test_an_about_blank_of_a_sandboxed_frame_is_not_isolated(session: mitto.Sess
         "text/html",
         [_COEP, ("Content-Security-Policy", "sandbox allow-scripts")],
     )
-    script = """(async () => {
+    script = (
+        "(async () => {"
+        + _ISOLATED_FRAME
+        + """
         const frame = document.createElement('iframe');
         frame.src = '/f-self';
         const loaded = () => new Promise((resolve) => frame.onload = resolve);
-        // Chrome's page cannot read a document of an opaque origin.
-        const isolated = () => frame.contentDocument !== null && frame.contentWindow.crossOriginIsolated;
         document.documentElement.appendChild(frame);
         await loaded();
         await loaded();
-        const own = isolated();
+        const own = isolated(frame);
         frame.src = 'about:blank';
         await loaded();
-        return [own, isolated()];
+        return [own, isolated(frame)];
     })()"""
+    )
 
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]
 
@@ -829,22 +843,26 @@ def test_a_frame_s_policy_is_split_as_the_parser_splits_it(session: mitto.Sessio
         "text/html",
         [_COEP, ("Content-Security-Policy", "sandbox\x0callow-scripts")],
     )
-    script = """(async () => {
-        const isolated = async (src) => {
+    script = (
+        "(async () => {"
+        + _ISOLATED_FRAME
+        + """
+        const load = async (src) => {
             const frame = document.createElement('iframe');
             frame.src = src;
             document.documentElement.appendChild(frame);
             await new Promise((resolve) => frame.onload = resolve);
-            return frame.contentWindow.crossOriginIsolated;
+            return isolated(frame);
         };
         return [
-            await isolated('/f-dup'),
-            await isolated('/f-bad'),
-            await isolated('/f-vt'),
-            await isolated('/f-vt-name'),
-            await isolated('/f-ff'),
+            await load('/f-dup'),
+            await load('/f-bad'),
+            await load('/f-vt'),
+            await load('/f-vt-name'),
+            await load('/f-ff'),
         ];
     })()"""
+    )
 
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, True, True, False]
 
