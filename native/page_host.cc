@@ -1548,12 +1548,14 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   GURL referrer;
   if (!asked.referrer.empty()) {
     referrer = GURL(asked.referrer);
-    // A document's opaque origin, which a sandbox or a data: URL gives it, is
-    // made for one whose URLs it may name.
-    const bool own = context.is_worker
-                         ? document_origin.IsSameOriginWith(referrer)
-                         : document_origin.GetTupleOrPrecursorTupleIfOpaque() ==
-                               url::SchemeHostPort(referrer);
+    // A module's base URL may be one of the origin that its document's opaque
+    // origin, which a sandbox or a data: URL gives it, is made for.
+    const bool own = document_origin.IsSameOriginWith(referrer) ||
+                     (!context.is_worker && document_origin.opaque() &&
+                      (asked.kind == PageRequestKind::kModule ||
+                       asked.kind == PageRequestKind::kModuleJson) &&
+                      document_origin.GetTupleOrPrecursorTupleIfOpaque() ==
+                          url::SchemeHostPort(referrer));
     if (!referrer.is_valid() ||
         (!own && !context.response_urls.contains(referrer))) {
       Refuse(

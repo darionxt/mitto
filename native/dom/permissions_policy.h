@@ -37,12 +37,12 @@ bool IsUnloadDeprecated(const DeprecatedUnload& seed, const GURL& url);
 
 class PermissionsPolicy final : public bindings::ScriptWrappable {
  public:
-  // Of a document at `url`, which `unload_deprecated` says whether the seed
+  // Of a document of `origin`, which `unload_deprecated` says whether the seed
   // deprecates unload for.
-  static PermissionsPolicy* Create(const std::u16string& url,
+  static PermissionsPolicy* Create(const url::Origin& origin,
                                    bool unload_deprecated);
 
-  PermissionsPolicy(const std::u16string& url, bool unload_deprecated);
+  PermissionsPolicy(const url::Origin& origin, bool unload_deprecated);
   ~PermissionsPolicy() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;

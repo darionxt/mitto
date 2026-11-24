@@ -602,6 +602,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   window.SetDocument(document);
   window.SetCurrentHistoryItem(HistoryItem::Create(url));
   TellOfLocalUrl(url);
+  WarnIfSandboxIneffective();
   // An empty body, which the parser ends at once, so that DOMContentLoaded,
   // the window's load and the element's load fire before this returns.
   empty_body_ = std::make_unique<EmptyBody>(*document);

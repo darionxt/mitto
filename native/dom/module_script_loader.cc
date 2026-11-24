@@ -344,12 +344,12 @@ std::string ModuleScriptLoader::ReferrerOf(
       return std::string(kNoReferrer);
     }
     // A document's opaque origin, which a sandbox or a data: URL gives it, is
-    // made for one whose URLs it may name.
+    // made for one whose URLs may be its scripts' base URLs.
     const url::Origin origin = context.GetSecurityOrigin();
-    const bool own = context.IsWindow()
-                         ? origin.GetTupleOrPrecursorTupleIfOpaque() ==
-                               url::SchemeHostPort(referrer)
-                         : origin.IsSameOriginWith(referrer);
+    const bool own = origin.IsSameOriginWith(referrer) ||
+                     (context.IsWindow() && origin.opaque() &&
+                      origin.GetTupleOrPrecursorTupleIfOpaque() ==
+                          url::SchemeHostPort(referrer));
     if (referrer.is_valid() &&
         (own || fetcher.HasFinishedResponse(referrer.spec()))) {
       return referrer.spec();

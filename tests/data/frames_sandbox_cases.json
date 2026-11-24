@@ -1628,6 +1628,8 @@
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
   "Error while parsing the 'sandbox' attribute: 'allow-same-origin,' is an invalid sandbox flag.",
   "Error while parsing the 'sandbox' attribute: 'allow-everything' is an invalid sandbox flag.",
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",

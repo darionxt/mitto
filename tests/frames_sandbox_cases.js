@@ -124,6 +124,8 @@
       results[name] = [shown.getAttribute('sandbox'), seen(shown), shown.contentDocument && [shown.contentWindow.name, shown.contentDocument.body.textContent]];
       shown.remove();
     }
+    // Frames whose document commits at once, which the console warns of too.
+    for (const attributes of [{}, {src: 'about:blank'}]) (await show(make(SANDBOXES.both, attributes))).remove();
     const tokens = {};
     for (const value of ['ALLOW-SAME-ORIGIN', ' allow-same-origin\n', 'allow-same-origin,', 'allow-everything allow-same-origin', 'allow-forms allow-same-origin']) {
       const shown = await show(make(value, {srcdoc: ''}));

@@ -452,8 +452,9 @@ v8::Local<v8::Promise> Document::HasStorageAccess() const {
 PermissionsPolicy* Document::FeaturePolicy() {
   if (!feature_policy_ && window_) {
     feature_policy_ = PermissionsPolicy::Create(
-        url_, IsUnloadDeprecated(window_->Start().features.deprecated_unload,
-                                 GURL(url_)));
+        GetOrigin(),
+        IsUnloadDeprecated(window_->Start().features.deprecated_unload,
+                           GURL(url_)));
   }
   return feature_policy_.Get();
 }

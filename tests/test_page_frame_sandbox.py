@@ -6,6 +6,7 @@ runs in a document without scripts. tests/data/frames_sandbox_cases.json holds w
 gave for the same scripts, what the server got from the frames, and what the console said of sandboxes.
 """
 
+import collections
 import http.server
 import json
 import threading
@@ -143,12 +144,12 @@ def test_what_a_sandbox_withholds_is_chrome_s(server: _Server) -> None:
     url = f"http://127.0.0.1:{port}/app/page"
     with mitto.Session() as session, session._open_page(url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         record = page.evaluate(_CASES, timeout=_TIMEOUT_SECONDS)
-        console = {message.text for message in page.console_messages if "sandbox" in message.text}
+        console = collections.Counter(message.text for message in page.console_messages if "sandbox" in message.text)
 
     assert set(record) == set(_AS_CHROME["record"])
     for section, expected in _AS_CHROME["record"].items():
         assert record[section] == expected, section
-    assert console == set(_AS_CHROME["console"])
+    assert console == collections.Counter(_AS_CHROME["console"])
 
     # What the server got, by the URL, which names the document that asked.
     requests: dict[str, list[dict[str, str]]] = {}
