@@ -328,6 +328,17 @@ class PageHost final : public PageChannel::Delegate {
 
   // A context of the Page's: a document, or a dedicated worker, by the ID
   // that the Page gave it.
+  // Where a document's frame is in the frame tree: the top-level document's
+  // origin, and whether a document from this one up is of another site, or of
+  // another origin, than the top-level one. A worker is in its creator's
+  // frame.
+  struct FrameTree {
+    url::Origin top_frame_origin;
+    bool is_top_level = true;
+    bool cross_site = false;
+    bool cross_origin = false;
+  };
+
   struct Context {
     // A document's URL, as the library loaded it after its navigation's
     // redirects, or about:blank; a worker's script's final URL, or its blob:
@@ -336,7 +347,9 @@ class PageHost final : public PageChannel::Delegate {
     // A document's origin, its URL's, or for a frame's initial about:blank its
     // parent's; a worker's, its creator's, or an opaque one for data:.
     url::Origin origin;
-    // What its storage is keyed by, if it has any: CalculateStorageKey()'s.
+    // Its place in the frame tree, and what its storage is keyed by, if it has
+    // any: CalculateStorageKey()'s. AddContext() works them out.
+    FrameTree frame_tree;
     std::optional<StorageKey> storage_key;
     // The document whose frame element holds a document's frame, or the
     // context that started a worker; kNoDocument for the top-level document.
@@ -456,16 +469,6 @@ class PageHost final : public PageChannel::Delegate {
   // place of its creator's or initiator's takes, as Blink's
   // DocumentInit::GetCookieUrl() does from its owner document.
   static GURL CookieUrlOf(const Context& context);
-  // Where document `id`'s frame is in the frame tree: the top-level
-  // document's origin, and whether a document from `id` up is of another
-  // site, or of another origin, than the top-level one.
-  struct FrameTree {
-    url::Origin top_frame_origin;
-    bool is_top_level = true;
-    bool cross_site = false;
-    bool cross_origin = false;
-  };
-  FrameTree FrameTreeOf(uint64_t id) const;
   // What the document's Cache API asks, which PageCacheStorage serves,
   // with the storage key of the document that asks.
   void OnCacheStorage(PageCacheStorageCall call,
@@ -592,14 +595,14 @@ class PageHost final : public PageChannel::Delegate {
   // Keeps `context`, a document or a worker that the Page has made, as `id`.
   void AddContext(uint64_t id, Context context);
 
-  // The storage key of document `id`, as Chrome works it out for a frame with
+  // The storage key of `context`, as Chrome works it out for a frame with
   // third-party storage partitioning, which it turns on: the document's
   // origin, the site of the top-level document and whether a document from
-  // `id` up is of another site. None for a document of an opaque origin, or
+  // this one up is of another site. None for a document of an opaque origin, or
   // one that is not of an HTTP or HTTPS URL, which have no storage, and for a
   // document under a top-level one of an opaque origin, whose key no other
   // top-level document ever has.
-  std::optional<StorageKey> CalculateStorageKey(uint64_t id) const;
+  static std::optional<StorageKey> CalculateStorageKey(const Context& context);
 
   // The storage key of context `id`'s IndexedDB and Cache API, as
   // StorageKey::Serialize() writes it: CalculateStorageKey()'s, or for a

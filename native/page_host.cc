@@ -2577,15 +2577,16 @@ std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
   return SerializeUnderOpaqueTop(context.origin, nonce->second);
 }
 
-std::optional<StorageKey> PageHost::CalculateStorageKey(uint64_t id) const {
+// static
+std::optional<StorageKey> PageHost::CalculateStorageKey(
+    const Context& context) {
   // RenderFrameHostImpl::CalculateStorageKey(), with
   // net::features::kThirdPartyStoragePartitioning on, as in Chrome.
   // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
-  const Context& context = contexts_.at(id);
   if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     return std::nullopt;
   }
-  const FrameTree tree = FrameTreeOf(id);
+  const FrameTree& tree = context.frame_tree;
   if (tree.is_top_level) {
     return StorageKey::CreateFirstParty(context.origin);
   }
@@ -2749,7 +2750,7 @@ void PageHost::OnNetworkHint(const PageNetworkHint& hint, uint64_t document) {
   }
   // GetPendingIsolationInfoForSubresources() of the document's frame.
   const Context& context = contexts_.at(document);
-  const FrameTree tree = FrameTreeOf(document);
+  const FrameTree& tree = context.frame_tree;
   const net::SiteForCookies site_for_cookies =
       tree.cross_site ? net::SiteForCookies()
                       : net::SiteForCookies::FromOrigin(tree.top_frame_origin);
@@ -3355,29 +3356,6 @@ void PageHost::LetKeepaliveRequestsGo(const std::set<uint64_t>* ids) {
   }
 }
 
-PageHost::FrameTree PageHost::FrameTreeOf(uint64_t id) const {
-  // A worker is in its creator's frame.
-  const Context* context = &contexts_.at(id);
-  while (context->is_worker) {
-    context = &contexts_.at(context->parent);
-  }
-  std::vector<const Context*> documents = {context};
-  while (documents.back()->parent != kNoDocument) {
-    documents.push_back(&contexts_.at(documents.back()->parent));
-  }
-  FrameTree tree;
-  tree.top_frame_origin = documents.back()->origin;
-  tree.is_top_level = documents.size() == 1;
-  const net::SchemefulSite top_site(tree.top_frame_origin);
-  for (const Context* document : documents) {
-    tree.cross_site =
-        tree.cross_site || net::SchemefulSite(document->origin) != top_site;
-    tree.cross_origin = tree.cross_origin || !document->origin.IsSameOriginWith(
-                                                 tree.top_frame_origin);
-  }
-  return tree;
-}
-
 void PageHost::FillContextFetch(uint64_t id,
                                 uint64_t parent,
                                 FetchParams& fetch) const {
@@ -3409,7 +3387,8 @@ void PageHost::FillContextFetch(uint64_t id,
   // its navigation, up to the top-level document, as Chrome's browser works
   // it out. A frame's navigation always names the top-level frame, since its
   // Initiator need not be it.
-  const FrameTree tree = FrameTreeOf(parent != kNoDocument ? parent : id);
+  const FrameTree& tree =
+      contexts_.at(parent != kNoDocument ? parent : id).frame_tree;
   if (!tree.is_top_level || parent != kNoDocument ||
       fetch.opaque_initiator.has_value()) {
     fetch.top_frame_origin = tree.top_frame_origin;
@@ -3448,7 +3427,7 @@ PageHost::CookieContext::~CookieContext() = default;
 
 PageHost::CookieContext PageHost::CookieContextOf(uint64_t id) const {
   const Context& context = contexts_.at(id);
-  const FrameTree tree = FrameTreeOf(id);
+  const FrameTree& tree = contexts_.at(id).frame_tree;
   CookieContext cookies;
   cookies.url = CookieUrlOf(context);
   cookies.site_for_cookies =
@@ -3515,9 +3494,23 @@ void PageHost::OnWorkerStarted(const PageWorkerStarted& started) {
 }
 
 void PageHost::AddContext(uint64_t id, Context context) {
-  const auto [added, inserted] = contexts_.emplace(id, std::move(context));
   // Neither its origin nor its place in the frame tree changes while it lasts.
-  added->second.storage_key = CalculateStorageKey(id);
+  FrameTree& tree = context.frame_tree;
+  if (context.parent == kNoDocument) {
+    tree.top_frame_origin = context.origin;
+  } else {
+    tree = contexts_.at(context.parent).frame_tree;
+  }
+  if (context.parent != kNoDocument && !context.is_worker) {
+    tree.is_top_level = false;
+    tree.cross_site =
+        tree.cross_site || net::SchemefulSite(context.origin) !=
+                               net::SchemefulSite(tree.top_frame_origin);
+    tree.cross_origin = tree.cross_origin ||
+                        !context.origin.IsSameOriginWith(tree.top_frame_origin);
+  }
+  context.storage_key = CalculateStorageKey(context);
+  contexts_.emplace(id, std::move(context));
 }
 
 void PageHost::OnContextGone(uint64_t context_id) {
