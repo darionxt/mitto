@@ -30,19 +30,20 @@
 
 namespace mitto {
 
-class Document;
+class Window;
 
 class PermissionsPolicy final : public bindings::ScriptWrappable {
  public:
-  // document.featurePolicy, DocumentPolicy.
-  static PermissionsPolicy* Create(Document& document);
-  // iframe.featurePolicy of an iframe in `document`, IFramePolicy, which says
-  // what a document at its URL would have.
+  // document.featurePolicy, DocumentPolicy, which says what the window's
+  // document has now.
+  static PermissionsPolicy* Create(Window& window);
+  // iframe.featurePolicy of an iframe in a document of `window`, IFramePolicy,
+  // which says what a document at its URL would have.
   static PermissionsPolicy* Create(
-      Document& document,
+      Window& window,
       std::unique_ptr<PermissionsPolicyState> state);
 
-  PermissionsPolicy(Document& document,
+  PermissionsPolicy(Window& window,
                     std::unique_ptr<PermissionsPolicyState> state);
   ~PermissionsPolicy() override;
 
@@ -69,7 +70,7 @@ class PermissionsPolicy final : public bindings::ScriptWrappable {
   const PolicyFeature* FindOrWarn(const std::u16string& name);
   void Warn(std::string message);
 
-  const cppgc::Member<Document> document_;
+  const cppgc::Member<Window> window_;
   // An iframe's.
   std::unique_ptr<PermissionsPolicyState> frame_state_;
   // What a page sees of the window's name map, in its order.

@@ -11,7 +11,7 @@
 
 #include <stddef.h>
 
-#include <set>
+#include <deque>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -87,10 +87,9 @@ class Frame {
   // FrameTreeNode::SetPendingFramePolicy() puts them together.
   SandboxFlags PendingSandboxFlags() const;
   // Whether the console has not been told `text` through this frame, the
-  // top-level one, before.
-  bool AddOneTimeMessage(const std::string& text) {
-    return one_time_messages_.insert(text).second;
-  }
+  // top-level one, among the latest messages, as Blink's
+  // ConsoleMessageStorage knows them, until the frame navigates.
+  bool AddOneTimeMessage(const std::string& text);
 
   // Blink's LocalFrame::IsNavigationAllowed(): no navigation of the frame
   // starts while a FrameNavigationDisabler holds it.
@@ -103,12 +102,14 @@ class Frame {
   // The frame shows the document of `window`, whose window takes the place of
   // the frame's remote one in its process.
   void DidShowDocument(Window& window);
+  void ClearOneTimeMessages() { one_time_messages_.clear(); }
 
  private:
   friend class FrameNavigationDisabler;
 
   int navigation_disable_count_ = 0;
-  std::set<std::string> one_time_messages_;
+  // The hashes of the one-time messages.
+  std::deque<size_t> one_time_messages_;
   // One for each process, for the frame's document now.
   std::vector<cppgc::WeakPersistent<RemoteWindow>> remote_windows_;
 };

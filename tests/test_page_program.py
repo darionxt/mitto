@@ -1812,6 +1812,28 @@ def test_the_seed_takes_unload_out_of_the_policy_of_the_pages_it_covers(
 
 @pytest.mark.parametrize(
     ("unload", "deprecated"),
+    [({"enabled": True, "allow_list": ["www.example.test"], "by_bucket": None}, True), ({"enabled": False}, False)],
+    ids=str,
+)
+def test_the_seed_takes_unload_out_of_the_policy_of_a_covered_pages_frames(
+    session: _Session, unload: dict[str, object], deprecated: bool
+) -> None:
+    session.start(_with_features(deprecated_unload={"allow_list": None, "by_bucket": None, **unload}))
+    _load_policy_page(session, "http://www.example.test:8722/")
+    script = """(() => {
+      const frame = document.createElement('iframe');
+      document.documentElement.append(frame);
+      const {contentWindow, contentDocument, featurePolicy} = frame;
+      addEventListener.call(contentWindow, 'unload', () => {});
+      contentWindow.onunload = () => {};
+      return [featurePolicy.allowsFeature('unload'), contentDocument.featurePolicy.allowsFeature('unload'), contentWindow.onunload !== null];
+    })()"""
+
+    assert session.evaluate(script) == (False, json.dumps([not deprecated] * 3, separators=(",", ":")))
+
+
+@pytest.mark.parametrize(
+    ("unload", "deprecated"),
     [
         ({"enabled": True, "allow_list": None, "by_bucket": None}, True),
         # Either list limits it to pages of http and https.

@@ -1576,6 +1576,9 @@ Document& PageFrame::CommitDocument(
     GiveStorage(*document);
   }
   Window::Current().SetDocument(document);
+  if (!parent_) {
+    ClearOneTimeMessages();
+  }
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
   // The reused window's CookieStore listens as its new document.
@@ -1594,8 +1597,9 @@ void PageFrame::InheritPermissionsPolicy(
     Document& document,
     const ContainerPolicy& container_policy) {
   if (parent_) {
-    document.InheritPermissionsPolicy(parent_->window_->GetDocument(),
-                                      container_policy);
+    document.InheritPermissionsPolicy(
+        parent_->window_->GetDocument(), container_policy,
+        runner_->start().features.deprecated_unload);
   }
 }
 

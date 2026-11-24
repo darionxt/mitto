@@ -97,6 +97,16 @@
     document.body.append(nested);
     results.nested = (await said).allowed;
     nested.remove();
+    // The object of a window that its frame's first document keeps.
+    const kept = document.createElement('iframe');
+    kept.src = '/child';
+    said = heard(kept);
+    document.body.append(kept);
+    const policy = kept.contentDocument.featurePolicy;
+    results['before'] = policy.allowsFeature('camera');
+    await said;
+    results['the kept object'] = [policy.allowsFeature('camera'), policy === kept.contentDocument.featurePolicy];
+    kept.remove();
     const frame = document.createElement('frame');
     frame.setAttribute('allow', 'camera');
     frame.src = '/child';
@@ -105,7 +115,22 @@
     const {allowed, fullscreen} = await said;
     results['a frame element'] = [allowed, fullscreen];
     frame.remove();
-    results['in no document'] = [document.createElement('iframe').featurePolicy !== null, new DOMParser().parseFromString('<iframe></iframe>', 'text/html').querySelector('iframe').featurePolicy !== null];
+    const parsed = new DOMParser().parseFromString(`<iframe allow="gamepad 'none'; unparsed"></iframe>`, 'text/html').querySelector('iframe').featurePolicy;
+    results['in no document'] = [document.createElement('iframe').featurePolicy !== null, parsed.allowsFeature('gamepad'), parsed.allowsFeature('camera'), parsed.getAllowlistForFeature('camera')];
+    const about = document.createElement('iframe');
+    about.src = 'about:other';
+    results['another about: URL'] = ofElement(about);
+    about.src = 'http://[::1]:1/';
+    about.allow = 'camera';
+    results['an IPv6 address'] = ofElement(about);
+    // A length limit in code units.
+    about.src = '/child';
+    about.allow = `gamepad 'none'; camera ${'\u00e9'.repeat(40000)}`;
+    results['a long attribute'] = ofElement(about);
+    about.allow = `gamepad 'none'; camera ${'x'.repeat(66000)}`;
+    results['too long an attribute'] = ofElement(about);
+    // A warning said before, again after others.
+    for (let i = 0; i < 3; ++i) about.allow = `repeated${i % 2}`;
     const made = document.createElement('iframe');
     results['the same object'] = made.featurePolicy === made.featurePolicy;
     results['its interface'] = made.featurePolicy.constructor.name;

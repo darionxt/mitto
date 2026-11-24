@@ -254,11 +254,17 @@ void CallListener(v8::Isolate* isolate,
 // that the permissions policy of the executing window's document does not
 // allow, as where the seed deprecates unload, is refused, and the console
 // reports the violation each time.
-bool AllowsUnloadListener(const std::u16string& type) {
+bool AllowsUnloadListener(EventTarget& target, const std::u16string& type) {
   if (type != u"unload" || !ExecutionContext::Current().IsWindow()) {
     return true;
   }
-  return Window::Current().GetDocument().IsFeatureEnabledOrReport("unload");
+  Window* window = target.ToWindow();
+  if (Node* const node = target.ToNode()) {
+    window = node->GetDocument().DefaultView();
+  }
+  return (window ? *window : Window::Current())
+      .GetDocument()
+      .IsFeatureEnabledOrReport("unload");
 }
 
 // Runs an event handler attribute's handler, as Blink's
@@ -431,7 +437,7 @@ void EventTarget::AddEventListener(
   if (signal && signal->Aborted()) {
     return;
   }
-  if (!AllowsUnloadListener(type)) {
+  if (!AllowsUnloadListener(*this, type)) {
     return;
   }
   // Blink makes a target's EventTargetData here, before it checks for the same
@@ -616,7 +622,7 @@ void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
   }
   // Blink's EventTarget::SetAttributeEventListener() adds it as any listener,
   // which makes the target's EventTargetData.
-  if (!AllowsUnloadListener(type)) {
+  if (!AllowsUnloadListener(*this, type)) {
     return;
   }
   has_event_target_data_ = true;
@@ -653,7 +659,7 @@ void EventTarget::SetAttributeEventListener(const std::u16string& type,
     existing->set_raw_handler(handler);
     return;
   }
-  if (!AllowsUnloadListener(type)) {
+  if (!AllowsUnloadListener(*this, type)) {
     return;
   }
   has_event_target_data_ = true;

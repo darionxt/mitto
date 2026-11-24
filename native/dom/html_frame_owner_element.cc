@@ -160,21 +160,24 @@ void HTMLFrameOwnerElement::ParseFrameAttribute(
 
 PermissionsPolicy* HTMLFrameOwnerElement::FeaturePolicy() {
   if (!feature_policy_) {
-    // A document of no window is in its creator's execution context.
-    Window* const window = GetDocument().DefaultView()
-                               ? GetDocument().DefaultView()
-                               : &Window::Current();
-    feature_policy_ = PermissionsPolicy::Create(
-        window->GetDocument(), FrameState(window->GetDocument()));
+    Window& window = PolicyWindow();
+    feature_policy_ = PermissionsPolicy::Create(window, FrameState(window));
   }
   return feature_policy_.Get();
 }
 
 std::unique_ptr<PermissionsPolicyState> HTMLFrameOwnerElement::FrameState(
-    Document& parent) const {
-  return parent.NewPermissionsPolicyState(&parent.GetPermissionsPolicyState(),
-                                          container_policy_,
-                                          OriginForPermissionsPolicy());
+    Window& window) const {
+  const url::Origin origin = OriginForPermissionsPolicy();
+  return std::make_unique<PermissionsPolicyState>(
+      &window.GetDocument().GetPermissionsPolicyState(), container_policy_,
+      origin,
+      IsUnloadDeprecated(window.Start().features.deprecated_unload, origin));
+}
+
+Window& HTMLFrameOwnerElement::PolicyWindow() const {
+  Window* const window = GetDocument().DefaultView();
+  return window ? *window : Window::Current();
 }
 
 url::Origin HTMLFrameOwnerElement::OriginForPermissionsPolicy() const {
@@ -183,14 +186,14 @@ url::Origin HTMLFrameOwnerElement::OriginForPermissionsPolicy() const {
   if ((sandbox_flags_ & SandboxFlags::kOrigin) != SandboxFlags::kNone) {
     return url::Origin();
   }
+  // Document::ShouldInheritSecurityOriginFromOwner().
   const GURL url = GetDocument().CompleteUrl(url_);
-  return url_.empty() || url.IsAboutBlank() || url.IsAboutSrcdoc()
-             ? GetDocument().GetOrigin()
+  return url_.empty() || url.is_empty() || url.SchemeIs(url::kAboutScheme)
+             ? PolicyWindow().GetSecurityOrigin()
              : url::Origin::Create(url);
 }
 
 void HTMLFrameOwnerElement::UpdateContainerPolicy() {
-  Window* const window = GetDocument().DefaultView();
   container_policy_.clear();
   if (!HasHTMLTagName(u"iframe")) {
     // GetLegacyFramePolicies(): a frame element's documents have no fullscreen.
@@ -198,15 +201,17 @@ void HTMLFrameOwnerElement::UpdateContainerPolicy() {
         {.feature = base::raw_ref(PolicyFeatureNamed("fullscreen"))});
     return;
   }
-  if (!window) {
+  // HTMLIFrameElement::ConstructContainerPolicy(), in the document's context,
+  // its creator's for one of no window.
+  if (!GetDocument().DefaultView() && !v8::Isolate::GetCurrent()->InContext()) {
     return;
   }
-  // HTMLIFrameElement::ConstructContainerPolicy().
+  Window& window = PolicyWindow();
   std::vector<PolicyMessage> messages;
   const std::u16string* const allow = FindAttribute(u"allow");
   container_policy_ = ParseAllowAttribute(
-      allow ? base::UTF16ToUTF8(*allow) : std::string(),
-      window->GetSecurityOrigin(), OriginForPermissionsPolicy(),
+      allow ? *allow : std::u16string(), window.GetSecurityOrigin(),
+      OriginForPermissionsPolicy(),
       bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features(),
       messages);
   for (const auto& [attribute, feature] :
@@ -220,10 +225,13 @@ void HTMLFrameOwnerElement::UpdateContainerPolicy() {
     }
   }
   if (feature_policy_) {
-    feature_policy_->SetFrameState(FrameState(window->GetDocument()));
+    feature_policy_->SetFrameState(FrameState(window));
   }
-  for (PolicyMessage& message : messages) {
-    window->AddConsoleMessageOnce(message.level, std::move(message.text));
+  // Document::AddConsoleMessage(): one of no window says nothing.
+  if (Window* const view = GetDocument().DefaultView()) {
+    for (PolicyMessage& message : messages) {
+      view->AddConsoleMessageOnce(message.level, std::move(message.text));
+    }
   }
 }
 

@@ -9,6 +9,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 
 namespace mitto {
 
@@ -102,7 +103,7 @@ PolicyDeclaration ParseAllowlist(const PolicyFeature& feature,
 
 }  // namespace
 
-ContainerPolicy ParseAllowAttribute(std::string_view allow,
+ContainerPolicy ParseAllowAttribute(std::u16string_view allow,
                                     const url::Origin& self,
                                     const url::Origin& source,
                                     const bindings::RuntimeFeatureSet& features,
@@ -116,8 +117,9 @@ ContainerPolicy ParseAllowAttribute(std::string_view allow,
                        base::NumberToString(kMaxLength), ")"})});
     return policy;
   }
+  const std::string utf8 = base::UTF16ToUTF8(allow);
   for (const std::string_view entry : base::SplitStringPiece(
-           allow, ";", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+           utf8, ";", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
     const std::vector<std::string_view> tokens = base::SplitStringPiece(
         entry, " \t\n\f\r", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
     if (tokens.empty()) {

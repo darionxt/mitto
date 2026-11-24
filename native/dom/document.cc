@@ -451,34 +451,29 @@ v8::Local<v8::Promise> Document::HasStorageAccess() const {
 
 PermissionsPolicy* Document::FeaturePolicy() {
   if (!feature_policy_ && window_) {
-    feature_policy_ = PermissionsPolicy::Create(*this);
+    feature_policy_ = PermissionsPolicy::Create(*window_);
   }
   return feature_policy_.Get();
 }
 
 const PermissionsPolicyState& Document::GetPermissionsPolicyState() {
   if (!permissions_policy_state_) {
-    permissions_policy_state_ = NewPermissionsPolicyState(
-        /*parent=*/nullptr, ContainerPolicy(), GetOrigin());
+    permissions_policy_state_ = std::make_unique<PermissionsPolicyState>(
+        /*parent=*/nullptr, ContainerPolicy(), GetOrigin(),
+        window_ &&
+            IsUnloadDeprecated(window_->Start().features.deprecated_unload,
+                               GetOrigin()));
   }
   return *permissions_policy_state_;
 }
 
 void Document::InheritPermissionsPolicy(
     Document& parent,
-    const ContainerPolicy& container_policy) {
-  permissions_policy_state_ = NewPermissionsPolicyState(
-      &parent.GetPermissionsPolicyState(), container_policy, GetOrigin());
-}
-
-std::unique_ptr<PermissionsPolicyState> Document::NewPermissionsPolicyState(
-    const PermissionsPolicyState* parent,
     const ContainerPolicy& container_policy,
-    const url::Origin& origin) const {
-  return std::make_unique<PermissionsPolicyState>(
-      parent, container_policy, origin,
-      window_ && IsUnloadDeprecated(window_->Start().features.deprecated_unload,
-                                    origin));
+    const DeprecatedUnload& deprecated_unload) {
+  permissions_policy_state_ = std::make_unique<PermissionsPolicyState>(
+      &parent.GetPermissionsPolicyState(), container_policy, GetOrigin(),
+      IsUnloadDeprecated(deprecated_unload, GetOrigin()));
 }
 
 bool Document::IsFeatureEnabled(std::string_view feature) {

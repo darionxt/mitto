@@ -280,22 +280,22 @@ bool IsUnloadDeprecated(const DeprecatedUnload& seed,
 }
 
 // static
-PermissionsPolicy* PermissionsPolicy::Create(Document& document) {
-  return bindings::MakeGarbageCollected<PermissionsPolicy>(document, nullptr);
+PermissionsPolicy* PermissionsPolicy::Create(Window& window) {
+  return bindings::MakeGarbageCollected<PermissionsPolicy>(window, nullptr);
 }
 
 // static
 PermissionsPolicy* PermissionsPolicy::Create(
-    Document& document,
+    Window& window,
     std::unique_ptr<PermissionsPolicyState> state) {
-  return bindings::MakeGarbageCollected<PermissionsPolicy>(document,
+  return bindings::MakeGarbageCollected<PermissionsPolicy>(window,
                                                            std::move(state));
 }
 
 PermissionsPolicy::PermissionsPolicy(
-    Document& document,
+    Window& window,
     std::unique_ptr<PermissionsPolicyState> state)
-    : document_(document), frame_state_(std::move(state)) {
+    : window_(window), frame_state_(std::move(state)) {
   const bindings::RuntimeFeatureSet& features =
       bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features();
   // FeatureAvailable(): a feature of the map that no origin trial hides and
@@ -320,7 +320,7 @@ const bindings::WrapperTypeInfo* PermissionsPolicy::GetWrapperTypeInfo() const {
 
 void PermissionsPolicy::Trace(cppgc::Visitor* visitor) const {
   ScriptWrappable::Trace(visitor);
-  visitor->Trace(document_);
+  visitor->Trace(window_);
 }
 
 bool PermissionsPolicy::AllowsFeature(
@@ -370,7 +370,8 @@ std::vector<std::u16string> PermissionsPolicy::GetAllowlistForFeature(
 }
 
 const PermissionsPolicyState& PermissionsPolicy::State() const {
-  return frame_state_ ? *frame_state_ : document_->GetPermissionsPolicyState();
+  return frame_state_ ? *frame_state_
+                      : window_->GetDocument().GetPermissionsPolicyState();
 }
 
 const PolicyFeature* PermissionsPolicy::FindOrWarn(const std::u16string& name) {
@@ -385,9 +386,7 @@ const PolicyFeature* PermissionsPolicy::FindOrWarn(const std::u16string& name) {
 }
 
 void PermissionsPolicy::Warn(std::string message) {
-  if (Window* const window = document_->DefaultView()) {
-    window->AddConsoleMessage(ConsoleLevel::kWarning, std::move(message));
-  }
+  window_->AddConsoleMessage(ConsoleLevel::kWarning, std::move(message));
 }
 
 }  // namespace mitto

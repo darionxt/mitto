@@ -22,9 +22,9 @@ struct PolicyMessage {
   std::string text;
 };
 
-// The policy that `allow`, in UTF-8, of an iframe in a document of `self` says
+// The policy that `allow` of an iframe in a document of `self` says
 // for a document of `source`, the origin of the iframe's URL.
-ContainerPolicy ParseAllowAttribute(std::string_view allow,
+ContainerPolicy ParseAllowAttribute(std::u16string_view allow,
                                     const url::Origin& self,
                                     const url::Origin& source,
                                     const bindings::RuntimeFeatureSet& features,

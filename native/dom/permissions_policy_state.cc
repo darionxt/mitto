@@ -148,11 +148,13 @@ std::vector<std::u16string> PermissionsPolicyState::AllowlistFor(
   if (feature.default_allowlist == PolicyFeature::Default::kEnableForAll) {
     return {u"*"};
   }
-  // OriginWithPossibleWildcards::FromOrigin() has none of an opaque origin.
-  if (origin_.opaque()) {
+  // OriginWithPossibleWildcards::FromOrigin() has none of an opaque origin, or
+  // of one that a source cannot say, as of an IPv6 address.
+  const std::string origin = origin_.Serialize();
+  if (origin_.opaque() || !PolicyOrigin::Parse(origin)) {
     return {};
   }
-  return {base::UTF8ToUTF16(origin_.Serialize())};
+  return {base::UTF8ToUTF16(origin)};
 }
 
 bool PermissionsPolicyState::IsForNone(const PolicyFeature& feature) const {

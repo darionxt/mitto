@@ -276,11 +276,8 @@ class Document : public Node {
   // its parent's with its frame's element's.
   const PermissionsPolicyState& GetPermissionsPolicyState();
   void InheritPermissionsPolicy(mitto::Document& parent,
-                                const ContainerPolicy& container_policy);
-  std::unique_ptr<PermissionsPolicyState> NewPermissionsPolicyState(
-      const PermissionsPolicyState* parent,
-      const ContainerPolicy& container_policy,
-      const url::Origin& origin) const;
+                                const ContainerPolicy& container_policy,
+                                const DeprecatedUnload& deprecated_unload);
   // ExecutionContext::IsFeatureEnabled().
   bool IsFeatureEnabled(std::string_view feature);
   // The same, and the console reports the violation if not.
