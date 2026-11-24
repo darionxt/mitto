@@ -1529,7 +1529,8 @@ def test_a_call_with_a_receiver_makes_the_wrappers_it_returns_in_the_receivers_r
 
 def test_a_members_receiver_goes_unchecked_only_where_another_origin_may_reach_it() -> None:
     # bind_gen's cross_origin_check: [CrossOrigin] leaves an operation's receiver and an attribute's getter's unchecked,
-    # and a static member has no receiver to check. A window's location stays checked while a Location checks nothing.
+    # and a static member has no receiver to check. A window's location stays checked while a Location checks nothing,
+    # and its postMessage() while a message names its target as its source.
     both = ExtendedAttributes((("CrossOrigin", ("Getter", "Setter")),))
     setter = ExtendedAttributes((("CrossOrigin", ("Setter",)),))
     window = _interface(
@@ -1543,7 +1544,11 @@ def test_a_members_receiver_goes_unchecked_only_where_another_origin_may_reach_i
             _attribute("name"),
             Attribute("first", BOOLEAN, True, True, ExtendedAttributes(), ALWAYS),
         ),
-        operation_groups=(_operation("close", "CrossOrigin"), _operation("stop")),
+        operation_groups=(
+            _operation("close", "CrossOrigin"),
+            _operation("postMessage", "CrossOrigin"),
+            _operation("stop"),
+        ),
         exposed_constructs=("Window",),
         exposed=(ExposedConstruct("Window", "interface", "Window", ALWAYS),),
     )
@@ -1557,16 +1562,10 @@ def test_a_members_receiver_goes_unchecked_only_where_another_origin_may_reach_i
         install = next(line for line in installs if f'"{name}", kInterfaceName' in line)
         return install[install.index("CrossOriginCheck::") :].rstrip(")")
 
-    checks = {name: check_of(name) for name in ("closed", "both", "href", "location", "name", "first", "close", "stop")}
-    assert [name for name, check in checks.items() if check == "CrossOriginCheck::kDoNotCheck"] == [
-        "closed",
-        "both",
-        "first",
-        "close",
-    ]
-    assert {check for name, check in checks.items() if name in ("href", "location", "name", "stop")} == {
-        "CrossOriginCheck::kCheck"
-    }
+    unchecked = {name: check_of(name) for name in ("closed", "both", "first", "close")}
+    checked = {name: check_of(name) for name in ("href", "location", "name", "postMessage", "stop")}
+    assert set(unchecked.values()) == {"CrossOriginCheck::kDoNotCheck"}
+    assert set(checked.values()) == {"CrossOriginCheck::kCheck"}
     assert "instance_template->SetAccessCheckCallback(&Window::AccessCheckCallback);" in source
 
 

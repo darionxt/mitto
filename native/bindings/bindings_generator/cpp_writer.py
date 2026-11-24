@@ -1743,8 +1743,9 @@ class _InterfaceWriter:
             unchecked |= "CrossOrigin" in member.extended_attributes and (not values or "Getter" in values)
         elif isinstance(member, OperationGroup):
             unchecked |= any("CrossOrigin" in overload.extended_attributes for overload in member.overloads)
-        if self.interface.name == "Window" and property_.name == "location":
-            # A Location checks no caller of its own yet, so a window gives its own to callers of its origin alone.
+        if self.interface.name == "Window" and property_.name in ("location", "postMessage"):
+            # A Location checks no caller of its own yet, and a message names its target as its source, so a window
+            # gives either to callers of its origin alone.
             unchecked = False
         return f"CrossOriginCheck::{'kDoNotCheck' if unchecked else 'kCheck'}"
 
