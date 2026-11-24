@@ -154,6 +154,7 @@
     "caches": "object",
     "locks": "object",
     "cookieStore": "object",
+    "storageAccess": "true",
     "estimate": "number",
     "persisted": "false",
     "buckets": "object",
@@ -190,6 +191,7 @@
     "caches": "object",
     "locks": "object",
     "cookieStore": "object",
+    "storageAccess": "true",
     "estimate": "number",
     "persisted": "false",
     "buckets": "object",
@@ -226,6 +228,7 @@
     "caches": "object",
     "locks": "object",
     "cookieStore": "object",
+    "storageAccess": "true",
     "estimate": "number",
     "persisted": "false",
     "buckets": "object",
@@ -264,6 +267,7 @@
     "caches": "SecurityError: Failed to read the 'caches' property from 'Window': Cache storage is disabled because the context is sandboxed and lacks the 'allow-same-origin' flag.",
     "locks": "SecurityError: Failed to execute 'query' on 'LockManager': Access to the Locks API is denied in this context.",
     "cookieStore": "SecurityError: Failed to execute 'getAll' on 'CookieStore': Access to the CookieStore API is denied in this context.",
+    "storageAccess": "false",
     "estimate": "TypeError: Failed to execute 'estimate' on 'StorageManager': The operation is not supported in this context.",
     "persisted": "TypeError: Failed to execute 'persisted' on 'StorageManager': The operation is not supported in this context.",
     "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
@@ -300,6 +304,7 @@
     "caches": "SecurityError: Failed to read the 'caches' property from 'Window': Cache storage is disabled because the context is sandboxed and lacks the 'allow-same-origin' flag.",
     "locks": "SecurityError: Failed to execute 'query' on 'LockManager': Access to the Locks API is denied in this context.",
     "cookieStore": "SecurityError: Failed to execute 'getAll' on 'CookieStore': Access to the CookieStore API is denied in this context.",
+    "storageAccess": "false",
     "estimate": "TypeError: Failed to execute 'estimate' on 'StorageManager': The operation is not supported in this context.",
     "persisted": "TypeError: Failed to execute 'persisted' on 'StorageManager': The operation is not supported in this context.",
     "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
@@ -336,6 +341,7 @@
     "caches": "SecurityError: Failed to read the 'caches' property from 'Window': Cache storage is disabled because the context is sandboxed and lacks the 'allow-same-origin' flag.",
     "locks": "SecurityError: Failed to execute 'query' on 'LockManager': Access to the Locks API is denied in this context.",
     "cookieStore": "SecurityError: Failed to execute 'getAll' on 'CookieStore': Access to the CookieStore API is denied in this context.",
+    "storageAccess": "false",
     "estimate": "TypeError: Failed to execute 'estimate' on 'StorageManager': The operation is not supported in this context.",
     "persisted": "TypeError: Failed to execute 'persisted' on 'StorageManager': The operation is not supported in this context.",
     "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
@@ -374,6 +380,7 @@
     "caches": "object",
     "locks": "object",
     "cookieStore": "object",
+    "storageAccess": "true",
     "estimate": "number",
     "persisted": "false",
     "buckets": "object",
@@ -410,6 +417,7 @@
     "caches": "object",
     "locks": "object",
     "cookieStore": "object",
+    "storageAccess": "true",
     "estimate": "number",
     "persisted": "false",
     "buckets": "object",
@@ -446,6 +454,7 @@
     "caches": "object",
     "locks": "object",
     "cookieStore": "object",
+    "storageAccess": "true",
     "estimate": "number",
     "persisted": "false",
     "buckets": "object",
@@ -473,6 +482,39 @@
    "removed, not navigated": "null",
    "removed, navigated": "ORIGIN/empty?3",
    "set while it waits": "ORIGIN/empty?slow",
+   "the same navigation again": "ORIGIN/empty?slow%20again",
+   "set, and the same navigation again": "null",
+   "a clone": [
+    "",
+    "null",
+    null
+   ],
+   "an imported one": [
+    "",
+    "null",
+    null
+   ],
+   "an adopted one": [
+    "",
+    "null",
+    null
+   ],
+   "a clone without": [
+    null,
+    "ORIGIN/empty",
+    [
+     "",
+     ""
+    ]
+   ],
+   "a clone of a srcdoc": [
+    "allow-same-origin",
+    "about:srcdoc",
+    [
+     "copy",
+     "x"
+    ]
+   ],
    "a frame element": "ORIGIN/empty",
    "tokens": {
     "ALLOW-SAME-ORIGIN": [
@@ -563,6 +605,179 @@
      "ORIGIN"
     ]
    ],
+   "secure contexts": {
+    "none": [
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "http:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "data:",
+       false
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       false
+      ]
+     ]
+    ],
+    "scripts": [
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "http:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "data:",
+       false
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       false
+      ]
+     ]
+    ],
+    "both": [
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "http:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "data:",
+       false
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       false
+      ]
+     ]
+    ]
+   },
+   "/closed in ''": "loaded",
+   "data:text/html;base64,% in ''": "loaded",
+   "http://127.0.0.1:1/ in ''": "loaded",
+   "data:text/unknown,x in ''": "loaded",
+   "/closed in 'allow-scripts'": "loaded",
+   "data:text/html;base64,% in 'allow-scripts'": "loaded",
+   "http://127.0.0.1:1/ in 'allow-scripts'": "loaded",
+   "data:text/unknown,x in 'allow-scripts'": "loaded",
+   "/closed": "null",
+   "data:text/html;base64,%": "null",
+   "unload times": {
+    "none": [
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ],
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ]
+    ],
+    "scripts": [
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ],
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ]
+    ],
+    "both": [
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ],
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ]
+    ]
+   },
    "a frame of its own": [
     [
      [
@@ -598,13 +813,29 @@
    ],
    "onclick": "null",
    "eval": 2,
+   "adopted": "null",
+   "compiled": "function",
+   "serialized": [
+    "<noscript>&lt;&amp;&gt;</noscript>",
+    "<noscript>&lt;b&gt;</noscript>"
+   ],
+   "fragment": 1,
+   "media": [
+    false,
+    true,
+    true,
+    false
+   ],
    "ran": [
     "Function",
+    "compiled handler",
     "eval",
     "its function as a listener",
     "its function in the page's timer",
     "microtask of its window",
     "promise of its window",
+    "the page's handler",
+    "the page's handler",
     "the page's handler",
     "the page's handler",
     "the page's listener"
@@ -1071,12 +1302,55 @@
    "sec-fetch-dest": "script",
    "sec-fetch-mode": "cors",
    "sec-fetch-site": "same-origin"
+  },
+  "other both: noscript": {
+   "cookie": "top=1; set=1",
+   "referer": "PAGE",
+   "sec-fetch-dest": "image",
+   "sec-fetch-mode": "no-cors",
+   "sec-fetch-site": "same-origin"
+  },
+  "other both: /ran.js": {
+   "cookie": "top=1; set=1",
+   "referer": "PAGE",
+   "sec-fetch-dest": "script",
+   "sec-fetch-mode": "no-cors",
+   "sec-fetch-site": "same-origin"
   }
  },
  "console": [
   "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
-  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "Error while parsing the 'sandbox' attribute: 'allow-same-origin,' is an invalid sandbox flag.",
   "Error while parsing the 'sandbox' attribute: 'allow-everything' is an invalid sandbox flag.",
-  "Error while parsing the 'sandbox' attribute: 'allow-same-origin,' is an invalid sandbox flag."
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set."
  ]
 }

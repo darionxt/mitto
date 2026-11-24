@@ -100,6 +100,30 @@
     await done;
     results['set while it waits'] = seen(waiting);
     waiting.remove();
+    // The same URL again, which the one that waits answers.
+    for (const [name, sandbox] of [['the same navigation again', null], ['set, and the same navigation again', '']]) {
+      const again = make(null, {src: '/empty?slow again'});
+      const done = loaded(again);
+      document.body.append(again);
+      if (sandbox !== null) again.sandbox = sandbox;
+      again.src = '/empty?slow again';
+      await done;
+      results[name] = seen(again);
+      again.remove();
+    }
+    // Copies of an element.
+    const template = document.createElement('template');
+    template.innerHTML = '<iframe sandbox src=/empty></iframe>';
+    const copies = {
+      'a clone': make('', {src: '/empty'}).cloneNode(), 'an imported one': document.importNode(template.content.firstChild, true),
+      'an adopted one': template.content.firstChild, 'a clone without': make(null, {src: '/empty'}).cloneNode(),
+      'a clone of a srcdoc': make('allow-same-origin', {srcdoc: 'x', name: 'copy'}).cloneNode(),
+    };
+    for (const name in copies) {
+      const shown = await show(copies[name]);
+      results[name] = [shown.getAttribute('sandbox'), seen(shown), shown.contentDocument && [shown.contentWindow.name, shown.contentDocument.body.textContent]];
+      shown.remove();
+    }
     const tokens = {};
     for (const value of ['ALLOW-SAME-ORIGIN', ' allow-same-origin\n', 'allow-same-origin,', 'allow-everything allow-same-origin', 'allow-forms allow-same-origin']) {
       const shown = await show(make(value, {srcdoc: ''}));
@@ -126,6 +150,49 @@
         await until(() => heard.length);
         results[`${within} in ${outer}`] = heard.slice();
         element.remove();
+      }
+    }
+    // Which of the documents within is a secure context.
+    results['secure contexts'] = {};
+    const says = `<script>postMessage.call(top, ['inner', location.protocol, isSecureContext], '*')</script>`;
+    const framed = (markup) => `<iframe srcdoc="${markup.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe>`;
+    const within = [framed(says), '<iframe src="/secure"></iframe>', `<iframe src="data:text/html,${encodeURIComponent(says)}"></iframe>`, framed(framed(says)),
+      `<iframe src="data:text/html,${encodeURIComponent(framed(says))}"></iframe>`];
+    for (const outer of ['none', 'scripts', 'both']) {
+      results['secure contexts'][outer] = [];
+      for (const inner of within) {
+        heard.length = 0;
+        const shown = make(SANDBOXES[outer], {srcdoc: `<body>${inner}`});
+        await show(shown);
+        await until(() => heard.length);
+        results['secure contexts'][outer].push(heard.map(([data]) => data));
+        shown.remove();
+      }
+    }
+    // Navigations that fail, under a sandbox.
+    for (const outer of ['', 'allow-scripts']) {
+      for (const inner of ['/closed', 'data:text/html;base64,%', 'http://127.0.0.1:1/', 'data:text/unknown,x']) {
+        const shown = make(outer, {srcdoc: `<body><iframe src="${inner}"></iframe>`});
+        results[`${inner} in '${outer}'`] = await Promise.race([show(shown).then(() => 'loaded'), settle(3000).then(() => 'never')]);
+        shown.remove();
+      }
+    }
+    for (const inner of ['/closed', 'data:text/html;base64,%']) {
+      const shown = make('', {src: inner});
+      results[inner] = await Promise.race([show(shown).then(() => seen(shown)), settle(3000).then(() => 'never')]);
+      shown.remove();
+    }
+    // A document's times of the one before it, which only one of its origin has.
+    results['unload times'] = {};
+    for (const outer of ['none', 'scripts', 'both']) {
+      results['unload times'][outer] = [];
+      for (const src of ['/times?itself', '/times']) {
+        heard.length = 0;
+        const shown = await show(make(SANDBOXES[outer], {src}));
+        if (src === '/times') shown.src = '/times?then';
+        await until(() => heard.length);
+        results['unload times'][outer].push(heard.map(([data]) => data));
+        shown.remove();
       }
     }
     // The documents of one opaque origin: a sandboxed document's frames that have its origin.
@@ -164,7 +231,7 @@
   await section('no scripts', async () => {
     const results = {};
     const ran = window.ran = [];
-    const element = make('allow-same-origin', {srcdoc: `<noscript><p id=noscript>n</p></noscript><body onclick="parent.ran.push('handler')">
+    const element = make('allow-same-origin', {srcdoc: `<noscript><p id=noscript>n</p><img src='/seen.svg?noscript'></noscript><body onclick="parent.ran.push('handler')">
       <script>parent.ran.push('inline')</script><script type=module>parent.ran.push('module')</script><script src=/ran.js></script>
       <img src=x: onerror="parent.ran.push('onerror')"><p id=p>x</p>`});
     await show(element);
@@ -193,6 +260,24 @@
     setTimeout(w.eval('() => parent.ran.push("its function in the page\'s timer")'), 0);
     d.body.addEventListener('y', w.eval('() => parent.ran.push("its function as a listener")'));
     d.body.dispatchEvent(new Event('y'));
+    // An element whose handler has not been compiled, and one whose handler has.
+    const adopted = document.createElement('p');
+    adopted.setAttribute('onclick', 'parent.ran.push("adopted handler")');
+    d.body.append(adopted);
+    adopted.click();
+    results.adopted = String(adopted.onclick);
+    const compiled = document.createElement('p');
+    compiled.setAttribute('onclick', 'parent.ran.push("compiled handler")');
+    results.compiled = typeof compiled.onclick;
+    d.body.append(compiled);
+    compiled.click();
+    d.querySelector('noscript').textContent = '<&>';
+    const other = d.createElement('noscript');
+    other.append('<b>');
+    results.serialized = [d.querySelector('noscript').outerHTML, other.outerHTML];
+    d.body.insertAdjacentHTML('beforeend', '<noscript id=more><p></p></noscript>');
+    results.fragment = d.getElementById('more').children.length;
+    results.media = [w.matchMedia('(scripting)').matches, w.matchMedia('(scripting: none)').matches, matchMedia('(scripting)').matches, matchMedia('(scripting: none)').matches];
     element.src = 'javascript:parent.ran.push("javascript:")';
     w.location = 'javascript:parent.ran.push("its location")';
     const link = d.createElement('a');

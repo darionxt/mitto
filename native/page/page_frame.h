@@ -233,9 +233,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // a context passes its WindowProxy, the old context's global proxy, which
   // the old context has let go, so that the new context takes it, as
   // LocalWindowProxy reinitializes on the same global proxy.
-  // Whether the document is potentially trustworthy, as its origin was before
-  // a sandbox made it opaque, decides with the frames above whether its context
-  // is a secure one.
+  // Whether its document's origin is potentially trustworthy, or was before a
+  // sandbox made it opaque, decides with the parent's context whether the
+  // context is a secure one.
   v8::Local<v8::Context> NewContext(
       base::TimeTicks time_origin,
       const url::Origin& origin,
@@ -338,7 +338,8 @@ class PageFrame final : public NavigationClient, public Frame {
     url::Origin origin;
     FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
     // What the sandbox withholds from it, and whether its origin was
-    // potentially trustworthy before that made it opaque.
+    // potentially trustworthy before that made it opaque, where a srcdoc's is
+    // if its parent's is, which its parent's context says.
     SandboxFlags sandbox = SandboxFlags::kNone;
     bool trustworthy = false;
     std::u16string referrer;
@@ -356,6 +357,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // Commits `navigation` from a later task, as Chrome's browser commits it,
   // unless a newer navigation of the frame takes its place first.
   void CommitWithoutNetworkSoon(LocalNavigation navigation);
+  // The same with Chrome's error page, as the latest navigation that asked the
+  // network, or that went to a data: URL, has failed.
+  void CommitErrorPageSoon();
   // A child frame's navigation to a data: URL, which the Page answers itself
   // from a later task, through a DocumentLoader as a response.
   void BeginDataUrlNavigation(const NavigationRequest& request);

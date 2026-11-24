@@ -93,10 +93,23 @@ void HTMLFrameOwnerElement::AttributeChanged(const QualifiedName& name,
                                              const std::u16string* old_value,
                                              const std::u16string* new_value) {
   HTMLElement::AttributeChanged(name, old_value, new_value);
+  ParseFrameAttribute(name, old_value, new_value);
+}
+
+void HTMLFrameOwnerElement::DidCloneAttributes() {
+  HTMLElement::DidCloneAttributes();
+  for (const Attribute& attribute : attributes()) {
+    ParseFrameAttribute(attribute.name, nullptr, &attribute.value);
+  }
+}
+
+void HTMLFrameOwnerElement::ParseFrameAttribute(
+    const QualifiedName& name,
+    const std::u16string* old_value,
+    const std::u16string* new_value) {
   if (name.namespace_uri) {
     return;
   }
-  // HTMLFrameElementBase::ParseAttribute().
   if (name.local_name == u"srcdoc") {
     if (new_value) {
       SetLocation(kSrcdocUrl);
@@ -113,8 +126,7 @@ void HTMLFrameOwnerElement::AttributeChanged(const QualifiedName& name,
   } else if (name.local_name == u"id" || name.local_name == u"name") {
     frame_name_ = new_value ? *new_value : std::u16string();
   } else if (name.local_name == u"sandbox" && HasHTMLTagName(u"iframe")) {
-    // HTMLIFrameElement::ParseAttribute(). It holds from the frame's next
-    // navigation on.
+    // It holds from the frame's next navigation on.
     sandbox_flags_ = SandboxFlags::kNone;
     if (new_value) {
       const SandboxPolicy policy =

@@ -31,6 +31,13 @@
 namespace mitto {
 namespace {
 
+// Whether a sandbox makes the origin of the context's document opaque.
+bool IsOriginSandboxed(const ExecutionContext& context) {
+  return context.IsWindow() &&
+         static_cast<const Window&>(context).GetDocument().IsSandboxed(
+             SandboxFlags::kOrigin);
+}
+
 // MIMETypeRegistry::IsSupportedJavaScriptMIMEType(), for a MIME type that is
 // already in lower case.
 bool IsSupportedJavaScriptMimeType(std::string_view mime_type) {
@@ -345,10 +352,10 @@ std::string ModuleScriptLoader::ReferrerOf(
     }
     // A sandboxed document's origin is made for the one that its URL has.
     const url::Origin origin = context.GetSecurityOrigin();
-    const bool own =
-        origin.IsSameOriginWith(referrer) ||
-        (origin.opaque() && origin.GetTupleOrPrecursorTupleIfOpaque() ==
-                                url::SchemeHostPort(referrer));
+    const bool own = origin.IsSameOriginWith(referrer) ||
+                     (IsOriginSandboxed(context) &&
+                      origin.GetTupleOrPrecursorTupleIfOpaque() ==
+                          url::SchemeHostPort(referrer));
     if (referrer.is_valid() &&
         (own || fetcher.HasFinishedResponse(referrer.spec()))) {
       return referrer.spec();

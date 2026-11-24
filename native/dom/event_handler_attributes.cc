@@ -301,9 +301,11 @@ v8::Local<v8::Value> RawEventHandler::Compile(v8::Isolate* isolate,
     document = &window->GetDocument();
   }
   // Step 2, as Blink's Document::AllowInlineEventHandler(): a document without
-  // a window runs no inline script.
+  // a window, or one that a sandbox withholds scripts from, runs no inline
+  // script.
   Window* const document_window = document->DefaultView();
-  if (!document_window || !document_window->HasContext()) {
+  if (!document_window || !document_window->HasContext() ||
+      !document_window->CanExecuteScripts(/*about_to_execute=*/false)) {
     return v8::Null(isolate);
   }
   v8::Local<v8::Context> context;

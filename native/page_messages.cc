@@ -1120,12 +1120,12 @@ base::expected<PageBroadcast, std::string> ReadBroadcast(
   return broadcast;
 }
 
-// A document that the Page has made: its ID, a byte for its source, its
-// parent, and for a navigation's response the navigation's number.
 // In the byte of a document's source: PageDocumentCommitted's
 // sandboxed_origin.
 constexpr uint8_t kSandboxedOriginBit = 0x80;
 
+// A document that the Page has made: its ID, a byte for its source, its
+// parent, and for a navigation's response the navigation's number.
 base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     std::string_view payload) {
   // The ID, the source and the parent, then what the source names.

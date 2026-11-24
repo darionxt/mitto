@@ -34,7 +34,7 @@
       request.onerror = () => reject(request.error);
     })),
     databases: await later(() => indexedDB.databases()), caches: await later(() => caches.keys()), locks: await later(() => navigator.locks.query()),
-    cookieStore: await later(() => cookieStore.getAll()), estimate: await later(() => navigator.storage.estimate().then(({quota}) => typeof quota)),
+    cookieStore: await later(() => cookieStore.getAll()), storageAccess: await later(() => document.hasStorageAccess()), estimate: await later(() => navigator.storage.estimate().then(({quota}) => typeof quota)),
     persisted: await later(() => navigator.storage.persisted()), buckets: await later(() => navigator.storageBuckets.keys()),
     channel: text(() => { new BroadcastChannel('sandbox').close(); return 'made'; }), blob: text(() => URL.createObjectURL(new Blob(['x'])).slice(0, 10)),
     worker: await later(() => new Promise((resolve) => {

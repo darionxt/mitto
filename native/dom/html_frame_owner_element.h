@@ -60,8 +60,14 @@ class HTMLFrameOwnerElement : public HTMLElement {
   void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
+  void DidCloneAttributes() override;
 
  private:
+  // HTMLFrameElementBase::ParseAttribute() and HTMLIFrameElement's: src,
+  // srcdoc, name, id and sandbox.
+  void ParseFrameAttribute(const QualifiedName& name,
+                           const std::u16string* old_value,
+                           const std::u16string* new_value);
   // HTMLFrameElementBase::SetLocation(): the URL the frame is to show, which
   // it navigates to now if the element is connected.
   void SetLocation(std::u16string location);

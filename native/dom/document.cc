@@ -438,9 +438,11 @@ v8::Local<v8::Promise> Document::HasStorageAccess() const {
            .ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
-  // Blink answers false outside a secure context, and otherwise whether the
-  // document's cookies are enabled, which they are in a new profile.
-  const bool access = window_ && window_->IsSecureContextForBindings();
+  // Blink answers false for an opaque origin and outside a secure context, and
+  // otherwise whether the document's cookies are enabled, which they are in a
+  // new profile.
+  const bool access =
+      window_ && !GetOrigin().opaque() && window_->IsSecureContextForBindings();
   ResolveFromTask(isolate, resolver, v8::Boolean::New(isolate, access));
   return resolver->GetPromise();
 }

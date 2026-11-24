@@ -191,9 +191,10 @@ void PageFrame::Start(const PageConnection& connection) {
   const url::Origin parent_origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
   const url::Origin origin = SandboxedOrigin(parent_origin, sandbox);
-  context_.Reset(isolate,
-                 NewContext(base::TimeTicks::Now(), origin,
-                            IsOriginPotentiallyTrustworthy(parent_origin)));
+  // It is as trustworthy as its parent's, whose context is a secure one only
+  // if that is.
+  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin,
+                                     /*is_trustworthy=*/parent_ != nullptr));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   window_->BindToContext(isolate, context());
   if (parent_) {
@@ -657,6 +658,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       navigation.body = srcdoc ? *srcdoc : std::u16string();
       Document& parent_document = parent_->window_->GetDocument();
       navigation.origin = parent_document.GetOrigin();
+      navigation.trustworthy = true;
       navigation.referrer_policy = parent_document.GetReferrerPolicy();
       navigation.about_base_url = parent_document.BaseUrl();
       navigation.cookie_url = parent_document.CookieUrl();
@@ -664,6 +666,12 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       navigation.committed.source = PageDocumentSource::kAboutBlank;
       navigation.committed.initiator = request.initiator;
       navigation.origin = request.initiator_origin;
+      // DocumentLoader::CalculateOwnerFrame(): an opaque origin is the parent's
+      // own, as trustworthy as that, or no trustworthy one.
+      navigation.trustworthy =
+          navigation.origin.opaque()
+              ? navigation.origin == parent_->window_->GetSecurityOrigin()
+              : IsOriginPotentiallyTrustworthy(navigation.origin);
       navigation.referrer_policy = request.initiator_referrer_policy;
       navigation.about_base_url = request.initiator_base_url;
       navigation.cookie_url = request.initiator_cookie_url;
@@ -672,7 +680,6 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     // what the sandbox withholds now, and an opaque origin without
     // allow-same-origin.
     navigation.sandbox = PendingSandboxFlags();
-    navigation.trustworthy = IsOriginPotentiallyTrustworthy(navigation.origin);
     navigation.origin = SandboxedOrigin(navigation.origin, navigation.sandbox);
     navigation.committed.sandboxed_origin =
         IsOriginSandboxed(navigation.sandbox);
@@ -708,11 +715,14 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     return;
   }
   const base::TimeTicks now = base::TimeTicks::Now();
+  const SandboxFlags sandbox =
+      parent_ ? PendingSandboxFlags() : SandboxFlags::kNone;
   // Navigator::Navigate(): a navigation the same as the one that waits, of
   // the same initiator, origin, referrer and history handling, which started
   // less than 3 seconds before while no script wrote a cookie, is dropped,
-  // and the one that waits goes on.
+  // and the one that waits goes on, unless the sandbox has changed since.
   if (provisional_ && request.url == provisional_request_.url &&
+      sandbox == provisional_sandbox_ &&
       request.reload == provisional_request_.reload &&
       request.replace == provisional_request_.replace &&
       request.user_activation == provisional_request_.user_activation &&
@@ -732,7 +742,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   traversal_record_.reset();
   provisional_request_ = request;
   ++provisional_request_serial_;
-  provisional_sandbox_ = parent_ ? PendingSandboxFlags() : SandboxFlags::kNone;
+  provisional_sandbox_ = sandbox;
   provisional_start_ = now;
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
@@ -818,10 +828,7 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (!data) {
     EndLocalNavigation();
     forget_request();
-    LocalNavigation navigation;
-    navigation.url = GURL(kErrorPageUrl);
-    navigation.committed.source = PageDocumentSource::kErrorPage;
-    CommitWithoutNetworkSoon(std::move(navigation));
+    CommitErrorPageSoon();
     return;
   }
   if (!IsSupportedMimeType(data->mime_type) ||
@@ -1409,13 +1416,19 @@ void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
   // another took the place of, ends with ERR_ABORTED, and the frame keeps
   // its document.
   if (parent_ && net_error != kNetErrorAborted && net_error != kNetOk) {
-    LocalNavigation navigation;
-    navigation.url = GURL(kErrorPageUrl);
-    navigation.committed.source = PageDocumentSource::kErrorPage;
-    CommitWithoutNetworkSoon(std::move(navigation));
+    CommitErrorPageSoon();
     return;
   }
   LetParentCheckCompleted();
+}
+
+void PageFrame::CommitErrorPageSoon() {
+  LocalNavigation navigation;
+  navigation.url = GURL(kErrorPageUrl);
+  navigation.committed.source = PageDocumentSource::kErrorPage;
+  navigation.sandbox = provisional_sandbox_;
+  navigation.committed.sandboxed_origin = IsOriginSandboxed(navigation.sandbox);
+  CommitWithoutNetworkSoon(std::move(navigation));
 }
 
 void PageFrame::LetParentCheckCompleted() {

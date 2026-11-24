@@ -25,6 +25,15 @@ _TESTS = Path(__file__).parent
 _CASES = (_TESTS / "frames_sandbox_cases.js").read_text()
 _CHILD = (_TESTS / "frames_sandbox_child.js").read_text()
 _AS_CHROME = json.loads((_TESTS / "data" / "frames_sandbox_cases.json").read_text())
+# Says whether it has times of the document before it, once it has navigated, which it does itself for ?itself.
+_TIMES = """<!doctype html><script>
+if (location.search === '?itself') onload = () => setTimeout(() => location.replace('?then'));
+else if (location.search) {
+  const [entry] = performance.getEntriesByType('navigation');
+  const said = [performance.timing.unloadEventStart > 0, performance.timing.unloadEventEnd > 0, entry.unloadEventEnd > 0];
+  postMessage.call(parent, said, '*');
+}
+</script>"""
 _HEADERS = {
     "origin",
     "cookie",
@@ -59,11 +68,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _Server)
         path = self.path
-        if path.startswith(("/seen", "/cors", "/child?", "/worker.js")):
+        if path.startswith(("/seen", "/cors", "/child?", "/worker.js", "/ran.js")):
             headers = {name.lower(): value for name, value in self.headers.items() if name.lower() in _HEADERS}
             self.server.seen.append((path, headers))
         if path.startswith("/empty?slow"):
             time.sleep(0.3)
+        if path == "/closed":
+            self.close_connection = True
+            return
         kind, body, more = "text/html", "<!doctype html><title>t</title><body>", dict[str, str]()
         if path.startswith("/app"):
             more = {"Set-Cookie": "top=1; Path=/"}
@@ -73,6 +85,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             body = f"<!doctype html><body><script>{_CHILD}</script>"
         elif path == "/hear":
             body = "<!doctype html><script>onmessage = (e) => postMessage.call(parent, 'heard ' + e.data, '*')</script>"
+        elif path == "/secure":
+            body = "<script>postMessage.call(top, ['inner', location.protocol, isSecureContext], '*')</script>"
+        elif path.startswith("/times"):
+            body = _TIMES
         elif path == "/worker.js":
             kind, body = "text/javascript", "postMessage(1)"
         elif path == "/ran.js":
@@ -136,7 +152,7 @@ def test_what_a_sandbox_withholds_is_chrome_s(server: _Server) -> None:
     for path, headers in server.seen:
         if path.startswith("/child?"):
             document = path.partition("key=")[2].replace("%20", " ")
-        what = path.partition("?")[0] if path.startswith(("/child", "/worker")) else path.partition("?")[2]
+        what = path.partition("?")[0] if path.startswith(("/child", "/worker", "/ran")) else path.partition("?")[2]
         key = f"{document}: {what}" if document else what
         requests.setdefault(key, {name: _plain(value, port) for name, value in sorted(headers.items())})
     assert requests == _AS_CHROME["requests"]
