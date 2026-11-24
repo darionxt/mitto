@@ -114,9 +114,6 @@ bool CanChangeToUrlForHistoryApi(const GURL& url,
 // this, the oldest go. The session history holds 50 entries, and the Page
 // releases what none holds.
 constexpr size_t kMaxNavigationRecords = 100;
-// How many URLs that document.open() gave top-level documents the library
-// keeps, past the session history's entries, the oldest of which go.
-constexpr size_t kMaxOpenedUrls = 100;
 // How many URLs that navigations within a document gave it the library keeps
 // for traversals to its entries, and how many bytes of them: past these, the
 // least recent go, and a traversal to one of them goes nowhere.
@@ -3005,15 +3002,22 @@ void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
   if (!changed || context.parent != kNoDocument) {
     return;
   }
-  std::erase(opened_urls_, url);
-  opened_urls_.push_back(url);
-  if (opened_urls_.size() > kMaxOpenedUrls) {
-    opened_urls_.erase(opened_urls_.begin());
+  if (const auto found = records_.find(document);
+      found != records_.end() && url.IsAboutBlank()) {
+    found->second.had_about_blank = true;
   }
   PageEvent event;
   event.type = MITTO_PAGE_EVENT_URL_CHANGED;
   event.url = url.spec();
   Push(std::move(event));
+}
+
+bool PageHost::MayHaveAboutBlankEntry(const Context& context) const {
+  return context.parent == kNoDocument && !context.is_worker &&
+         std::ranges::any_of(records_, [&context](const auto& entry) {
+           return entry.second.had_about_blank &&
+                  context.origin.IsSameOriginWith(entry.second.url);
+         });
 }
 
 void PageHost::OnSameDocumentNavigation(uint64_t document,
@@ -3025,20 +3029,17 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
   // one about:blank or about:srcdoc URL may follow another: the document
   // keeps its origin, and the Page holds it to its path and query. A URL that
   // document.open() gives a document, the library hears of with type 73, and a
-  // traversal takes the top-level document, the only one with entries, to one
-  // that it gave it or one before it, and from there to any URL of its origin.
+  // traversal takes the top-level document, the only one with entries, to the
+  // about:blank that it gave it or one before it of its origin, and from there
+  // to any URL of its origin.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
-  const auto is_opened_url = [this](const GURL& opened) {
-    return std::ranges::find(opened_urls_, opened.GetWithoutRef()) !=
-           opened_urls_.end();
-  };
   const bool is_entry_url =
-      context.parent == kNoDocument && !context.is_worker &&
-      (is_opened_url(new_url) ||
-       (is_opened_url(document_url) &&
-        url::Origin::Create(new_url).IsSameOriginWith(context.origin)));
+      (new_url.IsAboutBlank() ||
+       (document_url.IsAboutBlank() &&
+        url::Origin::Create(new_url).IsSameOriginWith(context.origin))) &&
+      MayHaveAboutBlankEntry(context);
   if (!new_url.is_valid() ||
       (!CanChangeToUrlForHistoryApi(new_url, context.origin, document_url) &&
        !is_entry_url &&
@@ -3051,6 +3052,7 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
   // A traversal may go back to an entry of this URL.
   if (const auto found = records_.find(document); found != records_.end()) {
     NavigationRecord& record = found->second;
+    record.had_about_blank |= new_url.IsAboutBlank();
     const auto same = std::ranges::find(record.same_document_urls, new_url);
     if (same != record.same_document_urls.end()) {
       record.same_document_url_bytes -= same->spec().size();

@@ -696,12 +696,14 @@ class PageHost final : public PageChannel::Delegate {
     std::string referrer;
     std::vector<GURL> same_document_urls;
     size_t same_document_url_bytes = 0;
+    // Whether document.open() gave the document about:blank, or a traversal
+    // took it there, so that an entry of its may be at it.
+    bool had_about_blank = false;
   };
   std::map<uint64_t, NavigationRecord> records_;
-  // The URLs that document.open() gave the Page's top-level documents, without
-  // their fragments, the most recent last: an entry may be at one, to which a
-  // traversal takes a later document of the page within itself.
-  std::vector<GURL> opened_urls_;
+  // Whether an entry of the top-level document `context` may be at about:blank:
+  // a document of its origin whose record the Page still holds had it.
+  bool MayHaveAboutBlankEntry(const Context& context) const;
   // The documents whose CookieStores listen, by ID: what tells each of each
   // change, and what its cookie calls are made for.
   struct CookieStoreListener {
