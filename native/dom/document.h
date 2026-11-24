@@ -429,7 +429,13 @@ class Document : public Node {
     return compat_mode_ == CompatibilityMode::kQuirks;
   }
   // The window whose document this is, which defaultView gives.
-  void SetWindow(Window* window) { window_ = window; }
+  void SetWindow(Window* window) {
+    window_ = window;
+    creator_ = nullptr;
+  }
+  // The window of the execution context that a document of no window is made
+  // in, which by default is that of the script that makes it.
+  void SetCreator(Window* window) { creator_ = window; }
   // The URL of the document, serialized, which URL and documentURI give.
   void SetUrl(std::u16string url);
   // The same for a URL that document.open() or a navigation within it gives

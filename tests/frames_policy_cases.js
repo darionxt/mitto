@@ -103,8 +103,10 @@
     said = heard(kept);
     document.body.append(kept);
     const policy = kept.contentDocument.featurePolicy;
+    const keptDocument = kept.contentDocument;
     results['before'] = policy.allowsFeature('camera');
     await said;
+    results['of the first document'] = keptDocument === kept.contentDocument || [keptDocument.createElement('iframe').featurePolicy === null, keptDocument.featurePolicy === null];
     results['the kept object'] = [policy.allowsFeature('camera'), policy === kept.contentDocument.featurePolicy];
     kept.remove();
     const frame = document.createElement('frame');
@@ -123,6 +125,11 @@
     const made = new child.contentWindow.DOMParser().parseFromString('<iframe></iframe>', 'text/html').querySelector('iframe');
     const getter = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'featurePolicy').get;
     results['of another window'] = getter.call(made).allowsFeature('camera');
+    const borrowed = DOMParser.prototype.parseFromString.call(new child.contentWindow.DOMParser(), '<iframe></iframe>', 'text/html');
+    const implemented = DOMImplementation.prototype.createHTMLDocument.call(child.contentDocument.implementation);
+    results['made by borrowed methods'] = [borrowed, implemented, document.implementation.createHTMLDocument()].map((from) => (from.querySelector('iframe') ?? from.createElement('iframe')).featurePolicy.allowsFeature('camera'));
+    const based = new DOMParser().parseFromString('<base href="about:blank"><iframe src=child></iframe>', 'text/html').querySelector('iframe');
+    results['a URL of nothing'] = based.featurePolicy.allowsFeature('camera');
     const keptPolicy = child.contentDocument.featurePolicy;
     child.remove();
     results['of a removed frame'] = [keptPolicy.allowsFeature('removed'), keptPolicy.allowsFeature('camera')];

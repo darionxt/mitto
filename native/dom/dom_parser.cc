@@ -42,6 +42,7 @@ Document* DOMParser::ParseFromString(
   } else {
     document = XMLDocument::Create(type);
   }
+  document->SetCreator(window_);
   const Document& creator = window_->GetDocument();
   document->SetUrl(creator.UrlForBinding());
   document->SetOrigin(creator.GetOrigin());

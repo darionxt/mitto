@@ -182,11 +182,15 @@ url::Origin HTMLFrameOwnerElement::OriginForPermissionsPolicy() const {
     return url::Origin();
   }
   // Document::ShouldInheritSecurityOriginFromOwner(). A URL that does not parse
-  // is no empty one.
-  const GURL url = GetDocument().CompleteUrl(url_);
-  return url_.empty() || (url.is_valid() && url.SchemeIs(url::kAboutScheme))
-             ? GetDocument().ContextWindow()->GetSecurityOrigin()
-             : url::Origin::Create(url);
+  // is no empty one, unless nothing of it is left.
+  const Document& document = GetDocument();
+  const GURL url = document.CompleteUrl(url_);
+  const bool inherits =
+      url_.empty() ||
+      (url.is_valid() ? url.SchemeIs(url::kAboutScheme)
+                      : document.UnresolvedUrlSpec(url_).empty());
+  return inherits ? document.ContextWindow()->GetSecurityOrigin()
+                  : url::Origin::Create(url);
 }
 
 void HTMLFrameOwnerElement::UpdateContainerPolicy() {
