@@ -3,10 +3,8 @@
 // that ends tells what it held, so that a load that stops then leaves the
 // page's own stream alone, where it would cancel it at any other time.
 //
-// Upstream:
-// third_party/blink/renderer/platform/bindings/script_forbidden_scope.h
-// Upstream:
-// third_party/blink/renderer/platform/bindings/script_forbidden_scope.cc
+// Upstream: third_party/blink/renderer/platform/bindings/script_forbidden_scope.h
+// Upstream: third_party/blink/renderer/platform/bindings/script_forbidden_scope.cc
 
 #ifndef MITTO_DOM_SCRIPT_FORBIDDEN_SCOPE_H_
 #define MITTO_DOM_SCRIPT_FORBIDDEN_SCOPE_H_
