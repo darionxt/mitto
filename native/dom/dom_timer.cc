@@ -13,6 +13,7 @@
 #include "base/timer/timer.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/error_reporting.h"
+#include "mitto/dom/window.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
@@ -292,6 +293,11 @@ void DOMTimerCoordinator::Execute(const Action& action) {
   const v8::MicrotasksScope microtasks_scope(
       context, v8::MicrotasksScope::kRunMicrotasks);
   const v8::TryCatch try_catch(isolate_);
+  // ScheduledAction::Execute().
+  Window* const window = Window::From(isolate_, context);
+  if (window && !window->CanExecuteScripts(/*about_to_execute=*/true)) {
+    return;
+  }
   if (!action.function.IsEmpty()) {
     std::vector<v8::Local<v8::Value>> arguments;
     arguments.reserve(action.arguments.size());

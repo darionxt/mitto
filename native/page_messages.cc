@@ -1122,6 +1122,10 @@ base::expected<PageBroadcast, std::string> ReadBroadcast(
 
 // A document that the Page has made: its ID, a byte for its source, its
 // parent, and for a navigation's response the navigation's number.
+// In the byte of a document's source: PageDocumentCommitted's
+// sandboxed_origin.
+constexpr uint8_t kSandboxedOriginBit = 0x80;
+
 base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     std::string_view payload) {
   // The ID, the source and the parent, then what the source names.
@@ -1131,7 +1135,10 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
   }
   PageDocumentCommitted committed;
   committed.document = DecodeUint64(payload.substr(0, 8));
-  const uint8_t source = static_cast<uint8_t>(payload[8]);
+  committed.sandboxed_origin =
+      (static_cast<uint8_t>(payload[8]) & kSandboxedOriginBit) != 0;
+  const uint8_t source =
+      static_cast<uint8_t>(payload[8]) & ~kSandboxedOriginBit;
   size_t named = 0;
   switch (source) {
     case static_cast<uint8_t>(PageDocumentSource::kInitialEmpty):
@@ -2142,7 +2149,9 @@ std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
 }
 
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
-  const char source = static_cast<char>(committed.source);
+  const char source =
+      static_cast<char>(static_cast<uint8_t>(committed.source) |
+                        (committed.sandboxed_origin ? kSandboxedOriginBit : 0));
   std::string payload = base::StrCat({EncodeUint64(committed.document),
                                       std::string_view(&source, 1),
                                       EncodeUint64(committed.parent)});

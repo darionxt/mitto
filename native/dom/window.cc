@@ -11,6 +11,7 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -42,6 +43,7 @@
 #include "mitto/dom/modulator.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigator.h"
+#include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/scheduler.h"
@@ -416,8 +418,12 @@ mitto::CacheStorage* Window::Caches(
   // opaque, as one that the Session did not load over HTTP or HTTPS has, may
   // not.
   if (!GetDocument().GetCacheStorageHost()) {
-    exception_state.ThrowDOMException("SecurityError",
-                                      "Access to cache storage is denied.");
+    exception_state.ThrowDOMException(
+        "SecurityError",
+        GetDocument().IsSandboxed(SandboxFlags::kOrigin)
+            ? "Cache storage is disabled because the context is sandboxed and "
+              "lacks the 'allow-same-origin' flag."
+            : "Access to cache storage is denied.");
     return nullptr;
   }
   if (!caches_) {
@@ -522,6 +528,21 @@ url::Origin Window::GetSecurityOrigin() const {
   return GetDocument().GetOrigin();
 }
 
+bool Window::CanExecuteScripts(bool about_to_execute) {
+  if (!HasDocument() || !GetDocument().IsSandboxed(SandboxFlags::kScripts)) {
+    return true;
+  }
+  if (about_to_execute) {
+    AddConsoleMessage(
+        ConsoleLevel::kError,
+        base::StrCat({"Blocked script execution in '",
+                      ElidedUrl(GURL(GetDocument().UrlForBinding())),
+                      "' because the document's frame is sandboxed and the "
+                      "'allow-scripts' permission is not set."}));
+  }
+  return false;
+}
+
 url::Origin Window::AgentClusterOrigin() const {
   return GetSecurityOrigin();
 }
@@ -575,9 +596,8 @@ void Window::WebkitRequestFileSystem(uint16_t type,
             },
             std::move(name), std::move(message)));
   };
-  const url::Origin origin = url::Origin::Create(
-      GURL(base::UTF16ToUTF8(GetDocument().UrlForBinding())));
   // SecurityOrigin::CanAccessFileSystem().
+  const url::Origin origin = GetSecurityOrigin();
   if (origin.opaque()) {
     report_error("SecurityError",
                  "It was determined that certain files are unsafe for access "

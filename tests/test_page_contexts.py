@@ -31,7 +31,7 @@ pytestmark = [
 _TIMEOUT_SECONDS = 60
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 34
+_PROTOCOL_VERSION = 35
 
 _FAKE_PAGE = textwrap.dedent(
     """\
@@ -139,6 +139,42 @@ _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
     send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
     send(70, struct.pack("<QBQ", 3, 0, 2))
     send(71, struct.pack("<Q", 3) + b"{other}")
+    while channel.recv(65536):
+        pass
+    """
+)
+
+# A frame in a sandbox without allow-same-origin, whose document of the top-level document's URL's origin fetches, asks for
+# its cookies, and then for storage, which it has none of.
+_FAKE_PAGE_OF_A_SANDBOX = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    send(1, struct.pack("<I", {version}))
+    send(70, struct.pack("<QBQ", 1, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    while True:
+        message_type, payload = receive()
+        if message_type == 4:
+            call = struct.unpack_from("<Q", payload)[0]
+            break
+    send(70, struct.pack("<QBQ", 3, 0x80, 2))
+    send(8, request(2, 1, 11, "{frame}", target=3))
+    wait_for_end(1)
+    send(70, struct.pack("<QBQQ", 4, 0x81, 2, 1))
+    send(8, request(4, 2, 2, "{fetch}"))
+    wait_for_end(2)
+    answers = []
+    for document in (2, 4):
+        send(10, struct.pack("<QQ", document, document))
+        while True:
+            message_type, payload = receive()
+            if message_type == 16:
+                answers.append('"' + payload[8:].decode() + '"')
+                break
+    send(5, struct.pack("<QB", call, 0) + ("[" + ",".join(answers) + "]").encode())
+    if {bind}:
+        send(27, struct.pack("<QQBQ", 4, 1, 1, 1))
     while channel.recv(65536):
         pass
     """
@@ -335,3 +371,42 @@ def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: 
     printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
 
     assert printed == "the library refused a message from the Page: a same-document navigation to another origin"
+
+
+def test_a_sandboxed_documents_requests_and_cookies_are_an_opaque_origins(tmp_path: Path, top: _Server) -> None:
+    program = _FAKE_PAGE_OF_A_SANDBOX.format(
+        python=sys.executable,
+        version=_PROTOCOL_VERSION,
+        frame=top.url("/frame-page"),
+        fetch=top.url("/frame-fetch"),
+        bind=False,
+    )
+
+    printed = _run_fake_page(tmp_path, program, _SESSION, top.url("/page"), top.url("/set"))
+
+    # The top-level document reads its cookie, and the frame's, of the same URL's origin, none.
+    assert printed == "['f=1', '']"
+    (navigation,) = top.headers_of("/frame-page")
+    assert _value(navigation, "Cookie") == "f=1"
+    (fetched,) = top.headers_of("/frame-fetch")
+    assert (_value(fetched, "Origin"), _value(fetched, "Sec-Fetch-Site")) == ("null", "cross-site")
+    assert (_value(fetched, "Cookie"), _value(fetched, "Referer")) == (None, None)
+
+
+def test_a_sandboxed_document_binds_no_storage(tmp_path: Path, top: _Server) -> None:
+    program = _FAKE_PAGE_OF_A_SANDBOX.format(
+        python=sys.executable,
+        version=_PROTOCOL_VERSION,
+        frame=top.url("/frame-page"),
+        fetch=top.url("/frame-fetch"),
+        bind=True,
+    )
+    session = _SESSION_OF_AN_ENDED_PAGE.replace(
+        'page.evaluate("1"', 'page.evaluate("1", timeout=60); page.evaluate("2"'
+    )
+
+    printed = _run_fake_page(tmp_path, program, session, top.url("/page"))
+
+    assert (
+        printed == "the library refused a message from the Page: a storage area of a document that has no storage key"
+    )

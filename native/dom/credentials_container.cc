@@ -140,8 +140,7 @@ bool IsEnabled(v8::Isolate* isolate, bindings::RuntimeFeature feature) {
 }
 
 url::Origin DocumentOrigin() {
-  return url::Origin::Create(
-      GURL(base::UTF16ToUTF8(Window::Current().GetDocument().UrlForBinding())));
+  return Window::Current().GetSecurityOrigin();
 }
 
 // The bytes of a BufferSource, as AsSpan<SharedBufferPolicy::kDisallow>()

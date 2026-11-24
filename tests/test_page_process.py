@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 34
+_PROTOCOL_VERSION = 35
 
 
 def _script_request(number: int, url: str) -> str:
@@ -348,6 +348,18 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 1, 0, 0))",
             "the library refused a message from the Page: a document of navigation 0, which has no response",
             id="document-of-no-response",
+        ),
+        pytest.param(
+            "top-level-in-a-sandbox",
+            f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack('<QBQ', 1, 0x80, 0))",
+            "the library refused a message from the Page: a top-level document in a sandbox",
+            id="top-level-in-a-sandbox",
+        ),
+        pytest.param(
+            "frame-outside-its-parent-s-sandbox",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0x80, 1))\nsend(70, struct.pack('<QBQ', 3, 0, 2))",
+            "the library refused a message from the Page: a document outside the sandbox of its parent",
+            id="frame-outside-its-parent-s-sandbox",
         ),
         pytest.param(
             "same-document-elsewhere",

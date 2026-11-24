@@ -247,7 +247,8 @@ RawEventHandler* CreateRawHandler(Element& element,
     return nullptr;
   }
   Window* const window = ContextWindowOf(element);
-  if (!window || !window->HasContext()) {
+  if (!window || !window->HasContext() ||
+      !window->CanExecuteScripts(/*about_to_execute=*/true)) {
     return nullptr;
   }
   // The URL of the window's document, and where its parser is, if it is

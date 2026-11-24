@@ -584,6 +584,8 @@ source_set("dom") {
     "resource_load_scheduler.h",
     "response.cc",
     "response.h",
+    "sandbox_flags.cc",
+    "sandbox_flags.h",
     "scheduler.cc",
     "scheduler.h",
     "scheduler_task_context.cc",

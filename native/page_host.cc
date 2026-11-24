@@ -53,6 +53,7 @@
 #include "net/http/http_content_disposition.h"
 #include "net/http/http_util.h"
 #include "url/origin.h"
+#include "url/scheme_host_port.h"
 #include "url/url_constants.h"
 
 namespace mitto {
@@ -1547,8 +1548,13 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   GURL referrer;
   if (!asked.referrer.empty()) {
     referrer = GURL(asked.referrer);
-    if (!referrer.is_valid() || (!document_origin.IsSameOriginWith(referrer) &&
-                                 !context.response_urls.contains(referrer))) {
+    // A sandboxed document's origin is made for the one that its URL has.
+    const bool own = document_origin.IsSameOriginWith(referrer) ||
+                     (context.sandboxed_origin &&
+                      context.origin.GetTupleOrPrecursorTupleIfOpaque() ==
+                          url::SchemeHostPort(referrer));
+    if (!referrer.is_valid() ||
+        (!own && !context.response_urls.contains(referrer))) {
       Refuse(
           "a request whose referrer is neither a URL of its document's origin "
           "nor that of a response it has had");
@@ -2986,6 +2992,20 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
       break;
     }
   }
+  // NavigationRequest::GetOriginToCommit(): an opaque origin, made for the one
+  // that the document would have, without allow-same-origin, which no document
+  // under one that lacks it has.
+  if (committed.sandboxed_origin) {
+    if (top_level) {
+      Refuse("a top-level document in a sandbox");
+      return;
+    }
+    context.sandboxed_origin = true;
+    context.origin = context.origin.DeriveNewOpaqueOrigin();
+  } else if (!top_level && contexts_.at(committed.parent).sandboxed_origin) {
+    Refuse("a document outside the sandbox of its parent");
+    return;
+  }
   last_context_id_ = committed.document;
   if (!top_level) {
     // It takes the place of its frame's document, and of everything under
@@ -3378,7 +3398,9 @@ void PageHost::FillContextFetch(uint64_t id,
          source->url.IsAboutSrcdoc()) {
     source = &contexts_.at(source->parent);
   }
-  if (!source->url.SchemeIsHTTPOrHTTPS()) {
+  // Nor does a document of an opaque origin, such as a sandboxed one's.
+  if (!source->url.SchemeIsHTTPOrHTTPS() ||
+      (!context.is_worker && context.origin.opaque())) {
     fetch.no_referrer_source = true;
   } else if (fetch.initiator && source->url != *fetch.initiator) {
     fetch.referrer_source = source->url;
@@ -3429,7 +3451,8 @@ PageHost::CookieContext PageHost::CookieContextOf(uint64_t id) const {
   const Context& context = contexts_.at(id);
   const FrameTree& tree = contexts_.at(id).frame_tree;
   CookieContext cookies;
-  cookies.url = CookieUrlOf(context);
+  // A document of an opaque origin reads and writes none.
+  cookies.url = context.origin.opaque() ? GURL() : CookieUrlOf(context);
   cookies.site_for_cookies =
       tree.cross_site ? net::SiteForCookies()
                       : net::SiteForCookies::FromOrigin(tree.top_frame_origin);

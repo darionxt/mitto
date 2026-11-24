@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/document.h"
@@ -111,6 +112,22 @@ void HTMLFrameOwnerElement::AttributeChanged(const QualifiedName& name,
                           : std::u16string());
   } else if (name.local_name == u"id" || name.local_name == u"name") {
     frame_name_ = new_value ? *new_value : std::u16string();
+  } else if (name.local_name == u"sandbox" && HasHTMLTagName(u"iframe")) {
+    // HTMLIFrameElement::ParseAttribute(). It holds from the frame's next
+    // navigation on.
+    sandbox_flags_ = SandboxFlags::kNone;
+    if (new_value) {
+      const SandboxPolicy policy =
+          ParseSandboxPolicy(base::UTF16ToUTF8(*new_value));
+      sandbox_flags_ = policy.flags;
+      Window* const window = GetDocument().DefaultView();
+      if (!policy.error_message.empty() && window) {
+        window->AddConsoleMessage(
+            ConsoleLevel::kError,
+            base::StrCat({"Error while parsing the 'sandbox' attribute: ",
+                          policy.error_message}));
+      }
+    }
   }
 }
 

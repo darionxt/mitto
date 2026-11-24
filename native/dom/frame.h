@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "base/memory/raw_ref.h"
+#include "mitto/dom/sandbox_flags.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/cppgc/persistent.h"
@@ -79,12 +80,10 @@ class Frame {
   Frame* ScopedChild(std::u16string_view name) const;
   // Whether this frame is `other` or one of its descendants.
   bool IsDescendantOf(const Frame& other) const;
-  // Whether its element, or an ancestor's, whose flags its documents
-  // inherit, has a sandbox attribute that withholds scripts or the frame's
-  // origin, which the Page does not enforce yet, so that what they would
-  // withhold runs nothing. One that allows both runs as the frame's own,
-  // whose script could take the sandbox away, without the other flags.
-  bool IsSandboxed() const;
+  // What the frame withholds from a document that it navigates to now: its
+  // element's sandbox, and what its parent's document has withheld, as Chrome's
+  // FrameTreeNode::SetPendingFramePolicy() puts them together.
+  SandboxFlags PendingSandboxFlags() const;
   // Blink's LocalFrame::IsNavigationAllowed(): no navigation of the frame
   // starts while a FrameNavigationDisabler holds it.
   bool IsNavigationAllowed() const { return navigation_disable_count_ == 0; }

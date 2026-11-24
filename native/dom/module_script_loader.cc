@@ -23,6 +23,7 @@
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
+#include "url/scheme_host_port.h"
 #include "url/url_constants.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
@@ -342,9 +343,14 @@ std::string ModuleScriptLoader::ReferrerOf(
     if (referrer.is_valid() && !referrer.SchemeIsHTTPOrHTTPS()) {
       return std::string(kNoReferrer);
     }
+    // A sandboxed document's origin is made for the one that its URL has.
+    const url::Origin origin = context.GetSecurityOrigin();
+    const bool own =
+        origin.IsSameOriginWith(referrer) ||
+        (origin.opaque() && origin.GetTupleOrPrecursorTupleIfOpaque() ==
+                                url::SchemeHostPort(referrer));
     if (referrer.is_valid() &&
-        (context.GetSecurityOrigin().IsSameOriginWith(referrer) ||
-         fetcher.HasFinishedResponse(referrer.spec()))) {
+        (own || fetcher.HasFinishedResponse(referrer.spec()))) {
       return referrer.spec();
     }
   }

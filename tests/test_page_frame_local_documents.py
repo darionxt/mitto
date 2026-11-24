@@ -988,9 +988,9 @@ def test_a_srcdoc_s_navigation_counts_from_its_start(origin: str) -> None:
 
 
 @pytest.mark.usefixtures("page_program")
-def test_a_frame_s_load_waits_no_more_for_a_child_whose_sandboxed_srcdoc_commits_nothing(origin: str) -> None:
+def test_a_frame_s_load_waits_for_the_srcdoc_that_its_child_s_sandbox_comes_with(origin: str) -> None:
     # The child's srcdoc waits for a script when it gains a sandbox and a new srcdoc: the navigation aborts it, and
-    # the outer frame's load fires, as Chrome's does once the new srcdoc has loaded.
+    # the outer frame's load fires once the new srcdoc has loaded, as Chrome's does.
     script = f"""
       (async () => {{
         {_LOADED}
@@ -1225,17 +1225,18 @@ def test_a_frame_s_first_network_document_in_its_reused_window_has_navigation_en
 @pytest.mark.usefixtures("page_program")
 def test_a_sandboxed_frame_s_network_document_runs_no_script(origin: str) -> None:
     # A sandbox that withholds scripts, its own or an ancestor's, keeps the document's script from running, and one
-    # that allows scripts and the frame's origin, in any case, lets it run. Chrome runs one that allows scripts alone
-    # with an opaque origin, which the Page cannot give a network document yet, so it runs nothing there. Chrome loads
-    # each document, where the Page loads none for a sandbox that withholds either, so no frame's load is awaited.
+    # that allows scripts and the frame's origin, in any case, lets it run. Each document loads.
     script = f"""
       (async () => {{
+        {_LOADED}
         {_SETTLE}
+        const loads = [];
         const add = (sandbox, query, parent) => {{
           const element = (parent || document).createElement('iframe');
           if (sandbox !== null) element.setAttribute('sandbox', sandbox);
           element.src = '/ran?' + query;
           (parent || document).body.appendChild(element);
+          loads.push(loaded(element));
         }};
         add('', 'none');
         add('allow-same-origin', 'origin');
@@ -1249,6 +1250,7 @@ def test_a_sandboxed_frame_s_network_document_runs_no_script(origin: str) -> Non
         outer.setAttribute('sandbox', 'allow-same-origin');
         document.body.appendChild(outer);
         add(null, 'ancestor', outer.contentDocument);
+        await Promise.all(loads);
         const seen = async (query) => (await fetch('/seen?path=/assets/ran-' + query)).text();
         for (let i = 0; i < 100 && ((await seen('both')) === 'unseen' || (await seen('srcdoc')) === 'unseen'); i++) {{
           await settle(10);

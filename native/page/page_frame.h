@@ -42,6 +42,7 @@
 #include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/navigation_rate_limiter.h"
+#include "mitto/dom/sandbox_flags.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -232,14 +233,20 @@ class PageFrame final : public NavigationClient, public Frame {
   // a context passes its WindowProxy, the old context's global proxy, which
   // the old context has let go, so that the new context takes it, as
   // LocalWindowProxy reinitializes on the same global proxy.
+  // Whether the document is potentially trustworthy, as its origin was before
+  // a sandbox made it opaque, decides with the frames above whether its context
+  // is a secure one.
   v8::Local<v8::Context> NewContext(
       base::TimeTicks time_origin,
       const url::Origin& origin,
+      bool is_trustworthy,
       bool cross_origin_isolated = false,
       v8::Local<v8::Object> global_proxy = v8::Local<v8::Object>());
   // The security token of a context of the Page whose document has
   // `origin`, an opaque one, or an empty handle if no frame's document has it.
   v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
+  // Warns of a sandbox that its frame's document can take away.
+  void WarnIfSandboxIneffective();
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells
@@ -330,6 +337,10 @@ class PageFrame final : public NavigationClient, public Frame {
     // the default for an error page, and its referrer, none for an error page.
     url::Origin origin;
     FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+    // What the sandbox withholds from it, and whether its origin was
+    // potentially trustworthy before that made it opaque.
+    SandboxFlags sandbox = SandboxFlags::kNone;
+    bool trustworthy = false;
     std::u16string referrer;
     // Its document's about base URL, the parent document's base URL for a
     // srcdoc and the initiator's for an about:blank, and its cookie URL, the
@@ -423,6 +434,8 @@ class PageFrame final : public NavigationClient, public Frame {
   // Counts the requests that have waited, so that a data: URL's navigation
   // lets its request go only while it is still the one that waits.
   uint64_t provisional_request_serial_ = 0;
+  // What the sandbox withheld as the navigation started.
+  SandboxFlags provisional_sandbox_ = SandboxFlags::kNone;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,

@@ -31,6 +31,7 @@
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
+#include "mitto/dom/sandbox_flags.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/cppgc/member.h"
@@ -200,6 +201,13 @@ class Document : public Node {
   // of Blink's documents has one SecurityOrigin.
   url::Origin GetOrigin() const;
   void SetOrigin(const url::Origin& origin) { origin_ = origin; }
+  // What the sandbox of its frame, and of the frames above, withholds from
+  // it, as they were when the navigation to it started.
+  SandboxFlags GetSandboxFlags() const { return sandbox_flags_; }
+  void SetSandboxFlags(SandboxFlags flags) { sandbox_flags_ = flags; }
+  bool IsSandboxed(SandboxFlags flag) const {
+    return (sandbox_flags_ & flag) != SandboxFlags::kNone;
+  }
   // Whether it keeps the origin that an earlier URL of its said, which its URL
   // does not (SetUrlKeepingOrigin()).
   bool KeepsOriginOfEarlierUrl() const { return keeps_origin_of_earlier_url_; }
@@ -823,6 +831,7 @@ class Document : public Node {
   const bool is_html_;
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
+  SandboxFlags sandbox_flags_ = SandboxFlags::kNone;
   bool keeps_origin_of_earlier_url_ = false;
   // The first opaque origin that its URL gave, which it keeps.
   mutable std::optional<url::Origin> opaque_origin_;

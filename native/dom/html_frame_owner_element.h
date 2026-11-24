@@ -15,6 +15,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "mitto/dom/html_element.h"
+#include "mitto/dom/sandbox_flags.h"
 
 namespace mitto {
 
@@ -37,6 +38,9 @@ class HTMLFrameOwnerElement : public HTMLElement {
   //
   // The element's frame, or null.
   Frame* ContentFrame() const { return content_frame_; }
+  // What its sandbox attribute withholds from the documents that its frame
+  // navigates to, which is an iframe's alone.
+  SandboxFlags GetSandboxFlags() const { return sandbox_flags_; }
   // The frame goes, as its documents have unloaded: the element holds none.
   void ClearContentFrame() { content_frame_ = nullptr; }
   // HTMLFrameOwnerElement::DispatchLoad(): load at the element, once its
@@ -75,6 +79,7 @@ class HTMLFrameOwnerElement : public HTMLElement {
   std::u16string url_;
   // The name the frame gets when the element makes it: its name, or its ID.
   std::u16string frame_name_;
+  SandboxFlags sandbox_flags_ = SandboxFlags::kNone;
 };
 
 }  // namespace mitto

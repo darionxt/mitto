@@ -261,6 +261,10 @@ class Window final : public WindowProperties, public ExecutionContext {
   // Whether it has its document yet, which it has once its context is made
   // and set up.
   bool HasDocument() const { return document_; }
+  // LocalDOMWindow::CanExecuteScripts(): whether its document's sandbox lets
+  // scripts run. One that is about to run and may not is said to be blocked
+  // in the console.
+  bool CanExecuteScripts(bool about_to_execute);
   // Makes `document` the window's, and the window its document's.
   void SetDocument(mitto::Document* document);
   // Makes the global proxy and the global object of `context`, which was made

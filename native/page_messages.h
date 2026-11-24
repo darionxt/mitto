@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 34;
+inline constexpr uint32_t kPageProtocolVersion = 35;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -822,6 +822,9 @@ struct PageDocumentCommitted {
   uint64_t replaces = kNoDocument;
   // For kDataUrl and kBlob: the URL.
   std::string url;
+  // Whether a sandbox makes its origin opaque, as it does that of every
+  // document under it.
+  bool sandboxed_origin = false;
 };
 
 // Where a dedicated worker's script comes from.

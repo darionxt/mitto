@@ -411,7 +411,10 @@ bool Document::IsCurrentDocumentOfItsWindow() const {
 void Document::ThrowCookiesDenied(
     bindings::ExceptionState& exception_state) const {
   exception_state.ThrowDOMException(
-      "SecurityError", url_.starts_with(u"data:")
+      "SecurityError", IsSandboxed(SandboxFlags::kOrigin)
+                           ? "The document is sandboxed and lacks the "
+                             "'allow-same-origin' flag."
+                       : url_.starts_with(u"data:")
                            ? "Cookies are disabled inside 'data:' URLs."
                            : "Access is denied for this document.");
 }

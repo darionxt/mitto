@@ -73,6 +73,15 @@ constexpr size_t kTraversalOverhead = 3 * 8 + 2;
 constexpr int kNetOk = 0;
 constexpr int kNetErrorAborted = -3;
 
+bool IsOriginSandboxed(SandboxFlags sandbox) {
+  return (sandbox & SandboxFlags::kOrigin) != SandboxFlags::kNone;
+}
+
+// `origin`, or an opaque one made for it without allow-same-origin.
+url::Origin SandboxedOrigin(const url::Origin& origin, SandboxFlags sandbox) {
+  return IsOriginSandboxed(sandbox) ? origin.DeriveNewOpaqueOrigin() : origin;
+}
+
 // A parser's client that gives it no body, for a document that has none, as
 // an about:blank that a frame commits synchronously has.
 class EmptyBody final : public DocumentParser::Client {
@@ -177,9 +186,14 @@ void PageFrame::Start(const PageConnection& connection) {
   // is no secure context, as in Chrome. A frame's has its parent's document's
   // origin, as Blink's RenderFrameHostImpl::SetOriginDependentStateOfNewFrame()
   // gives it. Its time origin is when its context was made.
-  const url::Origin origin =
+  const SandboxFlags sandbox =
+      parent_ ? PendingSandboxFlags() : SandboxFlags::kNone;
+  const url::Origin parent_origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
-  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin));
+  const url::Origin origin = SandboxedOrigin(parent_origin, sandbox);
+  context_.Reset(isolate,
+                 NewContext(base::TimeTicks::Now(), origin,
+                            IsOriginPotentiallyTrustworthy(parent_origin)));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   window_->BindToContext(isolate, context());
   if (parent_) {
@@ -200,6 +214,7 @@ void PageFrame::Start(const PageConnection& connection) {
     const v8::Context::Scope context_scope(context());
     Document& document = window_->GetDocument();
     document.SetOrigin(origin);
+    document.SetSandboxFlags(sandbox);
     // Its about base URL is its creator's base URL, as Blink's
     // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
     // creator's too.
@@ -216,7 +231,9 @@ void PageFrame::Start(const PageConnection& connection) {
       GiveStorage(document);
     }
   }
-  AttachWindow(connection, PageDocumentCommitted());
+  PageDocumentCommitted committed;
+  committed.sandboxed_origin = IsOriginSandboxed(sandbox);
+  AttachWindow(connection, committed);
 }
 
 v8::Local<v8::Context> PageFrame::context() const {
@@ -388,7 +405,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     // The new window's time origin is the navigation's start, as Blink's is,
     // before the old document's unload events and the task that commits.
     const v8::Local<v8::Context> context =
-        NewContext(navigation.start, origin,
+        NewContext(navigation.start, origin, navigation.trustworthy,
                    /*cross_origin_isolated=*/false, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
@@ -410,7 +427,9 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     document->LockCompatibilityMode();
   }
   document->SetOrigin(origin);
+  document->SetSandboxFlags(navigation.sandbox);
   DidShowDocument(*window_);
+  WarnIfSandboxIneffective();
   document->SetReferrer(navigation.referrer);
   document->SetReferrerPolicy(navigation.referrer_policy);
   document->SetAboutBaseUrl(navigation.about_base_url);
@@ -560,6 +579,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
   const url::Origin origin = old_document.GetOrigin();
   document->SetOrigin(origin);
+  document->SetSandboxFlags(old_document.GetSandboxFlags());
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
@@ -634,15 +654,6 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
           owner && owner->HasHTMLTagName(u"iframe")
               ? owner->FindAttribute(u"srcdoc")
               : nullptr;
-      // A sandboxed frame's srcdoc would run with the flags that its sandbox
-      // withholds, which the Page cannot enforce yet, so it commits nothing,
-      // and the parent, whose load event the document that the navigation
-      // aborted may have held back, checks again.
-      if (IsSandboxed()) {
-        CancelProvisionalNavigation();
-        CheckParentLoadSoon();
-        return;
-      }
       navigation.body = srcdoc ? *srcdoc : std::u16string();
       Document& parent_document = parent_->window_->GetDocument();
       navigation.origin = parent_document.GetOrigin();
@@ -657,6 +668,14 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       navigation.about_base_url = request.initiator_base_url;
       navigation.cookie_url = request.initiator_cookie_url;
     }
+    // NavigationRequest::ComputeSandboxFlagsToCommit() and GetOriginToCommit():
+    // what the sandbox withholds now, and an opaque origin without
+    // allow-same-origin.
+    navigation.sandbox = PendingSandboxFlags();
+    navigation.trustworthy = IsOriginPotentiallyTrustworthy(navigation.origin);
+    navigation.origin = SandboxedOrigin(navigation.origin, navigation.sandbox);
+    navigation.committed.sandboxed_origin =
+        IsOriginSandboxed(navigation.sandbox);
     StopAllLoaders();
     // The Session takes what the about:blank inherits of its initiator now,
     // once it has heard that a data: URL or an about:blank that waited ends.
@@ -666,15 +685,6 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
                                      PageLocalNavigationKind::kAboutBlank));
     }
     CommitWithoutNetworkSoon(std::move(navigation));
-    return;
-  }
-  // A sandboxed frame's document would run with the flags that its sandbox
-  // withholds, which the Page cannot enforce yet, so the frame keeps its
-  // document, as with a srcdoc, where Chrome sends the request and commits
-  // the document without those flags.
-  if (IsSandboxed()) {
-    CancelProvisionalNavigation();
-    CheckParentLoadSoon();
     return;
   }
   // NavigationRequest::IsSelfReferentialURL(): a navigation to the URL of two
@@ -722,6 +732,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   traversal_record_.reset();
   provisional_request_ = request;
   ++provisional_request_serial_;
+  provisional_sandbox_ = parent_ ? PendingSandboxFlags() : SandboxFlags::kNone;
   provisional_start_ = now;
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
@@ -772,6 +783,7 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
                                  PageLocalNavigationKind::kDataUrl));
   provisional_request_ = request;
   ++provisional_request_serial_;
+  provisional_sandbox_ = PendingSandboxFlags();
   provisional_start_ = base::TimeTicks::Now();
   auto answer = std::make_unique<DataUrlAnswer>();
   answer->number = ++last_data_url_answer_;
@@ -1454,11 +1466,15 @@ Document& PageFrame::CommitDocument(
     committed.replaces = window_->DocumentId();
   }
   // A data: URL's origin is opaque, made for its initiator's, in whose process
-  // Chrome has it.
-  const url::Origin origin =
+  // Chrome has it, and a sandboxed document's, made for its URL's.
+  const SandboxFlags sandbox =
+      parent_ ? provisional_sandbox_ : SandboxFlags::kNone;
+  committed.sandboxed_origin = IsOriginSandboxed(sandbox);
+  const url::Origin url_origin =
       committed.source == PageDocumentSource::kDataUrl
           ? url::Origin::Resolve(url, provisional_request_.initiator_origin)
           : url::Origin::Create(url);
+  const url::Origin origin = SandboxedOrigin(url_origin, sandbox);
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin, as DocumentLoader::CommitNavigation() reuses it. A top-level
   // frame's initial about:blank has an opaque origin, so it never does.
@@ -1491,8 +1507,9 @@ Document& PageFrame::CommitDocument(
     if (!parent_) {
       MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
     }
-    const v8::Local<v8::Context> context =
-        NewContext(time_origin, origin, cross_origin_isolated, global_proxy);
+    const v8::Local<v8::Context> context = NewContext(
+        time_origin, origin, IsOriginPotentiallyTrustworthy(url_origin),
+        cross_origin_isolated, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
@@ -1517,17 +1534,19 @@ Document& PageFrame::CommitDocument(
   // The origin stays the one it was committed with, whatever URL an
   // about:blank frame that opens the document gives it, as Blink's does.
   document->SetOrigin(origin);
+  document->SetSandboxFlags(sandbox);
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);
   // Only a document that the Session loaded over HTTP or HTTPS has cookies
-  // there; another's origin is opaque to them.
-  if (url.SchemeIsHTTPOrHTTPS()) {
+  // there; another's origin is opaque to them, as a sandboxed one's is.
+  if (url.SchemeIsHTTPOrHTTPS() && !origin.opaque()) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
   }
   Window::Current().SetDocument(document);
   DidShowDocument(*window_);
+  WarnIfSandboxIneffective();
   // The reused window's CookieStore listens as its new document.
   if (cookie_store) {
     cookie_store->DocumentChanged();
@@ -1535,9 +1554,25 @@ Document& PageFrame::CommitDocument(
   return *document;
 }
 
+// DocumentLoader::WarnIfSandboxIneffective().
+void PageFrame::WarnIfSandboxIneffective() {
+  const SandboxFlags sandbox = window_->GetDocument().GetSandboxFlags();
+  if (sandbox != SandboxFlags::kNone && !IsOriginSandboxed(sandbox) &&
+      (sandbox & SandboxFlags::kScripts) == SandboxFlags::kNone && parent_ &&
+      !parent_->parent_ &&
+      window_->GetSecurityOrigin().IsSameOriginWith(
+          parent_->window_->GetSecurityOrigin())) {
+    window_->AddConsoleMessage(
+        ConsoleLevel::kWarning,
+        "An iframe which has both allow-scripts and allow-same-origin for its "
+        "sandbox attribute can escape its sandboxing.");
+  }
+}
+
 v8::Local<v8::Context> PageFrame::NewContext(
     base::TimeTicks time_origin,
     const url::Origin& origin,
+    bool is_trustworthy,
     bool cross_origin_isolated,
     v8::Local<v8::Object> global_proxy) {
   v8::Isolate* const isolate = runner_->isolate();
@@ -1550,7 +1585,7 @@ v8::Local<v8::Context> PageFrame::NewContext(
   // is a secure context only under one, as the HTML Standard's secure
   // context takes each ancestor's.
   init.secure_context =
-      IsOriginPotentiallyTrustworthy(origin) &&
+      is_trustworthy &&
       (!parent_ || bindings::IsSecureContext(parent_->context()));
   init.cross_origin_isolated = cross_origin_isolated;
   PageReporter& reporter = runner_->reporter();
