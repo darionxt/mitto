@@ -1304,6 +1304,36 @@ def test_a_fetch_that_page_code_aborts_while_its_promise_resolves_outlives_the_c
     assert session.close() == 0
 
 
+def test_a_keepalive_fetch_that_page_code_aborts_frees_its_bytes_at_once(session: _Session) -> None:
+    # Two bodies of 40 KiB are past the quota of 64 KiB that the keepalive requests in flight share.
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1)
+        + b"""(() => {
+            const controller = new AbortController(); const { signal } = controller;
+            const init = { method: 'POST', body: 'a'.repeat(40 * 1024), keepalive: true };
+            Object.defineProperty(Response.prototype, 'then', { configurable: true, get() {
+                if (!signal.aborted) { controller.abort(); fetch('/b', init).catch(() => {}); }
+                return undefined;
+            } });
+            fetch('/a', { ...init, signal });
+        })()""",
+    )
+    assert session.receive()[0] == _REQUEST
+    assert session.evaluated() == (1, False, "")
+
+    _respond(session, 1, "http://www.example.test/a", "text/plain")
+
+    assert session.receive() == (_CANCEL, struct.pack("<Q", 1))
+    message_type, payload = session.receive()
+    assert message_type == _REQUEST
+    assert b"http://www.example.test/b" in payload
+    _end(session, 1, _ERR_ABORTED)
+    assert session.close() == 0
+
+
 def test_a_fetchs_request_init_reaches_the_session_in_its_request(session: _Session) -> None:
     # Mode no-cors takes only the no-CORS-safelisted lines, a referrer of the document's origin goes as a URL, and a
     # fetch's priority "low" is LOWEST, sent as one more than net::LOWEST. Keepalive is flag 8.

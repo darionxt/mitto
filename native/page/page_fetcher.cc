@@ -161,6 +161,9 @@ class PageFetcher::Request final : public PageRequests::Client,
     if (calling_client_) {
       stopped_ = true;
       cancel_pending_ = true;
+      // Its bytes are not in flight any more.
+      fetcher_->keepalive_bytes_ -= keepalive_bytes_;
+      keepalive_bytes_ = 0;
       return;
     }
     // Destroys this.
