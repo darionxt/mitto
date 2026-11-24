@@ -52,6 +52,9 @@ struct NavigationRequest {
   // gives it: its document's URL, or for a srcdoc document its parent's,
   // stripped for use as a referrer, and empty for an opaque origin.
   GURL initiator_referrer;
+  // Whether a header gave the initiator a Content-Security-Policy, which a
+  // local URL's document that it commits takes with its policy container.
+  bool initiator_has_header_csp = false;
 };
 
 struct HistoryItem;

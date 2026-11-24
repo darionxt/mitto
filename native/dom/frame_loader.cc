@@ -318,7 +318,8 @@ void StartNavigation(Window& window,
     return;
   }
   // A top-level frame shows no data: URL that a page navigates it to, but one
-  // that would be a download. A frame's goes on.
+  // that would be a download, as Chrome's browser blocks it for the main
+  // frame only. A frame's goes on.
   const Frame* const frame = window.GetFrame();
   if (url.SchemeIs(url::kDataScheme) && (!frame || !frame->Parent()) &&
       request.reason != ClientNavigationReason::kReload &&
@@ -427,6 +428,8 @@ void StartNavigation(Window& window,
   navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
   navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
   navigation.initiator_referrer = OutgoingReferrer(origin_window);
+  navigation.initiator_has_header_csp =
+      origin_window.GetDocument().HasHeaderDeliveredContentSecurityPolicy();
   client->BeginNavigation(navigation);
 }
 

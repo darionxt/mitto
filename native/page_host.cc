@@ -1581,10 +1581,12 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     net_error = net::ERR_UNKNOWN_URL_SCHEME;
   } else if (!request_template) {
     net_error = net::ERR_NOT_IMPLEMENTED;
-  } else if (document_origin.opaque() && !context.is_worker) {
-    // A document that the Session did not load, such as about:blank, has no
-    // Initiator that a request can name. A worker of a data: URL, whose
-    // origin is opaque, asks as that origin.
+  } else if (document_origin.opaque() && !context.is_worker &&
+             context.parent == kNoDocument) {
+    // The Page's first document, about:blank, which the Session did not load,
+    // has no Initiator that a request can name. A frame's document of an
+    // opaque origin, such as a data: URL's or Chrome's error page, asks as
+    // that origin, as a worker of a data: URL does.
     net_error = net::ERR_ACCESS_DENIED;
   } else if (asked.mode == PageRequestMode::kSameOrigin &&
              !document_origin.IsSameOriginWith(url)) {
@@ -2905,14 +2907,22 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
       // navigation within it leaves, as the Page keeps it too.
       context.cookie_url = context.url;
       break;
+    case PageDocumentSource::kBlob:
+      // A blob: URL's document, until the library can tie it to a navigation
+      // that the Page started and to a Blob that it holds, which #283 brings,
+      // could take any origin that its claimed initiator has.
+      Refuse("a blob: document, which no navigation of the library's backs");
+      return;
     case PageDocumentSource::kAboutBlank:
     case PageDocumentSource::kSrcdoc:
-    case PageDocumentSource::kErrorPage: {
+    case PageDocumentSource::kErrorPage:
+    case PageDocumentSource::kDataUrl: {
       // A document that a frame commits without the network takes the place
       // of the frame's document, under the same parent, as Chrome's browser
-      // commits it in that frame. srcdoc and an error page are only a
-      // frame's: the top-level frame keeps its document when its navigation
-      // fails.
+      // commits it in that frame. srcdoc, an error page and a data: URL's
+      // document are only a frame's: the top-level frame keeps its document
+      // when its navigation fails, and Chrome shows it no data: URL that a
+      // page navigates it to.
       const auto replaces = contexts_.find(committed.replaces);
       if (replaces == contexts_.end() || replaces->second.is_worker ||
           replaces->second.parent != committed.parent ||
@@ -2929,6 +2939,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         // were when the navigation started.
         const auto started = about_blank_navigations_.find(committed.replaces);
         if (started == about_blank_navigations_.end() ||
+            started->second.kind != PageLocalNavigationKind::kAboutBlank ||
             started->second.initiator != committed.initiator) {
           Refuse("an about:blank whose navigation did not start");
           return;
@@ -2945,10 +2956,28 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         context.coep = parent.coep;
         context.cookie_url = CookieUrlOf(parent);
         context.url = GURL(url::kAboutSrcdocURL);
-      } else {
+      } else if (committed.source == PageDocumentSource::kErrorPage) {
         // NavigationRequest::GetOriginToCommit(): an error page's origin is
         // opaque.
         context.url = GURL(kErrorPageUrl);
+      } else {
+        // So is a data: URL's, whose requests send no Referer and no cookies.
+        // It takes the policy container, with the embedder policy, of the
+        // document that started its navigation, as it was when the navigation
+        // started, as a local URL's document does, and keeps its URL, which a
+        // navigation to a fragment then changes.
+        const auto started = about_blank_navigations_.find(committed.replaces);
+        const GURL url(committed.url);
+        if (started == about_blank_navigations_.end() ||
+            started->second.kind != PageLocalNavigationKind::kDataUrl ||
+            started->second.initiator != committed.initiator ||
+            !url.is_valid() || !url.SchemeIs(url::kDataScheme)) {
+          Refuse("a data: URL's document whose navigation did not start");
+          return;
+        }
+        context.coep = started->second.coep;
+        about_blank_navigations_.erase(started);
+        context.url = url;
       }
       replaced = committed.replaces;
       break;
@@ -3011,11 +3040,17 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
 }
 
 void PageHost::OnAboutBlankNavigation(uint64_t document,
-                                      uint64_t initiator_id) {
+                                      uint64_t initiator_id,
+                                      PageLocalNavigationKind kind) {
   // The browser's NavigationRequest takes the initiator's origin and policy
-  // container as the navigation begins, so the about:blank has them though
-  // the initiator goes first. The newest navigation of the frame takes the
-  // place of one that waits.
+  // container as the navigation begins, so the about:blank or data: URL's
+  // document has them though the initiator goes first. The newest navigation
+  // of the frame takes the place of one that waits, and one that ended with
+  // no document leaves nothing to commit.
+  if (kind == PageLocalNavigationKind::kEnded) {
+    about_blank_navigations_.erase(document);
+    return;
+  }
   const auto initiator = contexts_.find(initiator_id);
   if (contexts_.at(document).is_worker || initiator == contexts_.end() ||
       initiator->second.is_worker) {
@@ -3023,6 +3058,7 @@ void PageHost::OnAboutBlankNavigation(uint64_t document,
     return;
   }
   AboutBlankNavigation& started = about_blank_navigations_[document];
+  started.kind = kind;
   started.initiator = initiator_id;
   started.origin = initiator->second.origin;
   started.coep = initiator->second.coep;
@@ -3645,7 +3681,8 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       OnSameDocumentNavigation(frame->document, frame->same_document_url);
       return;
     case PageMessage::kAboutBlankNavigation:
-      OnAboutBlankNavigation(frame->document, frame->about_blank_initiator);
+      OnAboutBlankNavigation(frame->document, frame->about_blank_initiator,
+                             frame->local_navigation_kind);
       return;
     case PageMessage::kDocumentOpened:
       OnDocumentOpened(frame->document, frame->opener);

@@ -10,6 +10,7 @@ through the Session. The other tests check what a frame reports, what the Sessio
 frames do as they go or move, where the expected values are what the same Chrome gave for the same scripts.
 """
 
+import dataclasses
 import html
 import http.server
 import json
@@ -60,24 +61,16 @@ parent.timingAtParse = {
   entries: performance.getEntriesByType('navigation').length,
 };
 </script>"""
-# Gives the document's title 3 seconds later.
-_AFTER_WAIT = "new Promise((resolve) => setTimeout(() => resolve(document.title), 3000))"
-# Gives the document's title once a collection of garbage has changed it, or 3 seconds after one that has not.
-_AFTER_COLLECTION = """
-  (async () => {
-    const task = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-    const collected = new WeakRef({});
+# Gives the document's URL, and how often a callback has reached it, 0 if none has after LIMIT milliseconds.
+_REACHED = """
+  new Promise((resolve) => {
     const started = performance.now();
-    do {
-      await task(0);
-      for (let i = 0; i < 8; i++) new Uint8Array(1 << 24).fill(1);
-      await task(0);
-    } while (collected.deref() && performance.now() - started < 20000);
-    if (collected.deref()) return 'nothing collected';
-    const title = document.title;
-    for (let i = 0; i < 30 && document.title === title; i++) await task(100);
-    return document.title;
-  })()
+    const check = () => {
+      if (document.reached || performance.now() - started > LIMIT) resolve([location.href, document.reached || 0]);
+      else setTimeout(check, 50);
+    };
+    check();
+  })
 """
 # The request headers that /echo gives back, which a frame's navigation sends.
 _ECHOED = (
@@ -105,7 +98,7 @@ def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], 
     html_type = {"Content-Type": "text/html"}
     if path.startswith("/from-"):
         return 200, {"Content-Type": "text/plain"}, (headers.get("referer") or "none").encode()
-    if path == "/echo":
+    if path.split("?")[0] == "/echo":
         echoed = {name: headers[name] for name in _ECHOED if name in headers}
         script = html.escape(json.dumps(echoed, sort_keys=True), quote=False)
         return 200, html_type, f"<!doctype html><script type=application/json id=h>{script}</script>".encode()
@@ -651,7 +644,18 @@ def test_a_window_that_its_frame_left_reaches_only_a_window_of_its_origin(page_u
     ]
 
 
-@pytest.mark.usefixtures("page_program")
+@pytest.fixture
+def exposed_gc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Have each Page that starts give its scripts V8's gc()."""
+    to_option = _native.PageFeatures.to_option
+
+    def with_gc(features: _native.PageFeatures) -> dict[str, object]:
+        return to_option(dataclasses.replace(features, v8_flags=(*features.v8_flags, "--expose-gc")))
+
+    monkeypatch.setattr(_native.PageFeatures, "to_option", with_gc)
+
+
+@pytest.mark.usefixtures("page_program", "exposed_gc")
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
 @pytest.mark.parametrize(
     ("where", "callback"),
@@ -664,40 +668,43 @@ def test_a_callback_of_a_page_that_went_reaches_only_a_document_of_its_origin(
     # which is then the next document's. The getter of `document` that it kept, called on that window, and the window's
     # property throw for a document of another origin, where Chrome 157 leaves the next document alone. One of its own
     # origin shows that the callback runs, which Chrome's does not reach either: a Known Gap.
+    # The page arms it as it goes, at the commit: a wait that ends a millisecond later, or a collection that finds what
+    # the registry holds gone. So the callback's task comes right after the commit, maybe before the next document's
+    # markup, and no collection takes the old window, which nothing else holds then, before it.
     script = f"""
       const element = document.createElement('iframe');
       document.body.appendChild(element);
-      const source = `{{
-        const held = top, get = Object.getOwnPropertyDescriptor(window, 'document').get;
-        const read = () => {{
+      const w = '{where}' === 'frame' ? element.contentWindow : window;
+      w.eval(`
+        var held = top, get = Object.getOwnPropertyDescriptor(window, 'document').get;
+        var read = () => {{
           for (const f of [() => get.call(held), () => held.document]) {{
-            try {{ f().title += ' reached'; }} catch (e) {{}}
+            try {{ f().reached = (f().reached || 0) + 1; }} catch (e) {{}}
           }}
         }};
-        const wait = (milliseconds, f) => {{
+        var wait = () => {{
           const cell = new Int32Array(new WebAssembly.Memory({{initial: 1, maximum: 1, shared: true}}).buffer);
-          Atomics.waitAsync(cell, 0, 0, milliseconds).value.then(f);
+          Atomics.waitAsync(cell, 0, 0, 1).value.then(read);
         }};
-        if ('{callback}' === 'Atomics.waitAsync') {{
-          wait(1500, read);
-        }} else {{
-          // What waits keeps the registry, whose callback runs only while something does.
-          const registry = new FinalizationRegistry(read);
-          registry.register({{}}, 0);
-          wait(60000, () => registry);
-        }}
-      }}`;
-      ('{where}' === 'frame' ? element.contentWindow : window).eval(source);
-      location.href = `http://{host}:${{location.port}}/child?next`;
+        var registry = new FinalizationRegistry(read);
+      `);
+      let registered = {{}};
+      if ('{callback}' === 'FinalizationRegistry') w.registry.register(registered, 0);
+      addEventListener('pagehide', () => {{
+        registered = null;
+        if ('{callback}' === 'Atomics.waitAsync') w.wait();
+        else gc();
+      }});
+      setTimeout(() => {{ location.href = `http://{host}:${{location.port}}/child?next`; }});
     """
     with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         page.evaluate(script)
         page.wait_for_navigation(timeout=_TIMEOUT_SECONDS)
-        title = page.evaluate(
-            _AFTER_COLLECTION if callback == "FinalizationRegistry" else _AFTER_WAIT, timeout=_TIMEOUT_SECONDS
-        )
+        limit = "20000" if host == "127.0.0.1" else "2000"
+        url, reached = page.evaluate(_REACHED.replace("LIMIT", limit), timeout=_TIMEOUT_SECONDS)
 
-    assert title == ("child reached reached" if host == "127.0.0.1" else "child")
+    assert url == page_url.replace("127.0.0.1", host) + "child?next"
+    assert reached == (2 if host == "127.0.0.1" else 0)
 
 
 @pytest.mark.usefixtures("page_program")

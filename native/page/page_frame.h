@@ -282,6 +282,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // document: its fetches fail, as Chrome's do, and its dedicated workers,
   // which Chrome keeps with the window, are terminated.
   void EndOldDocumentInWindow();
+  // The about:blank or data: URL of type 72 that waited ends with no
+  // document: the Session forgets what it took of the initiator for it.
+  void EndLocalNavigation();
   // Whether two of the frame's ancestors' documents are at `url`, but for the
   // fragment.
   bool IsSelfReferential(const GURL& url) const;
@@ -302,6 +305,12 @@ class PageFrame final : public NavigationClient, public Frame {
   void CommitAboutBlankSynchronously(const GURL& url);
   // A navigation of the frame that commits without the network: to a srcdoc
   // or an about:blank.
+  // A child frame's navigation to a data: URL, which waits for a later task,
+  // which a newer navigation takes the place of.
+  struct DataUrlAnswer {
+    uint64_t number = 0;
+    base::TimeTicks start;
+  };
   struct LocalNavigation {
     LocalNavigation();
     LocalNavigation(LocalNavigation&&);
@@ -336,6 +345,15 @@ class PageFrame final : public NavigationClient, public Frame {
   // Commits `navigation` from a later task, as Chrome's browser commits it,
   // unless a newer navigation of the frame takes its place first.
   void CommitWithoutNetworkSoon(LocalNavigation navigation);
+  // A child frame's navigation to a data: URL, which the Page answers itself
+  // from a later task, through a DocumentLoader as a response.
+  void BeginDataUrlNavigation(const NavigationRequest& request);
+  // Gives the loader of the data: URL's navigation numbered `number`, if it
+  // still waits, its response.
+  void AnswerDataUrl(uint64_t number);
+  // Has the parent check whether all of its frames have loaded, once this
+  // frame no longer loads.
+  void LetParentCheckCompleted();
   // Commits `navigation`, unless another has taken its place: in the same
   // window for a document of the initial about:blank's origin, as Blink's
   // DocumentLoader::CommitNavigation() reuses it, and otherwise in a new
@@ -374,6 +392,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // takes the place of.
   uint64_t last_local_navigation_ = 0;
   std::unique_ptr<LocalNavigation> pending_local_navigation_;
+  // The number of the last data: URL that the frame answered itself, and the
+  // answer that waits, if any.
+  uint64_t last_data_url_answer_ = 0;
+  std::unique_ptr<DataUrlAnswer> pending_data_url_answer_;
   // What the current window runs in its context, which stops with it.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;
@@ -398,6 +420,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // and what RenderFrameImpl compares a new one with to drop it as the same.
   std::unique_ptr<DocumentLoader> provisional_;
   NavigationRequest provisional_request_;
+  // Counts the requests that have waited, so that a data: URL's navigation
+  // lets its request go only while it is still the one that waits.
+  uint64_t provisional_request_serial_ = 0;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,

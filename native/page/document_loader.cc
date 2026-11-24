@@ -53,7 +53,15 @@ void DocumentLoader::StopLoading() {
   }
   if (response_started_ && !body_ended_) {
     body_ended_ = true;
-    requests_->Cancel(number_);
+    if (!answered_by_page_) {
+      requests_->Cancel(number_);
+    }
+  }
+}
+
+void DocumentLoader::TookBody(size_t size) {
+  if (!answered_by_page_) {
+    requests_->TookBody(number_, size);
   }
 }
 
@@ -77,9 +85,10 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   std::string mime_type =
       content_type.mime_type.empty() ? "text/html" : content_type.mime_type;
   // URLLoader::StartReading(): Chrome's network service gives a feed's
-  // response as text/plain.
-  if (mime_type == "application/rss+xml" ||
-      mime_type == "application/atom+xml") {
+  // response as text/plain, which a data: URL's, which the browser answers
+  // itself, does not go through.
+  if (!answered_by_page_ && (mime_type == "application/rss+xml" ||
+                             mime_type == "application/atom+xml")) {
     mime_type = "text/plain";
   }
   const DocumentKind document_kind = DocumentKindOf(mime_type);
@@ -123,16 +132,17 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   timing.critical_ch_restart = TicksOf(response.critical_ch_restart);
   // CreateNavigationTimingInstance(): no start time, the document's URL, and
   // a response that always passes the TAO check, whose cache state the bytes
-  // that had come with its headers decide.
+  // that had come with its headers decide, but for one that the Page answered
+  // itself, which is from no cache.
   PageResponseStarted navigation_response = response;
   navigation_response.timing_allow_passed = true;
   timing.navigation = CreateResourceTimingInfo(
       base::TimeTicks(), base::UTF8ToUTF16(response.url), &navigation_response,
       base::TimeTicks::Now());
-  timing.navigation.cache_state = response.validated ? CacheState::kValidated
-                                  : response.received_bytes == 0
-                                      ? CacheState::kLocal
-                                      : CacheState::kNone;
+  timing.navigation.cache_state =
+      response.validated ? CacheState::kValidated
+      : response.received_bytes == 0 && !answered_by_page_ ? CacheState::kLocal
+                                                           : CacheState::kNone;
   timing.connection_info = response.connection_info;
   timing.alpn_negotiated_protocol = response.alpn_negotiated_protocol;
   timing.was_fetched_via_spdy = response.was_fetched_via_spdy;
@@ -223,6 +233,9 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // Whether the response delivered a Content Security Policy: a policy for
   // each part of either header between commas that is not empty, as the
   // network service parses them, which hides nonces.
+  if (inherited_header_csp_) {
+    document_->SetHasHeaderDeliveredContentSecurityPolicy(true);
+  }
   for (const char* const name :
        {"content-security-policy", "content-security-policy-report-only"}) {
     const std::string policies = HeaderField(response.headers, name);
@@ -233,7 +246,11 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
     }
   }
   // The response's Referrer-Policy, which the browser's policy container
-  // gives the document as it commits.
+  // gives the document as it commits, or else the initiator's for a local
+  // URL's document.
+  if (inherited_referrer_policy_ != FetchReferrerPolicy::kDefault) {
+    document_->SetReferrerPolicy(inherited_referrer_policy_);
+  }
   const std::string referrer_policy =
       HeaderField(response.headers, "referrer-policy");
   if (!referrer_policy.empty()) {
@@ -275,7 +292,7 @@ void DocumentLoader::OnResponseBody(std::string bytes) {
   body_bytes_ += bytes.size();
   if (!parser_) {
     // What comes once the parser has stopped for good goes unread.
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
     return;
   }
   waiting_body_.push_back(std::move(bytes));
@@ -320,7 +337,7 @@ bool DocumentLoader::FeedParser() {
     waiting_body_.pop_front();
     // The Session hears that the piece is taken before anything the parser,
     // or its preload scanner, asks for from it.
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
     if (!bytes.empty()) {
       parser_->AppendBytes(bytes);
     }
@@ -343,7 +360,7 @@ void DocumentLoader::ParserDetached() {
   parser_ = nullptr;
   // What waits of the body goes unread.
   for (const std::string& bytes : waiting_body_) {
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
   }
   waiting_body_.clear();
 }
