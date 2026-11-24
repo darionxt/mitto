@@ -212,6 +212,13 @@ class PageFrame final : public NavigationClient, public Frame {
   // that the page starts take the place of.
   bool TraversalWaits() const;
 
+  // What the browser makes of what the old document asks as its last events
+  // run and another takes its place: nothing, as it unloads; its history
+  // changes, as the back/forward cache takes it; or nothing, and the cache
+  // lets it go, once it is there, as IsInactiveAndDisallowActivation() evicts
+  // a page.
+  enum class Leaving { kNo, kUnloads, kStays, kCached };
+
   // The back/forward cache of the top-level frame, as Chrome's
   // BackForwardCacheImpl keeps a tab's pages: a document that a navigation
   // leaves, if Chrome would keep it, stays with its context and what runs in
@@ -232,6 +239,18 @@ class PageFrame final : public NavigationClient, public Frame {
   // the next document commits in browsing instance `next_browsing_instance`.
   bool CanStoreDocument(const Document& document,
                         uint64_t next_browsing_instance) const;
+  // Runs the events of the current document, `document`, as the cache takes
+  // it and the next one commits in `next_browsing_instance`, where the browser
+  // has it as `leaving` says while it hides and in the cache while it freezes.
+  // Returns whether it goes into the cache: a listener may keep it out after
+  // all, which unloads it with no more events, as Chrome evicts it once it has
+  // stored it.
+  bool LeaveForBackForwardCache(Document& document,
+                                uint64_t next_browsing_instance,
+                                Leaving leaving);
+  // Whether the browser ignores what the old document asks as it leaves, which
+  // lets it go if the cache has it already.
+  bool IgnoresLeavingDocument();
   // The browsing instance of document `document`, which a traversal to an
   // entry of its puts the new document in, as Chrome's entry keeps its
   // SiteInstance.
@@ -241,10 +260,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // and the Session hears of it before the next document.
   void StoreDocument(std::unique_ptr<DocumentLoader> loader);
   // The stored document that a traversal to the entry of item
-  // `item_sequence_number`, whose record is `record`, restores: the document
-  // of the record, if the cache keeps it and stored it at that entry.
-  StoredDocument* FindStoredDocument(uint64_t record,
-                                     int64_t item_sequence_number);
+  // `item_sequence_number` restores: the one that the cache stored at that
+  // entry, or null.
+  StoredDocument* FindStoredDocument(int64_t item_sequence_number);
   // The stored documents of `browsing_instance` go, as the pages that a
   // traversal takes a new page into, or out of, conflict with them.
   void EvictBrowsingInstance(uint64_t browsing_instance);
@@ -445,8 +463,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // The entry that the traversal whose navigate event runs goes to, until it
   // commits.
   std::optional<size_t> committing_traversal_index_;
-  // Whether the old document's unload events run, as a new one commits.
-  bool unloading_for_commit_ = false;
+  // How the old document leaves, as its last events run.
+  Leaving leaving_ = Leaving::kNo;
+  // Whether the document that leaves asked something once the cache had it.
+  bool left_page_evicted_ = false;
   NavigationRateLimiter navigation_rate_limiter_;
   // The entry that the navigation that waits goes to, for a traversal.
   std::optional<HistoryItem> traversal_item_;
@@ -454,6 +474,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // repeats, which the Session keeps until it ends.
   std::optional<uint64_t> traversal_record_;
   // The record of the traversal whose beforeunload and navigate events run,
+  // or the document that a restore puts in place of one whose events run,
   // which the Session keeps whatever their listeners do.
   std::optional<uint64_t> pinned_record_;
   // The records that the Session keeps for the history.

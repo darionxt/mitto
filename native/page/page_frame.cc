@@ -64,9 +64,9 @@ namespace {
 constexpr base::TimeDelta kDuplicateWindow = base::Milliseconds(3000);
 
 // What a traversal request's payload holds beside its URL: the document's ID,
-// the number and the record, each a 64-bit number, a byte of flags and one of
-// the referrer policy.
-constexpr size_t kTraversalOverhead = 3 * 8 + 2;
+// the number, the record and the stored document, each a 64-bit number, a byte
+// of flags and one of the referrer policy.
+constexpr size_t kTraversalOverhead = 4 * 8 + 2;
 
 // How many pages BackForwardCacheImpl keeps, its "cache_size", and how long,
 // kDefaultTimeToLiveInBackForwardCacheInSeconds, or for a page of a no-store
@@ -181,6 +181,8 @@ struct PageFrame::StoredDocument {
   int64_t item_sequence_number = 0;
   scoped_refptr<FrameNavigationEntry> entry;
   uint64_t browsing_instance = 0;
+  // The frame's name, which Chrome's frame of the page keeps with it.
+  std::u16string name;
   base::OneShotTimer time_to_live;
 };
 
@@ -605,6 +607,11 @@ void PageFrame::ExpectOpeningNavigation() {
 }
 
 void PageFrame::BeginNavigation(const NavigationRequest& request) {
+  // A navigation that a pagehide listener of a document that the back/forward
+  // cache takes starts goes nowhere, a Known Gap: Chrome's goes on.
+  if (IgnoresLeavingDocument() || leaving_ == Leaving::kStays) {
+    return;
+  }
   if (parent_) {
     // A srcdoc or an about:blank goes through Chrome's browser and commits
     // from a later task, with the srcdoc that an iframe has now. The newest
@@ -719,7 +726,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
 
 void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
                                                 FrameLoadType type) {
-  if (unloading_for_commit_) {
+  if (IgnoresLeavingDocument()) {
     return;
   }
   // The traversal has committed, as Chrome's controller drops its pending
@@ -790,7 +797,7 @@ void PageFrame::NotifyNavigationApiOfDisposedEntries() {
 }
 
 void PageFrame::DidUpdateCurrentHistoryItem(const HistoryItem& item) {
-  if (!parent_ && !unloading_for_commit_) {
+  if (!parent_ && leaving_ != Leaving::kUnloads) {
     history().UpdateCurrentItem(item);
   }
 }
@@ -831,16 +838,20 @@ void PageFrame::NavigateBackForward(int offset) {
   if (!IsNavigationAllowed()) {
     return;
   }
-  // RenderFrameHostImpl::GoToEntryAtOffset(): ignored while a history
-  // navigation waits, without the user's activation.
-  if (TraversalWaits()) {
-    return;
-  }
   // GoToOffsetFromRenderer(): from the entry that a waiting traversal goes
   // to, or the current one, and nowhere past the entries.
   const HistoryCounts counts = history().Counts();
   const int index = static_cast<int>(CurrentEntryIndex()) + offset;
   if (index < 0 || index >= counts.length) {
+    return;
+  }
+  // As a navigation of a document that leaves.
+  if (IgnoresLeavingDocument() || leaving_ == Leaving::kStays) {
+    return;
+  }
+  // RenderFrameHostImpl::GoToEntryAtOffset(): ignored while a history
+  // navigation waits, without the user's activation.
+  if (TraversalWaits()) {
     return;
   }
   QueueTraversal(static_cast<size_t>(index), std::nullopt);
@@ -849,7 +860,8 @@ void PageFrame::NavigateBackForward(int offset) {
 void PageFrame::NavigateToNavigationApiKey(const std::u16string& key) {
   // RenderFrameHostImpl::NavigateToNavigationApiKey(): ignored while a
   // history navigation waits, without the user's activation.
-  if (Top().TraversalWaits() || !Top().IsNavigationAllowed()) {
+  if (!Top().IsNavigationAllowed() || Top().IgnoresLeavingDocument() ||
+      Top().leaving_ == Leaving::kStays || Top().TraversalWaits()) {
     return;
   }
   // A child frame's entries are none of the session history's yet.
@@ -950,12 +962,6 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   traversal.same_document_entry = entry.same_document_entry();
   traversal.referrer_policy = entry.referrer_policy();
   traversal.url = target.url.spec();
-  // The entry that a stored document was stored at restores it, if the
-  // Session agrees, and another entry of its document evicts it, as Chrome
-  // evicts a page whose browsing instance a traversal goes to.
-  StoredDocument* const stored =
-      FindStoredDocument(traversal.record, target.item_sequence_number);
-  traversal.stored_entry = stored != nullptr;
   // The tab's initial entry holds no navigation, and no traversal goes there,
   // nor to a URL that a Page message cannot carry, which no Chrome would have.
   if (traversal.record == kNoDocument ||
@@ -995,8 +1001,13 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   traversal_browsing_instance_ = BrowsingInstanceOf(traversal.record);
   traversal_start_ = provisional_start_;
   EndRestore();
-  if (traversal.stored_entry) {
-    restore_document_ = traversal.record;
+  // The entry that a stored document was stored at restores it, if the
+  // Session agrees, and another entry of its document evicts it, as Chrome
+  // evicts a page whose browsing instance a traversal goes to.
+  if (const StoredDocument* const stored =
+          FindStoredDocument(target.item_sequence_number)) {
+    traversal.stored_document = stored->document;
+    restore_document_ = stored->document;
   } else {
     // EvictFramesInRelatedSiteInstances(): the pages whose browsing instance
     // the traversal goes into, this one's entry among them.
@@ -1028,6 +1039,11 @@ void PageFrame::ReleaseRecords(uint64_t live_document) {
     if (record) {
       held.insert(*record);
     }
+  }
+  // A stored document's own, which no entry may hold though one restores it,
+  // repeats its navigation for the entries that it makes once it is back.
+  for (const std::unique_ptr<StoredDocument>& stored : stored_documents_) {
+    held.insert(stored->document);
   }
   std::vector<uint64_t> released;
   for (const uint64_t record : held_records_) {
@@ -1128,29 +1144,24 @@ Document& PageFrame::CommitNavigation(
       : SwapsBrowsingInstance(old_document, type, url)
           ? ++last_browsing_instance_
           : browsing_instance_;
-  bool store = CanStoreDocument(old_document, next_browsing_instance);
-  // What the old document's unload listeners do to its URL and entries goes
-  // nowhere, as Chrome's browser ignores a document that it is replacing, and
-  // nothing after them runs a script. What the pagehide listeners of one that
-  // the back/forward cache takes do is its entry's, as Chrome takes it.
-  const base::AutoReset<bool> unloading(&unloading_for_commit_, !store);
-  // DocumentLoader::CommitNavigation(): nothing navigates the frame
-  // meanwhile, whatever the old document or its frames' listeners ask.
-  const FrameNavigationDisabler navigation_disabler(*this);
+  const bool may_store = CanStoreDocument(old_document, next_browsing_instance);
   // A document that the back/forward cache takes has pagehide, persisted,
   // and visibilitychange in place of its unload events, as Chrome's renderer
   // dispatches them for the old page as the new one commits, and keeps
-  // loading. A listener may do what keeps it out after all, which unloads it
-  // with no more events, as Chrome evicts it once it has stored it.
-  if (store) {
-    old_document.HideForBackForwardCache();
-    if (window_) {
-      old_document.DispatchFreezeEvent();
-    }
-    store = window_ && CanStoreDocument(old_document, next_browsing_instance);
-    if (!store && current_) {
-      current_->StopLoading();
-    }
+  // loading. What its listeners do to its URL and entries is its entry's,
+  // until the browser has it in the cache, where it freezes.
+  const bool store =
+      may_store && LeaveForBackForwardCache(
+                       old_document, next_browsing_instance, Leaving::kStays);
+  // What the old document's unload listeners do to its URL and entries goes
+  // nowhere, as Chrome's browser ignores a document that it is replacing, and
+  // nothing after them runs a script.
+  const base::AutoReset<Leaving> leaving(&leaving_, Leaving::kUnloads);
+  // DocumentLoader::CommitNavigation(): nothing navigates the frame
+  // meanwhile, whatever the old document or its frames' listeners ask.
+  const FrameNavigationDisabler navigation_disabler(*this);
+  if (may_store) {
+    // It had its events.
   } else if (old_document.IsInitialEmptyDocument()) {
     // FrameLoader::DetachDocument(), for a frame that has committed no
     // navigation yet: the unload events first, then the loading stops.
@@ -1244,27 +1255,24 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   std::unique_ptr<StoredDocument> stored = std::move(*found);
   stored_documents_.erase(found);
   traversal_item_.reset();
-  traversal_record_.reset();
   pending_traversal_index_.reset();
+  // The Session keeps the document's own record, and the entry's, until the
+  // history is at the entry again.
+  pinned_record_ = restored;
   {
-    // The current document leaves as at any commit: into the cache, or it
-    // unloads.
+    // The current document leaves as at any commit, into the cache, or it
+    // unloads, but the browser has committed the restore already, so what it
+    // does to its URL and entries goes nowhere.
     const v8::Context::Scope current_scope(context());
     Document& old_document = window_->GetDocument();
-    bool store = CanStoreDocument(old_document, stored->browsing_instance);
-    const base::AutoReset<bool> unloading(&unloading_for_commit_, !store);
+    const bool may_store =
+        CanStoreDocument(old_document, stored->browsing_instance);
+    const bool store = may_store && LeaveForBackForwardCache(
+                                        old_document, stored->browsing_instance,
+                                        Leaving::kCached);
+    const base::AutoReset<Leaving> leaving(&leaving_, Leaving::kUnloads);
     const FrameNavigationDisabler navigation_disabler(*this);
-    if (store) {
-      old_document.HideForBackForwardCache();
-      if (window_) {
-        old_document.DispatchFreezeEvent();
-      }
-      store =
-          window_ && CanStoreDocument(old_document, stored->browsing_instance);
-      if (!store && current_) {
-        current_->StopLoading();
-      }
-    } else {
+    if (!may_store) {
       if (current_) {
         current_->StopLoading();
       }
@@ -1289,6 +1297,7 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   window_tasks_ = std::move(stored->window_tasks);
   worker_starter_ = std::move(stored->worker_starter);
   chrome_object_data_ = stored->chrome_object_data;
+  name_ = std::move(stored->name);
   current_ = std::move(stored->loader);
   browsing_instance_ = stored->browsing_instance;
   MemoryInfo::SetProcessLockedToSite(true);
@@ -1306,6 +1315,8 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   // takes the entries around it while the page is still frozen.
   Navigation::EntryArrays arrays =
       history().DidRestoreDocument(std::move(stored->entry));
+  traversal_record_.reset();
+  pinned_record_.reset();
   window.Navigation()->SetEntriesForRestore(arrays);
   // RemoveBackForwardCacheEviction(), then SetPageFrozen(false): what waited
   // runs from its tasks, the responses that came meanwhile among them.
@@ -1335,6 +1346,35 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   // shows.
   window.EnqueueAnimationFrameEvent(window, *PageRevealEvent::CreateTrusted());
   ReleaseRecords(window.DocumentId());
+}
+
+bool PageFrame::LeaveForBackForwardCache(Document& document,
+                                         uint64_t next_browsing_instance,
+                                         Leaving leaving) {
+  left_page_evicted_ = false;
+  {
+    const base::AutoReset<Leaving> hiding(&leaving_, leaving);
+    document.HideForBackForwardCache();
+  }
+  if (window_) {
+    const base::AutoReset<Leaving> freezing(&leaving_, Leaving::kCached);
+    document.DispatchFreezeEvent();
+  }
+  if (window_ && !left_page_evicted_ &&
+      CanStoreDocument(document, next_browsing_instance)) {
+    return true;
+  }
+  if (current_) {
+    current_->StopLoading();
+  }
+  return false;
+}
+
+bool PageFrame::IgnoresLeavingDocument() {
+  if (leaving_ == Leaving::kCached) {
+    left_page_evicted_ = true;
+  }
+  return leaving_ == Leaving::kCached || leaving_ == Leaving::kUnloads;
 }
 
 bool PageFrame::MayStoreDocument(const Document& document) const {
@@ -1413,6 +1453,7 @@ void PageFrame::StoreDocument(std::unique_ptr<DocumentLoader> loader) {
           ? window.CurrentHistoryItem()->item_sequence_number
           : 0;
   stored->entry = history().CurrentRootRef();
+  stored->name = name_;
   stored->context = std::move(context_);
   stored->window = window_.Get();
   window_ = nullptr;
@@ -1473,11 +1514,9 @@ void PageFrame::Freeze(StoredDocument& stored) {
 }
 
 PageFrame::StoredDocument* PageFrame::FindStoredDocument(
-    uint64_t record,
     int64_t item_sequence_number) {
   for (const std::unique_ptr<StoredDocument>& stored : stored_documents_) {
-    if (stored->document == record &&
-        stored->item_sequence_number == item_sequence_number) {
+    if (stored->item_sequence_number == item_sequence_number) {
       return stored.get();
     }
   }

@@ -557,3 +557,194 @@ def test_a_preload_keeps_a_no_store_page_out_only_once_a_fetch_takes_it(
         page.evaluate("history.back()")
         assert _next_document(page) == PageNavigation(url=first, status=200, restored=restored)
         assert page.evaluate("window.marker ?? null") == (1 if restored else None)
+
+
+def test_scheduled_tasks_of_a_kept_page_run_by_priority_once_it_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "addEventListener('pagehide', () => {"
+            # The background task is due first, while the cache keeps the page.
+            " scheduler.postTask(() => log.push('background'), {priority: 'background', delay: 10});"
+            " scheduler.postTask(() => log.push('user-blocking'), {priority: 'user-blocking', delay: 300});"
+            " const controller = new AbortController();"
+            " scheduler.postTask(() => log.push('aborted'), {signal: controller.signal}).catch(() => {});"
+            " controller.abort(); }); window.marker = 1; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        _wait(page, 900)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 100)
+        assert page.evaluate("[window.marker, log]") == [1, [*_KEPT_AND_BACK, "user-blocking", "background"]]
+
+
+def test_what_a_freeze_listener_asks_is_answered_once_its_page_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    ask = (
+        "addEventListener('unhandledrejection', event => { log.push('unhandled'); event.preventDefault(); });"
+        "document.addEventListener('freeze', () => {"
+        " cookieStore.getAll().then(() => log.push('getAll'));"
+        " cookieStore.set('x', '1').then(() => log.push('set'));"
+        " navigator.locks.query().then(() => log.push('query'));"
+        " navigator.permissions.query({name: 'geolocation'}).then(() => log.push('permission'));"
+        # A password manager answers, or nothing offers one, by the Host.
+        " navigator.credentials.get({password: true}).then(() => log.push('password'), () => log.push('password'));"
+        " chrome.app.installState(() => log.push('installState'));"
+        " Promise.reject('no'); });"
+    )
+
+    with _open_page(session, first) as page:
+        # An answer that came before leaves nothing that keeps the page out.
+        page.evaluate("navigator.storage.estimate().then(() => 0)")
+        page.evaluate(f"{ask} window.marker = 1; location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        _wait(page, 400)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 400)
+        marker, log = page.evaluate("[window.marker, log]")
+        assert marker == 1
+        assert log[: len(_KEPT_AND_BACK)] == _KEPT_AND_BACK
+        # The answers come in the order in which the browser gives them, which differs by the API.
+        assert sorted(log[len(_KEPT_AND_BACK) :]) == [
+            "getAll",
+            "installState",
+            "password",
+            "permission",
+            "query",
+            "set",
+            "unhandled",
+        ]
+
+
+def test_a_restored_page_has_its_window_name_again(session: mitto.Session, server: RecordingServer) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>").replace("127.0.0.1", "localhost")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "window.name = 'A'; addEventListener('pageshow', () => { window.shown = name; });"
+            f" location.href = '{second}'; 0"
+        )
+        assert _next_document(page).url == second
+        page.evaluate("window.name = 'B'; history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate("[window.shown, window.name]") == ["A", "A"]
+
+
+def test_a_page_kept_at_an_entry_that_an_earlier_document_made_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    within = server.url("/a2")
+    second = server.page("/b", "<title>B</title>")
+    third = server.page("/c", "<title>C</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("history.pushState(1, '', '/a2'); location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        # A new document takes the first entry, as the cache kept the one before it at the second, and goes there.
+        page.evaluate("history.go(-2)")
+        assert _next_document(page) == PageNavigation(url=first, status=200)
+        page.evaluate("window.marker = 3; history.forward(); new Promise(r => { onpopstate = r; }).then(() => 0)")
+        assert page.evaluate("[location.pathname, window.marker]") == ["/a2", 3]
+        page.evaluate("location.href = '/c'; 0")
+        assert _next_document(page).url == third
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=within, status=200, restored=True)
+        assert page.evaluate("[location.pathname, window.marker, history.state, log]") == [
+            "/a2",
+            3,
+            1,
+            _KEPT_AND_BACK,
+        ]
+
+
+_ENTRIES = (
+    "[location.pathname + location.search + location.hash, window.marker ?? null, history.length,"
+    " navigation.entries().map(entry => entry.url.slice(new URL(entry.url).origin.length)),"
+    " navigation.currentEntry.index]"
+)
+
+
+@pytest.mark.parametrize(
+    ("ask", "kept"),
+    [
+        ("history.pushState(1, '', '?asked')", False),
+        ("history.replaceState(1, '', '?asked')", False),
+        ("location.hash = 'asked'", False),
+        ("location.href = '/asked'", False),
+        ("navigation.updateCurrentEntry({state: 5})", True),
+        # Nothing lies before its entry, so the browser hears nothing of it.
+        ("history.back()", True),
+    ],
+)
+def test_what_a_freeze_listener_asks_of_the_history_lets_its_page_go(
+    session: mitto.Session, server: RecordingServer, ask: str, kept: bool
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            f"document.addEventListener('freeze', () => {{ {ask}; }}); window.marker = 1; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        # Chrome's browser has the page in its cache as it freezes, ignores what it asks, and evicts it.
+        assert page.evaluate(_ENTRIES) == ["/b", None, 2, ["/a", "/b"], 1]
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=kept)
+        assert page.evaluate(_ENTRIES) == ["/a", 1 if kept else None, 2, ["/a", "/b"], 0]
+
+
+@pytest.mark.parametrize(
+    ("ask", "kept"),
+    [
+        ("history.pushState(1, '', '?asked')", False),
+        ("history.replaceState(1, '', '?asked')", False),
+        ("location.hash = 'asked'", False),
+        ("location.href = '/asked'", False),
+        ("history.back()", False),
+        ("navigation.updateCurrentEntry({state: 5})", True),
+    ],
+)
+def test_what_a_page_asks_of_the_history_as_a_restore_takes_its_place_lets_it_go(
+    session: mitto.Session, server: RecordingServer, ask: str, kept: bool
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("window.marker = 'A'; location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate(f"window.marker = 'B'; addEventListener('pagehide', () => {{ {ask}; }}); history.back(); 0")
+        # Chrome's browser has committed the restore already, and the page that leaves is in its cache.
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate(_ENTRIES) == ["/a", "A", 2, ["/a", "/b"], 0]
+        page.evaluate("history.forward()")
+        assert _next_document(page) == PageNavigation(url=second, status=200, restored=kept)
+        assert page.evaluate(_ENTRIES) == ["/b", "B" if kept else None, 2, ["/a", "/b"], 1]
+
+
+def test_a_fragment_that_a_pagehide_listener_of_a_kept_page_goes_to_stays(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "addEventListener('pagehide', () => { location.hash = 'x'; }); window.marker = 1; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first + "#x", status=200, restored=True)
+        assert page.evaluate(_ENTRIES) == ["/a#x", 1, 3, ["/a", "/a#x", "/b"], 1]

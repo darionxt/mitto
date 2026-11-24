@@ -77,15 +77,13 @@
 "\x00\x00"
 "\x01\x01"
 "https://example.com/"
-# A traversal of the session history: the number, the record, a byte of flags,
-# 1 for an entry that a navigation within the document made and 2 for the entry
-# of a document that the back/forward cache keeps, and the URL; and the records
-# released, each a 64-bit number.
+# A traversal of the session history: the number, the record, the document that
+# the back/forward cache keeps for the entry, a byte of flags, 1 for an entry
+# that a navigation within the document made, a byte of the referrer policy, and
+# the URL; and the records released, each a 64-bit number.
 "\x18\x01\x00\x00"
 "\x19\x01\x00\x00"
 "\x01"
-"\x02"
-"\x03"
 # A document that the back/forward cache stores, restores or evicts: its ID.
 "\x1a\x01\x00\x00"
 "\x1c\x01\x00\x00"

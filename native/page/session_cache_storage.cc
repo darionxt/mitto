@@ -75,7 +75,8 @@ void SessionCacheStorage::Send(const PageCacheStorageCall& call) {
 }
 
 void SessionCacheStorage::Ask(PageCacheStorageCall call, Answer answer) {
-  used_ = true;
+  // The answer of estimate() is all that a document has of it.
+  used_ |= call.op != CacheStorageCallOp::kEstimate;
   if (!CacheStorageCallFits(call)) {
     runner_->PostTask(FROM_HERE,
                       base::BindOnce(std::move(answer), TooLargeAnswer(call)));
@@ -156,7 +157,7 @@ void SessionCacheStorage::ReleaseCache(uint64_t cache) {
 }
 
 bool SessionCacheStorage::UsedByDocument() const {
-  return used_;
+  return used_ || !questions_.empty();
 }
 
 void SessionCacheStorage::DocumentCommitted(uint64_t document) {

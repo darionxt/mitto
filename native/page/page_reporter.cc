@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -20,7 +21,10 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/error_reporting.h"
+#include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/memory_info.h"
+#include "mitto/dom/window_task.h"
 #include "mitto/page_messages.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-primitive.h"
@@ -162,12 +166,19 @@ void PageReporter::ReportUnhandledRejections(
   std::erase_if(reported_rejections_, [](const Rejection& rejection) {
     return rejection.promise.IsEmpty();
   });
+  // Those of a window that the back/forward cache keeps frozen wait for it, as
+  // Blink's task of each context does.
+  std::map<ExecutionContext*, std::vector<Rejection>> held;
   for (Rejection& rejection : rejections) {
     if (rejection.promise.IsEmpty() || rejection.context.IsEmpty()) {
       continue;
     }
     const v8::Local<v8::Context> context = rejection.context.Get(isolate_);
     if (!IsLive(context)) {
+      continue;
+    }
+    if (ExecutionContext* const frozen = FrozenContext(isolate_, context)) {
+      held[frozen].push_back(std::move(rejection));
       continue;
     }
     const v8::Context::Scope context_scope(context);
@@ -198,6 +209,13 @@ void PageReporter::ReportUnhandledRejections(
           reported_rejections_.begin(),
           reported_rejections_.begin() + kMaxReportedRejections / 10);
     }
+  }
+  for (auto& [frozen, waiting] : held) {
+    // The reporter lives as long as the Page's isolate.
+    frozen->HoldTask(
+        TaskType::kDOMManipulation,
+        base::BindOnce(&PageReporter::ReportUnhandledRejections,
+                       base::Unretained(this), std::move(waiting)));
   }
 }
 
@@ -235,6 +253,13 @@ void PageReporter::Revoke(Rejection rejection) {
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = rejection.context.Get(isolate_);
   if (!IsLive(context)) {
+    return;
+  }
+  if (ExecutionContext* const frozen = FrozenContext(isolate_, context)) {
+    frozen->HoldTask(
+        TaskType::kDOMManipulation,
+        base::BindOnce(&PageReporter::Revoke, base::Unretained(this),
+                       std::move(rejection)));
     return;
   }
   const v8::Context::Scope context_scope(context);

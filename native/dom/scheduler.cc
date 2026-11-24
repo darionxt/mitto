@@ -19,6 +19,7 @@
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/scheduler_task_context.h"
 #include "mitto/dom/task_signal.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
@@ -72,21 +73,27 @@ std::optional<v8::Local<v8::Context>> ResolverContext(
 }
 
 // Whether the back/forward cache keeps the window of the promise that
-// `resolver` settles frozen, and `run` waits for it, as a task of Blink's
-// frozen frame does.
+// `resolver` settles frozen, and `run` waits for it, posted again to `runner`
+// once the window comes back, as a task of Blink's frozen frame does.
 bool HoldIfFrozen(v8::Isolate* isolate,
                   v8::Local<v8::Promise::Resolver> resolver,
+                  scoped_refptr<base::SingleThreadTaskRunner> runner,
                   base::OnceClosure run) {
   v8::Local<v8::Context> context;
   if (!resolver->GetPromise()->GetCreationContext(isolate).ToLocal(&context)) {
     return false;
   }
-  ExecutionContext* const execution_context =
-      ExecutionContext::From(isolate, context);
-  if (!execution_context || !execution_context->IsInBackForwardCache()) {
+  ExecutionContext* const frozen = FrozenContext(isolate, context);
+  if (!frozen) {
     return false;
   }
-  execution_context->HoldTask(TaskType::kInternalDefault, std::move(run));
+  frozen->HoldTask(TaskType::kInternalDefault,
+                   base::BindOnce(
+                       [](scoped_refptr<base::SingleThreadTaskRunner> runner,
+                          base::OnceClosure run) {
+                         runner->PostTask(FROM_HERE, std::move(run));
+                       },
+                       std::move(runner), std::move(run)));
   return true;
 }
 
@@ -137,10 +144,15 @@ class DOMTask final : public cppgc::GarbageCollected<DOMTask> {
 
   // The posted task, which no longer waits once it runs.
   void Run() {
+    // One that an abort cancelled has let its resolver go, and waits no more.
+    if (cancelled_) {
+      return;
+    }
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
     const v8::HandleScope handle_scope(isolate);
     if (HoldIfFrozen(
             isolate, resolver_.Get(isolate),
+            RunnerFor(context_->priority(), /*continuation=*/false),
             base::BindOnce([](cppgc::Persistent<DOMTask> task) { task->Run(); },
                            cppgc::Persistent<DOMTask>(this)))) {
       return;
@@ -242,8 +254,12 @@ class DOMTaskContinuation final
   DOMTaskContinuation(Scheduler* scheduler,
                       v8::Isolate* isolate,
                       v8::Local<v8::Promise::Resolver> resolver,
-                      AbortSignal* signal)
-      : pending_(scheduler), resolver_(isolate, resolver), signal_(signal) {}
+                      AbortSignal* signal,
+                      Priority priority)
+      : pending_(scheduler),
+        resolver_(isolate, resolver),
+        signal_(signal),
+        priority_(priority) {}
 
   void Trace(cppgc::Visitor* visitor) const {
     pending_.Trace(visitor);
@@ -257,6 +273,7 @@ class DOMTaskContinuation final
     const v8::HandleScope held_scope(held_isolate);
     if (!finished_ &&
         HoldIfFrozen(held_isolate, resolver_.Get(held_isolate),
+                     RunnerFor(priority_, /*continuation=*/true),
                      base::BindOnce(
                          [](cppgc::Persistent<DOMTaskContinuation> task) {
                            task->Invoke();
@@ -307,6 +324,7 @@ class DOMTaskContinuation final
   PendingWork pending_;
   v8::TracedReference<v8::Promise::Resolver> resolver_;
   const cppgc::Member<AbortSignal> signal_;
+  const Priority priority_;
   bool finished_ = false;
 };
 
@@ -429,7 +447,7 @@ v8::Local<v8::Promise> Scheduler::Yield(
       task_context ? task_context->priority() : Priority::kUserVisible;
   DOMTaskContinuation* const continuation =
       bindings::MakeGarbageCollected<DOMTaskContinuation>(
-          this, isolate, resolver, abort_source);
+          this, isolate, resolver, abort_source, priority);
   if (abort_source) {
     abort_source->AddAlgorithm(
         bindings::MakeGarbageCollected<AbortAlgorithm<DOMTaskContinuation>>(

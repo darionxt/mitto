@@ -45,6 +45,15 @@ void PostTaskInContext(ExecutionContext* context,
                      std::move(task)));
 }
 
+ExecutionContext* FrozenContext(v8::Isolate* isolate,
+                                v8::Local<v8::Context> context) {
+  ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  return execution_context && execution_context->IsInBackForwardCache()
+             ? execution_context
+             : nullptr;
+}
+
 bool RunInWindowContext(Window* window, base::FunctionRef<void()> run) {
   return RunInContext(window, run);
 }

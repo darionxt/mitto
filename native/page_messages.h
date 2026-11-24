@@ -752,12 +752,11 @@ struct PageIsolation {
 // A traversal of the session history to an entry of another document, which
 // repeats the navigation that made document `record`, as Chrome's browser
 // repeats an entry's own navigation, whose Initiator and Referer the Session
-// keeps. Its payload is the number, as a request's, the record, each a 64-bit
-// number, a byte of flags, 1 for an entry that a navigation within that
-// document made and 2 for the entry that it was at when the back/forward cache
-// took it, a byte of the referrer policy, as a request's, and then the
-// URL in UTF-8, which is the rest: the record's URL for an entry of its
-// navigation, or one that a navigation within it gave it.
+// keeps. Its payload is the number, as a request's, the record and the stored
+// document, each a 64-bit number, a byte of flags, 1 for an entry that a
+// navigation within that document made, a byte of the referrer policy, as a
+// request's, and then the URL in UTF-8, which is the rest: the record's URL for
+// an entry of its navigation, or one that a navigation within it gave it.
 struct PageTraversalRequest {
   uint64_t number = 0;
   uint64_t record = kNoDocument;
@@ -767,9 +766,10 @@ struct PageTraversalRequest {
   // within the document made, the document's policy when it made it, as
   // Chrome's FrameNavigationEntry keeps the referrer of each commit.
   PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument;
-  // Whether the entry is the one that the record's document was at when the
-  // back/forward cache took it, which the Session may answer with a restore.
-  bool stored_entry = false;
+  // The document that was at the entry when the back/forward cache took it,
+  // which the Session may answer with a restore, and which is not always the
+  // record's: kNoDocument for none.
+  uint64_t stored_document = kNoDocument;
   std::string url;
 };
 

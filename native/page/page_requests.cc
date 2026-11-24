@@ -166,7 +166,7 @@ uint64_t PageRequests::StartTraversal(PageTraversalRequest traversal,
   // of first, as of any navigation, or which it answers with a restore.
   open_[number].client = &client;
   open_[number].navigation = true;
-  open_[number].may_restore = traversal.stored_entry;
+  open_[number].may_restore = traversal.stored_document != kNoDocument;
   return number;
 }
 
