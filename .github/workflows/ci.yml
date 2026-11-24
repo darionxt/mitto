@@ -55,16 +55,107 @@ jobs:
       - run: uv run pyright
       - run: uv run pytest
 
-  native:
+  # Which run's wheels the native jobs can take for a push that changes nothing but the list of differences of
+  # web-platform-tests. That push follows a run whose wheels passed every test, and only the tests of the list can come
+  # out otherwise. Whatever this job does not find, it runs everything (docs/building.md, "A push that changes only the
+  # list of differences").
+  changes:
+    name: What the push changes
+    # Only a push to a pull request that is ready for review: a draft runs no native job. Not a fork's, whose runs never
+    # take another run's artifacts.
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.reuse.outputs.run }}
+    steps:
+      # The merge commit and its parents, without the files' contents: only their names are read.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+          filter: blob:none
+          sparse-checkout: .github
+      - id: reuse
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          RUNNERS: ubuntu-latest xcode-27 windows-2025-vs2026
+        run: |
+          list=tests/wpt/differences.json
+          everything() {
+            echo "Everything runs: $1" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          # With --no-renames and the status, so that moving the list or making it a link counts as more than a change.
+          changes_only_the_list() {
+            [ "$(git diff --name-status --no-renames "$1" "$2")" = "M"$'\t'"$list" ]
+          }
+          fetch() {
+            git fetch --quiet --depth 2 --filter=blob:none origin "$1"
+          }
+
+          # What the push itself changes, from the head before it to the head after it.
+          [ "$(git rev-parse HEAD^2)" = "$HEAD_SHA" ] || everything "this run does not merge $HEAD_SHA."
+          fetch "$BEFORE" || everything "$BEFORE, the head before the push, is not there to compare with."
+          changes_only_the_list "$BEFORE" "$HEAD_SHA" || everything "the push changes more than $list."
+
+          # The last run of this pull request on that head, whatever else has run on it.
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$BEFORE&per_page=100" --jq '
+            [.workflow_runs[] | select(.head_repository.full_name == env.GITHUB_REPOSITORY and .head_branch == env.HEAD_REF and any(.pull_requests[]; .number == (env.NUMBER | tonumber)))]
+            | max_by(.run_number).id // empty')" || everything "the runs on $BEFORE cannot be listed."
+          [ -n "$run" ] || everything "this pull request has no run on $BEFORE."
+
+          # Each of its native jobs passed, on one commit, which the job's last step names. No job that was skipped can
+          # count: it has no steps, and no name with a runner in it.
+          passed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" --jq '
+            .jobs[] | select(.conclusion == "success") | .name as $job | .steps[]
+            | select(.conclusion == "success" and (.name | test("^Passed on [0-9a-f]{40}$")))
+            | "\($job) \(.name | ltrimstr("Passed on "))"')" || everything "the jobs of run $run cannot be listed."
+          tested=""
+          for runner in $RUNNERS; do
+            commit="$(sed -n "s/^Native core on $runner //p" <<< "$passed")"
+            [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || everything "run $run did not pass on $runner."
+            [ "${tested:-$commit}" = "$commit" ] || everything "run $run passed on more than one commit."
+            tested="$commit"
+          done
+
+          # They passed on a merge of that head, and what merges now differs from it by the list alone, so main has not
+          # moved either, and the workflow that ran then is this one.
+          fetch "$tested" || everything "$tested, which run $run passed on, is not there to compare with."
+          [ "$(git rev-parse "$tested^2")" = "$BEFORE" ] || everything "run $run passed on $tested, which does not merge $BEFORE."
+          changes_only_the_list "$tested" "$GITHUB_SHA" || everything "more than $list differs from what run $run passed on."
+
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | .name')" || everything "the artifacts of run $run cannot be listed."
+          for runner in $RUNNERS; do
+            grep -Fqx "wheel-$runner" <<< "$artifacts" || everything "run $run no longer has the wheel of $runner."
+          done
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "Only $list differs from what run $run passed on, so this run tests its wheels: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # A job for each Host rather than one matrix, so that a Host's web-platform-tests wait for its own native job alone.
+  # Each has a matrix of one all the same. GitHub counts a skipped job as a pass of the check of its name, and a job
+  # that a condition skips keeps its name as it is written below, with the expression in it. No check that main requires
+  # has that name, while a job without a matrix would pass "Native core on ubuntu-latest" whenever it is skipped.
+  native-linux:
     name: Native core on ${{ matrix.runner }}
+    needs: changes
     # A draft pull request builds nothing: it runs once it is marked ready for review, at the head of the merge queue.
-    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
+    # Nor does a push that changes only the list of differences, whose wheels the reuse jobs take. Should "changes"
+    # fail, or be skipped, this builds as on any other push.
+    if: &builds ${{ !cancelled() && !(github.event_name == 'pull_request' && github.event.pull_request.draft) && (needs.changes.result != 'success' || needs.changes.outputs.run == '') }}
     runs-on: ${{ matrix.runner }}
     # From nothing, as in the nightly run, the library takes 13 to 42 minutes, the Runtime 58 to 107 more and the tests
     # 9 to 12.
     timeout-minutes: 240
     strategy:
-      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
@@ -75,36 +166,13 @@ jobs:
             html-tree-builder-test: html_tree_builder_test
             media-query-test: media_query_test
             environment-python: bin/python
-          # The one hosted macOS image with the macOS SDK that Chromium's bots use.
-          - runner: xcode-27
-            library: libmitto_core.dylib
-            core-test: mitto_core_test
-            page-program: mitto_page
-            # One build step per core. With ninja's default of 5, the Runtime's build took 108 minutes rather than 83.
-            runtime-jobs: 3
-            html-tokenizer-test: html_tokenizer_test
-            html-tree-builder-test: html_tree_builder_test
-            media-query-test: media_query_test
-            environment-python: bin/python
-          # Visual Studio 2026, which Chromium 157 asks for.
-          - runner: windows-2025-vs2026
-            library: mitto_core.dll
-            # The debug information of the DLL and of the program, which the wheel's symbols archive holds.
-            symbols: mitto_core.dll.pdb
-            core-test: mitto_core_test.exe
-            page-program: mitto_page.exe
-            page-program-symbols: mitto_page.exe.pdb
-            html-tokenizer-test: html_tokenizer_test.exe
-            html-tree-builder-test: html_tree_builder_test.exe
-            media-query-test: media_query_test.exe
-            environment-python: Scripts/python.exe
-    env:
+    env: &uv-locked
       UV_LOCKED: "1"
-    defaults:
+    defaults: &bash
       run:
         # Git's bash on Windows.
         shell: bash
-    steps:
+    steps: &native-steps
       - if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -187,15 +255,16 @@ jobs:
           done
           # The notices of what this library links, which the test of the wheel's notices compares with them.
           uv run python -m tools.workspace.notices host "$build_dir" > "$RUNNER_TEMP/native-core/host-notices.txt"
-      # Before the tests, so that a test that fails does not waste the build.
-      - if: steps.cached-library.outputs.cache-hit != 'true' && !inputs.from-nothing
+      # Before the tests, so that a test that fails does not waste the build. A full run by hand saves nothing: only its
+      # own branch could restore it, and it would take room from main's caches.
+      - if: steps.cached-library.outputs.cache-hit != 'true' && !inputs.from-nothing && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/native-core
           key: ${{ steps.cached-library.outputs.cache-primary-key }}
       # Only main saves a build directory, the first time it builds with a tools/workspace, and on Windows with an image:
       # one restored from another image's directory is saved again, under this image's key.
-      - if: steps.cached-library.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
+      - if: steps.cached-library.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && steps.cached-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
@@ -216,12 +285,12 @@ jobs:
           for file in $PAGE_PROGRAM $PAGE_PROGRAM_SYMBOLS $HTML_TREE_BUILDER_TEST; do
             cp "$build_dir/$file" "$RUNNER_TEMP/runtime"
           done
-      - if: steps.cached-runtime.outputs.cache-hit != 'true' && !inputs.from-nothing
+      - if: steps.cached-runtime.outputs.cache-hit != 'true' && !inputs.from-nothing && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/runtime
           key: ${{ steps.cached-runtime.outputs.cache-primary-key }}
-      - if: steps.cached-runtime.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-runtime-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
+      - if: steps.cached-runtime.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && steps.cached-runtime-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/runtime
@@ -265,7 +334,8 @@ jobs:
           if-no-files-found: error
       # A new environment, with the locked tools and the package from the wheel, so that the
       # tests load the library inside the installed package and import nothing from src/.
-      - name: Install the wheel
+      - &install-the-wheel
+        name: Install the wheel
         env:
           UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/wheel-env
           ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
@@ -301,30 +371,159 @@ jobs:
           MITTO_PAGE_PROGRAM="$("$ENVIRONMENT_PYTHON" -c 'import importlib.util, os, sys; print(os.path.join(importlib.util.find_spec("mitto").submodule_search_locations[0], sys.argv[1]))' "$PAGE_PROGRAM")"
           export MITTO_PAGE_PROGRAM
           "$ENVIRONMENT_PYTHON" -m pytest -rs tests/test_page_process.py
+      # The last step, so that it passes only when every step before it did. A push that changes only the list of
+      # differences finds the commit here, in what the Actions API says of the job (the job "changes" above).
+      - &passed-on
+        name: Passed on ${{ github.sha }}
+        run: ":"
 
-  wpt:
-    name: web-platform-tests on ${{ matrix.runner }}
-    # From the wheel that the native job built on the same Host, so it waits for that job on every Host. A draft pull
-    # request builds no wheel, and runs this once it is marked ready for review.
-    needs: native
+  native-macos:
+    name: Native core on ${{ matrix.runner }}
+    needs: changes
+    if: *builds
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 240
     strategy:
-      fail-fast: false
+      matrix:
+        include:
+          # The one hosted macOS image with the macOS SDK that Chromium's bots use.
+          - runner: xcode-27
+            library: libmitto_core.dylib
+            core-test: mitto_core_test
+            page-program: mitto_page
+            # One build step per core. With ninja's default of 5, the Runtime's build took 108 minutes rather than 83.
+            runtime-jobs: 3
+            html-tokenizer-test: html_tokenizer_test
+            html-tree-builder-test: html_tree_builder_test
+            media-query-test: media_query_test
+            environment-python: bin/python
+    env: *uv-locked
+    defaults: *bash
+    steps: *native-steps
+
+  native-windows:
+    name: Native core on ${{ matrix.runner }}
+    needs: changes
+    if: *builds
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      matrix:
+        include:
+          # Visual Studio 2026, which Chromium 157 asks for.
+          - runner: windows-2025-vs2026
+            library: mitto_core.dll
+            # The debug information of the DLL and of the program, which the wheel's symbols archive holds.
+            symbols: mitto_core.dll.pdb
+            core-test: mitto_core_test.exe
+            page-program: mitto_page.exe
+            page-program-symbols: mitto_page.exe.pdb
+            html-tokenizer-test: html_tokenizer_test.exe
+            html-tree-builder-test: html_tree_builder_test.exe
+            media-query-test: media_query_test.exe
+            environment-python: Scripts/python.exe
+    env: *uv-locked
+    defaults: *bash
+    steps: *native-steps
+
+  # What takes the native jobs' place when a push changes only the list of differences: the same wheel, and the tests
+  # that read the list, which run on the Host as in the native job. Like the native jobs, each has a matrix of one.
+  reuse-linux:
+    name: Native core on ${{ matrix.runner }}
+    needs: changes
+    if: &reuses ${{ needs.changes.outputs.run != '' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions: &reads-artifacts
+      actions: read
+      contents: read
+    strategy:
       matrix:
         include:
           - runner: ubuntu-latest
             environment-python: bin/python
+    env: *uv-locked
+    defaults: *bash
+    steps: &reuse-steps
+      - if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      # The wheel that the native job of the run before built and tested.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheel-${{ matrix.runner }}
+          path: ${{ runner.temp }}/dist
+          run-id: ${{ needs.changes.outputs.run }}
+          github-token: ${{ github.token }}
+      - *install-the-wheel
+      # The only tests that read the list. Every other test came out as it did in the run before: nothing that it reads
+      # has changed.
+      - name: Test what reads the list of differences
+        env:
+          ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
+        run: |
+          "$ENVIRONMENT_PYTHON" -m pytest -rs tests/test_wpt*.py
+      # For the web-platform-tests of this run, and for the next push that changes only the list.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-${{ matrix.runner }}
+          path: ${{ runner.temp }}/dist/mitto-*
+          if-no-files-found: error
+          compression-level: 0
+      - *passed-on
+
+  reuse-macos:
+    name: Native core on ${{ matrix.runner }}
+    needs: changes
+    if: *reuses
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions: *reads-artifacts
+    strategy:
+      matrix:
+        include:
           - runner: xcode-27
             environment-python: bin/python
+    env: *uv-locked
+    defaults: *bash
+    steps: *reuse-steps
+
+  reuse-windows:
+    name: Native core on ${{ matrix.runner }}
+    needs: changes
+    if: *reuses
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions: *reads-artifacts
+    strategy:
+      matrix:
+        include:
           - runner: windows-2025-vs2026
             environment-python: Scripts/python.exe
-    env:
-      UV_LOCKED: "1"
-    defaults:
-      run:
-        shell: bash
-    steps:
+    env: *uv-locked
+    defaults: *bash
+    steps: *reuse-steps
+
+  wpt-linux:
+    name: web-platform-tests on ${{ matrix.runner }}
+    # From this Host's wheel, which its native job made or, for a push that changes only the list, its reuse job took.
+    # So it waits for this Host's job alone, and runs only when that job passed. A draft pull request builds no wheel,
+    # and runs this once it is marked ready for review.
+    needs: [native-linux, reuse-linux]
+    if: &has-a-wheel ${{ !cancelled() && contains(needs.*.result, 'success') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            environment-python: bin/python
+    env: *uv-locked
+    defaults: *bash
+    steps: &wpt-steps
       # The copy of web-platform-tests holds files whose line endings a test checks.
       - if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
@@ -337,13 +536,7 @@ jobs:
           name: wheel-${{ matrix.runner }}
           path: ${{ runner.temp }}/dist
       # As the native job installs it, so that the Pages run the Page program of the installed package.
-      - name: Install the wheel
-        env:
-          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/wheel-env
-          ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
-        run: |
-          uv sync --no-install-project
-          uv pip install --python "$ENVIRONMENT_PYTHON" "$RUNNER_TEMP"/dist/*.whl
+      - *install-the-wheel
       # Against Chrome's results and the list of differences in tests/wpt. docs/wpt.md says how to write the list from
       # the results that this keeps. Most Pages wait out a timeout with nothing to do, so 12 run at once on 4 cores.
       - name: Run web-platform-tests
@@ -357,3 +550,33 @@ jobs:
           name: wpt-results-${{ matrix.runner }}
           path: ${{ runner.temp }}/wpt-results.json
           if-no-files-found: ignore
+
+  wpt-macos:
+    name: web-platform-tests on ${{ matrix.runner }}
+    needs: [native-macos, reuse-macos]
+    if: *has-a-wheel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - runner: xcode-27
+            environment-python: bin/python
+    env: *uv-locked
+    defaults: *bash
+    steps: *wpt-steps
+
+  wpt-windows:
+    name: web-platform-tests on ${{ matrix.runner }}
+    needs: [native-windows, reuse-windows]
+    if: *has-a-wheel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - runner: windows-2025-vs2026
+            environment-python: Scripts/python.exe
+    env: *uv-locked
+    defaults: *bash
+    steps: *wpt-steps
