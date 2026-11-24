@@ -231,8 +231,8 @@ Response* Response::Clone(bindings::ExceptionState& exception_state) {
     exception_state.ThrowTypeError("Response body is already used");
     return nullptr;
   }
-  // FetchResponseData::Clone(): the body goes to both through a tee. An
-  // opaque response's internal body stays with it, as nothing reads it.
+  // FetchResponseData::Clone(): the body goes to both through a tee, and so
+  // does an opaque response's internal body, which each of them keeps loading.
   Response* const response = bindings::MakeGarbageCollected<Response>();
   response->type_ = type_;
   response->status_ = status_;
@@ -240,15 +240,20 @@ Response* Response::Clone(bindings::ExceptionState& exception_state) {
   response->url_ = url_;
   response->redirected_ = redirected_;
   response->headers_ = headers_->Clone();
-  if (body_buffer_) {
+  for (const auto member :
+       {&Response::body_buffer_, &Response::internal_body_buffer_}) {
+    BodyStreamBuffer* const body = (this->*member).Get();
+    if (!body) {
+      continue;
+    }
     BodyStreamBuffer* branch1 = nullptr;
     BodyStreamBuffer* branch2 = nullptr;
-    body_buffer_->Tee(&branch1, &branch2, exception_state);
+    body->Tee(&branch1, &branch2, exception_state);
     if (exception_state.HadException()) {
       return nullptr;
     }
-    body_buffer_ = branch1;
-    response->body_buffer_ = branch2;
+    this->*member = branch1;
+    response->*member = branch2;
   }
   return response;
 }

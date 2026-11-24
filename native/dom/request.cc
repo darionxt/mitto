@@ -64,6 +64,18 @@ bool HasMissingMember(const bindings::RequestInit& init) {
          init.private_token.has_value() || init.retry_options.has_value();
 }
 
+// Whether `origin` made `url`, as SecurityOrigin::Create() reads it: a blob:
+// URL of an opaque origin is of the origin that registered it.
+bool IsSameOriginWithUrl(const url::Origin& origin, const GURL& url) {
+  if (url.SchemeIsBlob()) {
+    if (const std::optional<BlobUrlRegistry::Entry> entry =
+            BlobUrlRegistry::Get().ResolveEntry(url)) {
+      return origin.IsSameOriginWith(entry->origin);
+    }
+  }
+  return origin.IsSameOriginWith(url);
+}
+
 // Whether `init` has any member, which resets what a Request takes from
 // another.
 bool AreAnyMembersPresent(const bindings::RequestInit& init) {
@@ -249,7 +261,8 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
                              parsed.host().empty() &&
                              parsed.path() == "client";
       request->referrer_ =
-          is_client || !document.GetSecurityOrigin().IsSameOriginWith(parsed)
+          is_client ||
+                  !IsSameOriginWithUrl(document.GetSecurityOrigin(), parsed)
               ? std::string(kClientReferrer)
               : parsed.spec();
     }
@@ -318,10 +331,16 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
                                           : Headers::Guard::kRequest);
   if (init.headers) {
     request->headers_->FillWith(*init.headers, exception_state);
-  } else if (input_request) {
+  } else if (input_request && AreAnyMembersPresent(init)) {
     for (const auto& [name, value] : input_request->headers_->list()) {
       request->headers_->Append(name, value, exception_state);
     }
+  } else if (input_request) {
+    // The input's list as it is, such as one from a cache, whose mode keeps
+    // scripts from adding some of its lines.
+    const Headers::Guard guard = request->headers_->guard();
+    request->headers_ = input_request->headers_->Clone();
+    request->headers_->set_guard(guard);
   }
   if (exception_state.HadException()) {
     return nullptr;

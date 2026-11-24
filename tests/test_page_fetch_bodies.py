@@ -802,6 +802,32 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
         "GET,,,,no-cors,omit,default,follow,,false,false,false,half / "
         "GET,,,,no-cors,omit,default,follow,,false,false,false,half",
     ),
+    "the header lines of copies of a cache's request": (
+        """
+        const cache = await caches.open("copies");
+        await cache.put(new Request("/h", { headers: { "X-Version": "1", "Accept-Language": "fr" } }), new Response("x"));
+        const key = (await cache.keys())[0]; const names = (r) => [...r.headers.keys()].join();
+        const copy = new Request(key); copy.headers.set("X-Late", "1"); copy.headers.delete("X-Version");
+        const made = [{ method: "GET" }, { mode: "cors" }, { signal: null }, { priority: "high" }];
+        return [names(key), names(new Request(key)), names(new Request(key, {})), names(copy),
+                ...made.map((init) => names(new Request(key, init)))].join(" / ");
+        """,
+        "accept-language,x-version / accept-language,x-version / accept-language,x-version / "
+        "accept-language,x-version / accept-language / accept-language,x-version / accept-language / accept-language",
+    ),
+    "the referrers of an opaque origin's blobs": (
+        """
+        const script = `
+            const url = URL.createObjectURL(new Blob(["x"]));
+            const of = () => new Request("https://example.test/", { referrer: url }).referrer;
+            const kept = of() === url;
+            URL.revokeObjectURL(url);
+            postMessage([self.origin, kept, of()].join());`;
+        const worker = new Worker("data:text/javascript," + encodeURIComponent(script));
+        return new Promise((resolve) => { worker.onmessage = (event) => resolve(event.data); });
+        """,
+        "null,true,about:client",
+    ),
     "the referrers of an initial about:blank frame's requests": (
         """
         const f = document.createElement("iframe"); document.body.append(f);
