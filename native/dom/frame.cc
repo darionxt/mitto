@@ -48,16 +48,16 @@ void Frame::DidShowDocument(Window& window) {
                 });
 }
 
-bool Frame::AddOneTimeMessage(const std::string& text) {
+bool Frame::AddPolicyMessage(const std::string& text, bool discard_duplicate) {
   constexpr size_t kMaxMessages = 1000;
   const size_t hash = base::FastHash(text);
-  if (std::ranges::contains(one_time_messages_, hash)) {
+  if (discard_duplicate && std::ranges::contains(policy_messages_, hash)) {
     return false;
   }
-  if (one_time_messages_.size() == kMaxMessages) {
-    one_time_messages_.pop_front();
+  if (policy_messages_.size() == kMaxMessages) {
+    policy_messages_.pop_front();
   }
-  one_time_messages_.push_back(hash);
+  policy_messages_.push_back(hash);
   return true;
 }
 

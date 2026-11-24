@@ -1579,7 +1579,7 @@ Document& PageFrame::CommitDocument(
   }
   Window::Current().SetDocument(document);
   if (!parent_) {
-    ClearOneTimeMessages();
+    ClearPolicyMessages();
   }
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();

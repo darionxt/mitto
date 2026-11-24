@@ -529,8 +529,10 @@ url::Origin Window::GetSecurityOrigin() const {
   return GetDocument().GetOrigin();
 }
 
-void Window::AddConsoleMessageOnce(ConsoleLevel level, std::string text) {
-  if (!frame_ || frame_->Top().AddOneTimeMessage(text)) {
+void Window::AddPolicyMessage(ConsoleLevel level,
+                              std::string text,
+                              bool discard_duplicate) {
+  if (frame_ && frame_->Top().AddPolicyMessage(text, discard_duplicate)) {
     AddConsoleMessage(level, std::move(text));
   }
 }

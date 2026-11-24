@@ -185,6 +185,11 @@ class Document : public Node {
   void SetBody(HTMLElement* body, bindings::ExceptionState& exception_state);
   HTMLHeadElement* Head() const;
   Window* DefaultView() const { return window_.Get(); }
+  // The window of its execution context, which for a document of no window is
+  // the one that made it, or null if none did.
+  Window* ContextWindow() const {
+    return window_ ? window_.Get() : creator_.Get();
+  }
   // The tasks that the document's elements queue theirs in, as Blink's
   // GetTaskRunner(): its window's, or for a document of no window, such as
   // one that createHTMLDocument() made, the current window's, as such a
@@ -892,6 +897,7 @@ class Document : public Node {
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   cppgc::Member<Window> window_;
+  cppgc::Member<Window> creator_;
   cppgc::Member<Element> css_target_;
   cppgc::Member<HTMLCollection> images_;
   cppgc::Member<HTMLCollection> embeds_;

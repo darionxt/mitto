@@ -190,6 +190,10 @@ Document::Document(bool is_html)
     : Node(nullptr),
       is_html_(is_html),
       content_type_(is_html ? u"text/html" : u"application/xml") {
+  v8::Isolate* const isolate = v8::Isolate::TryGetCurrent();
+  if (isolate && isolate->InContext()) {
+    creator_ = Window::From(isolate, isolate->GetCurrentContext());
+  }
   // An HTMLDocument clears its XML version, as Blink's does.
   if (!is_html) {
     xml_version_ = u"1.0";
@@ -206,6 +210,7 @@ const bindings::WrapperTypeInfo* Document::GetWrapperTypeInfo() const {
 void Document::Trace(cppgc::Visitor* visitor) const {
   Node::Trace(visitor);
   visitor->Trace(window_);
+  visitor->Trace(creator_);
   visitor->Trace(css_target_);
   visitor->Trace(images_);
   visitor->Trace(embeds_);

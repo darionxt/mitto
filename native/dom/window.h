@@ -293,9 +293,12 @@ class Window final : public WindowProperties, public ExecutionContext {
   // and clears once another window takes its place.
   void SetFrame(mitto::Frame* frame) { frame_ = frame; }
   mitto::Frame* GetFrame() const { return frame_; }
-  // The same as AddConsoleMessage(), but for a message that the Page's frames
-  // have been told of so before, as FrameConsole discards a duplicate.
-  void AddConsoleMessageOnce(ConsoleLevel level, std::string text);
+  // The same as AddConsoleMessage(), of a permissions policy: nothing for a
+  // window of no frame, or for one that has been said so before, if a duplicate
+  // is to be discarded, as FrameConsole discards it.
+  void AddPolicyMessage(ConsoleLevel level,
+                        std::string text,
+                        bool discard_duplicate);
   // Whether its frame is under another.
   bool IsInFrame() const;
   // The process that Chrome has its document in.

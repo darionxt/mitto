@@ -117,12 +117,24 @@
     frame.remove();
     const parsed = new DOMParser().parseFromString(`<iframe allow="gamepad 'none'; unparsed"></iframe>`, 'text/html').querySelector('iframe').featurePolicy;
     results['in no document'] = [document.createElement('iframe').featurePolicy !== null, parsed.allowsFeature('gamepad'), parsed.allowsFeature('camera'), parsed.getAllowlistForFeature('camera')];
+    const child = document.createElement('iframe');
+    child.allow = `camera 'none'`;
+    document.body.append(child);
+    const made = new child.contentWindow.DOMParser().parseFromString('<iframe></iframe>', 'text/html').querySelector('iframe');
+    const getter = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'featurePolicy').get;
+    results['of another window'] = getter.call(made).allowsFeature('camera');
+    const keptPolicy = child.contentDocument.featurePolicy;
+    child.remove();
+    results['of a removed frame'] = [keptPolicy.allowsFeature('removed'), keptPolicy.allowsFeature('camera')];
     const about = document.createElement('iframe');
     about.src = 'about:other';
     results['another about: URL'] = ofElement(about);
     about.src = 'http://[::1]:1/';
     about.allow = 'camera';
     results['an IPv6 address'] = ofElement(about);
+    about.src = 'http://invalid:port/path';
+    about.allow = '';
+    results['an invalid URL'] = ofElement(about);
     // A length limit in code units.
     about.src = '/child';
     about.allow = `gamepad 'none'; camera ${'\u00e9'.repeat(40000)}`;
@@ -131,10 +143,12 @@
     results['too long an attribute'] = ofElement(about);
     // A warning said before, again after others.
     for (let i = 0; i < 3; ++i) about.allow = `repeated${i % 2}`;
-    const made = document.createElement('iframe');
-    results['the same object'] = made.featurePolicy === made.featurePolicy;
-    results['its interface'] = made.featurePolicy.constructor.name;
-    results['unknown names'] = [made.featurePolicy.allowsFeature('unknown'), document.featurePolicy.allowsFeature('unknown'), document.featurePolicy.allowsFeature('camera', 'nonsense'),
+    for (let i = 0; i < 2; ++i) document.featurePolicy.allowsFeature('said');
+    about.allow = 'said';
+    const plainFrame = document.createElement('iframe');
+    results['the same object'] = plainFrame.featurePolicy === plainFrame.featurePolicy;
+    results['its interface'] = plainFrame.featurePolicy.constructor.name;
+    results['unknown names'] = [plainFrame.featurePolicy.allowsFeature('unknown'), document.featurePolicy.allowsFeature('unknown'), document.featurePolicy.allowsFeature('camera', 'nonsense'),
       document.featurePolicy.getAllowlistForFeature('unknown')];
     return results;
   });

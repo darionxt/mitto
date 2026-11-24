@@ -260,7 +260,7 @@ bool AllowsUnloadListener(EventTarget& target, const std::u16string& type) {
   }
   Window* window = target.ToWindow();
   if (Node* const node = target.ToNode()) {
-    window = node->GetDocument().DefaultView();
+    window = node->GetDocument().ContextWindow();
   } else if (!window) {
     // Another target's execution context is the one that made it.
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
