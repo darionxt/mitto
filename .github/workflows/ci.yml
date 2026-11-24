@@ -34,7 +34,7 @@ jobs:
       matrix:
         # Linux x86_64, macOS arm64 and Windows x64. macos-latest often gets no runner. A draft pull request runs Linux
         # only: it is not in the merge queue yet, and macOS and Windows runners are few.
-        runner: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.draft && '["ubuntu-latest"]' || '["ubuntu-latest", "xcode-27", "windows-2025-vs2026"]') }}
+        runner: ${{ fromJSON(github.event_name == 'pull_request' && false && '["ubuntu-latest"]' || '["ubuntu-latest", "xcode-27", "windows-2025-vs2026"]') }}
         # The oldest supported Python and the newest released one.
         python: ["3.12", "3.15"]
     env:
@@ -63,7 +63,7 @@ jobs:
     name: What the push changes
     # Only a push to a pull request that is ready for review: a draft runs no native job. Not a fork's, whose runs never
     # take another run's artifacts.
-    if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && !false && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -150,7 +150,7 @@ jobs:
     # A draft pull request builds nothing: it runs once it is marked ready for review, at the head of the merge queue.
     # Nor does a push that changes only the list of differences, whose wheels the reuse jobs take. Should "changes"
     # fail, or be skipped, this builds as on any other push.
-    if: &builds ${{ !cancelled() && !(github.event_name == 'pull_request' && github.event.pull_request.draft) && (needs.changes.result != 'success' || needs.changes.outputs.run == '') }}
+    if: &builds ${{ !cancelled() && !(github.event_name == 'pull_request' && false) && (needs.changes.result != 'success' || needs.changes.outputs.run == '') }}
     runs-on: ${{ matrix.runner }}
     # From nothing, as in the nightly run, the library takes 13 to 42 minutes, the Runtime 58 to 107 more and the tests
     # 9 to 12.
