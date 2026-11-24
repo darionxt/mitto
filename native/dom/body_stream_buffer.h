@@ -11,6 +11,8 @@
 #ifndef MITTO_DOM_BODY_STREAM_BUFFER_H_
 #define MITTO_DOM_BODY_STREAM_BUFFER_H_
 
+#include <stdint.h>
+
 #include <optional>
 #include <string>
 
@@ -135,6 +137,8 @@ class BodyStreamBuffer final : public UnderlyingByteSourceBase,
   cppgc::Persistent<BodyStreamBuffer> keep_alive_;
   cppgc::Member<FetchDataLoader> loader_;
   cppgc::Member<LoaderClient> loader_client_;
+  // What tells the buffer, while it loads, that the context goes.
+  uint64_t context_destroyed_callback_ = 0;
   // The signal of the request that brought the body, if any.
   cppgc::Member<AbortSignal> signal_;
   // Whether the stream needs more data even if the desired size is not

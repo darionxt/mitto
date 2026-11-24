@@ -229,20 +229,20 @@ void BodyStreamBuffer::StartLoading(FetchDataLoader* loader,
   }
   keep_alive_ = this;
   loader_client_ = bindings::MakeGarbageCollected<LoaderClient>(this, client);
-  loader->Start(handle, loader_client_.Get());
   // A load that waits for more of the body stops when the context goes, a
   // window's or a worker's, as Blink's LoaderClient, an
   // ExecutionContextLifecycleObserver, stops it, so that it keeps nothing
-  // alive across a navigation.
-  if (loader_ && context_) {
-    context_->AddContextDestroyedCallback(base::BindOnce(
-        [](cppgc::WeakPersistent<BodyStreamBuffer> buffer) {
-          if (buffer) {
-            buffer->ContextDestroyed();
-          }
-        },
-        cppgc::WeakPersistent<BodyStreamBuffer>(this)));
-  }
+  // alive across a navigation. The first read can run script, which may end
+  // the context.
+  context_destroyed_callback_ =
+      context_->AddContextDestroyedCallback(base::BindOnce(
+          [](cppgc::WeakPersistent<BodyStreamBuffer> buffer) {
+            if (buffer) {
+              buffer->ContextDestroyed();
+            }
+          },
+          cppgc::WeakPersistent<BodyStreamBuffer>(this)));
+  loader->Start(handle, loader_client_.Get());
 }
 
 bool BodyStreamBuffer::HasContext() const {
@@ -487,6 +487,9 @@ void BodyStreamBuffer::EndLoading() {
   keep_alive_.Clear();
   loader_ = nullptr;
   loader_client_ = nullptr;
+  if (context_) {
+    context_->RemoveContextDestroyedCallback(context_destroyed_callback_);
+  }
 }
 
 void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,

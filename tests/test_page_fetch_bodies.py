@@ -1066,18 +1066,27 @@ def test_a_cache_put_whose_bodys_frame_goes_keeps_nothing(page_url: str, monkeyp
       (async () => {
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const cache = await caches.open("kept"); const refs = []; globalThis.cache = cache;
-        const put = async (i) => {
-            const f = document.createElement("iframe"); document.body.append(f); const w = f.contentWindow;
+        const put = (i, response) => {
             const request = new Request(location.origin + "/" + i);
-            let controller;
-            const response = new w.Response(new w.ReadableStream({ start(c) { controller = c; } }));
             cache.put(request, response);
-            controller.enqueue(new Uint8Array(10));
             refs.push(new WeakRef(request), new WeakRef(response));
+        };
+        const frame = () => { const f = document.createElement("iframe"); document.body.append(f); return f; };
+        // A frame that goes while more of its body is read, and one that the body's first read removes.
+        const later = async (i) => {
+            const f = frame(); const w = f.contentWindow; let controller;
+            put(i, new w.Response(new w.ReadableStream({ start(c) { controller = c; } })));
+            controller.enqueue(new Uint8Array(10));
             await wait(10);
             f.remove();
         };
-        for (let i = 0; i < 5; i++) await put(i);
+        const inPull = async (i) => {
+            const f = frame();
+            const response = new f.contentWindow.Response(new ReadableStream({ pull() { f.remove(); } }, { highWaterMark: 0 }));
+            await wait(0);
+            put(i, response);
+        };
+        for (let i = 0; i < 5; i++) { await later(i); await inPull(i + 5); }
         for (let i = 0; i < 5; i++) { await wait(50); gc(); }
         return refs.filter((ref) => ref.deref()).length;
       })()
