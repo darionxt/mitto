@@ -448,36 +448,72 @@
    }
   },
   "a message as its document goes": {
-   "same origin": [
-    [
-     "pagehide",
-     "null"
+   "same origin": {
+    "as it comes": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
     ],
-    [
-     "hidden",
-     "null"
+    "later": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
     ]
-   ],
-   "same site": [
-    [
-     "pagehide",
-     "null"
+   },
+   "same site": {
+    "as it comes": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
     ],
-    [
-     "hidden",
-     "null"
+    "later": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
     ]
-   ],
-   "another site": [
-    [
-     "pagehide",
-     "null"
+   },
+   "another site": {
+    "as it comes": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
     ],
-    [
-     "hidden",
-     "null"
+    "later": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
     ]
-   ]
+   }
   },
   "a sender that removed its own frame": {
    "same origin": [

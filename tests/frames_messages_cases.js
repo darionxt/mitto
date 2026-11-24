@@ -311,8 +311,12 @@
     const results = {};
     for (const kind in CHILD_OF) {
       const element = await add(`${CHILD_OF[kind]}?hide`);
+      const sources = [];
+      const listener = (event) => sources.push([event.data, named(event.source, element)]);
+      addEventListener('message', listener);
       const events = await heard(2, () => load(element, `${CHILD_OF[kind]}?next`));
-      results[kind] = events.filter((event) => event.data !== 'unload').map((event) => [event.data, named(event.source, element)]);
+      removeEventListener('message', listener);
+      results[kind] = {'as it comes': sources, later: events.map((event) => [event.data, named(event.source, element)])};
       element.remove();
     }
     return results;
