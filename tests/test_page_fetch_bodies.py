@@ -432,6 +432,9 @@ def page_url(native_library: Any) -> Iterator[str]:
             if self.path == "/cached":
                 cached_requests.append(self.path)
                 self.send_header("Cache-Control", "max-age=600")
+            if self.path == "/twice":
+                self.send_header("X-Twice", "1")
+                self.send_header("x-twice", "2")
             if self.path == "/requests":
                 body = str(len(cached_requests)).encode()
             self.send_header("Content-Type", "text/html")
@@ -896,6 +899,15 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
         """,
         "null,true,about:client",
     ),
+    "a line that came twice, from a cache": (
+        """
+        const cache = await caches.open("twice"); const r = await fetch("/twice");
+        const before = [r.headers.get("x-twice"), [...r.headers.keys()].filter((name) => name === "x-twice").length];
+        await cache.put("/t", r);
+        return [...before, (await cache.match("/t")).headers.get("x-twice")].join(" / ");
+        """,
+        "1, 2 / 1 / 1, 2",
+    ),
     "an opaque response put twice": (
         """
         const cache = await caches.open("opaque");
@@ -972,7 +984,7 @@ def test_an_opaque_response_counts_the_same_at_each_hit_of_the_http_cache(page_u
         const used = async () => (await navigator.storage.estimate()).usageDetails?.caches ?? 0;
         let last = await used(); const grew = [];
         for (let i = 0; i < 5; ++i) {
-            await cache.put("/" + i, await fetch(url, { mode: "no-cors" }));
+            await cache.put("/" + i, await fetch(url + "#" + i, { mode: "no-cors" }));
             const now = await used(); grew.push(now - last); last = now;
         }
         const hits = grew.slice(1);

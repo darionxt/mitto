@@ -1870,10 +1870,14 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
       const bool was_cached =
           !event.load_timing.request_start_time.is_null() &&
           event.response_time < event.load_timing.request_start_time;
-      response.padding = was_cached ? ComputeStableResponsePadding(
-                                          request.document_origin(), event.url,
-                                          event.response_time, event.method)
-                                    : ComputeRandomResponsePadding();
+      // The fragment, which the HTTP cache does not know, makes no other
+      // padding.
+      response.padding = was_cached
+                             ? ComputeStableResponsePadding(
+                                   request.document_origin(),
+                                   GURL(event.url).GetWithoutRef().spec(),
+                                   event.response_time, event.method)
+                             : ComputeRandomResponsePadding();
     }
     response.validated = event.validated;
     response.received_bytes = event.received_bytes;

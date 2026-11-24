@@ -1,11 +1,16 @@
 #include "mitto/dom/fetch_loader.h"
 
+#include <map>
 #include <set>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -182,15 +187,31 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   // status, whose bytes wait in the consumer until they are read. Unless the
   // response says no-store, Blink's BufferingBytesConsumer reads them 50 ms
   // after the body starts.
-  Headers* const all = Headers::Create(Headers::Guard::kNone);
+  //
+  // ResourceResponse::AddHttpHeaderField() joins the values of a name's lines,
+  // which the Cache API then stores as one.
+  std::vector<std::pair<std::string, std::string>> lines;
+  std::map<std::string, size_t> places;
   for (const std::string_view line :
        base::SplitStringPiece(head.headers, "\n", base::KEEP_WHITESPACE,
                               base::SPLIT_WANT_NONEMPTY)) {
     const size_t colon = line.find(": ");
-    if (colon != std::string_view::npos) {
-      all->AppendLine(std::string(line.substr(0, colon)),
-                      std::string(line.substr(colon + 2)));
+    if (colon == std::string_view::npos) {
+      continue;
     }
+    const std::string_view name = line.substr(0, colon);
+    const std::string_view value = line.substr(colon + 2);
+    const auto [place, added] =
+        places.emplace(base::ToLowerASCII(name), lines.size());
+    if (added) {
+      lines.emplace_back(name, value);
+    } else {
+      base::StrAppend(&lines[place->second].second, {", ", value});
+    }
+  }
+  Headers* const all = Headers::Create(Headers::Guard::kNone);
+  for (auto& [name, value] : lines) {
+    all->AppendLine(std::move(name), std::move(value));
   }
   auto* const consumer =
       bindings::MakeGarbageCollected<BodyLoaderBytesConsumer>(
