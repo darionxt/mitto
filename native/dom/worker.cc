@@ -9,6 +9,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_worker.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/dedicated_worker_messaging.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event.h"
@@ -26,10 +27,18 @@ namespace mitto {
 namespace {
 
 // SecurityOrigin::CanReadContent() for a worker's script: one of the
-// context's own origin, or a data: URL, whose worker gets an opaque origin.
+// context's own origin, or a data: URL, whose worker gets an opaque origin. A
+// blob: URL's origin is that of the context that made it, which a blob:null
+// URL's is, as Blink's BlobURLNullOriginMap keeps it.
 bool CanReadContent(const ExecutionContext& context, const GURL& url) {
   if (url.SchemeIs(url::kDataScheme)) {
     return true;
+  }
+  if (url.SchemeIsBlob()) {
+    if (std::optional<BlobUrlRegistry::Entry> entry =
+            BlobUrlRegistry::Get().ResolveEntry(url)) {
+      return context.GetSecurityOrigin().IsSameOriginWith(entry->origin);
+    }
   }
   return context.GetSecurityOrigin().IsSameOriginWith(url::Origin::Create(url));
 }

@@ -118,15 +118,16 @@ void Event::PreventDefault() {
 double Event::TimeStamp() const {
   // Blink's Event::timeStamp(): the time it was made, from the time origin of
   // the event's relevant realm, whose ScriptState the getter is called with,
-  // through the performance timeline's clamp, so that it falls between two
-  // calls of performance.now() around its making. A frame's event read with
-  // another frame's getter counts from its own frame's time origin.
+  // through that realm's performance timeline's clamp, so that it falls
+  // between two calls of performance.now() around its making. A frame's event
+  // read with another frame's getter counts from its own frame's time origin.
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   ExecutionContext* const relevant = ExecutionContext::From(
       isolate, bindings::ReceiverRealmScope::CreationContext(isolate));
+  const ExecutionContext& context =
+      relevant ? *relevant : ExecutionContext::Current();
   return Performance::MonotonicTimeToDOMHighResTimeStamp(
-      (relevant ? *relevant : ExecutionContext::Current()).TimeOrigin(),
-      created_);
+      context.TimeOrigin(), created_, context.CrossOriginIsolatedCapability());
 }
 
 void Event::InitEvent(const std::u16string& type,

@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/task_observer.h"
@@ -21,12 +22,15 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_dedicated_worker_global_scope.h"
 #include "mitto/dom/animation_frame_controller.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/classic_pending_script.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/dedicated_worker_global_scope.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
+#include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/modulator.h"
 #include "mitto/dom/module_script.h"
@@ -228,6 +232,11 @@ void DedicatedWorkerThread::Scope::Start() {
       base::BindRepeating(&Scope::ReportUncaught, base::Unretained(this)));
   data_->SetExceptionReporter(base::BindRepeating(
       &PageReporter::ReportException, base::Unretained(reporter_.get())));
+  data_->SetConsoleWarningReporter(
+      base::BindRepeating([](std::string_view message) {
+        ExecutionContext::Current().AddConsoleMessage(ConsoleLevel::kWarning,
+                                                      std::string(message));
+      }));
   data_->SetKnownGapReporter(base::BindRepeating(
       [](const SendFrame& send, std::string_view name) {
         send.Run(EncodeKnownGap(name));
@@ -305,13 +314,16 @@ void DedicatedWorkerThread::Scope::Start() {
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
         PageConsoleMessage message;
         message.level = level;
-        message.text = std::move(text);
+        // A message may hold what a page gave, such as the value that an
+        // enumeration lacks, and goes no further than a Page message can.
+        base::TruncateUTF8ToByteSize(text, kMaxConsoleTextSize, &message.text);
         send.Run(EncodeConsole(message));
       },
       send));
   scope_->SetObjectProxy(params_.object_proxy.get());
   scope_->SetModule(params_.module);
   scope_->SetOutsideReferrerPolicy(params_.referrer_policy);
+  scope_->SetOutsideOrigin(params_.outside_origin);
   scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.
@@ -636,7 +648,27 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
     script.body = std::move(data->body);
     return script;
   }
-  // A blob: URL's is a Known Gap.
+  // A blob: URL's comes from the blob it names, of the worker's origin, as
+  // the browser's BlobURLLoader reads it.
+  if (url.SchemeIsBlob()) {
+    std::optional<BlobUrlRegistry::Entry> entry =
+        BlobUrlRegistry::Get().ResolveEntry(url);
+    if (!entry ||
+        !entry->origin.IsSameOriginWith(scope_->GetSecurityOrigin())) {
+      return std::nullopt;
+    }
+    LocalSchemeFetch::Answer answer = LocalSchemeFetch::AnswerBlobUrl(
+        url, std::move(entry->blob), "GET", std::nullopt);
+    if (answer.net_error) {
+      return std::nullopt;
+    }
+    ImportedScript script;
+    script.url = url;
+    script.status = answer.head.status;
+    script.headers = std::move(answer.head.headers);
+    script.body = answer.TakeBody();
+    return script;
+  }
   if (!url.SchemeIsHTTPOrHTTPS()) {
     return std::nullopt;
   }

@@ -228,6 +228,20 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_EQ(started.url.size() + 26, payload.size());
           break;
         }
+        case mitto::PageMessage::kTraversalRequest:
+          CHECK_NE(frame->traversal.record, mitto::kNoDocument);
+          CHECK(base::IsStringUTF8AllowingNoncharacters(frame->traversal.url));
+          CHECK_EQ(
+              mitto::EncodeTraversalRequest(frame->document, frame->traversal)
+                  .substr(mitto::kFrameHeaderSize),
+              payload);
+          break;
+        case mitto::PageMessage::kRecordsReleased:
+          CHECK(!frame->released_records.empty());
+          CHECK_EQ(mitto::EncodeRecordsReleased(frame->released_records)
+                       .substr(mitto::kFrameHeaderSize),
+                   payload);
+          break;
         case mitto::PageMessage::kContextGone:
           CHECK_NE(frame->gone_context, mitto::kNoDocument);
           CHECK_EQ(payload.size(), 8u);

@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 31;
+inline constexpr uint32_t kPageProtocolVersion = 32;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -265,6 +265,13 @@ enum class PageMessage : uint32_t {
   // To the Page: how much more of the body of a request whose body streams
   // the Session takes, as PageCredit says, once //net has taken as much.
   kRequestBodyCredit = 162,
+  // To the Session: the ID of the frame's document that a traversal of the
+  // session history leaves, and the navigation that repeats the navigation of
+  // a document that the entry holds, as PageTraversalRequest says.
+  kTraversalRequest = 280,
+  // To the Session: the IDs of documents whose navigations no entry of the
+  // session history holds any more, each a 64-bit number, one at least.
+  kRecordsReleased = 281,
   // To the Page: whether the document that a navigation's response makes is
   // cross-origin isolated, as PageIsolation says, just before the response
   // starts, as Chrome's browser gives the renderer the document's agent
@@ -729,6 +736,26 @@ struct PageIsolation {
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
 };
 
+// A traversal of the session history to an entry of another document, which
+// repeats the navigation that made document `record`, as Chrome's browser
+// repeats an entry's own navigation, whose Initiator and Referer the Session
+// keeps. Its payload is the number, as a request's, the record, each a 64-bit
+// number, a byte of flags, 1 for an entry that a navigation within that
+// document made, a byte of the referrer policy, as a request's, and then the
+// URL in UTF-8, which is the rest: the record's URL for an entry of its
+// navigation, or one that a navigation within it gave it.
+struct PageTraversalRequest {
+  uint64_t number = 0;
+  uint64_t record = kNoDocument;
+  bool same_document_entry = false;
+  // The policy that the record's Referer goes with: kDocument for the policy
+  // of the navigation's own request, and for an entry that a navigation
+  // within the document made, the document's policy when it made it, as
+  // Chrome's FrameNavigationEntry keeps the referrer of each commit.
+  PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument;
+  std::string url;
+};
+
 // What a document that the Page has made is made of.
 enum class PageDocumentSource : uint8_t {
   // A frame's first document, about:blank: the Page's, whose origin is
@@ -1180,6 +1207,10 @@ struct FrameFromPage {
   uint64_t storage_unbind = 0;
   // kNetworkHint.
   PageNetworkHint network_hint;
+  // kTraversalRequest.
+  PageTraversalRequest traversal;
+  // kRecordsReleased.
+  std::vector<uint64_t> released_records;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -1317,6 +1348,11 @@ std::string EncodeContextGone(uint64_t context);
 // `url` is at most kMaxPayloadSize - 8 bytes.
 std::string EncodeSameDocumentNavigation(uint64_t document,
                                          std::string_view url);
+// `traversal.url` is at most kMaxPayloadSize - 26 bytes.
+std::string EncodeTraversalRequest(uint64_t document,
+                                   const PageTraversalRequest& traversal);
+// `records` holds one at least, and at most kMaxPayloadSize / 8.
+std::string EncodeRecordsReleased(const std::vector<uint64_t>& records);
 std::string EncodeAboutBlankNavigation(uint64_t document, uint64_t initiator);
 std::string EncodeDocumentOpened(uint64_t document, uint64_t opener);
 std::string EncodeStorageBind(uint64_t document, const PageStorageBind& bind);

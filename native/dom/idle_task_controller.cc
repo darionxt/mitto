@@ -149,8 +149,9 @@ void IdleTaskController::RunIdleTask(uint32_t id,
                       SchedulerTaskContext::Priority::kBackground));
     const v8::TryCatch try_catch(isolate_);
     v8::Local<v8::Value> argument = bindings::ToV8(
-        isolate_,
-        bindings::MakeGarbageCollected<IdleDeadline>(deadline, did_timeout));
+        isolate_, bindings::MakeGarbageCollected<IdleDeadline>(
+                      deadline, did_timeout,
+                      Window::Current().CrossOriginIsolatedCapability()));
     std::ignore =
         callback->Call(context, v8::Undefined(isolate_), 1, &argument);
     // As InvokeAndReportException() reports it, in the callback's realm.

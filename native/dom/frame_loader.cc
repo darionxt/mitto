@@ -12,6 +12,7 @@
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
+#include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -24,9 +25,13 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/hash_change_event.h"
+#include "mitto/dom/history.h"
+#include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
+#include "mitto/dom/navigation_rate_limiter.h"
 #include "mitto/dom/pop_state_event.h"
+#include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/mime_types.h"
@@ -44,6 +49,15 @@
 namespace mitto {
 namespace {
 
+// The rate limiter of `window`'s frame, or of the Page program's own window,
+// which has no frame.
+NavigationRateLimiter& RateLimiterOf(Window& window) {
+  if (Frame* const frame = window.GetFrame()) {
+    return frame->GetNavigationRateLimiter();
+  }
+  static base::NoDestructor<NavigationRateLimiter> frameless;
+  return *frameless;
+}
 
 // Whether `a` and `b` are the same but for their fragments.
 bool EqualIgnoringFragment(const GURL& a, const GURL& b) {
@@ -133,13 +147,16 @@ GURL OutgoingReferrer(const Window& window) {
 
 // KURL::ElidedString(): a URL longer than 1024 characters keeps its first
 // 511 and its last 510, with "..." between them.
-std::string Elided(const GURL& url) {
-  const std::string& spec = url.possibly_invalid_spec();
+std::string Elided(std::string_view spec) {
   if (spec.size() <= 1024) {
-    return spec;
+    return std::string(spec);
   }
-  return base::StrCat({std::string_view(spec).substr(0, 511), "...",
-                       std::string_view(spec).substr(spec.size() - 510)});
+  return base::StrCat(
+      {spec.substr(0, 511), "...", spec.substr(spec.size() - 510)});
+}
+
+std::string Elided(const GURL& url) {
+  return Elided(url.possibly_invalid_spec());
 }
 
 // network_utils::IsDataURLMimeTypeSupported(): whether Chrome would show what
@@ -179,10 +196,28 @@ void FireHashChange(std::u16string old_url, std::u16string new_url) {
       HashChangeEvent::CreateTrusted(old_url, new_url));
 }
 
-// DocumentLoader::CommitSameDocumentNavigation(): the document takes `url` at
-// once, the Session hears of it, popstate fires at the window with the
-// entry's state, null for a fragment's, and hashchange from a task of the DOM
-// manipulation task source if the fragment changed.
+// Queues hashchange at the window, from a task of the DOM manipulation task
+// source, if `url` differs from `old_url` only in its fragment, as Blink's
+// CommitSameDocumentNavigationInternal() enqueues it before the commit.
+void MaybeEnqueueHashChange(Window& window,
+                            const GURL& url,
+                            const GURL& old_url) {
+  const bool hash_change =
+      EqualIgnoringFragment(url, old_url) &&
+      (url.has_ref() != old_url.has_ref() || url.ref() != old_url.ref());
+  if (hash_change && window.GetTasks()) {
+    window.GetTasks()->PostTask(
+        TaskType::kDOMManipulation,
+        base::BindOnce(&FireHashChange, base::UTF8ToUTF16(old_url.spec()),
+                       base::UTF8ToUTF16(url.spec())));
+  }
+}
+
+// DocumentLoader::CommitSameDocumentNavigation() for a navigation to a
+// fragment: the document takes `url` at once, a new entry or the current one
+// replaced, the Session hears of it, popstate fires at the window with a null
+// state, and hashchange from a task of the DOM manipulation task source if the
+// fragment changed.
 void CommitSameDocumentNavigation(Window& window,
                                   const FrameLoadRequest& request,
                                   FrameLoadType type) {
@@ -199,30 +234,14 @@ void CommitSameDocumentNavigation(Window& window,
     return;
   }
   Document& document = window.GetDocument();
-  const GURL old_url(document.UrlForBinding());
-  const bool hash_change =
-      EqualIgnoringFragment(url, old_url) &&
-      (url.has_ref() != old_url.has_ref() || url.ref() != old_url.ref());
-  if (hash_change && window.GetTasks()) {
-    window.GetTasks()->PostTask(
-        TaskType::kDOMManipulation,
-        base::BindOnce(&FireHashChange, base::UTF8ToUTF16(old_url.spec()),
-                       base::UTF8ToUTF16(url.spec())));
-  }
-  document.SetUrl(base::UTF8ToUTF16(url.spec()));
-  if (NavigationClient* const client = window.GetNavigationClient()) {
-    client->DidNavigateWithinDocument(url);
-  }
-  window.Navigation()->UpdateForNavigation(url, type, /*keep_state=*/true);
+  MaybeEnqueueHashChange(window, url, GURL(document.UrlForBinding()));
+  UpdateForSameDocumentNavigation(window, url, /*history_item=*/nullptr,
+                                  SameDocumentNavigationType::kFragment,
+                                  /*state=*/nullptr, type,
+                                  /*fire_popstate=*/true);
   if (!window.HasContext()) {
     return;
   }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  bindings::PopStateEventInit init;
-  init.state = v8::Null(isolate);
-  PopStateEvent* const popstate = PopStateEvent::Create(u"popstate", init);
-  popstate->SetTrusted(true);
-  window.DispatchEvent(popstate);
   // FrameLoader::ProcessScrollForSameDocumentNavigation(), after the events
   // of the commit: this navigation's fragment indicates the document's
   // target, also when a listener has navigated on meanwhile, as Blink takes
@@ -280,8 +299,7 @@ void ProcessJavaScriptUrl(Window& window, const GURL& url) {
 void Navigate(Window& window,
               const FrameLoadRequest& request,
               FrameLoadType type) {
-  if (Frame* const frame = window.GetFrame();
-      frame && !frame->navigation_rate_limiter().CanProceed(window)) {
+  if (!CanProceedWithNavigation(window)) {
     return;
   }
   if (type == FrameLoadType::kStandard && !request.force_history_push &&
@@ -410,6 +428,145 @@ void StartNavigation(Window& window,
   navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
   navigation.initiator_referrer = OutgoingReferrer(origin_window);
   client->BeginNavigation(navigation);
+}
+
+bool CanProceedWithNavigation(Window& window) {
+  return RateLimiterOf(window).CanProceed(window);
+}
+
+void AddStateObject(Window& window,
+                    scoped_refptr<const SharedSerializedScriptValue> state,
+                    const std::optional<std::u16string>& url,
+                    FrameLoadType type,
+                    bindings::ExceptionState& exception_state) {
+  Document& document = window.GetDocument();
+  const GURL document_url(document.UrlForBinding());
+  // History::UrlForState(): the document's URL for none or "", and otherwise
+  // the URL resolved against the document's base URL, as KURL(base, url) does.
+  GURL full_url = document_url;
+  std::string shown = document_url.possibly_invalid_spec();
+  if (url && !url->empty()) {
+    const ResolvedURL resolved(ResolvedURL(base::UTF8ToUTF16(
+                                   document.BaseUrl().possibly_invalid_spec())),
+                               *url);
+    shown = base::UTF16ToUTF8(resolved.GetString());
+    full_url = GURL(shown);
+  }
+  if (!CanChangeToUrlForHistoryApi(full_url, document.GetOrigin(),
+                                   document_url)) {
+    exception_state.ThrowDOMException(
+        "SecurityError",
+        base::StrCat({"A history state object with URL '", Elided(shown),
+                      "' cannot be created in a document with origin '",
+                      base::UTF16ToUTF8(window.Origin()), "' and URL '",
+                      Elided(document_url), "'."}));
+    return;
+  }
+  if (!CanProceedWithNavigation(window)) {
+    return;
+  }
+  Navigation::NavigateParams params;
+  params.url = full_url;
+  params.history_api = true;
+  params.load_type = type;
+  params.state_object = state;
+  if (window.Navigation()->DispatchNavigateEvent(params) !=
+      Navigation::DispatchResult::kContinue) {
+    return;
+  }
+  UpdateForSameDocumentNavigation(window, full_url, /*history_item=*/nullptr,
+                                  SameDocumentNavigationType::kHistoryApi,
+                                  std::move(state), type,
+                                  /*fire_popstate=*/false);
+}
+
+void UpdateForSameDocumentNavigation(
+    Window& window,
+    const GURL& url,
+    const HistoryItem* history_item,
+    SameDocumentNavigationType navigation_type,
+    scoped_refptr<const SharedSerializedScriptValue> state,
+    FrameLoadType type,
+    bool fire_popstate) {
+  Document& document = window.GetDocument();
+  // A new entry of the initial about:blank replaces it.
+  if (type == FrameLoadType::kStandard && document.IsInitialEmptyDocument()) {
+    type = FrameLoadType::kReplaceCurrentItem;
+  }
+  HistoryItem item;
+  if (type == FrameLoadType::kBackForward && history_item) {
+    item = *history_item;
+    // The entry's state comes anew, as Blink reads the entry's state from the
+    // browser's PageState for each traversal, so that history.state gives an
+    // object of its own, not one that a script changed before it left.
+    if (item.state) {
+      item.state =
+          base::MakeRefCounted<SharedSerializedScriptValue>(item.state->data);
+    }
+  } else {
+    // As Blink's is_history_api_or_app_history_navigation: an intercepted
+    // navigation is one of the history API, whose entry takes no Navigation
+    // API state from the one before and has the classic state it gives, none
+    // but that of pushState() or replaceState().
+    const bool fragment =
+        navigation_type == SameDocumentNavigationType::kFragment;
+    item =
+        HistoryItem::ForCommit(window.CurrentHistoryItem(), url, type,
+                               fragment ? HistoryNavigationType::kFragment
+                                        : HistoryNavigationType::kHistoryApi);
+    if (!fragment) {
+      item.state = std::move(state);
+    }
+    // A new entry protects its URL as the document's policy did when it
+    // committed, which a meta element's later policy does not change.
+    item.protect_url_in_navigation_api = document.ProtectsUrlInNavigationApi();
+  }
+  window.SetCurrentHistoryItem(item);
+  document.SetUrl(base::UTF8ToUTF16(url.spec()));
+  if (NavigationClient* const client = window.GetNavigationClient()) {
+    client->DidCommitSameDocumentNavigation(item, type);
+  }
+  window.Navigation()->UpdateForNavigation(item, type);
+  if (!fire_popstate || !window.HasContext()) {
+    return;
+  }
+  // A traversal's popstate has the entry's state, the object that
+  // history.state gives, and one to a fragment null.
+  PopStateEvent* const popstate = PopStateEvent::CreateForHistory(
+      history_item ? item.state : nullptr, window.History());
+  window.DispatchEvent(popstate);
+}
+
+bool CommitSameDocumentHistoryNavigation(Window& window,
+                                         const HistoryItem& item) {
+  // An entry that the document is at already fires nothing.
+  const HistoryItem* const current = window.CurrentHistoryItem();
+  if (current && current->item_sequence_number == item.item_sequence_number) {
+    return true;
+  }
+  Navigation::NavigateParams params;
+  params.url = item.url;
+  params.fragment = true;
+  params.load_type = FrameLoadType::kBackForward;
+  params.destination_item = &item;
+  switch (window.Navigation()->DispatchNavigateEvent(params)) {
+    case Navigation::DispatchResult::kAbort:
+      return false;
+    case Navigation::DispatchResult::kIntercept:
+      return true;
+    case Navigation::DispatchResult::kContinue:
+      break;
+  }
+  Document& document = window.GetDocument();
+  MaybeEnqueueHashChange(window, item.url, GURL(document.UrlForBinding()));
+  UpdateForSameDocumentNavigation(
+      window, item.url, &item, SameDocumentNavigationType::kFragment,
+      /*state=*/nullptr, FrameLoadType::kBackForward,
+      /*fire_popstate=*/true);
+  if (window.HasContext()) {
+    document.ProcessUrlFragment(item.url);
+  }
+  return true;
 }
 
 }  // namespace mitto

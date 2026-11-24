@@ -124,8 +124,10 @@ class DocumentLoadTiming final
   base::TimeTicks load_event_end;
   base::TimeTicks critical_ch_restart;
   // Whether the navigation reloaded the document, which navigation timing
-  // calls a reload.
+  // calls a reload, or traversed the session history to its entry, which it
+  // calls back_forward.
   bool is_reload = false;
+  bool is_back_forward = false;
   // When the unload event of the document before this one started and ended,
   // which only a document of its origin sees, as Blink's
   // HasSameOriginAsPreviousDocument() says.
@@ -148,6 +150,9 @@ class DocumentLoadTiming final
   // and so does a frame's srcdoc or about:blank, of no response, but not a
   // Page's or a frame's initial about:blank.
   bool has_response = false;
+  // Whether the window that takes these times is cross-origin isolated, as
+  // PerformanceTiming reads its window's capability.
+  bool cross_origin_isolated_capability = false;
   // What the navigation's entry is made from.
   ResourceTimingInfo navigation;
   // Of its connection, as net::HttpResponseInfo has it, for window.chrome.

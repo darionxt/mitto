@@ -27,7 +27,6 @@ from tools.capture import (
     DOCUMENTS_START_PATH,
     FORMS_PATH,
     HINTS_ASKED,
-    HISTORY_COOKIE_SET_PATH,
     HTTP1,
     HTTP2,
     HTTP3,
@@ -50,6 +49,23 @@ _FORM_FIELDS = {"name": "mitto", "a b&c": "d e&f+g"}
 _PAGE_TIMEOUT_SECONDS = 30.0
 # What the start page's script does for its classic worker: it waits until the worker, whose script calls importScripts()
 # and then fetch(), answers once both have ended.
+# What the person recording did on a page that shows a "next" link once it is ready: click it, here with no user's
+# activation.
+_CLICK_NEXT = """new Promise((resolve) => {
+  const next = document.getElementById("next");
+  const click = () => { next.click(); resolve(); };
+  if (!next.hidden) {
+    click();
+    return;
+  }
+  new MutationObserver((records, observer) => {
+    if (!next.hidden) {
+      observer.disconnect();
+      click();
+    }
+  }).observe(next, {attributes: true});
+})"""
+
 _WORKER_ANSWERED = """new Promise((resolve, reject) => {
   const worker = new Worker(urls.worker);
   worker.onmessage = () => {
@@ -57,6 +73,23 @@ _WORKER_ANSWERED = """new Promise((resolve, reject) => {
     resolve();
   };
   worker.onerror = () => reject(new Error(urls.worker + " failed"));
+})"""
+# What the start page's script does for its worker of a blob: URL, whose script fetches with no URL of its own to name as
+# the referrer, and answers once that has ended, or says that it failed, which no error event would.
+_BLOB_WORKER_ANSWERED = """new Promise((resolve, reject) => {
+  const source = `fetch("${location.origin}${urls.worker_blob_fetch}")
+    .then((response) => response.text())
+    .then(() => postMessage("done"), (error) => postMessage("failed: " + error));`;
+  const worker = new Worker(URL.createObjectURL(new Blob([source], {type: "text/javascript"})));
+  worker.onmessage = (event) => {
+    worker.terminate();
+    if (event.data === "done") {
+      resolve();
+    } else {
+      reject(new Error("the fetch of the worker of a blob: URL " + event.data));
+    }
+  };
+  worker.onerror = () => reject(new Error("the worker of a blob: URL failed"));
 })"""
 # How long a Page's document stays where it is before a replay takes it that it navigates no further.
 _SETTLED_SECONDS = 3.0
@@ -96,6 +129,8 @@ class Replay:
             a Page does not do yet first: the step of that script that makes the request, which for a request that is no
             navigation settles once the request has ended.
         lands_at: The case whose page the navigation ends at, for a hop of a redirect, or nothing for the case itself.
+        clicks: The paths of the pages, in order, where the person recording clicked the page's "next" link: once the
+            Page's document is at each, the Page clicks it, with no user's activation, once the page shows it.
         until: For a page that does not navigate, the path that its own script asks for last: the Page stays open until
             the server has had a request for it, by when every other request of the page has ended, so that closing
             the Page cancels none.
@@ -118,6 +153,7 @@ class Replay:
     through_page: bool = False
     page_script: str | None = None
     lands_at: str | None = None
+    clicks: tuple[str, ...] = ()
     until: str | None = None
 
 
@@ -229,7 +265,9 @@ def _document_replays() -> dict[str, Replay]:
         ),
         "worker_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, page_script=_WORKER_ANSWERED),
         "worker_module": Replay(RequestKind.WORKER, page=start),
-        "worker_blob_fetch": Replay(RequestKind.FETCH, page=start, made_by_a_page=289),
+        "worker_blob_fetch": Replay(
+            RequestKind.FETCH, page=start, through_page=True, page_script=_BLOB_WORKER_ANSWERED
+        ),
         "beacon_text": Replay(RequestKind.BEACON, _POST, body=_TEXT, page=start),
         "beacon_blob": Replay(RequestKind.BEACON, _POST, body={"data": b"blob body"}, page=start),
         "beacon_form_data": Replay(
@@ -356,13 +394,15 @@ def _document_replays() -> dict[str, Replay]:
             body={"data": _FORM_FIELDS},
             page=_PATHS["navigation_form_text"],
         ),
-        # The traversal goes back to an entry that the form of the other site made, and carries what the next page set.
+        # The traversal goes back to an entry that a link of the other site's page made, and carries what the next page
+        # set. The Page clicks the links that the person recording clicked, and the next page goes back by itself.
         "navigation_history_back": Replay(
             RequestKind.NAVIGATION,
-            asks=(HISTORY_COOKIE_SET_PATH,),
             page=_PATHS["navigation_form_cross_site"],
             page_host=CROSS_SITE_HOST,
-            made_by_a_page=280,
+            through_page=True,
+            page_script=_CLICK_NEXT,
+            clicks=(_PATHS["navigation_history_back"],),
         ),
     }
 
@@ -516,11 +556,17 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
     lands_at = _PATHS[steps.lands_at or case]
     with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         if steps.page_script is not None:
-            page.evaluate(steps.page_script)
+            page.evaluate(steps.page_script, timeout=_PAGE_TIMEOUT_SECONDS)
         if steps.kind is not RequestKind.NAVIGATION:
             return
-        while urlsplit(page.wait_for_navigation(timeout=_PAGE_TIMEOUT_SECONDS).url).path != lands_at:
-            pass
+        clicks = list(steps.clicks)
+        while True:
+            path = urlsplit(page.wait_for_navigation(timeout=_PAGE_TIMEOUT_SECONDS).url).path
+            if clicks and path == clicks[0]:
+                clicks.pop(0)
+                page.evaluate(_CLICK_NEXT, timeout=_PAGE_TIMEOUT_SECONDS)
+            elif path == lands_at and not clicks:
+                break
         # The case's page navigates on, as the pages of Chrome's run did. Each navigation ends before the Page closes,
         # so that closing it cancels no request, which over HTTP/3 would open the QPACK decoder stream that Chrome's
         # run, which cancelled nothing, never opened.

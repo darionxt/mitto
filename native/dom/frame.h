@@ -11,35 +11,17 @@
 
 #include <stddef.h>
 
-#include <optional>
 #include <string>
 #include <string_view>
 
 #include "base/memory/raw_ref.h"
-#include "base/time/time.h"
 #include "url/gurl.h"
 
 namespace mitto {
 
 class HTMLFrameOwnerElement;
+class NavigationRateLimiter;
 class Window;
-
-// NavigationRateLimiter: at most 200 navigations of a frame in 10 seconds,
-// and a warning in the console for the first one past that in each period.
-class NavigationRateLimiter {
- public:
-  // Whether the frame, whose window is `window`, may start one more, which
-  // counts.
-  bool CanProceed(Window& window);
-
- private:
-  static constexpr base::TimeDelta kPeriod = base::Seconds(10);
-  static constexpr int kStateUpdateLimit = 200;
-
-  base::TimeTicks period_start_;
-  int count_ = 0;
-  std::optional<base::TimeTicks> warned_period_start_;
-};
 
 class Frame {
  public:
@@ -79,6 +61,9 @@ class Frame {
   // of it that still runs, and so do its window's timers, callbacks and
   // fetches, which stop at once.
   virtual void Detach() = 0;
+  // What counts the navigations that the frame's documents start, which it
+  // keeps across them, as Blink's Frame::navigation_rate_limiter().
+  virtual NavigationRateLimiter& GetNavigationRateLimiter() = 0;
 
   // The top-level frame of this one's tree.
   Frame& Top();
@@ -97,11 +82,6 @@ class Frame {
   // starts while a FrameNavigationDisabler holds it.
   bool IsNavigationAllowed() const { return navigation_disable_count_ == 0; }
 
-  // Blink's Frame::NavigationRateLimiter(): each frame counts its own.
-  NavigationRateLimiter& navigation_rate_limiter() {
-    return navigation_rate_limiter_;
-  }
-
  protected:
   Frame() = default;
   virtual ~Frame() = default;
@@ -109,7 +89,6 @@ class Frame {
  private:
   friend class FrameNavigationDisabler;
 
-  NavigationRateLimiter navigation_rate_limiter_;
   int navigation_disable_count_ = 0;
 };
 

@@ -49,6 +49,7 @@ KNOWN: dict[str, tuple[Role, str]] = {
     "ContextEnabled": (Role.EXPOSURE, "exposes a construct where the context turns a feature on"),
     "ConvertibleToObject": (Role.CONVERSION, "lets Blink convert a dictionary back to an object"),
     "CrossOrigin": (Role.PLAN, "lets a frame of another origin reach a member"),
+    "CrossOriginIsolated": (Role.EXPOSURE, "exposes a construct in cross-origin isolated contexts alone"),
     "CrossOriginIsolatedOrRuntimeEnabled": (Role.EXPOSURE, "exposes a member in isolated contexts or with a feature"),
     "DeprecateAs": (Role.NONE, "writes a deprecation warning to the console, which a page cannot read"),
     "EnforceRange": (Role.CONVERSION, "throws for a number outside an integer type's range"),

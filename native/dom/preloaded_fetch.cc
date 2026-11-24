@@ -112,6 +112,13 @@ void PreloadedFetch::NotifyFinished() {
 }
 
 void PreloadedFetch::Cancel() {
+  // A cancel under a call to the client, as when a script that resolving the
+  // fetch's promise runs aborts it or lets the context go: the client goes
+  // once the call has returned, not under it.
+  if (calling_client_) {
+    cancel_pending_ = true;
+    return;
+  }
   if (!delivering_) {
     // Before the task, which destroys this: the resource may let its load go
     // now.
@@ -137,8 +144,9 @@ void PreloadedFetch::Forward() {
       return;
     }
     response_started_ = true;
+    calling_client_ = true;
     client_->OnResponseStarted(resource.Response());
-    if (!weak || !client_) {
+    if (!weak || !ReturnedFromClient() || !client_) {
       return;
     }
   }
@@ -146,8 +154,22 @@ void PreloadedFetch::Forward() {
   if (body.size() > body_sent_) {
     std::string bytes = body.substr(body_sent_);
     body_sent_ = body.size();
+    calling_client_ = true;
     client_->OnResponseBody(std::move(bytes));
+    if (weak) {
+      ReturnedFromClient();
+    }
   }
+}
+
+bool PreloadedFetch::ReturnedFromClient() {
+  calling_client_ = false;
+  if (cancel_pending_) {
+    cancel_pending_ = false;
+    Cancel();
+    return false;
+  }
+  return true;
 }
 
 }  // namespace mitto

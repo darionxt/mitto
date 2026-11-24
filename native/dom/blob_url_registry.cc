@@ -94,13 +94,14 @@ scoped_refptr<BlobDataHandle> BlobUrlRegistry::Resolve(const GURL& url) const {
   return found == entries_.end() ? nullptr : found->second.blob;
 }
 
-std::optional<url::Origin> BlobUrlRegistry::OriginOf(const GURL& url) const {
+std::optional<BlobUrlRegistry::Entry> BlobUrlRegistry::ResolveEntry(
+    const GURL& url) const {
   base::AutoLock lock(lock_);
   const auto found = entries_.find(KeyOf(url));
   if (found == entries_.end()) {
     return std::nullopt;
   }
-  return found->second.origin;
+  return found->second;
 }
 
 }  // namespace mitto

@@ -27,9 +27,11 @@
 
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
@@ -37,7 +39,9 @@
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame.h"
+#include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation_client.h"
+#include "mitto/dom/navigation_rate_limiter.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -55,6 +59,7 @@ class DOMTimerCoordinator;
 class Document;
 class DocumentLoadTiming;
 class DocumentLoader;
+class FrameNavigationEntry;
 class IdleTaskController;
 class PageFetcher;
 class HTMLFrameOwnerElement;
@@ -62,6 +67,7 @@ class IndexedDbHost;
 class PageWorkerStarter;
 class ScriptRunner;
 class SessionCacheStorage;
+class SessionHistory;
 class SessionIndexedDb;
 class SessionStorageBuckets;
 class StorageBucketHost;
@@ -115,10 +121,16 @@ class PageFrame final : public NavigationClient, public Frame {
                           std::u16string name) override;
   void NavigateFromOwner(const GURL& url) override;
   void Detach() override;
+  NavigationRateLimiter& GetNavigationRateLimiter() override;
 
   // NavigationClient:
   void BeginNavigation(const NavigationRequest& request) override;
-  void DidNavigateWithinDocument(const GURL& url) override;
+  void DidCommitSameDocumentNavigation(const HistoryItem& item,
+                                       FrameLoadType type) override;
+  void DidUpdateCurrentHistoryItem(const HistoryItem& item) override;
+  HistoryCounts GetHistoryCounts() const override;
+  void NavigateBackForward(int offset) override;
+  void NavigateToNavigationApiKey(const std::u16string& key) override;
   void DidOpenDocument(const Window& opener) override;
   bool HasProvisionalNavigation() const override;
   void StopAllLoaders() override;
@@ -152,6 +164,49 @@ class PageFrame final : public NavigationClient, public Frame {
   // Takes `loader` from where the frame holds it, as the opening navigation's
   // or the one that waits.
   std::unique_ptr<DocumentLoader> Take(DocumentLoader& loader);
+  // Has the history go to entry `index` from a later task, as Chrome's
+  // browser takes the renderer's message: the entry it is when asked, which
+  // a navigation that commits meanwhile does not change, and whose traversal
+  // a later go() counts from until the history moves.
+  void QueueTraversal(size_t index, std::optional<std::u16string> key);
+  // Runs `task` from a later task of the DOM manipulation task source, in the
+  // frame's window of that time, as Chrome's browser answers the frame,
+  // unless the frame has gone.
+  void PostHistoryTask(base::OnceClosure task);
+  void RunInCurrentWindow(base::OnceClosure task);
+  // The task of a traversal to the entry of item `item_sequence_number`,
+  // which goes nowhere if a new entry has pruned it since, and cancels the
+  // traverseTo() of `key` then.
+  void GoToItem(int64_t item_sequence_number,
+                std::optional<std::u16string> key);
+  // NotifyNavigationApiOfDisposedEntries(): the document hears of the
+  // entries that the session history dropped.
+  void NotifyNavigationApiOfDisposedEntries();
+  // NavigateToExistingPendingEntry() for the top-level frame: a traversal to
+  // entry `index`, within the document if it is of the document's. Returns
+  // whether it went there or to the document's navigate event, which may
+  // cancel it.
+  bool GoToIndex(size_t index);
+  // The index that Chrome's controller counts a renderer's traversal from.
+  size_t CurrentEntryIndex() const;
+  // The tab's session history, which the top-level frame keeps entries in,
+  // and the top-level frame, which a child's traversals go through until
+  // frames have entries of their own.
+  SessionHistory& history() const;
+  PageFrame& Top();
+  // A traversal to `entry`, of another document: the document's
+  // beforeunload, then its navigate event for an entry of its origin, which
+  // the page can neither cancel nor intercept, then the Session repeats the
+  // navigation that the entry holds, and its response takes the document's
+  // place with the entry's own state. Returns whether the Session was asked.
+  bool BeginTraversal(const FrameNavigationEntry& entry);
+  // Tells the Session of the records that no entry holds any more, nor the
+  // document `live_document`.
+  void ReleaseRecords(uint64_t live_document);
+  // Whether a traversal to another document waits for its response, or runs
+  // its beforeunload and navigate events, which Chrome's browser lets nothing
+  // that the page starts take the place of.
+  bool TraversalWaits() const;
 
   // Makes a new context, whose window has an empty document at `url`, the
   // response of navigation `navigation`, in place of the current one, tells
@@ -345,6 +400,26 @@ class PageFrame final : public NavigationClient, public Frame {
   NavigationRequest provisional_request_;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
+  // The entry that the latest traversal asked for goes to, while one waits,
+  // as Chrome's pending entry, which the next go() counts from.
+  std::optional<size_t> pending_traversal_index_;
+  int waiting_traversals_ = 0;
+  // The entry that the traversal whose navigate event runs goes to, until it
+  // commits.
+  std::optional<size_t> committing_traversal_index_;
+  // Whether the old document's unload events run, as a new one commits.
+  bool unloading_for_commit_ = false;
+  NavigationRateLimiter navigation_rate_limiter_;
+  // The entry that the navigation that waits goes to, for a traversal.
+  std::optional<HistoryItem> traversal_item_;
+  // The record of the document whose navigation the traversal that waits
+  // repeats, which the Session keeps until it ends.
+  std::optional<uint64_t> traversal_record_;
+  // The record of the traversal whose beforeunload and navigate events run,
+  // which the Session keeps whatever their listeners do.
+  std::optional<uint64_t> pinned_record_;
+  // The records that the Session keeps for the history.
+  std::set<uint64_t> held_records_;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };
 
