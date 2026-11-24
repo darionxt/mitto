@@ -13,19 +13,24 @@
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/v8_blob.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/bindings/v8_form_data.h"
 #include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_request.h"
+#include "mitto/bindings/v8_url_search_params.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/blob.h"
 #include "mitto/dom/blob_bytes_consumer.h"
+#include "mitto/dom/blob_data.h"
 #include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/bytes_consumer.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/form_data.h"
 #include "mitto/dom/form_data_bytes_consumer.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/readable_stream.h"
+#include "mitto/dom/url_search_params.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
@@ -104,6 +109,35 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
             &ExecutionContext::Current(), blob->GetBlobDataHandle()),
         /*signal=*/nullptr);
   }
+  if (FormData* const form_data =
+          bindings::V8FormData::ToWrappable(isolate, value)) {
+    FormData::MultipartBody body = form_data->EncodeMultiPartFormData();
+    *content_type = body.ContentType();
+    if (!body.has_files) {
+      return BodyStreamBuffer::Create(
+          isolate,
+          bindings::MakeGarbageCollected<FormDataBytesConsumer>(
+              std::move(body.bytes)),
+          /*signal=*/nullptr);
+    }
+    // Blink reads a body with a file's bytes in it as a blob of the whole
+    // body, as DataAndEncodedFileOrBlobBytesConsumer does.
+    return BodyStreamBuffer::Create(
+        isolate,
+        bindings::MakeGarbageCollected<BlobBytesConsumer>(
+            &ExecutionContext::Current(),
+            BlobDataHandle::Create(std::move(body.bytes), body.ContentType())),
+        /*signal=*/nullptr);
+  }
+  if (URLSearchParams* const params =
+          bindings::V8URLSearchParams::ToWrappable(isolate, value)) {
+    *content_type = "application/x-www-form-urlencoded;charset=UTF-8";
+    return BodyStreamBuffer::Create(
+        isolate,
+        bindings::MakeGarbageCollected<FormDataBytesConsumer>(
+            base::UTF16ToUTF8(params->ToString())),
+        /*signal=*/nullptr);
+  }
   std::string bytes;
   if (value->IsArrayBuffer()) {
     const std::shared_ptr<v8::BackingStore> store =
@@ -124,6 +158,9 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
     bytes.resize(view->ByteLength());
     view->CopyContents(bytes.data(), bytes.size());
   } else {
+    // What the page's own conversion throws reaches the caller through
+    // `exception_state`.
+    const bindings::TryRethrowScope rethrow_scope(isolate, exception_state);
     std::u16string text;
     if (!bindings::FromV8USVString(isolate, value, &text)) {
       return nullptr;
@@ -404,8 +441,8 @@ Request* Request::CreateFromStored(
 Request::Request() = default;
 Request::~Request() = default;
 
-std::string Request::MimeType() const {
-  return base::ToLowerASCII(headers_->GetValue("content-type").value_or(""));
+std::string Request::ContentType() const {
+  return headers_->GetValue("content-type").value_or("");
 }
 
 BodyStreamBuffer* Request::BodyBuffer() const {

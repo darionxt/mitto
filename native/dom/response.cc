@@ -186,8 +186,8 @@ Response* Response::CreateFetched(ResponseType type,
 Response::Response() = default;
 Response::~Response() = default;
 
-std::string Response::MimeType() const {
-  return base::ToLowerASCII(headers_->GetValue("content-type").value_or(""));
+std::string Response::ContentType() const {
+  return headers_->GetValue("content-type").value_or("");
 }
 
 BodyStreamBuffer* Response::BodyBuffer() const {
