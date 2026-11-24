@@ -1994,6 +1994,7 @@ def test_a_data_url_frame_and_its_parent_reach_only_their_own_realms(origin: str
       (async () => {{
         {_LOADED}
         {_SETTLE}
+        {_SEEN}
         const refused = (f) => {{ try {{ f(); return false; }} catch (e) {{ return true; }} }};
         const get = (name) => Object.getOwnPropertyDescriptor(window, name).get;
         const uses = {{
@@ -2014,11 +2015,13 @@ def test_a_data_url_frame_and_its_parent_reach_only_their_own_realms(origin: str
         await loaded(element);
         const w = element.contentWindow;
         const results = {{own: reached(w), left: old.map(refused).join(' '), document: element.contentDocument}};
-        window.ran = 0;
+        // Its request, which the server remembers, shows a script that runs in the data: URL's window too, whose origin
+        // keeps it from the parent.
         const child = oldDocument.createElement('script');
-        child.textContent = 'top.ran++';
+        child.textContent = `fetch('${{location.origin}}/assets/left-ran')`;
         Node.prototype.appendChild.call(oldDocument.body, child);
-        results.ran = window.ran;
+        await settle(200);
+        results.ran = await seen('/assets/left-ran');
         element.remove();
         results.removed = reached(w);
         const reporter = document.createElement('iframe');
@@ -2034,7 +2037,7 @@ def test_a_data_url_frame_and_its_parent_reach_only_their_own_realms(origin: str
         "own": [],
         "left": "true true true true true",
         "document": None,
-        "ran": 0,
+        "ran": "unseen",
         "removed": [],
         "reports": {
             "parent": refused,
