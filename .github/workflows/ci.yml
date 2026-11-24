@@ -50,6 +50,8 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python }}
+          # A full run by hand saves nothing: its caches would belong to its branch, and outlive the pull request.
+          save-cache: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: uv run ruff check
       - run: uv run ruff format --check
       - run: uv run pyright
@@ -61,9 +63,9 @@ jobs:
   # list of differences").
   changes:
     name: What the push changes
-    # Only a push to a pull request that is ready for review: a draft runs no native job. Not a fork's, whose runs never
-    # take another run's artifacts.
-    if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && !false && github.event.pull_request.head.repo.full_name == github.repository }}
+    # Only a push to a pull request that is ready for review: a draft runs no native job. Only to main, where the checks
+    # are required. Not a fork's, whose runs never take another run's artifacts.
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.base_ref == 'main' && !false && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -71,6 +73,8 @@ jobs:
       contents: read
     outputs:
       run: ${{ steps.reuse.outputs.run }}
+      # The ID of each runner's wheel, as JSON. An ID is of one artifact, whatever is uploaded under its name later.
+      wheels: ${{ steps.reuse.outputs.wheels }}
     steps:
       # The merge commit and its parents, without the files' contents: only their names are read.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,6 +117,15 @@ jobs:
             | max_by(.run_number).id // empty')" || everything "the runs on $BEFORE cannot be listed."
           [ -n "$run" ] || everything "this pull request has no run on $BEFORE."
 
+          # The wheels, by the ID of each. Read before the jobs: a job that is run again in between shows as not passed.
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | "\(.name) \(.id)"')" || everything "the artifacts of run $run cannot be listed."
+          wheels=""
+          for runner in $RUNNERS; do
+            id="$(sed -n "s/^wheel-$runner //p" <<< "$artifacts")"
+            [[ "$id" =~ ^[0-9]+$ ]] || everything "run $run no longer has the wheel of $runner."
+            wheels+="${wheels:+,}\"$runner\":$id"
+          done
+
           # Each of its native jobs passed, on one commit, which the job's last step names. No job that was skipped can
           # count: it has no steps, and no name with a runner in it.
           passed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" --jq '
@@ -133,11 +146,8 @@ jobs:
           [ "$(git rev-parse "$tested^2")" = "$BEFORE" ] || everything "run $run passed on $tested, which does not merge $BEFORE."
           changes_only_the_list "$tested" "$GITHUB_SHA" || everything "more than $list differs from what run $run passed on."
 
-          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | .name')" || everything "the artifacts of run $run cannot be listed."
-          for runner in $RUNNERS; do
-            grep -Fqx "wheel-$runner" <<< "$artifacts" || everything "run $run no longer has the wheel of $runner."
-          done
           echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "wheels={$wheels}" >> "$GITHUB_OUTPUT"
           echo "Only $list differs from what run $run passed on, so this run tests its wheels: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # A job for each Host rather than one matrix, so that a Host's web-platform-tests wait for its own native job alone.
@@ -178,7 +188,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - &setup-uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # As in the Python job.
+          save-cache: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       # tools/workspace holds the pin of the source export, so this key covers it too. The nightly run neither
       # restores nor saves a cache.
       - id: cached-library
@@ -450,11 +464,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - *setup-uv
       # The wheel that the native job of the run before built and tested.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: wheel-${{ matrix.runner }}
+          artifact-ids: ${{ fromJSON(needs.changes.outputs.wheels)[matrix.runner] }}
           path: ${{ runner.temp }}/dist
           run-id: ${{ needs.changes.outputs.run }}
           github-token: ${{ github.token }}
@@ -513,7 +527,7 @@ jobs:
     # So it waits for this Host's job alone, and runs only when that job passed. A draft pull request builds no wheel,
     # and runs this once it is marked ready for review.
     needs: [native-linux, reuse-linux]
-    if: &has-a-wheel ${{ !cancelled() && contains(needs.*.result, 'success') }}
+    if: ${{ !cancelled() && (needs.native-linux.result == 'success' || needs.reuse-linux.result == 'success') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -530,7 +544,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - *setup-uv
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: wheel-${{ matrix.runner }}
@@ -554,7 +568,7 @@ jobs:
   wpt-macos:
     name: web-platform-tests on ${{ matrix.runner }}
     needs: [native-macos, reuse-macos]
-    if: *has-a-wheel
+    if: ${{ !cancelled() && (needs.native-macos.result == 'success' || needs.reuse-macos.result == 'success') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -569,7 +583,7 @@ jobs:
   wpt-windows:
     name: web-platform-tests on ${{ matrix.runner }}
     needs: [native-windows, reuse-windows]
-    if: *has-a-wheel
+    if: ${{ !cancelled() && (needs.native-windows.result == 'success' || needs.reuse-windows.result == 'success') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:

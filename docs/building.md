@@ -582,23 +582,23 @@ When a job fails, the run's last job opens an issue titled "Nightly build from n
 gh workflow run full-run.yml --ref BRANCH
 ```
 
-It starts by hand only, from the Actions tab or with the command above, and only on a branch of this repository, so a fork's code cannot run. It tests the branch's head as it is, not merged with `main`, so merge `main` first if it has moved. Its checks stand on that head as `Full run / Native core on ...`, which is not a check that `main` requires: only the run of a pull request that is ready counts for the merge. It restores `main`'s caches and saves none of its own, since only its branch could restore them.
+It starts by hand only, from the Actions tab or with the command above, and only on a branch of this repository, so a fork's code cannot run. It tests the branch's head as it is, not merged with `main`, so merge `main` first if it has moved. Its checks stand on that head as `Full run / Native core on ...`, which is not a check that `main` requires: only the run of a pull request that is ready counts for the merge. It restores `main`'s caches and saves none of its own, not of the builds nor of uv, since only its branch could restore them.
 
 A label on the pull request would be more visible, but CI would then start for every label on every pull request, and the run that a label starts is newer than the full run of a ready pull request, which GitHub then judges the required checks by. A run by the pull request's number would be `main`'s, with a pull request's code in reach of `main`'s caches and its checks on `main`'s commit.
 
 #### A push that changes only the list of differences
 
-A push to a ready pull request that changes nothing but [`tests/wpt/differences.json`](../tests/wpt/differences.json) follows a run whose wheels have already passed every test but web-platform-tests. So CI takes those wheels instead of building and testing them again, and the required checks pass after the tests that read the list, [`tests/test_wpt.py`](../tests/test_wpt.py) and [`tests/test_wpt_pages.py`](../tests/test_wpt_pages.py), have run from them on each Host. The job "What the push changes" decides, in a few seconds:
+A push to a ready pull request to `main` that changes nothing but [`tests/wpt/differences.json`](../tests/wpt/differences.json) follows a run whose wheels have already passed every test but web-platform-tests. So CI takes those wheels instead of building and testing them again, and the required checks pass after the tests that read the list, [`tests/test_wpt.py`](../tests/test_wpt.py) and [`tests/test_wpt_pages.py`](../tests/test_wpt_pages.py), have run from them on each Host. The job "What the push changes" decides, in a few seconds:
 
 1. The push changes only that file, from the head before it to the head after it, without moving it, deleting it or making it a link.
 2. The pull request's last CI run on the head before it belongs to this pull request and this repository, not to a fork.
 3. Each native job of that run passed, and names the merge commit that it passed on, which is a merge of that head. Its last step names it, and GitHub's API gives it with the job's result.
 4. That merge commit and the one under test now differ in that file alone. So every other file is as it was when the wheels were tested, `ci.yml` and the Python code of the tests included, and `main` has not moved. A run that differed in anything else is a run of other code.
-5. The wheels of the three Hosts are still there.
+5. The wheels of the three Hosts are still there. The reuse jobs take them by the IDs that this job read, so a run that is run again later cannot put another wheel in their place.
 
 Anything else runs everything, as it always did, and so does an API that does not answer. The job prints why, in its summary too. The merge commit that a job names is the only thing taken from the run itself, and it counts only if it merges the head that GitHub records for that run. So a run that another `ci.yml` made cannot stand in for this one: the push would then change `ci.yml` as well. A pull request from a fork always runs everything, and reuses nothing.
 
-`web-platform-tests` runs on each Host from the same wheel, since its results are what the push is for. So do the Python jobs, and the sanitizers on a pull request that changes what they build. No cache is read or written. The wheel goes on to this run's artifacts, so a second such push takes it from there. The notices artifact, which only [merging the third-party notices](#third-party-notices) reads, stays with the run that built the wheel.
+`web-platform-tests` runs on each Host from the same wheel, since its results are what the push is for. So do the Python jobs, and the sanitizers on a pull request that changes what they build. The reuse jobs read and write no cache of a build. The wheel goes on to this run's artifacts, so a second such push takes it from there. Should it be gone by the time a runner has started, the job is red, and running all the jobs again decides anew. The notices artifact, which only [merging the third-party notices](#third-party-notices) reads, stays with the run that built the wheel.
 
 #### Which checks `main` requires
 
