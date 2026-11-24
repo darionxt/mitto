@@ -150,5 +150,3 @@ Chrome as shipped blocks a window that a page opens without a gesture, so a test
 The `wpt` job of CI runs on each Host once that Host's native job has built the wheel, from the installed wheel, as the native job tests it: `python -m tools.wpt run --jobs 12`, since most Pages wait out a timeout with nothing to do. It keeps each test's result as the artifact `wpt-results-RUNNER`, whose files `--from` takes. A draft pull request runs no native job, so no `wpt` job either, unless it is started by hand ([a full run of a draft](building.md#a-full-run-of-a-draft)). On each Host it takes about 15 to 20 minutes.
 
 A push to a ready pull request that changes only the list of differences takes the wheels of the run before it, and its `wpt` job starts within a few minutes of the push, without the native jobs' builds and tests ([building.md](building.md#a-push-that-changes-only-the-list-of-differences)). `docs/building.md` says when it does not, and why a run of it cannot pass a required check for code that the tests have not seen.
-
-Trial line, removed again before this is merged.

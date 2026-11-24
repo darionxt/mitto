@@ -582,7 +582,7 @@ When a job fails, the run's last job opens an issue titled "Nightly build from n
 gh workflow run full-run.yml --ref BRANCH
 ```
 
-It starts by hand only, from the Actions tab or with the command above, and only on a branch of this repository, so a fork's code cannot run. It tests the branch's head as it is, not merged with `main`, so merge `main` first if it has moved. Its checks stand on that head as `Full run / Native core on ...`, which is not a check that `main` requires: only the run of a pull request that is ready counts for the merge. It restores `main`'s caches and saves none of its own, not of the builds nor of uv, since only its branch could restore them.
+It starts by hand only, from the Actions tab or with the command above, and only on a branch of this repository, so a fork's code cannot run. It tests the branch's head as it is, not merged with `main`, so merge `main` first if it has moved. Its checks stand on that head as `Full run / Native core on ...`, which is not a check that `main` requires: only the run of a pull request that is ready counts for the merge. It restores `main`'s caches and, on any branch but `main`, saves none of its own, not of the builds nor of uv, since only its branch could restore them.
 
 A label on the pull request would be more visible, but CI would then start for every label on every pull request, and the run that a label starts is newer than the full run of a ready pull request, which GitHub then judges the required checks by. A run by the pull request's number would be `main`'s, with a pull request's code in reach of `main`'s caches and its checks on `main`'s commit.
 
