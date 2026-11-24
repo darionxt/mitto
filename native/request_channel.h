@@ -58,7 +58,7 @@ struct RequestEvent {
   int64_t received_bytes = 0;
   bool validated = false;
   // When the response came, which a response from the cache keeps, and the
-  // method of its request.
+  // method that its request started with, before any redirect.
   base::Time response_time;
   std::string method;
   // When the request's first hop started, and, for a navigation that

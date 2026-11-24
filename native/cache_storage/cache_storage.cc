@@ -15,6 +15,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/pickle.h"
 #include "base/task/task_runner.h"
+#include "base/time/time.h"
 #include "base/uuid.h"
 
 namespace mitto {
@@ -22,6 +23,10 @@ namespace {
 
 // The file that lists a storage key's caches.
 constexpr base::FilePath::CharType kIndexFileName[] = FILE_PATH_LITERAL("index");
+
+// How long a change of a cache's padding waits for others before the index is
+// written, as Chrome's kWriteIndexDelaySecs.
+constexpr base::TimeDelta kWriteIndexDelay = base::Seconds(5);
 
 // Changes with any change to what the index holds.
 constexpr int kIndexVersion = 1;
@@ -431,8 +436,15 @@ void CacheStorage::Close(base::OnceClosure callback) {
 }
 
 void CacheStorage::CloseImpl(base::OnceClosure callback) {
-  const base::RepeatingClosure barrier =
-      base::BarrierClosure(caches_.size() + doomed_.size(), std::move(callback));
+  const base::RepeatingClosure barrier = base::BarrierClosure(
+      caches_.size() + doomed_.size() + 1, std::move(callback));
+  // FlushIndexIfDirty().
+  if (write_index_timer_.IsRunning()) {
+    WriteIndex(base::BindOnce(
+        [](base::RepeatingClosure done, bool) { done.Run(); }, barrier));
+  } else {
+    barrier.Run();
+  }
   for (auto& [name, cache] : caches_) {
     cache->Close(barrier);
   }
@@ -446,10 +458,19 @@ void CacheStorage::CacheSizeUpdated(const CacheStorageCache& cache) {
     return;
   }
   // Only the padding is kept: the size comes from the backend when the cache
-  // opens. The index is written with the next change to the list.
+  // opens.
   for (IndexEntry& entry : index_) {
-    if (entry.name == cache.cache_name()) {
-      entry.padding = cache.cache_padding();
+    if (entry.name != cache.cache_name() ||
+        entry.padding == cache.cache_padding()) {
+      continue;
+    }
+    entry.padding = cache.cache_padding();
+    if (!directory_.empty()) {
+      // ScheduleWriteIndex().
+      write_index_timer_.Start(
+          FROM_HERE, kWriteIndexDelay,
+          base::BindOnce(&CacheStorage::WriteIndex, base::Unretained(this),
+                         base::DoNothing()));
     }
   }
 }
@@ -538,6 +559,7 @@ std::unique_ptr<CacheStorageCache> CacheStorage::CreateCache(
 }
 
 void CacheStorage::WriteIndex(base::OnceCallback<void(bool)> callback) {
+  write_index_timer_.Stop();
   if (directory_.empty()) {
     std::move(callback).Run(true);
     return;

@@ -829,7 +829,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.validated = response_info.cache_entry_status ==
                       net::HttpResponseInfo::CacheEntryStatus::ENTRY_VALIDATED;
     event.response_time = response_info.response_time;
-    event.method = request_->method();
+    event.method = options_.method;
     event.first_request_start = first_request_start_;
     event.critical_ch_restart = critical_ch_restart_;
     event.restarted_for_critical_ch = restarted_for_critical_ch_;

@@ -410,12 +410,15 @@ def test_request_and_response_members_do_what_chrome_does(program: Path, script:
 
 @pytest.fixture
 def page_url(native_library: Any) -> Iterator[str]:
-    """The URL of an empty page on 127.0.0.1, whose /referer gives any origin the Referer line that came, or skip if no
-    Page program lies beside the library."""
+    """The URL of an empty page on 127.0.0.1, whose /referer gives any origin the Referer line that came, and whose
+    /requests says how many requests came for /cached, which a cache may keep, or skip if no Page program lies beside
+    the library."""
     library_path = _native.find_library()
     assert library_path is not None
     if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
         pytest.skip("no Page program beside the library")
+
+    cached_requests: list[str] = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -427,7 +430,10 @@ def page_url(native_library: Any) -> Iterator[str]:
                 body = self.headers.get("Referer", "none").encode()
                 self.send_header("Access-Control-Allow-Origin", "*")
             if self.path == "/cached":
+                cached_requests.append(self.path)
                 self.send_header("Cache-Control", "max-age=600")
+            if self.path == "/requests":
+                body = str(len(cached_requests)).encode()
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -968,11 +974,39 @@ def test_an_opaque_response_counts_the_same_at_each_hit_of_the_http_cache(page_u
             const now = await used(); grew.push(now - last); last = now;
         }
         const hits = grew.slice(1);
-        return [hits.every((size) => Math.abs(size - hits[0]) < 256), Math.abs(grew[0] - hits[0]) > 256].join();
+        return [hits.every((size) => Math.abs(size - hits[0]) < 256), await (await fetch("/requests")).text()].join();
       })()
     """
     with (
         mitto.Session(cache="memory") as session,
         session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
     ):
-        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "true,true"
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "true,1"
+
+
+def test_an_opaque_response_counts_the_same_in_a_storage_directory_that_another_session_opens(
+    page_url: str, tmp_path: Path
+) -> None:
+    used = "(async () => (await navigator.storage.estimate()).usageDetails?.caches ?? 0)()"
+    put = """
+      (async () => {
+        const cache = await caches.open("kept");
+        const url = location.origin.replace("127.0.0.1", "localhost") + "/x";
+        for (let i = 0; i < 4; ++i) await cache.put("/" + i, await fetch(url, { mode: "no-cors" }));
+      })()
+    """
+    with (
+        mitto.Session(_storage=tmp_path) as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        page.evaluate(put, timeout=_TIMEOUT_SECONDS)
+        before = page.evaluate(used, timeout=_TIMEOUT_SECONDS)
+    with (
+        mitto.Session(_storage=tmp_path) as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        page.evaluate("caches.open('kept').then(() => null)", timeout=_TIMEOUT_SECONDS)
+        after = page.evaluate(used, timeout=_TIMEOUT_SECONDS)
+    # Four paddings of up to 14 MiB, which are 64 KiB together once in more than 10 billion runs.
+    assert before > 64 * 1024
+    assert abs(after - before) < 16 * 1024
