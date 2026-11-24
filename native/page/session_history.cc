@@ -163,6 +163,25 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
   return arrays;
 }
 
+Navigation::EntryArrays SessionHistory::DidRestoreDocument(
+    int64_t item_sequence_number) {
+  const Entry& old = entries_[current_];
+  if (const std::optional<size_t> index = IndexOfItem(item_sequence_number)) {
+    current_ = *index;
+  }
+  const HistoryItem& item = entries_[current_].root->item();
+  const url::Origin origin = url::Origin::Create(item.url);
+  Navigation::EntryArrays arrays;
+  arrays.type = FrameLoadType::kBackForward;
+  if (!old.initial &&
+      url::Origin::Create(old.root->item().url).IsSameOriginWith(origin)) {
+    arrays.previous =
+        ToApiEntry(old.root->item(), item.document_sequence_number);
+  }
+  FillApiEntries(current_, origin, arrays);
+  return arrays;
+}
+
 void SessionHistory::DidCommitSameDocumentNavigation(
     const HistoryItem& item,
     FrameLoadType type,

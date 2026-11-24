@@ -490,6 +490,7 @@ std::unique_ptr<WorkerMessagingProxy> PageWorkerStarter::StartWorker(
     Worker& worker,
     const GURL& url,
     const WorkerStartOptions& options) {
+  started_ = true;
   return std::make_unique<DedicatedWorkerMessagingProxy>(worker, creator_, url,
                                                          options);
 }

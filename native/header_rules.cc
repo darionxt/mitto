@@ -246,4 +246,69 @@ std::string HttpContentType(std::string_view headers) {
   return mime_type;
 }
 
+// Whether a response's Cache-Control value, `raw_value`, has the directive
+// no-store, as Blink's ParseCacheControlDirectives() finds it, with its
+// separators of RFC 2616.
+// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
+bool CacheControlContainsNoStore(std::string_view raw_value) {
+  constexpr std::string_view kSeparators = "()<>@,;:\\\"/[]?={} \t";
+  std::string value;
+  for (const char c : raw_value) {
+    if (static_cast<unsigned char>(c) >= 0x20 && c != 0x7F) {
+      value.push_back(c);
+    }
+  }
+  const auto strip = [](std::string_view text) {
+    return base::TrimString(text, " ", base::TRIM_ALL);
+  };
+  const auto trim_to_separator = [&](std::string_view text) {
+    return text.substr(0, text.find_first_of(kSeparators));
+  };
+  bool no_store = false;
+  const auto add = [&](std::string_view directive) {
+    if (base::EqualsCaseInsensitiveASCII(directive, "no-store")) {
+      no_store = true;
+    }
+  };
+  const std::string_view header = value;
+  const size_t max = header.size();
+  for (size_t pos = 0; pos < max;) {
+    const size_t next_comma = header.find(',', pos);
+    const size_t next_equal = header.find('=', pos);
+    if (next_equal != std::string_view::npos &&
+        (next_equal < next_comma || next_comma == std::string_view::npos)) {
+      // A directive with a value.
+      add(trim_to_separator(strip(header.substr(pos, next_equal - pos))));
+      pos = next_equal + 1;
+      const std::string_view rest = strip(header.substr(pos));
+      if (rest.starts_with('"')) {
+        const size_t next_quote = rest.find('"', 1);
+        if (next_quote == std::string_view::npos) {
+          return no_store;
+        }
+        pos = header.find('"', pos) + next_quote + 1;
+        const size_t comma = header.find(',', pos);
+        if (comma == std::string_view::npos) {
+          return no_store;
+        }
+        pos = comma + 1;
+      } else {
+        if (rest.find(',') == std::string_view::npos) {
+          return no_store;
+        }
+        pos = header.find(',', pos) + 1;
+      }
+    } else if (next_comma != std::string_view::npos &&
+               (next_comma < next_equal ||
+                next_equal == std::string_view::npos)) {
+      add(trim_to_separator(strip(header.substr(pos, next_comma - pos))));
+      pos = next_comma + 1;
+    } else {
+      add(trim_to_separator(strip(header.substr(pos))));
+      return no_store;
+    }
+  }
+  return no_store;
+}
+
 }  // namespace mitto

@@ -103,6 +103,26 @@ void IdleTaskController::Stop() {
   }
 }
 
+void IdleTaskController::Resume() {
+  frozen_ = false;
+  for (const uint32_t id : std::exchange(held_timeouts_, {})) {
+    const auto found = tasks_.find(id);
+    if (found == tasks_.end()) {
+      continue;
+    }
+    EventLoopOfPage()
+        .TaskRunner(TaskType::kIdleTask)
+        ->PostTask(FROM_HERE,
+                   base::BindOnce(&IdleTask::OnTimeout,
+                                  found->second->timeout_factory.GetWeakPtr()));
+  }
+  for (const uint32_t id : std::exchange(held_idle_tasks_, {})) {
+    if (tasks_.contains(id)) {
+      PostSchedulerIdleTask(id);
+    }
+  }
+}
+
 void IdleTaskController::PostSchedulerIdleTask(uint32_t id) {
   EventLoopOfPage().PostIdleTask(
       FROM_HERE, base::BindOnce(&IdleTaskController::SchedulerIdleTask,
@@ -113,10 +133,18 @@ void IdleTaskController::PostSchedulerIdleTask(uint32_t id) {
 // has the high priority work that would make it yield.
 void IdleTaskController::SchedulerIdleTask(uint32_t id,
                                            base::TimeTicks deadline) {
+  if (frozen_) {
+    held_idle_tasks_.push_back(id);
+    return;
+  }
   RunIdleTask(id, deadline, /*did_timeout=*/false);
 }
 
 void IdleTaskController::TimeoutTask(uint32_t id) {
+  if (frozen_) {
+    held_timeouts_.push_back(id);
+    return;
+  }
   RunIdleTask(id, base::TimeTicks::Now(), /*did_timeout=*/true);
 }
 

@@ -109,6 +109,7 @@ bool SessionIndexedDb::NamesWhatWent(const PageIndexedDbCall& call) const {
 }
 
 void SessionIndexedDb::Send(const PageIndexedDbCall& call) {
+  used_ = true;
   // What a collected object of a document before lets go has gone with it.
   if (NamesWhatWent(call)) {
     return;
@@ -184,7 +185,12 @@ void SessionIndexedDb::StopListening(uint64_t connection) {
   listeners_.erase(connection);
 }
 
+bool SessionIndexedDb::UsedByDocument() const {
+  return used_;
+}
+
 void SessionIndexedDb::DocumentCommitted(uint64_t document) {
+  used_ = false;
   // What the document before asked and opened goes unheard.
   if (host_ != 0) {
     sender_->RemoveIndexedDbHost(host_);

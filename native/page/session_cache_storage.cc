@@ -70,6 +70,7 @@ void SessionCacheStorage::SetSender(
 }
 
 void SessionCacheStorage::Send(const PageCacheStorageCall& call) {
+  used_ = true;
   sender_->SendFromContext(document_, EncodeCacheStorage(document_, call));
 }
 
@@ -153,7 +154,12 @@ void SessionCacheStorage::ReleaseCache(uint64_t cache) {
   Send(call);
 }
 
+bool SessionCacheStorage::UsedByDocument() const {
+  return used_;
+}
+
 void SessionCacheStorage::DocumentCommitted(uint64_t document) {
+  used_ = false;
   // What the document before asked, held or opened goes unheard.
   if (host_ != 0) {
     sender_->RemoveCacheStorageHost(host_);

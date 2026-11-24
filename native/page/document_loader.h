@@ -56,6 +56,11 @@ class DocumentLoader final : public PageRequests::Client,
   // Whether the navigation's response came after a redirect, which its
   // frame's commit reads.
   bool redirected() const { return redirected_; }
+  // The response's status, and whether its Cache-Control says no-store, which
+  // the back/forward cache reads when the document is left, as Chrome's
+  // RenderFrameHost keeps them of its last navigation.
+  int32_t status() const { return status_; }
+  bool no_store() const { return no_store_; }
   void SetNumber(uint64_t number) { number_ = number; }
   // DocumentLoader::StopLoading(), once another document takes the place of
   // this one's: the parser stops, and so does the body, if it still comes.
@@ -69,6 +74,9 @@ class DocumentLoader final : public PageRequests::Client,
   // A navigation that ends with no response tells the frame, which lets this
   // go: nothing may come after it.
   void OnResponseEnded(int net_error) override;
+  // A traversal's restore of a document that the back/forward cache keeps,
+  // which the frame takes in place of a response, and which lets this go.
+  void OnRestore() override;
 
   // DocumentParser::Client:
   bool FeedParser() override;
@@ -88,6 +96,8 @@ class DocumentLoader final : public PageRequests::Client,
   bool response_started_ = false;
   // Whether the response came after a redirect.
   bool redirected_ = false;
+  int32_t status_ = 0;
+  bool no_store_ = false;
   // Whether the document of the response is cross-origin isolated, which
   // its window's agent is, as Blink's agent cluster key from the browser
   // says.

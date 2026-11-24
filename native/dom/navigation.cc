@@ -4,6 +4,7 @@
 #include <tuple>
 #include <utility>
 
+#include "base/functional/bind.h"
 #include "base/functional/function_ref.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
@@ -28,6 +29,7 @@
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_tasks.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
 #include "url/url_util.h"
@@ -630,6 +632,77 @@ void Navigation::UpdateCurrentEntry(
     }
   }
   DispatchEvent(NavigationCurrentEntryChangeEvent::CreateTrusted(u"", current));
+}
+
+NavigationHistoryEntry* Navigation::GetEntryForRestore(const ApiEntry& entry) {
+  if (const int64_t index = IndexOfKey(entry.key); index >= 0) {
+    NavigationHistoryEntry* const existing =
+        entries_[static_cast<size_t>(index)].Get();
+    if (existing->id() == entry.id) {
+      return existing;
+    }
+  }
+  return NavigationHistoryEntry::Create(window_, entry.key, entry.id, entry.url,
+                                        entry.document_sequence, entry.state);
+}
+
+void Navigation::SetEntriesForRestore(const EntryArrays& arrays) {
+  if (HasEntriesAndEventsDisabled()) {
+    return;
+  }
+  MakeEntries();
+  // The navigation that left the document, which went to another one, does
+  // not stay ongoing; one that was intercepted finishes as it would have.
+  if (!ongoing_navigate_event_ ||
+      !ongoing_navigate_event_->HasNavigationActions()) {
+    ongoing_navigate_event_ = nullptr;
+    ongoing_tracker_ = nullptr;
+  }
+  NavigationHistoryEntry* const current = CurrentEntry();
+  std::vector<cppgc::Member<NavigationHistoryEntry>> entries;
+  entries.reserve(arrays.back.size() + arrays.forward.size() + 1);
+  for (const ApiEntry& entry : arrays.back) {
+    entries.emplace_back(GetEntryForRestore(entry));
+  }
+  entries.emplace_back(current);
+  for (const ApiEntry& entry : arrays.forward) {
+    entries.emplace_back(GetEntryForRestore(entry));
+  }
+  NavigationHistoryEntry* const from =
+      arrays.previous ? GetEntryForRestore(*arrays.previous) : nullptr;
+  entries.swap(entries_);
+  current_index_ = static_cast<int64_t>(arrays.back.size());
+  if (activation_) {
+    activation_->Update(current, from, u"traverse");
+  } else {
+    activation_ = NavigationActivation::Create(current, u"traverse", from);
+  }
+  // `entries` now holds the old ones: those that are not among the new go,
+  // with their dispose events from a task, which waits while the window is
+  // frozen.
+  std::vector<cppgc::Persistent<NavigationHistoryEntry>> disposed;
+  for (const cppgc::Member<NavigationHistoryEntry>& entry : entries) {
+    const int64_t index = IndexOfKey(entry->key());
+    if (index < 0 || entries_[static_cast<size_t>(index)] != entry) {
+      disposed.emplace_back(entry.Get());
+    }
+  }
+  if (disposed.empty() || !window_->GetTasks()) {
+    return;
+  }
+  window_->GetTasks()->PostTask(
+      TaskType::kInternalDefault,
+      base::BindOnce(
+          [](std::vector<cppgc::Persistent<NavigationHistoryEntry>> disposed) {
+            for (const cppgc::Persistent<NavigationHistoryEntry>& entry :
+                 disposed) {
+              bindings::EventInit init;
+              Event* const dispose = Event::Create(u"dispose", init);
+              dispose->SetTrusted(true);
+              entry->DispatchEvent(dispose);
+            }
+          },
+          std::move(disposed)));
 }
 
 void Navigation::DisposeEntriesForSessionHistoryRemoval(

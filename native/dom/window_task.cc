@@ -29,13 +29,20 @@ void PostTaskInContext(ExecutionContext* context,
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
   event_loop->TaskRunner(type)->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          [](cppgc::WeakPersistent<ExecutionContext> context,
-             base::OnceClosure task) {
-            RunInContext(context.Get(), [&] { std::move(task).Run(); });
-          },
-          cppgc::WeakPersistent<ExecutionContext>(context), std::move(task)));
+      FROM_HERE, base::BindOnce(
+                     [](cppgc::WeakPersistent<ExecutionContext> context,
+                        TaskType type, base::OnceClosure task) {
+                       // A task of a window that the back/forward cache keeps
+                       // waits, as those of Blink's frozen frames do.
+                       if (context && context->IsInBackForwardCache()) {
+                         context->HoldTask(type, std::move(task));
+                         return;
+                       }
+                       RunInContext(context.Get(),
+                                    [&] { std::move(task).Run(); });
+                     },
+                     cppgc::WeakPersistent<ExecutionContext>(context), type,
+                     std::move(task)));
 }
 
 bool RunInWindowContext(Window* window, base::FunctionRef<void()> run) {
@@ -45,6 +52,16 @@ bool RunInWindowContext(Window* window, base::FunctionRef<void()> run) {
 bool RunInContext(ExecutionContext* execution_context,
                   base::FunctionRef<void()> run) {
   if (!execution_context || !execution_context->HasContext()) {
+    return false;
+  }
+  // Something would run in a window that the back/forward cache keeps
+  // frozen, whose page Chrome evicts for a script, as LocalFrame's
+  // BackForwardCacheEviction hook does, or for a message of a
+  // BroadcastChannel, as BroadcastChannel::OnMessage() does.
+  if (execution_context->IsInBackForwardCache()) {
+    if (execution_context->IsWindow()) {
+      static_cast<Window*>(execution_context)->EvictFromBackForwardCache();
+    }
     return false;
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();

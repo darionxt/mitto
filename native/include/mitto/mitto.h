@@ -244,6 +244,10 @@ typedef struct MittoPageEvent {
   // NUL byte.
   char* url;
   size_t url_size;
+  // NAVIGATED with no net error: 1 if the Page's back/forward cache restored
+  // the document that the navigation goes to, a traversal of the session
+  // history, with no request, and 0 otherwise.
+  int32_t restored;
 } MittoPageEvent;
 
 // Returns the ABI version of the loaded library. Callers compare it with the

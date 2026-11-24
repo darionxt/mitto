@@ -25,6 +25,8 @@
 
 #include <stdint.h>
 
+#include <list>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -152,6 +154,12 @@ class PageFrame final : public NavigationClient, public Frame {
   // `loader`'s navigation ended with no response, and the frame keeps its
   // document. `loader` goes.
   void NavigationEndedWithoutDocument(DocumentLoader& loader);
+  // The Session restores the document that `loader`'s traversal goes to,
+  // which the back/forward cache keeps, in place of a response: the frame's
+  // document is stored or unloads, as at any commit, and the kept one takes
+  // its place, thaws, and shows again, as Chrome's browser restores a page
+  // from its BackForwardCacheImpl. `loader` goes.
+  void RestoreDocument(DocumentLoader& loader);
   // How the current window's document loads, which its document's loading
   // fills in, and performance.timing and window.chrome read.
   DocumentLoadTiming& document_load_timing();
@@ -203,6 +211,53 @@ class PageFrame final : public NavigationClient, public Frame {
   // its beforeunload and navigate events, which Chrome's browser lets nothing
   // that the page starts take the place of.
   bool TraversalWaits() const;
+
+  // The back/forward cache of the top-level frame, as Chrome's
+  // BackForwardCacheImpl keeps a tab's pages: a document that a navigation
+  // leaves, if Chrome would keep it, stays with its context and what runs in
+  // it, frozen, until a traversal to its own entry restores it, or it goes.
+  struct StoredDocument;
+  // The reasons of Chrome's that keep the current document, `document`, out
+  // of the cache whenever it is left, and that the browser knows before a
+  // navigation starts: GetFutureBackForwardCacheEligibilityPotential().
+  bool MayStoreDocument(const Document& document) const;
+  // RenderFrameHostManager::ShouldProactivelySwapBrowsingInstance(): whether
+  // a navigation of `type` to `url` gives the next document a browsing
+  // instance of its own, which the cache needs to keep the current one.
+  bool SwapsBrowsingInstance(const Document& document,
+                             FrameLoadType type,
+                             const GURL& url) const;
+  // BackForwardCacheImpl::CanStorePageNow(), with the reasons that a Page can
+  // have: whether the current document, `document`, goes into the cache as
+  // the next document commits in browsing instance `next_browsing_instance`.
+  bool CanStoreDocument(const Document& document,
+                        uint64_t next_browsing_instance) const;
+  // The browsing instance of document `document`, which a traversal to an
+  // entry of its puts the new document in, as Chrome's entry keeps its
+  // SiteInstance.
+  uint64_t BrowsingInstanceOf(uint64_t document);
+  // The current window, whose document has had its pagehide and
+  // visibilitychange, goes into the cache, frozen, with `loader`, and the
+  // Session hears of it before the next document. Its freeze event follows
+  // from a task, as Chrome's browser freezes a page once it has stored it.
+  void StoreDocument(std::unique_ptr<DocumentLoader> loader);
+  // The current window goes, as its context does once the next document
+  // takes its place.
+  void DropCurrentWindow();
+  // The stored document that a traversal to the entry of item
+  // `item_sequence_number`, whose record is `record`, restores: the document
+  // of the record, if the cache keeps it and stored it at that entry.
+  StoredDocument* FindStoredDocument(uint64_t record,
+                                     int64_t item_sequence_number);
+  // The stored document `document` goes, with no event, as Chrome evicts a
+  // page, and the Session hears of it, unless a traversal waits to restore
+  // it, which takes it anyway.
+  void EvictDocument(uint64_t document);
+  // The traversal that waited to restore a stored document ended otherwise:
+  // the document goes, as Chrome's GetOrEvictEntry() evicts it then.
+  void EndRestore();
+  // Freezes what runs in `stored`'s context, which waits until it thaws.
+  static void Freeze(StoredDocument& stored);
 
   // Makes a new context, whose window has an empty document at `url`, the
   // response of navigation `navigation`, in place of the current one, tells
@@ -400,6 +455,22 @@ class PageFrame final : public NavigationClient, public Frame {
   std::optional<uint64_t> pinned_record_;
   // The records that the Session keeps for the history.
   std::set<uint64_t> held_records_;
+  // The documents that the back/forward cache keeps, the newest first, and
+  // the one that the traversal that waits may restore, which stays until
+  // the traversal ends.
+  std::list<std::unique_ptr<StoredDocument>> stored_documents_;
+  std::optional<uint64_t> restore_document_;
+  // When the traversal that waits started, which a restored document's
+  // pageshow gives as its timeStamp.
+  base::TimeTicks traversal_start_;
+  // The browsing instance of the current document, as Chrome's
+  // BrowsingInstance, the largest yet, and that of each document that the
+  // records hold, which the next document of a traversal takes, as the
+  // traversal that waits does.
+  uint64_t browsing_instance_ = 1;
+  uint64_t last_browsing_instance_ = 1;
+  std::map<uint64_t, uint64_t> browsing_instances_;
+  uint64_t traversal_browsing_instance_ = 1;
   base::WeakPtrFactory<PageFrame> weak_factory_{this};
 };
 

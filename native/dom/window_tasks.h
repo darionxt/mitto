@@ -6,6 +6,9 @@
 #ifndef MITTO_DOM_WINDOW_TASKS_H_
 #define MITTO_DOM_WINDOW_TASKS_H_
 
+#include <utility>
+#include <vector>
+
 #include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
@@ -41,11 +44,20 @@ class WindowTasks {
   // that waits runs.
   void Stop() { weak_factory_.InvalidateWeakPtrs(); }
 
+  // FrameScheduler's frozen queues, as the back/forward cache freezes a
+  // window: a task whose turn comes while frozen does not run, and Resume()
+  // posts each again, in the order their turns came, as a frozen queue keeps
+  // its tasks until it thaws.
+  void Freeze() { frozen_ = true; }
+  void Resume();
+
  private:
-  void Run(base::OnceClosure task);
+  void Run(TaskType type, base::OnceClosure task);
 
   const raw_ptr<v8::Isolate> isolate_;
   const v8::Global<v8::Context> context_;
+  bool frozen_ = false;
+  std::vector<std::pair<TaskType, base::OnceClosure>> held_;
   base::WeakPtrFactory<WindowTasks> weak_factory_{this};
 };
 

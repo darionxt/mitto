@@ -160,8 +160,13 @@ class PageWorkerStarter final : public WorkerStarter {
       const GURL& url,
       const WorkerStartOptions& options) override;
 
+  // Whether it has started a worker, which the back/forward cache cannot
+  // freeze yet: the window's document unloads (a Known Gap).
+  bool HasStarted() const { return started_; }
+
  private:
   DedicatedWorkerMessagingProxy::Creator creator_;
+  bool started_ = false;
 };
 
 }  // namespace mitto

@@ -39,6 +39,14 @@ const bindings::WrapperTypeInfo* NavigationActivation::GetWrapperTypeInfo()
   return &bindings::V8NavigationActivation::kWrapperTypeInfo;
 }
 
+void NavigationActivation::Update(NavigationHistoryEntry* entry,
+                                  NavigationHistoryEntry* from,
+                                  std::u16string navigation_type) {
+  entry_ = entry;
+  from_ = from;
+  navigation_type_ = std::move(navigation_type);
+}
+
 void NavigationActivation::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(entry_);

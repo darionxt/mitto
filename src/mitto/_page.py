@@ -96,12 +96,16 @@ class PageNavigation:
         same_document: Whether it stayed within the document, as one to a fragment does, with no request.
         kept_document: Whether it ended with no document, as one whose response is a 204 or a download does, and the
             Page kept the one it had.
+        restored: Whether it went back to a document that the back/forward cache kept, as Chrome's does for a traversal
+            of the session history, with no request: the document is the one that the Page left, as it was, and its
+            status the one its response had.
     """
 
     url: str
     status: int
     same_document: bool = False
     kept_document: bool = False
+    restored: bool = False
 
 
 @dataclass(slots=True)
@@ -207,7 +211,14 @@ class PageRecord:
             self.navigated = event
         else:
             navigation.navigated = event
-            navigation.done = event.net_error != 0
+            # A document that the back/forward cache restores comes back as it was, so its navigation starts no load.
+            navigation.done = event.net_error != 0 or event.restored
+        if event.restored:
+            self.document_url = event.url
+            if self._loading is not None:
+                self._loading.done = True
+            self._loading = None
+            return
         if event.net_error == 0:
             self.document_url = event.url
             # A document that has not loaded before another takes its place never will.
@@ -297,7 +308,12 @@ def navigation_of(native: NativePage, outcome: _OwnNavigation | PageEnded) -> Pa
         case _OwnNavigation(navigated=PageNavigated() as navigated) if (
             navigated.net_error == 0 or navigated.kept_document
         ):
-            return PageNavigation(url=navigated.url, status=navigated.status, kept_document=navigated.kept_document)
+            return PageNavigation(
+                url=navigated.url,
+                status=navigated.status,
+                kept_document=navigated.kept_document,
+                restored=navigated.restored,
+            )
         case _OwnNavigation(navigated=PageNavigated(net_error=net_error), url=url):
             raise native.request_error(url, net_error)
         case _OwnNavigation():

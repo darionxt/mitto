@@ -367,6 +367,11 @@ void ScriptRunner::OnIsolation(PageIsolation isolation) {
                          base::Unretained(requests_.get()), isolation));
 }
 
+void ScriptRunner::OnRestore(uint64_t number) {
+  RunTask(base::BindOnce(&PageRequests::OnRestore,
+                         base::Unretained(requests_.get()), number));
+}
+
 void ScriptRunner::RunTask(base::OnceClosure task) {
   // Start() failed, and the Page is about to end.
   if (!started_) {

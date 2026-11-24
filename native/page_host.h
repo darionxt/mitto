@@ -208,6 +208,8 @@ struct PageEvent {
   int32_t status = 0;
   int32_t net_error = 0;
   std::string url;
+  // NAVIGATED: whether the back/forward cache restored the document.
+  bool restored = false;
 };
 
 // Carries a Page's events from the network thread to whichever thread holds the
@@ -420,9 +422,25 @@ class PageHost final : public PageChannel::Delegate {
                           uint64_t document);
   // Records that no entry of the session history holds any more.
   void OnRecordsReleased(const std::vector<uint64_t>& records);
+  // The Page's back/forward cache keeps the top-level document `document`,
+  // whose context the library keeps apart, though another takes its place.
+  void OnDocumentStored(uint64_t document);
+  // The Page restored the stored document `document`, as the library asked,
+  // which takes the place of the top-level document and of everything under
+  // it.
+  void OnDocumentRestored(uint64_t document);
+  // The stored document `document` goes.
+  void OnDocumentEvicted(uint64_t document);
+  // Top-level document `id`, of `context`, takes the place of the one before
+  // it and of everything under it, whose messages all came before this.
+  void ReplaceTopLevelDocument(uint64_t id, Context context);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
-  // with `net_error`, and `status` for one that kept the document.
-  void PushNavigated(std::string url, int32_t status, int32_t net_error);
+  // with `net_error`, and `status` for one that kept the document, or that
+  // the back/forward cache `restored`.
+  void PushNavigated(std::string url,
+                     int32_t status,
+                     int32_t net_error,
+                     bool restored = false);
   // Context `id`, or null after refusing a message of `type` that names a
   // context that is not the Page's.
   const Context* ContextOf(uint64_t id, uint32_t type);
@@ -677,8 +695,42 @@ class PageHost final : public PageChannel::Delegate {
     // traversal to its document repeats.
     FetchParams fetch;
     std::string referrer;
+    // Whether its Cache-Control says no-store.
+    bool no_store = false;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
+  // The top-level documents that the Page's back/forward cache keeps, by ID:
+  // each one's context, apart from the Page's, and its response's status.
+  struct StoredDocument {
+    Context context;
+    int32_t status = 0;
+  };
+  std::map<uint64_t, StoredDocument> stored_documents_;
+  // The status of the top-level document's response, which a stored
+  // document keeps.
+  int32_t top_level_status_ = 0;
+  // The traversal to the entry of a stored document that the library may
+  // restore, until the Page restores the document, or the library makes the
+  // request after all, or the Page lets it go.
+  struct PendingRestore {
+    uint64_t number = 0;
+    uint64_t document = kNoDocument;
+  };
+  std::optional<PendingRestore> pending_restore_;
+  // For each top-level document of a no-store response, the current one or a
+  // stored one, by ID: whether a cookie of its URL has changed since it
+  // committed, which keeps it from being restored, as Chrome's
+  // RenderFrameHostImpl::CookieChangeListener counts.
+  struct NoStoreWatch {
+    NoStoreWatch();
+    NoStoreWatch(NoStoreWatch&&);
+    NoStoreWatch& operator=(NoStoreWatch&&);
+    ~NoStoreWatch();
+
+    std::unique_ptr<net::CookieChangeSubscription> subscription;
+    bool cookie_changed = false;
+  };
+  std::map<uint64_t, NoStoreWatch> no_store_watches_;
   // What the library kept of the navigation that made each document that an
   // entry of the Page's session history may go back to, by the document's
   // ID, as Chrome's FrameNavigationEntry keeps it: what the navigation went

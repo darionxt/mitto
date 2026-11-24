@@ -40,7 +40,7 @@ void SessionSender::Send(std::string frame) {
 
 void SessionSender::SendFromContext(uint64_t context, std::string frame) {
   const base::AutoLock lock(lock_);
-  if (forgotten_.contains(context)) {
+  if (forgotten_.contains(context) || stored_.contains(context)) {
     return;
   }
   send_.Run(std::move(frame));
@@ -53,7 +53,7 @@ uint64_t SessionSender::SendRequest(
   const base::AutoLock lock(lock_);
   // The Session's own navigation of the Page is request 0.
   const uint64_t number = ++last_request_;
-  if (forgotten_.contains(context)) {
+  if (forgotten_.contains(context) || stored_.contains(context)) {
     unsent_requests_.insert(number);
     return number;
   }
@@ -124,6 +124,31 @@ void SessionSender::SendContextGone(uint64_t context) {
   }
   ForgetUnder(context);
   send_.Run(EncodeContextGone(context));
+}
+
+void SessionSender::SendDocumentStored(uint64_t document) {
+  const base::AutoLock lock(lock_);
+  parents_.erase(document);
+  stored_.insert(document);
+  send_.Run(EncodeDocumentStored(document));
+}
+
+void SessionSender::SendDocumentRestored(uint64_t document) {
+  const base::AutoLock lock(lock_);
+  for (const auto& [context, parent] : parents_) {
+    forgotten_.insert(context);
+  }
+  parents_.clear();
+  stored_.erase(document);
+  parents_.emplace(document, kNoDocument);
+  send_.Run(EncodeDocumentRestored(document));
+}
+
+void SessionSender::SendDocumentEvicted(uint64_t document) {
+  const base::AutoLock lock(lock_);
+  stored_.erase(document);
+  forgotten_.insert(document);
+  send_.Run(EncodeDocumentEvicted(document));
 }
 
 void SessionSender::ForgetUnder(uint64_t context) {

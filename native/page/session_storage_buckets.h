@@ -45,6 +45,7 @@ class SessionStorageBuckets final : public StorageBucketHost {
   void Ask(PageStorageBucketCall call, Answer answer) override;
   void Release(uint64_t bucket) override;
   void DocumentCommitted(uint64_t document) override;
+  bool UsedByDocument() const override;
 
   // From a task of its own: what the Session answered the document or worker
   // that `host` stands for, which goes unheard once another has its place.
@@ -57,6 +58,8 @@ class SessionStorageBuckets final : public StorageBucketHost {
   // The document or worker, which every call names, and the sender's number
   // of its host.
   uint64_t document_ = kNoDocument;
+  // Whether the document has asked anything here.
+  bool used_ = false;
   uint64_t host_ = 0;
   std::map<uint64_t, Answer> questions_;
   // The buckets that the Session gave the context.

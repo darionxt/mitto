@@ -10,10 +10,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <deque>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
@@ -54,6 +57,10 @@ class PageRequests {
     // For a navigation: whether the document of its response is cross-origin
     // isolated, which the Session says just before the response starts.
     virtual void OnIsolation(PageCrossOriginIsolation isolation) {}
+    // For a traversal to the entry of a document that the back/forward cache
+    // keeps: the Session restores that document, in place of a response.
+    // Nothing more comes.
+    virtual void OnRestore() {}
 
    protected:
     virtual ~Client() = default;
@@ -144,12 +151,23 @@ class PageRequests {
   void SendBodyPart(uint64_t number, std::string_view bytes);
   void EndBody(uint64_t number, bool errored);
 
+  // What the Session sends of the requests of a window that the back/forward
+  // cache keeps frozen (ExecutionContext::IsInBackForwardCache()) waits, in
+  // the order it came, as Blink's loaders buffer what comes for a frozen page
+  // (LoaderFreezeMode::kBufferIncoming). This hands over what waited for the
+  // windows that are no longer frozen, in that order.
+  void DeliverHeld();
+  // Cancels each request of `context`, as when the back/forward cache drops
+  // its window, which hears nothing more of them.
+  void CancelAllOf(const ExecutionContext& context);
+
   // What the Session sends.
   void OnResponseStarted(const PageResponseStarted& response);
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(const PageResponseEnded& ended);
   void OnRequestBodyCredit(const PageCredit& credit);
   void OnIsolation(const PageIsolation& isolation);
+  void OnRestore(uint64_t number);
 
  private:
   // What the entry of a request of the Page's is made of: ResourceFetcher's
@@ -203,7 +221,29 @@ class PageRequests {
     // has said whether its document is cross-origin isolated.
     bool navigation = false;
     bool isolation_said = false;
+    // Whether it is a script's request, as Blink's ThreadableLoader loads.
+    bool script_request = false;
+    // Whether it is a traversal that the Session may answer with a restore.
+    bool may_restore = false;
   };
+
+  // What the Session sent of a request of a frozen window.
+  using Held = std::variant<PageResponseStarted,
+                            PageResponseBody,
+                            PageResponseEnded,
+                            PageCredit>;
+  // Whether what the Session sends of request `number` waits: its window is
+  // frozen, or something of it waits already.
+  bool ShouldHold(uint64_t number) const;
+  void HoldMessage(uint64_t number, Held message);
+  // Whether `open` is a request of a window that the back/forward cache keeps
+  // frozen.
+  static bool IsFrozen(const Open& open);
+  // What the On...() methods do with what they do not hold.
+  void ProcessResponseStarted(const PageResponseStarted& response);
+  void ProcessResponseBody(PageResponseBody body);
+  void ProcessResponseEnded(const PageResponseEnded& ended);
+  void ProcessRequestBodyCredit(const PageCredit& credit);
 
   // Returns the request that the Session names, or null after refusing what
   // it sent. The navigation that the Session makes when the Page opens is
@@ -229,6 +269,9 @@ class PageRequests {
   const base::RepeatingCallback<void(std::string)> refuse_;
   const SessionSender::ResponseRoute route_;
   std::map<uint64_t, Open> open_;
+  std::deque<std::pair<uint64_t, Held>> held_;
+  // How many messages of each request wait in `held_`.
+  std::map<uint64_t, size_t> held_count_;
   raw_ptr<Client> navigation_client_ = nullptr;
   bool navigation_seen_ = false;
 };

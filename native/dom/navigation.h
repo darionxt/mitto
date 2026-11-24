@@ -163,6 +163,12 @@ class Navigation final : public EventTarget {
   void InitializeForNewWindow(EntryArrays arrays) {
     arrays_ = std::move(arrays);
   }
+  // NavigationApi::SetEntriesForRestore(), for a document that the
+  // back/forward cache restores: its entries become those of `arrays` around
+  // its own, an entry of the same key and ID staying the same object, its
+  // activation is a traversal from `arrays.previous`, and those it no longer
+  // has get dispose events from a later task.
+  void SetEntriesForRestore(const EntryArrays& arrays);
   // DisposeEntriesForSessionHistoryRemoval(): the session history dropped the
   // entries of `keys`, which go, but the current one, with their dispose
   // events.
@@ -229,6 +235,9 @@ class Navigation final : public EventTarget {
   int64_t IndexOfKey(const std::u16string& key) const;
   // NavigationApi::MakeEntryFromItem().
   NavigationHistoryEntry* MakeEntryFromItem(const HistoryItem& item);
+  // NavigationApi::GetEntryForRestore(): the entry of `entry`'s key, if it has
+  // its ID too, or a new one.
+  NavigationHistoryEntry* GetEntryForRestore(const ApiEntry& entry);
   // What traverseTo() gives for the current entry: both promises fulfilled
   // with it, as Blink's EarlySuccessResult().
   v8::Local<v8::Object> EarlySuccessResult(NavigationHistoryEntry* entry);

@@ -72,6 +72,9 @@ class Event : public bindings::ScriptWrappable {
   bool Composed() const { return composed_; }
   bool IsTrusted() const { return trusted_; }
   double TimeStamp() const;
+  // The time that timeStamp counts, which is when the event was made unless
+  // this says otherwise, as Blink's Event takes a platform time stamp.
+  void SetPlatformTimeStamp(base::TimeTicks time) { created_ = time; }
   void InitEvent(const std::u16string& type, bool bubbles, bool cancelable);
   EventTarget* SrcElement() const { return Target(); }
   bool LegacyReturnValue() const { return !canceled_; }
@@ -176,7 +179,7 @@ class Event : public bindings::ScriptWrappable {
   bool legacy_did_listeners_throw_ = false;
   PassiveMode handling_passive_ = PassiveMode::kNotPassiveDefault;
   Phase phase_ = Phase::kNone;
-  const base::TimeTicks created_;
+  base::TimeTicks created_;
   cppgc::Member<EventTarget> target_;
   cppgc::Member<EventTarget> current_target_;
   cppgc::Member<const Event> underlying_event_;

@@ -119,6 +119,14 @@ class DOMTimerCoordinator::DOMTimer {
 
   void Stop() { timer_.Stop(); }
 
+  // Runs the timer's task as soon as it can, as a task that waited in a
+  // frozen queue does once the queue thaws, without moving its next time.
+  void RunSoon() {
+    timer_.Start(FROM_HERE, base::TimeTicks(),
+                 base::BindOnce(&DOMTimer::Fired, base::Unretained(this)),
+                 delay_policy_);
+  }
+
  private:
   void Arm() {
     timer_.Start(FROM_HERE, next_fire_time_,
@@ -129,6 +137,10 @@ class DOMTimerCoordinator::DOMTimer {
   // Blink's TimerBase::RunInternal() and DOMTimer::Fired().
   void Fired() {
     DOMTimerCoordinator& coordinator = *coordinator_;
+    if (coordinator.frozen_) {
+      coordinator.held_.push_back(id_);
+      return;
+    }
     coordinator.timer_nesting_level_ = nesting_level_;
     if (repeat_interval_) {
       // The next run is on the grid of the interval, past a twentieth of it
@@ -244,6 +256,15 @@ void DOMTimerCoordinator::Stop() {
   }
   for (const std::unique_ptr<DOMTimer>& timer : clearing_) {
     timer->Stop();
+  }
+}
+
+void DOMTimerCoordinator::Resume() {
+  frozen_ = false;
+  for (const int32_t id : std::exchange(held_, {})) {
+    if (const auto found = timers_.find(id); found != timers_.end()) {
+      found->second->RunSoon();
+    }
   }
 }
 
