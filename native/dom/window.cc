@@ -69,10 +69,50 @@ Window* Window::Create() {
 // static
 Window& Window::Current() {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  Window* const window = bindings::V8Window::ToWrappable(
-      isolate, isolate->GetCurrentContext()->Global());
+  Window* const window = From(isolate, isolate->GetCurrentContext());
   CHECK(window);
   return *window;
+}
+
+// static
+Window* Window::From(v8::Isolate* isolate, v8::Local<v8::Context> context) {
+  ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  return execution_context && execution_context->IsWindow()
+             ? static_cast<Window*>(execution_context)
+             : nullptr;
+}
+
+// static
+Window* Window::Entered() {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!isolate->InContext()) {
+    return nullptr;
+  }
+  return From(isolate, isolate->GetEnteredOrMicrotaskContext());
+}
+
+// static
+Window* Window::Incumbent() {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!isolate->InContext()) {
+    return nullptr;
+  }
+  return From(isolate, isolate->GetIncumbentContext());
+}
+
+// static
+bool Window::AccessCheckCallback(v8::Local<v8::Context> accessing_context,
+                                 v8::Local<v8::Object> accessed_object,
+                                 v8::Local<v8::Value> data) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  Window* const accessing = From(isolate, accessing_context);
+  Window* const accessed =
+      bindings::V8Window::ToWrappable(isolate, accessed_object);
+  return accessing && accessing->HasDocument() && accessed &&
+         accessed->HasDocument() &&
+         accessing->GetSecurityOrigin().IsSameOriginWith(
+             accessed->GetSecurityOrigin());
 }
 
 Window::Window() = default;

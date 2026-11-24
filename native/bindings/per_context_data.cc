@@ -12,7 +12,8 @@ namespace {
 // Index 0 is Chrome's debugger's (v8-context.h), and 1 the objects that the
 // context made for constructs (idl_member_installer.cc).
 constexpr int kContextSecureIndex = 2;
-// And the one that holds whether it is cross-origin isolated.
+// And the one that holds whether it is cross-origin isolated. 4 holds the
+// execution context bound to it (execution_context.cc).
 constexpr int kContextCrossOriginIsolatedIndex = 3;
 
 }  // namespace

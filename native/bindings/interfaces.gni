@@ -1682,6 +1682,7 @@ mitto_bindings_interfaces = [
     file = "notification"
     made_by_known_gaps = true
     implemented = [
+      "constructor",
       "maxActions",
       "permission",
       "requestPermission",
@@ -2978,6 +2979,12 @@ mitto_bindings_interfaces = [
   {
     name = "TextEncoderStream"
     file = "text_encoder_stream"
+  },
+  {
+    name = "TimestampTrigger"
+    file = "timestamp_trigger"
+    made_by_known_gaps = true
+    implemented = []
   },
   {
     name = "ToggleEvent"

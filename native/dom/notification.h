@@ -1,10 +1,12 @@
 // Notifications API's Notification: what a page reads of it without showing
 // one, its static maxActions, and permission and requestPermission() as Chrome
-// answers them for a profile that has granted nothing. Its constructor and its
-// other members are Known Gaps.
+// answers them for a profile that has granted nothing, and its constructor,
+// which runs Chrome's checks and fires error, since nobody has granted the
+// permission. Its other members are Known Gaps.
 //
 // Upstream: third_party/blink/renderer/modules/notifications/notification.cc
 // Upstream: third_party/blink/renderer/modules/notifications/notification_manager.cc
+// Upstream: third_party/blink/renderer/modules/notifications/notification_data.cc
 // Upstream: third_party/blink/public/common/notifications/notification_constants.h
 // Upstream: components/permissions/permission_context_base.cc
 // Upstream: components/content_settings/core/browser/content_settings_registry.cc
@@ -17,7 +19,10 @@
 #include <optional>
 #include <string>
 
+#include "mitto/bindings/dictionaries.h"
+#include "mitto/bindings/exception_state.h"
 #include "mitto/dom/event_target.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-promise.h"
@@ -27,6 +32,15 @@ namespace mitto {
 class Notification final : public EventTarget {
  public:
   static Notification* Create();
+  // new Notification(title, options), as Blink's Notification::Create() and
+  // CreateNotificationData() check `options`, with their messages, and
+  // serialize its data for storage, which throws a DataCloneError for what
+  // cannot be stored, such as a SharedArrayBuffer. The notification never
+  // shows: SchedulePrepareShow() finds no permission, so error fires at it
+  // from a task.
+  static Notification* Create(const std::u16string& title,
+                              const bindings::NotificationOptions& options,
+                              bindings::ExceptionState& exception_state);
   // The one a Known Gap gives, whose wrapper is of `info`.
   static bindings::ScriptWrappable* CreateForKnownGap(
       const bindings::WrapperTypeInfo& info);
@@ -47,6 +61,11 @@ class Notification final : public EventTarget {
   // its own, which goes to the deprecated callback first.
   static v8::Local<v8::Promise> RequestPermission(
       std::optional<v8::Local<v8::Function>> deprecated_callback);
+
+ private:
+  // HasPendingActivity(): one that a page made is never closed, since it never
+  // shows, so it stays until its context goes.
+  cppgc::Persistent<Notification> keep_alive_;
 };
 
 }  // namespace mitto

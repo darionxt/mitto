@@ -345,6 +345,11 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
+    // The URL whose cookies a document's cookie calls read and write, as
+    // Blink's Document::CookieURL(): for a frame's about:blank or srcdoc its
+    // creator's or its initiator's, and empty for a document's own URL, as
+    // ContextUrl() speaks for it.
+    GURL cookie_url;
     // The final URLs of the context's requests that have finished, which a
     // request of the context may name as its referrer, as a module names the
     // module that imports it, or a style sheet the sheet that imports it, in
@@ -401,6 +406,22 @@ class PageHost final : public PageChannel::Delegate {
   void OnContextGone(uint64_t context_id);
   // A navigation within document `document` that gave it the URL `url`.
   void OnSameDocumentNavigation(uint64_t document, const std::string& url);
+  // A navigation of document `document`'s frame to about:blank that document
+  // `initiator` started.
+  void OnAboutBlankNavigation(uint64_t document,
+                              uint64_t initiator,
+                              PageLocalNavigationKind kind);
+  // Document `opener` of another window opened document `document`.
+  void OnDocumentOpened(uint64_t document, uint64_t opener);
+  // A traversal of the session history that leaves document `document` for
+  // an entry of another document: the navigation that made the record's
+  // document again, from what the library kept of it, never from what the
+  // Page names, and taking what the cache holds, as Chrome's browser repeats
+  // an entry's navigation.
+  void OnTraversalRequest(const PageTraversalRequest& traversal,
+                          uint64_t document);
+  // Records that no entry of the session history holds any more.
+  void OnRecordsReleased(const std::vector<uint64_t>& records);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
   // with `net_error`, and `status` for one that kept the document.
   void PushNavigated(std::string url, int32_t status, int32_t net_error);
@@ -429,6 +450,10 @@ class PageHost final : public PageChannel::Delegate {
   GURL TopDocumentUrl() const;
   // What the cookie calls of document `id` are made for.
   CookieContext CookieContextOf(uint64_t id) const;
+  // The cookie URL of a context, which a frame's document that takes the
+  // place of its creator's or initiator's takes, as Blink's
+  // DocumentInit::GetCookieUrl() does from its owner document.
+  static GURL CookieUrlOf(const Context& context);
   // Where document `id`'s frame is in the frame tree: the top-level
   // document's origin, and whether a document from `id` up is of another
   // site, or of another origin, than the top-level one.
@@ -499,6 +524,9 @@ class PageHost final : public PageChannel::Delegate {
     // A navigation, whose response the Page makes a document of, unless it
     // is a 204, a 205 or a download.
     bool is_navigation = false;
+    // A navigation of the top-level frame, which the caller hears of, and
+    // whose COOP and COEP make the Page's agent cluster.
+    bool top_level = false;
     // A dedicated worker's script: its creator's embedder policy, which the
     // worker's has to be compatible with, as DedicatedWorkerHost::CheckCOEP()
     // holds it.
@@ -506,6 +534,9 @@ class PageHost final : public PageChannel::Delegate {
     // The embedder policy of the document or worker that asks, which the
     // Cross-Origin-Resource-Policy check of a request of mode no-cors reads.
     CrossOriginEmbedderPolicy embedder_policy;
+    // A frame's navigation: the URLs of the frame's ancestors' documents, from
+    // its parent's up, as they were when it started.
+    std::vector<GURL> frame_ancestor_urls;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
@@ -621,6 +652,18 @@ class PageHost final : public PageChannel::Delegate {
     uint64_t target = kNoDocument;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
+  // The navigations of frames to about:blank that have started and not
+  // committed yet, by the frame's document that the about:blank takes the
+  // place of: the document that started it, and what of it the about:blank
+  // takes.
+  struct AboutBlankNavigation {
+    PageLocalNavigationKind kind = PageLocalNavigationKind::kAboutBlank;
+    uint64_t initiator = kNoDocument;
+    url::Origin origin;
+    CrossOriginEmbedderPolicy coep;
+    GURL cookie_url;
+  };
+  std::map<uint64_t, AboutBlankNavigation> about_blank_navigations_;
   // The responses of the scripts of workers that the Page has and has not
   // started yet, by number: the context that asked and the final URL.
   struct WorkerScript {
@@ -639,8 +682,37 @@ class PageHost final : public PageChannel::Delegate {
     int32_t status = 0;
     CrossOriginEmbedderPolicy coep;
     int coop_ignored = 0;
+    // What the navigation went as, and the Referer it sent last, which a
+    // traversal to its document repeats.
+    FetchParams fetch;
+    std::string referrer;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
+  // What the library kept of the navigation that made each document that an
+  // entry of the Page's session history may go back to, by the document's
+  // ID, as Chrome's FrameNavigationEntry keeps it: what the navigation went
+  // as, its URL after its redirects, the Referer it sent last, and the URLs
+  // that navigations within the document gave it, the most recent last, with
+  // how many bytes they hold.
+  struct NavigationRecord {
+    NavigationRecord();
+    NavigationRecord(NavigationRecord&&);
+    NavigationRecord& operator=(NavigationRecord&&);
+    ~NavigationRecord();
+
+    FetchParams fetch;
+    GURL url;
+    std::string referrer;
+    std::vector<GURL> same_document_urls;
+    size_t same_document_url_bytes = 0;
+    // Whether document.open() gave the document about:blank, or a traversal
+    // took it there, so that an entry of its may be at it.
+    bool had_about_blank = false;
+  };
+  std::map<uint64_t, NavigationRecord> records_;
+  // Whether an entry of the top-level document `context` may be at about:blank:
+  // a document of its origin whose record the Page still holds had it.
+  bool MayHaveAboutBlankEntry(const Context& context) const;
   // The documents whose CookieStores listen, by ID: what tells each of each
   // change, and what its cookie calls are made for.
   struct CookieStoreListener {

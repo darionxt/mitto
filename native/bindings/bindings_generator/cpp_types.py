@@ -19,6 +19,7 @@ import dataclasses
 from bindings_generator.cpp_names import file_name
 from bindings_generator.errors import UnhandledError
 from bindings_generator.model import IdlType, TypeKind
+from bindings_generator.type_tables import idl_type_kind
 
 __all__ = ["Site", "TypeMapper", "header_of", "union_name"]
 
@@ -522,6 +523,7 @@ class TypeMapper:
             TypeKind.BOOLEAN,
             TypeKind.DICTIONARY,
             TypeKind.FLOATING_POINT,
+            TypeKind.INTEGER,
             TypeKind.STRING,
             TypeKind.INTERFACE,
             TypeKind.SEQUENCE,
@@ -534,13 +536,19 @@ class TypeMapper:
             if member.kind is TypeKind.BUFFER_SOURCE and member.name not in _SPAN_MEMBERS:
                 # Of the buffer sources, those of BufferSource.
                 raise self._refuse(idl_type, where, "a union")
+            if member.kind is TypeKind.INTEGER and member.name not in _CONVERTED_INTEGERS:
+                raise self._refuse(idl_type, where, "a union")
             if member.kind in (TypeKind.SEQUENCE, TypeKind.RECORD):
                 # Checks that its elements convert.
                 self.value_type(member, where)
         # Interfaces with a class can be any number. Of the others, Web IDL's conversion takes the first that fits, so
-        # the writer allows one of each.
+        # the writer allows one of each, and one numeric type, an integer or a floating point one.
         kinds = [
-            (member.kind, member.name) if member.kind is TypeKind.BUFFER_SOURCE else member.kind
+            (member.kind, member.name)
+            if member.kind is TypeKind.BUFFER_SOURCE
+            else TypeKind.FLOATING_POINT
+            if member.kind is TypeKind.INTEGER
+            else member.kind
             for member in idl_type.members
             if member.kind is not TypeKind.INTERFACE
         ]
@@ -559,6 +567,8 @@ class TypeMapper:
             return "bool"
         if member.kind is TypeKind.FLOATING_POINT:
             return "float" if member.name.endswith("float") else "double"
+        if member.kind is TypeKind.INTEGER:
+            return _INTEGERS[member.name]
         if member.kind is TypeKind.STRING and member.name == "ByteString":
             return "std::string"
         if member.kind is TypeKind.STRING:
@@ -571,6 +581,14 @@ class TypeMapper:
         if member.kind in (TypeKind.SEQUENCE, TypeKind.RECORD):
             return self.value_type(member, "a union")
         return member.name
+
+    def sequence_capacity(self, item: IdlType, where: str) -> str:
+        """The expression of the most items that Blink's Vector of a sequence of `item` holds, which an array of
+        more fails with Blink's RangeError before any item converts."""
+        kind = idl_type_kind(item)
+        if kind is None:
+            raise self._refuse(item, where, "an item")
+        return f"SequenceCapacity(IdlTypeKind::{kind}, {'true' if item.nullable else 'false'})"
 
     def from_v8_enumeration_for_setter(
         self, idl_type: IdlType, value: str, target: str, site: Site, where: str
@@ -680,7 +698,8 @@ class TypeMapper:
                 f"{cpp_type} {target};",
                 f"if (!{value}->IsNullOrUndefined()) {{",
                 f"  {cpp_type.removeprefix('std::optional<').removesuffix('>')} {items};",
-                f"  if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value> {item}) {{",
+                f"  if (!IterateSequence(isolate, {value}, exception_state, {self.sequence_capacity(element_type, where)},",
+                f"                       [&](v8::Local<v8::Value> {item}) {{",
                 *["        " + line for line in inner],
                 f"        {items}.push_back(std::move({element}));",
                 "        return true;",
@@ -699,7 +718,8 @@ class TypeMapper:
                 not_of_type = Site(fail="", element=True).not_of_type(self.reduce(element_type).name)
                 return [
                     f"{cpp_type} {target};",
-                    f"if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value>) {{",
+                    f"if (!IterateSequence(isolate, {value}, exception_state, {self.sequence_capacity(element_type, where)},",
+                    "                     [&](v8::Local<v8::Value>) {",
                     f"      exception_state.ThrowTypeError({not_of_type});",
                     "      return false;",
                     "    })) {",
@@ -711,7 +731,8 @@ class TypeMapper:
             inner = self.from_v8(element_type, item, element, Site(fail="return false;", element=True), where)
             return [
                 f"{cpp_type} {target};",
-                f"if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value> {item}) {{",
+                f"if (!IterateSequence(isolate, {value}, exception_state, {self.sequence_capacity(element_type, where)},",
+                f"                     [&](v8::Local<v8::Value> {item}) {{",
                 *["      " + line for line in inner],
                 f"      {target}.push_back(std::move({element}));",
                 "      return true;",

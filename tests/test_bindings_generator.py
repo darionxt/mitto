@@ -443,6 +443,60 @@ def test_a_union_converts_a_number_to_its_floating_point_member() -> None:
     )
 
 
+def test_a_union_converts_a_number_and_what_no_other_member_takes_to_its_integer_member() -> None:
+    # NotificationOptions' vibrate: (unsigned long or sequence<unsigned long>).
+    types = TypeMapper(frozenset(), frozenset())
+    integer = IdlType(TypeKind.INTEGER, "unsigned long")
+    sequence = IdlType(TypeKind.SEQUENCE, "sequence<unsigned long>", members=(integer,))
+    union = IdlType(TypeKind.UNION, "(unsigned long or sequence<unsigned long>)", members=(integer, sequence))
+
+    assert types.value_type(union, "a") == "UnsignedLongOrUnsignedLongSequence"
+    assert types.union_alternative(integer) == "uint32_t"
+    header, source = cpp_writer._write_union("UnsignedLongOrUnsignedLongSequence", union, types)  # pyright: ignore[reportPrivateUsage]
+    text = "\n".join(source)
+
+    assert "using UnsignedLongOrUnsignedLongSequence = std::variant<uint32_t, std::vector<uint32_t>>;" in header
+    # An object with an @@iterator is the sequence; a Number, and then anything else, converts as the integer does.
+    assert text.index("GetIteratorMethod(") < text.index("if (value->IsNumber()) {")
+    assert text.count("FromV8Integer(isolate, value, &number)") == 2
+    # Web IDL's union has one numeric type at most.
+    with pytest.raises(UnhandledError, match="a union"):
+        types.value_type(dataclasses.replace(union, members=(integer, IdlType(TypeKind.FLOATING_POINT, "double"))), "b")
+
+
+def test_a_union_takes_an_array_by_its_indices_before_any_iterator() -> None:
+    # bind_gen's union.py: an array goes to the sequence member read by index, so an array whose @@iterator is not
+    # callable still converts, as `new Notification('t', {vibrate: pattern})` does in Chrome.
+    types = TypeMapper(frozenset(), frozenset())
+    integer = IdlType(TypeKind.INTEGER, "unsigned long")
+    sequence = IdlType(TypeKind.SEQUENCE, "sequence<unsigned long>", members=(integer,))
+    union = IdlType(TypeKind.UNION, "(unsigned long or sequence<unsigned long>)", members=(integer, sequence))
+
+    _, source = cpp_writer._write_union("UnsignedLongOrUnsignedLongSequence", union, types)  # pyright: ignore[reportPrivateUsage]
+    text = "\n".join(source)
+
+    assert text.index("if (value->IsArray()) {") < text.index("GetIteratorMethod(")
+    assert (
+        "IterateSequence(isolate, value, exception_state, SequenceCapacity(IdlTypeKind::kUnsignedLong, false)," in text
+    )
+    assert text.count("items.push_back(std::move(element));") == 2
+
+
+def test_a_sequence_names_the_kind_of_its_items_for_blinks_capacity() -> None:
+    # CreateIDLSequenceFromV8ArraySlow() refuses an array longer than its Vector of items holds, whose size the
+    # Page works out from the item's IdlTypeKind and whether it is nullable.
+    types = TypeMapper(frozenset({"Node"}), frozenset())
+    node = IdlType(TypeKind.INTERFACE, "Node")
+    string = IdlType(TypeKind.STRING, "DOMString", nullable=True)
+
+    assert types.sequence_capacity(node, "a") == "SequenceCapacity(IdlTypeKind::kInterface, false)"
+    assert types.sequence_capacity(string, "a") == "SequenceCapacity(IdlTypeKind::kDOMString, true)"
+    lines = types.from_v8(
+        IdlType(TypeKind.SEQUENCE, "sequence<Node>", members=(node,)), "value", "nodes", Site(fail="return;"), "a"
+    )
+    assert "SequenceCapacity(IdlTypeKind::kInterface, false)," in "\n".join(lines)
+
+
 def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -> None:
     types = TypeMapper(frozenset(), frozenset({"Options"}))
     union = IdlType(
@@ -1626,6 +1680,48 @@ def test_a_call_with_a_receiver_makes_the_wrappers_it_returns_in_the_receivers_r
     static_getter = source[source.index("void FirstAttributeGetCallback") :]
     assert "ReceiverRealmScope" not in static_getter[: static_getter.index("\n}")]
     assert '#include "mitto/bindings/per_context_data.h"' in source
+
+
+def test_a_members_receiver_goes_unchecked_only_where_another_origin_may_reach_it() -> None:
+    # bind_gen's cross_origin_check: [CrossOrigin] leaves an operation's receiver and an attribute's getter's unchecked,
+    # and a static member has no receiver to check. A window's location stays checked while a Location checks nothing,
+    # and its postMessage() while a message names its target as its source.
+    both = ExtendedAttributes((("CrossOrigin", ("Getter", "Setter")),))
+    setter = ExtendedAttributes((("CrossOrigin", ("Setter",)),))
+    window = _interface(
+        name="Window",
+        extended_attributes=_extended("Global"),
+        attributes=(
+            _attribute("closed", "CrossOrigin"),
+            Attribute("both", BOOLEAN, True, False, both, ALWAYS),
+            Attribute("href", BOOLEAN, True, False, setter, ALWAYS),
+            Attribute("location", BOOLEAN, True, False, both, ALWAYS),
+            _attribute("name"),
+            Attribute("first", BOOLEAN, True, True, ExtendedAttributes(), ALWAYS),
+        ),
+        operation_groups=(
+            _operation("close", "CrossOrigin"),
+            _operation("postMessage", "CrossOrigin"),
+            _operation("stop"),
+        ),
+        exposed_constructs=("Window",),
+        exposed=(ExposedConstruct("Window", "interface", "Window", ALWAYS),),
+    )
+    definitions = Definitions({"Window": window}, {}, {}, {}, frozenset())
+
+    source = write_bindings(definitions, [], [ImplementedInterface("Window", "mitto/dom/window.h")])["v8_window.cc"]
+
+    installs = " ".join(source.split("void InstallInterfaceTemplate")[1].split()).split(";")
+
+    def check_of(name: str) -> str:
+        install = next(line for line in installs if f'"{name}", kInterfaceName' in line)
+        return install[install.index("CrossOriginCheck::") :].rstrip(")")
+
+    unchecked = {name: check_of(name) for name in ("closed", "both", "first", "close")}
+    checked = {name: check_of(name) for name in ("href", "location", "name", "postMessage", "stop")}
+    assert set(unchecked.values()) == {"CrossOriginCheck::kDoNotCheck"}
+    assert set(checked.values()) == {"CrossOriginCheck::kCheck"}
+    assert "instance_template->SetAccessCheckCallback(&Window::AccessCheckCallback);" in source
 
 
 def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None:

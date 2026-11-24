@@ -139,16 +139,6 @@ class NestingLevelIncrementer {
   const raw_ref<int> level_;
 };
 
-// The window of the entered context, as Blink's EnteredDOMWindow() gives it.
-Window* EnteredWindow() {
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (!isolate->InContext()) {
-    return nullptr;
-  }
-  return bindings::V8Window::ToWrappable(
-      isolate, isolate->GetEnteredOrMicrotaskContext()->Global());
-}
-
 bool IsAsciiWhitespace(char16_t c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
 }
@@ -183,8 +173,8 @@ Document* Document::Create() {
   if (!isolate || !isolate->InContext()) {
     return document;
   }
-  const Window* const window = bindings::V8Window::ToWrappable(
-      isolate, isolate->GetCurrentContext()->Global());
+  const Window* const window =
+      Window::From(isolate, isolate->GetCurrentContext());
   if (window && window->HasDocument()) {
     document->SetOrigin(window->GetDocument().GetOrigin());
   }
@@ -261,8 +251,7 @@ WindowTasks* Document::GetTasks() const {
   if (!isolate || !isolate->InContext()) {
     return nullptr;
   }
-  Window* const window = bindings::V8Window::ToWrappable(
-      isolate, isolate->GetCurrentContext()->Global());
+  Window* const window = Window::From(isolate, isolate->GetCurrentContext());
   return window ? window->GetTasks() : nullptr;
 }
 
@@ -392,7 +381,7 @@ HTMLAllCollection* Document::All() {
 // Upstream: third_party/blink/renderer/core/dom/document.cc
 std::u16string Document::Cookie(
     bindings::ExceptionState& exception_state) const {
-  if (!window_) {
+  if (!IsCurrentDocumentOfItsWindow()) {
     return std::u16string();
   }
   if (!cookie_jar_) {
@@ -404,7 +393,7 @@ std::u16string Document::Cookie(
 
 void Document::SetCookie(const std::u16string& value,
                          bindings::ExceptionState& exception_state) {
-  if (!window_) {
+  if (!IsCurrentDocumentOfItsWindow()) {
     return;
   }
   if (!cookie_jar_) {
@@ -412,6 +401,11 @@ void Document::SetCookie(const std::u16string& value,
     return;
   }
   cookie_jar_->SetCookie(value);
+}
+
+bool Document::IsCurrentDocumentOfItsWindow() const {
+  return window_ && window_->HasContext() && window_->HasDocument() &&
+         &window_->GetDocument() == this;
 }
 
 void Document::ThrowCookiesDenied(
@@ -545,9 +539,11 @@ bool Document::DispatchBeforeUnloadEvent() {
         "frame that never had a user gesture since its load. "
         "https://www.chromestatus.com/feature/5082396709879808");
   }
-  // FrameLoader::BeforeUnloadDoneWillUnload().
-  load_event_progress_ = LoadEventProgress::kBeforeUnloadEventHandled;
   return true;
+}
+
+void Document::BeforeUnloadDoneWillUnload() {
+  load_event_progress_ = LoadEventProgress::kBeforeUnloadEventHandled;
 }
 
 HttpRefreshScheduler& Document::GetHttpRefreshScheduler() {
@@ -1427,9 +1423,22 @@ void Document::SetUrl(std::u16string url) {
   UpdateBaseUrl();
 }
 
+void Document::SetUrlKeepingOrigin(std::u16string url) {
+  // Not one that its URL does not say already, which a frame's about:blank or
+  // srcdoc inherits, or a sandbox makes opaque.
+  url::Origin origin = GetOrigin();
+  if (url::Origin::Create(GURL(url_)).IsSameOriginWith(origin) &&
+      !url::Origin::Create(GURL(url)).IsSameOriginWith(origin)) {
+    origin_ = std::move(origin);
+    keeps_origin_of_earlier_url_ = true;
+  }
+  SetUrl(std::move(url));
+}
+
 GURL Document::FallbackBaseUrl() const {
   GURL url(url_);
-  if (url.IsAboutBlank() && about_base_url_.is_valid()) {
+  if ((url.IsAboutSrcdoc() || url.IsAboutBlank()) &&
+      about_base_url_.is_valid()) {
     return about_base_url_;
   }
   return url;
@@ -1441,6 +1450,7 @@ GURL Document::CookieUrl() const {
 
 void Document::SetAboutBaseUrl(GURL url) {
   about_base_url_ = std::move(url);
+  ProcessBaseElement();
   UpdateBaseUrl();
 }
 
@@ -1884,12 +1894,22 @@ void Document::CheckCompleted() {
     http_refresh_scheduler_->MaybeStartTimer();
   }
   // FrameLoader::DidFinishNavigation(): once a frame has loaded, its parent
-  // checks whether all of its frames have.
-  if (load_event_runs && window_) {
+  // checks whether all of its frames have, each time, so that one whose load
+  // event ran before a frame under it started holds back no ancestor.
+  if (window_) {
     if (Frame* const frame = window_->GetFrame()) {
       if (Frame* const parent = frame->Parent()) {
+        // In the parent's own context, so that what its load event starts,
+        // such as the top-level document's favicon, is the parent's.
+        v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+        const v8::HandleScope handle_scope(isolate);
+        v8::Local<v8::Context> parent_context;
         if (Window* const parent_window = parent->DomWindow();
-            parent_window && parent_window->HasDocument()) {
+            parent_window && parent_window->HasDocument() &&
+            parent_window->HasContext() &&
+            parent_window->ToV8(isolate)->GetCreationContext(isolate).ToLocal(
+                &parent_context)) {
+          const v8::Context::Scope context_scope(parent_context);
           parent_window->GetDocument().CheckCompleted();
         }
       }
@@ -1973,7 +1993,7 @@ Document* Document::Open(const std::u16string& type,
                          const std::u16string& replace,
                          bindings::ExceptionState& exception_state) {
   // The type is ignored, and "replace" only counted, as in Blink.
-  Open(EnteredWindow(), exception_state);
+  Open(Window::Entered(), exception_state);
   return this;
 }
 
@@ -2034,8 +2054,16 @@ void Document::Open(Window* entered_window,
       }
     }
     const std::u16string spec = base::UTF8ToUTF16(url.possibly_invalid_spec());
-    if (spec != url_) {
-      SetUrl(spec);
+    // Not for an about:srcdoc opener, whose frame's content its URL is not.
+    if (spec != url_ && !url.IsAboutSrcdoc()) {
+      SetUrlKeepingOrigin(spec);
+    }
+    // DidOpenDocumentInputStream(): the browser takes what the opener gave
+    // the document.
+    if (entered_window != window_) {
+      if (NavigationClient* const client = window_->GetNavigationClient()) {
+        client->DidOpenDocument(*entered_window);
+      }
     }
   }
   Open();
@@ -2120,7 +2148,7 @@ void Document::Write(const std::vector<std::u16string>& text,
   for (const std::u16string& piece : text) {
     string += piece;
   }
-  Write(string, EnteredWindow(), exception_state);
+  Write(string, Window::Entered(), exception_state);
 }
 
 void Document::Writeln(const std::vector<std::u16string>& text,
@@ -2130,7 +2158,7 @@ void Document::Writeln(const std::vector<std::u16string>& text,
     string += piece;
   }
   string += u'\n';
-  Write(string, EnteredWindow(), exception_state);
+  Write(string, Window::Entered(), exception_state);
 }
 
 void Document::Write(const std::u16string& text,

@@ -84,6 +84,23 @@ class Window final : public WindowProperties, public ExecutionContext {
   static Window* Create();
   // The Window of the isolate's current context.
   static Window& Current();
+  // The window of `context`, as ExecutionContext::From() finds it, or null
+  // for a context of none or of a worker.
+  static Window* From(v8::Isolate* isolate, v8::Local<v8::Context> context);
+  // The windows of the entered and the incumbent contexts, as Blink's
+  // EnteredDOMWindow() and IncumbentDOMWindow() give them: the window whose
+  // script the task entered, and the one whose script made the call. Null
+  // outside a context.
+  static Window* Entered();
+  static Window* Incumbent();
+  // Whether `accessing_context` may access the window that `accessed_object`,
+  // a global proxy, gives, as bind_gen's AccessCheckCallback() of Window asks
+  // BindingSecurity::ShouldAllowAccessTo(): for a window of the same origin.
+  // V8 asks for contexts of different security tokens, such as that of a
+  // window that its frame navigated away from, which loses its token.
+  static bool AccessCheckCallback(v8::Local<v8::Context> accessing_context,
+                                  v8::Local<v8::Object> accessed_object,
+                                  v8::Local<v8::Value> data);
 
   Window();
   ~Window() override;
@@ -185,6 +202,10 @@ class Window final : public WindowProperties, public ExecutionContext {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // The window's CookieStore, if a script has asked for it.
+  mitto::CookieStore* GetCookieStoreIfExists() const {
+    return cookie_store_.Get();
+  }
   // GlobalCacheStorage::caches(): the window's CacheStorage, made the first
   // time, or null after throwing a SecurityError for a document whose origin
   // may not reach caches.

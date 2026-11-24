@@ -101,6 +101,22 @@ uint64_t SessionSender::SendContext(
   return id;
 }
 
+uint64_t SessionSender::SendFrameDocument(
+    uint64_t parent,
+    uint64_t replaced,
+    base::FunctionRef<std::string(uint64_t id)> encode) {
+  const base::AutoLock lock(lock_);
+  const uint64_t id = ++last_context_;
+  if (parent == kNoDocument || forgotten_.contains(parent)) {
+    forgotten_.insert(id);
+    return id;
+  }
+  ForgetUnder(replaced);
+  parents_.emplace(id, parent);
+  send_.Run(encode(id));
+  return id;
+}
+
 void SessionSender::SendContextGone(uint64_t context) {
   const base::AutoLock lock(lock_);
   if (forgotten_.contains(context)) {

@@ -22,6 +22,7 @@
 
 #include "base/memory/raw_ptr_exclusion.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "url/gurl.h"
 
@@ -66,6 +67,13 @@ struct FrameLoadRequest {
   // navigate() with history "push", which keeps a new entry where a
   // navigation would otherwise replace the current one.
   bool force_history_push = false;
+  // The window whose document starts it, as a frame's element's starts the
+  // frame's, or null for the navigated window's own.
+  // On the stack only, as the garbage collector scans it.
+  RAW_PTR_EXCLUSION Window* origin_window = nullptr;
+  // The referrer policy of the element that starts it, as an iframe's
+  // referrerpolicy names it, or kDefault for the initiator's.
+  FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
 };
 
 // LocalFrame::Navigate(): drops a navigation past the rate limit, makes a

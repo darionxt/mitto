@@ -374,6 +374,8 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kStorageBuckets:
       case PageMessage::kDocumentCommitted:
       case PageMessage::kSameDocumentNavigation:
+      case PageMessage::kAboutBlankNavigation:
+      case PageMessage::kDocumentOpened:
       case PageMessage::kWorkerStarted:
       case PageMessage::kContextGone:
       case PageMessage::kStorageBind:
@@ -384,6 +386,8 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kStorageUnbind:
       case PageMessage::kStoragePart:
       case PageMessage::kNetworkHint:
+      case PageMessage::kTraversalRequest:
+      case PageMessage::kRecordsReleased:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }

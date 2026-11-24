@@ -72,7 +72,7 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 #   it, which only a WeakRef or FinalizationRegistry can see; a class with it says in its header what it keeps.
 # - CEReactions: the Runtime has no custom elements, so there are no reactions to run around a call.
 # - CachedAccessor and CachedAttribute: a page sees the same value either way; caching only saves calls.
-# - CrossOrigin: only a frame of another origin sees it, and a Page has no frames yet.
+# - CrossOrigin: the receiver of a member that a caller of another origin may reach goes unchecked (_receiver_check()).
 # - NewObject: the class returns a new object, which Blink only checks.
 # - NoAllocDirectCall: the install plan puts the member where Blink does; V8's fast call itself only saves time.
 # - SameObject: the class keeps the object and returns it on every call, so the bindings keep nothing of their own.
@@ -1722,7 +1722,8 @@ class _InterfaceWriter:
             first = "isolate, context" if on_objects else "isolate"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, "
-                f"{callback}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
+                f"{callback}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect, "
+                f"{self._receiver_check(property_)});"
             ]
         if isinstance(member, ExposedConstruct):
             if member not in self.constructs:
@@ -1759,7 +1760,7 @@ class _InterfaceWriter:
                 signature = "v8::Local<v8::Signature>()"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "
-                f"{setter}, {attributes}, {side_effect}{data});"
+                f"{setter}, {attributes}, {side_effect}, {self._receiver_check(property_)}{data});"
             ]
         if isinstance(member, Constant):
             if on_objects:
@@ -1776,9 +1777,26 @@ class _InterfaceWriter:
             data = f", {self._known_gap_data(property_)}" if callback.startswith("&KnownGap") else ""
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, {callback}, "
-                f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect{data});"
+                f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect, "
+                f"{self._receiver_check(property_)}{data});"
             ]
         raise UnhandledError(f"{self.where(property_.name)}: the C++ writer does not install this kind of property")
+
+    def _receiver_check(self, property_: Property) -> str:
+        """Whether V8 checks the access to the receiver of an attribute's getter or an operation, as bind_gen's
+        cross_origin_check says: not for a static member, or for one that [CrossOrigin] lets another origin reach."""
+        member = property_.member
+        unchecked = property_.target == "interface"
+        if isinstance(member, Attribute):
+            values = member.extended_attributes.values_of("CrossOrigin")
+            unchecked |= "CrossOrigin" in member.extended_attributes and (not values or "Getter" in values)
+        elif isinstance(member, OperationGroup):
+            unchecked |= any("CrossOrigin" in overload.extended_attributes for overload in member.overloads)
+        if self.interface.name == "Window" and property_.name in ("location", "postMessage"):
+            # A Location checks no caller of its own yet, and a message names its target as its source, so a window
+            # gives either to callers of its origin alone.
+            unchecked = False
+        return f"CrossOriginCheck::{'kDoNotCheck' if unchecked else 'kCheck'}"
 
     @staticmethod
     def _attributes(property_: Property) -> str:
@@ -1857,6 +1875,9 @@ class _InterfaceWriter:
                 "  instance_template->SetImmutableProto();",
                 "  prototype_template->SetImmutableProto();",
             ]
+        if interface.name == "Window":
+            # As bind_gen's V8Window has it: V8 asks for each access to a window whose security token is another.
+            lines.append("  instance_template->SetAccessCheckCallback(&Window::AccessCheckCallback);")
         if "Global" in interface.extended_attributes:
             # Web IDL's [[SetPrototypeOf]] of a global object and of the prototypes on its chain.
             lines += ["  instance_template->SetImmutableProto();", "  prototype_template->SetImmutableProto();"]
@@ -2135,7 +2156,8 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
 
     Web IDL tries the union's members in a fixed order: a dictionary for undefined and null, then an object of each
     interface, then an ArrayBuffer and a view, then a dictionary for any other object, then a boolean for a boolean, a
-    number for a Number, and then, for what is left, a string, or else a number, or else a boolean.
+    number for a Number, and then, for what is left, a string, or else a number, or else a boolean. The number is
+    the union's one numeric member, an integer or a floating point one, which converts as its own type does.
     """
     alternatives = ", ".join(types.union_alternative(member) for member in union.members)
     signature = f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result)"
@@ -2153,7 +2175,9 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
     sequence = next((member for member in union.members if member.kind is TypeKind.SEQUENCE), None)
     record = next((member for member in union.members if member.kind is TypeKind.RECORD), None)
     has_boolean = any(member.kind is TypeKind.BOOLEAN for member in union.members)
-    number = next((member for member in union.members if member.kind is TypeKind.FLOATING_POINT), None)
+    number = next(
+        (member for member in union.members if member.kind in (TypeKind.FLOATING_POINT, TypeKind.INTEGER)), None
+    )
     string = next((member for member in union.members if member.kind is TypeKind.STRING), None)
     convert_dictionary = [
         f"  {dictionary.name if dictionary else ''} dictionary;",
@@ -2198,6 +2222,26 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             inner = types.from_v8(
                 sequence.members[0], "item", "element", Site(fail="return false;"), f"union {union.syntax}"
             )
+            capacity = types.sequence_capacity(sequence.members[0], f"union {union.syntax}")
+            convert_items = [
+                *["            " + line for line in inner],
+                "            items.push_back(std::move(element));",
+                "            return true;",
+            ]
+            # bind_gen's union.py takes an array by its indices, as IterateSequence() does, before any @@iterator.
+            source += [
+                "    if (value->IsArray()) {",
+                f"      std::vector<{element_type}> items;",
+                f"      if (!IterateSequence(isolate, value, exception_state, {capacity},",
+                "                           [&](v8::Local<v8::Value> item) {",
+                *convert_items,
+                "          })) {",
+                "        return false;",
+                "      }",
+                "      *result = std::move(items);",
+                "      return true;",
+                "    }",
+            ]
             source += [
                 "    v8::Local<v8::Function> method;",
                 "    if (!GetIteratorMethod(isolate, value.As<v8::Object>(), &method)) {",
@@ -2207,9 +2251,7 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
                 f"      std::vector<{element_type}> items;",
                 "      if (!IterateSequenceWithMethod(isolate, value.As<v8::Object>(), method,",
                 "                                     [&](v8::Local<v8::Value> item) {",
-                *["            " + line for line in inner],
-                "            items.push_back(std::move(element));",
-                "            return true;",
+                *convert_items,
                 "          })) {",
                 "        return false;",
                 "      }",
