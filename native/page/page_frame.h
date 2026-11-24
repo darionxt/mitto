@@ -141,17 +141,21 @@ class PageFrame final : public NavigationClient, public Frame {
   // stops loading and unloads, and a new context's document at `url` takes
   // its place, which this returns: an XMLDocument of `xml_content_type`
   // where one is given, in a cross-origin isolated agent if
-  // `cross_origin_isolated`. `loader` becomes the document's.
-  Document& CommitNavigation(
+  // `cross_origin_isolated`. `loader` becomes the document's. Null if a
+  // listener of the old document's unload events, or of its frames', took
+  // the frame away: the response goes, and so does `loader`, from a later
+  // task.
+  Document* CommitNavigation(
       DocumentLoader& loader,
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
       bool cross_origin_isolated,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
-  // `loader`'s navigation ended with no response, and the frame keeps its
-  // document. `loader` goes.
-  void NavigationEndedWithoutDocument(DocumentLoader& loader);
+  // `loader`'s navigation ended with no response, with `net_error`: the frame
+  // keeps its document, or a child frame commits Chrome's error page for a
+  // navigation that failed. `loader` goes.
+  void NavigationEndedWithoutDocument(DocumentLoader& loader, int net_error);
   // How the current window's document loads, which its document's loading
   // fills in, and performance.timing and window.chrome read.
   DocumentLoadTiming& document_load_timing();
@@ -262,14 +266,25 @@ class PageFrame final : public NavigationClient, public Frame {
   // The frame's children go, each as Detach() has it, when the frame goes or
   // its document goes and its elements with it.
   void DetachChildren();
-  // A frame that loaded held its parent's load event back, which checks
-  // again once the frame stops, as Blink's does: from a task, since the
-  // element's removal may still be under way, and not while the parent's own
-  // document goes.
+  // A frame that loaded held its parent's load event back, or an ancestor's,
+  // which checks again once the frame stops, as Blink's does: from a task,
+  // since the element's removal may still be under way, and not while the
+  // parent's own document goes.
   void CheckParentLoadSoon();
   // A srcdoc or an about:blank that waits commits nothing then, and the
   // parent, whose load event it held back, checks again.
   void CancelLocalNavigation();
+  // A navigation through the Session that waits for its response ends, as a
+  // newer one takes its place.
+  void CancelProvisionalNavigation();
+  // The window that a frame's initial about:blank leaves to a document of
+  // its origin keeps it, as Blink's does, but the Session forgets the old
+  // document: its fetches fail, as Chrome's do, and its dedicated workers,
+  // which Chrome keeps with the window, are terminated.
+  void EndOldDocumentInWindow();
+  // Whether two of the frame's ancestors' documents are at `url`, but for the
+  // fragment.
+  bool IsSelfReferential(const GURL& url) const;
   // The Session records a document that the frame commits without the network
   // at the bare about:blank or about:srcdoc, since message 70 names no URL,
   // so it hears the URL that the document committed at, such as
@@ -298,10 +313,12 @@ class PageFrame final : public NavigationClient, public Frame {
     uint64_t number = 0;
     base::TimeTicks start;
     GURL url;
-    // Its source, kSrcdoc or kAboutBlank, and an about:blank's initiator.
+    // Its source, kSrcdoc, kAboutBlank or kErrorPage, and an about:blank's
+    // initiator.
     PageDocumentCommitted committed;
     // Its document's origin and referrer policy, the parent document's for a
-    // srcdoc and the initiator's for an about:blank, and its referrer.
+    // srcdoc, the initiator's for an about:blank, and an opaque origin and
+    // the default for an error page, and its referrer, none for an error page.
     url::Origin origin;
     FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
     std::u16string referrer;
@@ -316,6 +333,9 @@ class PageFrame final : public NavigationClient, public Frame {
     // Whether it reloads the frame's document, as location.reload() does.
     bool reload = false;
   };
+  // Commits `navigation` from a later task, as Chrome's browser commits it,
+  // unless a newer navigation of the frame takes its place first.
+  void CommitWithoutNetworkSoon(LocalNavigation navigation);
   // Commits `navigation`, unless another has taken its place: in the same
   // window for a document of the initial about:blank's origin, as Blink's
   // DocumentLoader::CommitNavigation() reuses it, and otherwise in a new

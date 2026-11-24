@@ -490,8 +490,24 @@ std::unique_ptr<WorkerMessagingProxy> PageWorkerStarter::StartWorker(
     Worker& worker,
     const GURL& url,
     const WorkerStartOptions& options) {
+  std::erase_if(workers_, [](const cppgc::WeakPersistent<Worker>& started) {
+    return !started;
+  });
+  workers_.emplace_back(&worker);
   return std::make_unique<DedicatedWorkerMessagingProxy>(worker, creator_, url,
                                                          options);
+}
+
+void PageWorkerStarter::TerminateWorkers() {
+  // Terminate() runs no script, but the list goes first all the same.
+  const std::vector<cppgc::WeakPersistent<Worker>> workers =
+      std::move(workers_);
+  workers_.clear();
+  for (const cppgc::WeakPersistent<Worker>& worker : workers) {
+    if (worker) {
+      worker->Terminate();
+    }
+  }
 }
 
 }  // namespace mitto

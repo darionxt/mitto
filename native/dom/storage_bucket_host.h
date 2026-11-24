@@ -28,6 +28,9 @@ class StorageBucketHost {
   // The Page no longer uses a bucket that the Session gave it, as dropping a
   // BucketHost remote tells the browser.
   virtual void Release(uint64_t bucket) = 0;
+  // Whether the Session gave `bucket` to the host's current document, and
+  // not to one before it.
+  virtual bool HasBucket(uint64_t bucket) const = 0;
 
   // The Page has made document `document`, which takes the place of the one
   // before it: what that one asked and held goes, as its Mojo pipes go with

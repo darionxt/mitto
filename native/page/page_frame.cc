@@ -12,6 +12,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
@@ -63,6 +64,11 @@ constexpr base::TimeDelta kDuplicateWindow = base::Milliseconds(3000);
 // the number and the record, each a 64-bit number, a byte of flags and one of
 // the referrer policy.
 constexpr size_t kTraversalOverhead = 3 * 8 + 2;
+
+// net::OK and net::ERR_ABORTED, the net errors of a navigation that ended
+// with no document and no failure.
+constexpr int kNetOk = 0;
+constexpr int kNetErrorAborted = -3;
 
 // A parser's client that gives it no body, for a document that has none, as
 // an about:blank that a frame commits synchronously has.
@@ -301,6 +307,20 @@ void PageFrame::NavigateFromOwner(const GURL& url) {
   Navigate(*window_, request, FrameLoadType::kStandard);
 }
 
+void PageFrame::CommitWithoutNetworkSoon(LocalNavigation navigation) {
+  navigation.number = ++last_local_navigation_;
+  if (navigation.start.is_null()) {
+    navigation.start = base::TimeTicks::Now();
+  }
+  const uint64_t number = navigation.number;
+  pending_local_navigation_ =
+      std::make_unique<LocalNavigation>(std::move(navigation));
+  EventLoop::Get()
+      ->TaskRunner(TaskType::kInternalLoading)
+      ->PostTask(FROM_HERE, base::BindOnce(&PageFrame::CommitWithoutNetwork,
+                                           weak_factory_.GetWeakPtr(), number));
+}
+
 void PageFrame::CommitWithoutNetwork(uint64_t number) {
   if (!pending_local_navigation_ ||
       pending_local_navigation_->number != number || !window_) {
@@ -350,8 +370,12 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     if (cookie_store) {
       cookie_store->DocumentWillChange();
     }
+    EndOldDocumentInWindow();
     window_->SetDocumentId(SendDocumentCommitted(committed));
     document = Document::CreateHTML();
+    // A reused window keeps its time origin, while the new document's
+    // timing starts again from the navigation's start.
+    document_load_timing().Restart(navigation.start);
     window_->SetDocument(document);
   } else {
     // The frame keeps its WindowProxy, which takes the new window.
@@ -460,12 +484,10 @@ void PageFrame::CheckParentLoadSoon() {
     return;
   }
   PageFrame& parent = *parent_;
+  // A parent that has loaded checks too, for an ancestor that waits for it.
   if (!parent.detaching_ && !parent.detaching_children_ && parent.window_ &&
       parent.window_->HasDocument()) {
-    Document& parent_document = parent.window_->GetDocument();
-    if (!parent_document.LoadEventFinished()) {
-      parent_document.CheckLoadEventSoon();
-    }
+    parent.window_->GetDocument().CheckLoadEventSoon();
   }
 }
 
@@ -538,6 +560,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
   }
+  document_load_timing().Restart(base::TimeTicks::Now());
   document->SetLoadTiming(&document_load_timing());
   TimeLocalCommit(document_load_timing(), url, /*body_size=*/0,
                   /*reload=*/false);
@@ -563,25 +586,29 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
 }
 
 void PageFrame::ExpectOpeningNavigation() {
-  opening_ = std::make_unique<DocumentLoader>(
-      runner_->requests(), runner_->send(), *this, kNavigationRequest);
+  opening_ = std::make_unique<DocumentLoader>(runner_->requests(), *this,
+                                              kNavigationRequest);
   runner_->requests().SetNavigationClient(*opening_);
 }
 
 void PageFrame::BeginNavigation(const NavigationRequest& request) {
   if (parent_) {
-    // A srcdoc or an about:blank goes through Chrome's browser and commits
-    // from a later task, with the srcdoc that an iframe has now. The newest
-    // navigation takes the place of one that waits, whatever its URL. A
-    // frame's navigations through the Session, and to a data: or blob: URL,
-    // are Known Gaps for now: it keeps its document.
+    // The newest navigation of a frame takes the place of a srcdoc or an
+    // about:blank that waits, whatever its URL. A frame's navigation to a
+    // data: or blob: URL is a Known Gap for now: the frame keeps its document,
+    // which the navigation aborted, so the parent, whose load event it may
+    // have held back, checks again.
     CancelLocalNavigation();
-    if (!request.url.IsAboutSrcdoc() && !request.url.IsAboutBlank()) {
-      // The navigation aborted the document, which may have held the
-      // parent's load event back, and starts no loader in its place.
+    if (!request.url.IsAboutSrcdoc() && !request.url.IsAboutBlank() &&
+        !request.url.SchemeIsHTTPOrHTTPS()) {
+      CancelProvisionalNavigation();
       CheckParentLoadSoon();
       return;
     }
+  }
+  if (parent_ && (request.url.IsAboutSrcdoc() || request.url.IsAboutBlank())) {
+    // A srcdoc or an about:blank goes through Chrome's browser and commits
+    // from a later task, with the srcdoc that an iframe has now.
     LocalNavigation navigation;
     navigation.start = base::TimeTicks::Now();
     navigation.url = request.url;
@@ -607,6 +634,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       // and the parent, whose load event the document that the navigation
       // aborted may have held back, checks again.
       if (IsSandboxed()) {
+        CancelProvisionalNavigation();
         CheckParentLoadSoon();
         return;
       }
@@ -628,15 +656,25 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       navigation.cookie_url = request.initiator_cookie_url;
     }
     StopAllLoaders();
-    navigation.number = ++last_local_navigation_;
-    const uint64_t number = navigation.number;
-    pending_local_navigation_ =
-        std::make_unique<LocalNavigation>(std::move(navigation));
-    EventLoop::Get()
-        ->TaskRunner(TaskType::kInternalLoading)
-        ->PostTask(FROM_HERE,
-                   base::BindOnce(&PageFrame::CommitWithoutNetwork,
-                                  weak_factory_.GetWeakPtr(), number));
+    CommitWithoutNetworkSoon(std::move(navigation));
+    return;
+  }
+  // A sandboxed frame's document would run with the flags that its sandbox
+  // withholds, which the Page cannot enforce yet, so the frame keeps its
+  // document, as with a srcdoc, where Chrome sends the request and commits
+  // the document without those flags.
+  if (IsSandboxed()) {
+    CancelProvisionalNavigation();
+    CheckParentLoadSoon();
+    return;
+  }
+  // NavigationRequest::IsSelfReferentialURL(): a navigation to the URL of two
+  // of the frame's ancestors' documents, but for the fragment, ends before
+  // its request, and the frame keeps its document, so that a document that
+  // embeds its own URL is in itself once and no more.
+  if (IsSelfReferential(request.url)) {
+    CancelProvisionalNavigation();
+    CheckParentLoadSoon();
     return;
   }
   // Navigator::OnBeginNavigation(): the browser ignores a navigation that a
@@ -646,12 +684,18 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     return;
   }
   const base::TimeTicks now = base::TimeTicks::Now();
-  // RenderFrameImpl::BeginNavigationInternal(): a navigation the same as the
-  // one that waits, which started less than 3 seconds before while no script
-  // wrote a cookie, is dropped, and the one that waits goes on.
+  // Navigator::Navigate(): a navigation the same as the one that waits, of
+  // the same initiator, origin, referrer and history handling, which started
+  // less than 3 seconds before while no script wrote a cookie, is dropped,
+  // and the one that waits goes on.
   if (provisional_ && request.url == provisional_request_.url &&
       request.reload == provisional_request_.reload &&
+      request.replace == provisional_request_.replace &&
       request.user_activation == provisional_request_.user_activation &&
+      request.initiator == provisional_request_.initiator &&
+      request.initiator_origin == provisional_request_.initiator_origin &&
+      request.initiator_referrer == provisional_request_.initiator_referrer &&
+      request.referrer_policy == provisional_request_.referrer_policy &&
       now - provisional_start_ < kDuplicateWindow &&
       runner_->cookie_jar().cookie_writes() == provisional_cookie_writes_) {
     return;
@@ -662,15 +706,23 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     runner_->requests().Cancel(provisional_->number());
     provisional_.reset();
   }
-  provisional_ = std::make_unique<DocumentLoader>(runner_->requests(),
-                                                  runner_->send(), *this);
+  provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
   traversal_item_.reset();
   traversal_record_.reset();
   provisional_request_ = request;
   provisional_start_ = now;
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
-  page_request.kind = PageRequestKind::kNavigation;
+  // A frame's navigation names the frame's document that the new one takes
+  // the place of, which the Session counts the frame tree from. A frame
+  // element's goes as an iframe's too until the Session has Baselines of
+  // destination frame.
+  if (parent_) {
+    page_request.kind = PageRequestKind::kIframe;
+    page_request.target = window_->DocumentId();
+  } else {
+    page_request.kind = PageRequestKind::kNavigation;
+  }
   page_request.url = request.url.spec();
   page_request.user_activation = request.user_activation;
   page_request.reload = request.reload;
@@ -678,7 +730,21 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   // A worker's thread may number a request in between, so the loader learns
   // its number once the request has it.
   provisional_->SetNumber(runner_->requests().StartNavigation(
-      std::move(page_request), *provisional_));
+      request.initiator, std::move(page_request), *provisional_));
+}
+
+bool PageFrame::IsSelfReferential(const GURL& url) const {
+  bool found = false;
+  for (const PageFrame* frame = parent_; frame; frame = frame->parent_) {
+    if (GURL(frame->window_->GetDocument().UrlForBinding())
+            .EqualsIgnoringRef(url)) {
+      if (found) {
+        return true;
+      }
+      found = true;
+    }
+  }
+  return false;
 }
 
 void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
@@ -723,7 +789,10 @@ void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
 }
 
 void PageFrame::TellOfLocalUrl(const GURL& url) {
-  if (url == GURL(url::kAboutBlankURL) || url == GURL(url::kAboutSrcdocURL)) {
+  // Only a URL that is not the bare about:blank or about:srcdoc, which
+  // message 70 names, such as about:blank?v=1, as an error page's is known.
+  if (!(url.IsAboutBlank() && url != GURL(url::kAboutBlankURL)) &&
+      !(url.IsAboutSrcdoc() && url != GURL(url::kAboutSrcdocURL))) {
     return;
   }
   const std::string& spec = url.spec();
@@ -942,8 +1011,7 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
     runner_->requests().Cancel(provisional_->number());
     provisional_.reset();
   }
-  provisional_ = std::make_unique<DocumentLoader>(runner_->requests(),
-                                                  runner_->send(), *this);
+  provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
   provisional_request_ = NavigationRequest();
   provisional_request_.url = target.url;
   provisional_start_ = base::TimeTicks::Now();
@@ -1015,6 +1083,11 @@ void PageFrame::StopAllLoaders() {
   if (current_) {
     current_->StopLoading();
   }
+  CancelProvisionalNavigation();
+  CancelLocalNavigation();
+}
+
+void PageFrame::CancelProvisionalNavigation() {
   if (provisional_) {
     runner_->requests().Cancel(provisional_->number());
     provisional_.reset();
@@ -1032,7 +1105,7 @@ void PageFrame::CancelLocalNavigation() {
   CheckParentLoadSoon();
 }
 
-Document& PageFrame::CommitNavigation(
+Document* PageFrame::CommitNavigation(
     DocumentLoader& loader,
     const GURL& url,
     base::TimeTicks navigation_start,
@@ -1066,23 +1139,40 @@ Document& PageFrame::CommitNavigation(
   // nowhere, as Chrome's browser ignores a document that it is replacing, and
   // nothing after them runs a script.
   const base::AutoReset<bool> unloading(&unloading_for_commit_, true);
-  // DocumentLoader::CommitNavigation(): nothing navigates the frame
-  // meanwhile, whatever the old document or its frames' listeners ask.
-  const FrameNavigationDisabler navigation_disabler(*this);
-  if (old_document.IsInitialEmptyDocument()) {
-    // FrameLoader::DetachDocument(), for a frame that has committed no
-    // navigation yet: the unload events first, then the loading stops.
-    old_document.DispatchUnloadEvents();
-    if (current_) {
-      current_->StopLoading();
+  {
+    // DocumentLoader::CommitNavigation(): no script of the old document or
+    // of its frames starts a navigation of this frame meanwhile.
+    const FrameNavigationDisabler navigation_disabler(*this);
+    if (old_document.IsInitialEmptyDocument()) {
+      // FrameLoader::DetachDocument(), for a frame that has committed no
+      // navigation yet: the unload events first, then the loading stops.
+      old_document.DispatchUnloadEvents();
+      if (current_) {
+        current_->StopLoading();
+      }
+    } else {
+      // LocalFrame::DetachImpl(), as RenderDocument swaps in a new frame for
+      // each later document: the loading stops first, then the unload
+      // events.
+      if (current_) {
+        current_->StopLoading();
+      }
+      old_document.DispatchUnloadEvents();
     }
-  } else {
-    // LocalFrame::DetachImpl(), as RenderDocument swaps in a new frame for
-    // each later document: the loading stops first, then the unload events.
-    if (current_) {
-      current_->StopLoading();
+    // The old document's frames go with it, and the Session forgets them
+    // with it. A listener of the old document's unload events, or of its
+    // frames', that removed the frame's element took the frame away, which
+    // then commits nothing: the response goes, and so does its loader, from
+    // a later task, since it is on the stack below this.
+    if (!detaching_) {
+      DetachChildren();
     }
-    old_document.DispatchUnloadEvents();
+    if (detaching_) {
+      runner_->requests().Cancel(committing->number());
+      base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+          FROM_HERE, std::move(committing));
+      return nullptr;
+    }
   }
   current_ = std::move(committing);
   const GURL old_url(old_document.UrlForBinding());
@@ -1126,6 +1216,15 @@ Document& PageFrame::CommitNavigation(
         HistoryNavigationType::kDifferentDocument);
   }
   Window& window = *document.DefaultView();
+  if (parent_) {
+    // A child frame's document has an entry of its own, which none of the
+    // session history's is until frames have entries there, and entries of
+    // the Navigation API of its own, made again for a window that its
+    // initial about:blank left to it.
+    window.SetCurrentHistoryItem(item);
+    window.Navigation()->InitializeForNewWindow(Navigation::EntryArrays());
+    return &document;
+  }
   Navigation::EntryArrays arrays = history().DidCommitNavigation(
       item, type, window.DocumentId(), traversed_item_sequence_number);
   // The new document's entries come from the history as it is, without the
@@ -1134,10 +1233,11 @@ Document& PageFrame::CommitNavigation(
   window.SetCurrentHistoryItem(item);
   window.Navigation()->InitializeForNewWindow(std::move(arrays));
   ReleaseRecords(window.DocumentId());
-  return document;
+  return &document;
 }
 
-void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader) {
+void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
+                                               int net_error) {
   if (provisional_.get() == &loader) {
     traversal_item_.reset();
     traversal_record_.reset();
@@ -1145,6 +1245,25 @@ void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader) {
   // The loader is on the stack below this, so it goes from a later task.
   base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
                                                              Take(loader));
+  // NavigationRequest::OnRequestFailedInternal(): a child frame's navigation
+  // that fails commits Chrome's error page, whose load its parent waits for.
+  // One that ends with no document, a 204, a 205 or a download, or that
+  // another took the place of, ends with ERR_ABORTED, and the frame keeps
+  // its document.
+  if (parent_ && net_error != kNetErrorAborted && net_error != kNetOk) {
+    LocalNavigation navigation;
+    navigation.url = GURL(kErrorPageUrl);
+    navigation.committed.source = PageDocumentSource::kErrorPage;
+    CommitWithoutNetworkSoon(std::move(navigation));
+    return;
+  }
+  // FrameLoader::DidFinishNavigation(): a frame that no longer loads has its
+  // parent check whether all of its frames have loaded.
+  if (parent_ && !IsLoading() && parent_->window_ &&
+      parent_->window_->HasDocument()) {
+    const v8::Context::Scope context_scope(parent_->context());
+    parent_->window_->GetDocument().CheckCompleted();
+  }
 }
 
 DocumentLoadTiming& PageFrame::document_load_timing() {
@@ -1166,40 +1285,72 @@ Document& PageFrame::CommitDocument(
   if (!parent_) {
     runner_->TopLevelContextGoes();
   }
-  // The old document's frames go with it, and the Session forgets them with
-  // it. The frame keeps its WindowProxy, which takes the new window, as
-  // LocalWindowProxy detaches the old global object from it.
-  DetachChildren();
-  const v8::Local<v8::Object> global_proxy = context()->Global();
-  DetachWindow();
-  context()->DetachGlobal();
-  // What the new document's DOMHighResTimeStamp counts from, as Blink takes
-  // it from the navigation's start.
-  const base::TimeTicks now = base::TimeTicks::Now();
-  const base::TimeTicks time_origin =
-      navigation_start.is_null() || navigation_start > now ? now
-                                                           : navigation_start;
-  // Chrome's site isolation locks a renderer to the site of a top-level
-  // document at an HTTP or HTTPS URL.
-  if (!parent_) {
-    MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
-  }
-  const v8::Local<v8::Context> context =
-      NewContext(time_origin, url::Origin::Create(url), cross_origin_isolated,
-                 global_proxy);
-  context_.Reset(isolate, context);
-  window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
-  window_->BindToContext(isolate, context);
+  // A frame's document takes the place of the frame's in the Session.
   PageDocumentCommitted committed;
   committed.source = PageDocumentSource::kNavigationResponse;
   committed.navigation = navigation;
-  AttachWindow(connection, committed);
-  const v8::Context::Scope context_scope(context);
+  if (parent_) {
+    committed.replaces = window_->DocumentId();
+  }
+  const url::Origin origin = url::Origin::Create(url);
+  // Blink keeps the window of a frame's initial about:blank for a document of
+  // its origin, as DocumentLoader::CommitNavigation() reuses it. A top-level
+  // frame's initial about:blank has an opaque origin, so it never does.
+  const Document& old_document = window_->GetDocument();
+  const bool reuse_window = old_document.IsInitialEmptyDocument() &&
+                            old_document.GetOrigin().IsSameOriginWith(origin);
+  CookieStore* const cookie_store =
+      reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
+  if (reuse_window) {
+    const v8::Context::Scope context_scope(context());
+    if (cookie_store) {
+      cookie_store->DocumentWillChange();
+    }
+    EndOldDocumentInWindow();
+    window_->SetDocumentId(SendDocumentCommitted(committed));
+  } else {
+    // The frame keeps its WindowProxy, which takes the new window, as
+    // LocalWindowProxy detaches the old global object from it.
+    const v8::Local<v8::Object> global_proxy = context()->Global();
+    DetachWindow();
+    context()->DetachGlobal();
+    // What the new document's DOMHighResTimeStamp counts from, as Blink takes
+    // it from the navigation's start.
+    const base::TimeTicks now = base::TimeTicks::Now();
+    const base::TimeTicks time_origin =
+        navigation_start.is_null() || navigation_start > now ? now
+                                                             : navigation_start;
+    // Chrome's site isolation locks a renderer to the site of a top-level
+    // document at an HTTP or HTTPS URL.
+    if (!parent_) {
+      MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
+    }
+    const v8::Local<v8::Context> context =
+        NewContext(time_origin, origin, cross_origin_isolated, global_proxy);
+    context_.Reset(isolate, context);
+    window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
+    window_->BindToContext(isolate, context);
+    AttachWindow(connection, committed);
+  }
+  const v8::Context::Scope context_scope(context());
   Document* const document =
       xml_content_type
           ? static_cast<Document*>(XMLDocument::Create(*xml_content_type))
           : Document::CreateHTML();
+  if (reuse_window) {
+    // The window keeps its time origin, and the document's times start
+    // again at the navigation's start.
+    const base::TimeTicks now = base::TimeTicks::Now();
+    document_load_timing().Restart(navigation_start.is_null() ||
+                                           navigation_start > now
+                                       ? now
+                                       : navigation_start);
+    document->SetLoadTiming(&document_load_timing());
+  }
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
+  // The origin stays the one it was committed with, whatever URL an
+  // about:blank frame that opens the document gives it, as Blink's does.
+  document->SetOrigin(origin);
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);
@@ -1210,6 +1361,10 @@ Document& PageFrame::CommitDocument(
     GiveStorage(*document);
   }
   Window::Current().SetDocument(document);
+  // The reused window's CookieStore listens as its new document.
+  if (cookie_store) {
+    cookie_store->DocumentChanged();
+  }
   return *document;
 }
 
@@ -1224,8 +1379,12 @@ v8::Local<v8::Context> PageFrame::NewContext(
   chrome_object_data_ = &chrome_object_data;
   ContextInit init;
   init.time_origin = time_origin;
-  // A [SecureContext] member is installed when a context is made.
-  init.secure_context = IsOriginPotentiallyTrustworthy(origin);
+  // A [SecureContext] member is installed when a context is made. A frame's
+  // is a secure context only under one, as the HTML Standard's secure
+  // context takes each ancestor's.
+  init.secure_context =
+      IsOriginPotentiallyTrustworthy(origin) &&
+      (!parent_ || bindings::IsSecureContext(parent_->context()));
   init.cross_origin_isolated = cross_origin_isolated;
   PageReporter& reporter = runner_->reporter();
   const v8::Local<v8::Context> context = NewPageContext(
@@ -1375,6 +1534,18 @@ void PageFrame::AttachWindow(const PageConnection& connection,
         send.Run(EncodeConsole(message));
       },
       runner_->send()));
+}
+
+void PageFrame::EndOldDocumentInWindow() {
+  // Its fetches fail, as Chrome's do, and the next document starts with none
+  // of its responses; the old fetcher goes from a later task, in case one of
+  // its clients runs below.
+  fetcher_->Abort();
+  base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+      FROM_HERE, std::move(fetcher_));
+  fetcher_ = std::make_unique<PageFetcher>(runner_->requests());
+  window_->SetFetcher(fetcher_.get());
+  worker_starter_->TerminateWorkers();
 }
 
 void PageFrame::DetachWindow() {

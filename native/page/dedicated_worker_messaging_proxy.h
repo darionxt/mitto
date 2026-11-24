@@ -160,8 +160,14 @@ class PageWorkerStarter final : public WorkerStarter {
       const GURL& url,
       const WorkerStartOptions& options) override;
 
+  // Terminates the workers that it started, and those that wait for their
+  // scripts never start.
+  void TerminateWorkers();
+
  private:
   DedicatedWorkerMessagingProxy::Creator creator_;
+  // The Workers that it started, while they remain.
+  std::vector<cppgc::WeakPersistent<Worker>> workers_;
 };
 
 }  // namespace mitto

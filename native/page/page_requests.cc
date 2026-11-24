@@ -139,8 +139,10 @@ uint64_t PageRequests::StartWorkerScript(PageRequest request, Client& client) {
   return number;
 }
 
-uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
-  const uint64_t number = Send(Window::Current().DocumentId(), request);
+uint64_t PageRequests::StartNavigation(uint64_t initiator,
+                                       PageRequest request,
+                                       Client& client) {
+  const uint64_t number = Send(initiator, request);
   open_[number].client = &client;
   open_[number].navigation = true;
   return number;
@@ -291,6 +293,10 @@ void PageRequests::CancelAll() {
 void PageRequests::Hint(const PageNetworkHint& hint) {
   const uint64_t document = Window::Current().DocumentId();
   sender_->SendFromContext(document, EncodeNetworkHint(document, hint));
+}
+
+void PageRequests::SendLoaded(uint64_t document) {
+  sender_->SendFromContext(document, EncodeLoaded(document));
 }
 
 void PageRequests::LetGo(uint64_t number) {

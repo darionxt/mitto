@@ -821,9 +821,15 @@ bool EventTarget::FireEventListeners(Event* event) {
       listener_context = isolate->GetCurrentContext();
     }
     const v8::Context::Scope listener_scope(listener_context);
+    Window* const window = Window::From(isolate, listener_context);
+    // A listener of a window whose context has gone, as one that its frame
+    // left, or a removed frame's, runs nothing (ContextIsValid()).
+    if (window && !window->HasContext()) {
+      fired = true;
+      continue;
+    }
     const v8::Local<v8::Value> current_target = ToV8(isolate);
     const v8::Local<v8::Value> event_wrapper = event->ToV8(isolate);
-    Window* const window = Window::From(isolate, listener_context);
     event->SetHandlingPassive(PassiveModeOf(*entry));
     const cppgc::Persistent<Event> previous_event(
         window ? window->CurrentEvent() : nullptr);

@@ -300,6 +300,14 @@ void Navigation::MakeEntries() {
       NavigationTypeOf(arrays.type), from);
 }
 
+void Navigation::InitializeForNewWindow(EntryArrays arrays) {
+  arrays_ = std::move(arrays);
+  made_ = false;
+  entries_.clear();
+  current_index_ = -1;
+  activation_ = nullptr;
+}
+
 NavigationHistoryEntry* Navigation::MakeEntryFromItem(const HistoryItem& item) {
   return NavigationHistoryEntry::Create(
       window_, item.navigation_api_key, item.navigation_api_id,

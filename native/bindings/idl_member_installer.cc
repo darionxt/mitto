@@ -39,10 +39,14 @@ v8::Local<v8::FunctionTemplate> MemberFunction(
     int length,
     v8::SideEffectType side_effect,
     v8::ExceptionContext exception_context,
+    CrossOriginCheck check,
     v8::Local<v8::Value> data) {
   const v8::Local<v8::FunctionTemplate> function =
       v8::FunctionTemplate::New(isolate, callback, data, signature, length,
                                 v8::ConstructorBehavior::kThrow, side_effect);
+  if (check == CrossOriginCheck::kCheck) {
+    function->SetAcceptAnyReceiver(false);
+  }
   function->SetClassName(ToV8StringFromUtf8(isolate, function_name));
   function->SetInterfaceName(ToV8StringFromUtf8(isolate, interface_name));
   function->SetExceptionContext(exception_context);
@@ -211,16 +215,18 @@ void InstallAttribute(v8::Isolate* isolate,
                       v8::FunctionCallback setter,
                       v8::PropertyAttribute attributes,
                       v8::SideEffectType getter_side_effect,
+                      CrossOriginCheck getter_check,
                       v8::Local<v8::Value> data) {
-  const v8::Local<v8::FunctionTemplate> getter_function = MemberFunction(
-      isolate, getter, signature, base::StrCat({"get ", name}), interface_name,
-      0, getter_side_effect, v8::ExceptionContext::kAttributeGet, data);
+  const v8::Local<v8::FunctionTemplate> getter_function =
+      MemberFunction(isolate, getter, signature, base::StrCat({"get ", name}),
+                     interface_name, 0, getter_side_effect,
+                     v8::ExceptionContext::kAttributeGet, getter_check, data);
   v8::Local<v8::FunctionTemplate> setter_function;
   if (setter) {
-    setter_function =
-        MemberFunction(isolate, setter, signature, base::StrCat({"set ", name}),
-                       interface_name, 1, v8::SideEffectType::kHasSideEffect,
-                       v8::ExceptionContext::kAttributeSet, data);
+    setter_function = MemberFunction(
+        isolate, setter, signature, base::StrCat({"set ", name}),
+        interface_name, 1, v8::SideEffectType::kHasSideEffect,
+        v8::ExceptionContext::kAttributeSet, CrossOriginCheck::kCheck, data);
   }
   target->SetAccessorProperty(ToV8StringFromUtf8(isolate, name),
                               getter_function, setter_function, attributes);
@@ -235,12 +241,13 @@ void InstallOperation(v8::Isolate* isolate,
                       int length,
                       v8::PropertyAttribute attributes,
                       v8::SideEffectType side_effect,
+                      CrossOriginCheck check,
                       v8::Local<v8::Value> data) {
-  target->Set(
-      ToV8StringFromUtf8(isolate, name),
-      MemberFunction(isolate, callback, signature, name, interface_name, length,
-                     side_effect, v8::ExceptionContext::kOperation, data),
-      attributes);
+  target->Set(ToV8StringFromUtf8(isolate, name),
+              MemberFunction(isolate, callback, signature, name, interface_name,
+                             length, side_effect,
+                             v8::ExceptionContext::kOperation, check, data),
+              attributes);
 }
 
 void InstallAttributeOnObject(v8::Isolate* isolate,
@@ -253,11 +260,12 @@ void InstallAttributeOnObject(v8::Isolate* isolate,
                               v8::FunctionCallback setter,
                               v8::PropertyAttribute attributes,
                               v8::SideEffectType getter_side_effect,
+                              CrossOriginCheck getter_check,
                               v8::Local<v8::Value> data) {
   const v8::Local<v8::Function> getter_function =
       MemberFunction(isolate, getter, signature, base::StrCat({"get ", name}),
                      interface_name, 0, getter_side_effect,
-                     v8::ExceptionContext::kAttributeGet, data)
+                     v8::ExceptionContext::kAttributeGet, getter_check, data)
           ->GetFunction(context)
           .ToLocalChecked();
   v8::Local<v8::Function> setter_function;
@@ -265,7 +273,8 @@ void InstallAttributeOnObject(v8::Isolate* isolate,
     setter_function =
         MemberFunction(isolate, setter, signature, base::StrCat({"set ", name}),
                        interface_name, 1, v8::SideEffectType::kHasSideEffect,
-                       v8::ExceptionContext::kAttributeSet, data)
+                       v8::ExceptionContext::kAttributeSet,
+                       CrossOriginCheck::kCheck, data)
             ->GetFunction(context)
             .ToLocalChecked();
   }
@@ -283,10 +292,11 @@ void InstallOperationOnObject(v8::Isolate* isolate,
                               int length,
                               v8::PropertyAttribute attributes,
                               v8::SideEffectType side_effect,
+                              CrossOriginCheck check,
                               v8::Local<v8::Value> data) {
   const v8::Local<v8::Function> function =
       MemberFunction(isolate, callback, signature, name, interface_name, length,
-                     side_effect, v8::ExceptionContext::kOperation, data)
+                     side_effect, v8::ExceptionContext::kOperation, check, data)
           ->GetFunction(context)
           .ToLocalChecked();
   CHECK(target
