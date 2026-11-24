@@ -352,7 +352,8 @@ class PageFrame final : public NavigationClient, public Frame {
     // from the owner document.
     GURL about_base_url;
     GURL cookie_url;
-    // OwnerSandboxesOrigin() as it started.
+    // OwnerSandboxesOrigin() as it started, or of the document that started
+    // it, whose origin an about:blank takes.
     bool origin_sandboxed = false;
     // A srcdoc's markup.
     std::u16string body;
@@ -443,6 +444,9 @@ class PageFrame final : public NavigationClient, public Frame {
   base::TimeTicks provisional_start_;
   // OwnerSandboxesOrigin() as the network navigation started.
   bool provisional_origin_sandboxed_ = false;
+  // Whether a sandbox, its frame's or its response's, gives the document an
+  // opaque origin in Chrome, where the Page gives it its URL's yet.
+  bool origin_sandboxed_ = false;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,
   // as Chrome's pending entry, which the next go() counts from.

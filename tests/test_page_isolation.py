@@ -767,6 +767,31 @@ def test_a_frame_whose_response_sandboxes_it_is_not_isolated(session: mitto.Sess
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]
 
 
+def test_an_about_blank_of_a_sandboxed_frame_is_not_isolated(session: mitto.Session, server: RecordingServer) -> None:
+    # An about:blank takes the origin of the document that starts it, which the sandbox of that document's response
+    # made opaque, so the page cannot read it in Chrome (Chrome for Testing 157), and it is not isolated.
+    server.route(
+        "/f-self",
+        b"<!doctype html><title>s</title><script>onload = () => { location.href = 'about:blank'; };</script>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox allow-scripts")],
+    )
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/f-self';
+        const loaded = () => new Promise((resolve) => frame.onload = resolve);
+        document.documentElement.appendChild(frame);
+        await loaded();
+        await loaded();
+        const own = [frame.contentWindow.location.href, frame.contentWindow.crossOriginIsolated];
+        frame.src = 'about:blank';
+        await loaded();
+        return [...own, frame.contentWindow.crossOriginIsolated];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == ["about:blank", False, True]
+
+
 def test_a_frame_s_policy_is_split_as_the_parser_splits_it(session: mitto.Session, server: RecordingServer) -> None:
     # The parser ignores a duplicate directive, so a sandbox that keeps allow-same-origin, then a bare one, keeps the
     # frame's origin and its isolation. So does a sandbox whose value has a character that is not ASCII, or a vertical

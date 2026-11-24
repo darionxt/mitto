@@ -180,9 +180,10 @@ void PageFrame::Start(const PageConnection& connection) {
   // gives it. Its time origin is when its context was made.
   const url::Origin origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
-  context_.Reset(
-      isolate, NewContext(base::TimeTicks::Now(), origin,
-                          IsolatedLikeParent(origin, OwnerSandboxesOrigin())));
+  origin_sandboxed_ = OwnerSandboxesOrigin();
+  context_.Reset(isolate,
+                 NewContext(base::TimeTicks::Now(), origin,
+                            IsolatedLikeParent(origin, origin_sandboxed_)));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   window_->BindToContext(isolate, context());
   if (parent_) {
@@ -372,6 +373,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
       return;
     }
   }
+  origin_sandboxed_ = navigation.origin_sandboxed;
   Document* document = nullptr;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
@@ -622,7 +624,12 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     LocalNavigation navigation;
     navigation.start = base::TimeTicks::Now();
     navigation.url = request.url;
-    navigation.origin_sandboxed = OwnerSandboxesOrigin();
+    // An about:blank that the frame's own document starts has its origin,
+    // which a sandbox of its response keeps opaque in Chrome.
+    navigation.origin_sandboxed =
+        OwnerSandboxesOrigin() ||
+        (request.url.IsAboutBlank() && origin_sandboxed_ &&
+         request.initiator == window_->DocumentId());
     navigation.reload = request.reload;
     // Its document's referrer is what the initiator's outgoing referrer gives
     // a navigation to its URL under the initiator's referrer policy, as
@@ -1468,6 +1475,11 @@ Document& PageFrame::CommitDocument(
       parent_ ? cross_origin_isolated &&
                     IsolatedLikeParent(origin, provisional_origin_sandboxed_)
               : cross_origin_isolated;
+  // The Session isolates what the parent's window lets be, but for a response
+  // that sandboxes its document's origin.
+  origin_sandboxed_ = provisional_origin_sandboxed_ ||
+                      (!cross_origin_isolated &&
+                       IsolatedLikeParent(origin, /*origin_sandboxed=*/false));
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin and isolation, as DocumentLoader::CommitNavigation() reuses
   // it. A top-level frame's initial about:blank has an opaque origin, so it

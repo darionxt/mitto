@@ -130,7 +130,7 @@ Each message travels as a frame: the size of its payload and its type, each a 32
 
 ## The messages
 
-Version 33 of the messages:
+Version 34 of the messages:
 
 | Type | Name | Way | Payload |
 | --- | --- | --- | --- |

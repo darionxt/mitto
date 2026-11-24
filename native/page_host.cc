@@ -700,11 +700,11 @@ bool PolicySandboxesOrigin(std::string_view policy) {
                                                               c) ||
                                         base::IsAsciiPrintable(c);
                                }) &&
-           std::ranges::none_of(
-               SplitPolicy(value, kCspWhitespace), [](std::string_view token) {
-                 return base::EqualsCaseInsensitiveASCII(token,
-                                                         "allow-same-origin");
-               });
+           std::ranges::none_of(SplitPolicy(value, kCspWhitespace),
+                                [](std::string_view token) {
+                                  return base::EqualsCaseInsensitiveASCII(
+                                      token, "allow-same-origin");
+                                });
   }
   return false;
 }
