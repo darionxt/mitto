@@ -158,6 +158,9 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
     bytes.resize(view->ByteLength());
     view->CopyContents(bytes.data(), bytes.size());
   } else {
+    // What the page's own conversion throws reaches the caller through
+    // `exception_state`.
+    const bindings::TryRethrowScope rethrow_scope(isolate, exception_state);
     std::u16string text;
     if (!bindings::FromV8USVString(isolate, value, &text)) {
       return nullptr;
