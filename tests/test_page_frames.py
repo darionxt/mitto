@@ -599,6 +599,9 @@ def test_a_window_that_its_frame_left_reaches_only_a_window_of_its_origin(page_u
             () => c.localName, () => mine, () => window.document.URL, () => document.URL.includes('old') || document.URL,
             () => name, () => origin, () => typeof setTimeout(() => 1), () => typeof localStorage, () => location.pathname,
             () => 'document' in self, () => self === window, () => parent === top, () => length, () => closed,
+            () => { const f = btoa; return [f('a'), btoa.call(undefined, 'a'), Reflect.apply(btoa, self, ['a'])]; },
+            () => { const add = addEventListener; return [add('x', () => 1), addEventListener.call(null, 'x', () => 1)]; },
+            () => Object.getOwnPropertyDescriptor(window, 'document').get.call(self).URL,
           ]`);
           const before = f[0]();
           element.src = origin + '/child?new';
@@ -617,11 +620,175 @@ def test_a_window_that_its_frame_left_reaches_only_a_window_of_its_origin(page_u
     assert results["same"] == [
         *("p", "c is not defined", "old", new, new),
         *("n", page_url.rstrip("/"), "number", "object", "/child", True, True, True, 0, False),
+        *(["YQ==", "YQ==", "YQ=="], [None, None], new),
     ]
     assert results["other"] == [
         *("p", "c is not defined", "old", "refused", "refused"),
         *("refused", "refused", "refused", "refused", "refused", "refused", True, True, 0, False),
+        *("refused", "refused", "refused"),
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_s_own_members_take_calls_of_its_origin(page_url: str) -> None:
+    # What Chrome 157 gives for the same script: calls with no receiver, in sloppy and in strict code, with another
+    # object, on the window of a frame of the page's origin, and through such a frame's own functions.
+    script = """
+      (async () => {
+        const tried = (f) => { try { return f(); } catch (e) { return e.name + ': ' + e.message; } };
+        const body = `
+          const get = (name) => Object.getOwnPropertyDescriptor(window, name).get;
+          const set = (name) => Object.getOwnPropertyDescriptor(window, name).set;
+          const results = {};
+          const record = (name, f) => { try { results[name] = f(); } catch (e) { results[name] = e.name + ': ' + e.message; } };
+          record('bare', () => { const f = setTimeout, b = btoa; return [typeof f(() => 1), b('a')]; });
+          record('undefined', () => [typeof setTimeout.call(undefined, () => 1), btoa.call(undefined, 'a')]);
+          record('null', () => [typeof setTimeout.call(null, () => 1), btoa.apply(null, ['a'])]);
+          record('window', () => [typeof setTimeout.call(window, () => 1), btoa.call(self, 'a'), typeof Reflect.apply(setTimeout, window, [() => 1])]);
+          record('get', () => [undefined, null, window].map((w) => get('document').call(w) === document));
+          record('reflect get', () => Reflect.get(window, 'document', window) === document);
+          record('set', () => { set('name').call(undefined, 'n1'); const first = name; set('name').call(window, 'n2'); return [first, name]; });
+          record('handler', () => { set('onload').call(null, f0); return onload === f0; });
+          record('listener', () => {
+            let count = 0;
+            const listener = () => count++;
+            addEventListener.call(null, 'x', listener);
+            const add = addEventListener, dispatch = dispatchEvent, remove = removeEventListener;
+            add('x', listener, true);
+            dispatch(new Event('x'));
+            dispatchEvent.call(undefined, new Event('x'));
+            remove('x', listener);
+            removeEventListener.call(null, 'x', listener, true);
+            dispatch(new Event('x'));
+            return count;
+          });
+          record('object', () => setTimeout.call({}, () => 1));
+          record('node', () => btoa.call(document, 'a'));
+          record('object get', () => get('document').call({}));
+          record('object set', () => set('name').call({}, 'x'));
+          record('inherits', () => Object.create(window).document);
+          record('proxy', () => new Proxy(window, {}).document);
+          record('getComputedStyle', () => getComputedStyle.call(undefined, document.body) instanceof CSSStyleDeclaration);
+          record('replaceable', () => { const before = get('self').call(undefined) === window; return [before, get('parent').call(null) === parent, get('frames').call(window) === window]; });
+          record('fetched', () => Promise.all([fetch.call(undefined, '/child'), fetch.call(null, '/child'), Reflect.apply(fetch, window, ['/child'])])
+              .then((all) => all.map((r) => r.status), (e) => e.message));
+          return results;
+        `;
+        const f0 = () => 1;
+        const settle = async (results) => { for (const name in results) results[name] = await results[name]; return results; };
+        const record = {
+          sloppy: await settle(Function('f0', body)(f0)),
+          strict: await settle(Function('f0', "'use strict';" + body)(f0)),
+        };
+        onload = null;
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const element = document.createElement('iframe');
+        element.src = '/child?same';
+        document.body.appendChild(element);
+        await loaded(element);
+        const w = element.contentWindow;
+        const get = (from, name) => Object.getOwnPropertyDescriptor(from, name).get;
+        let heard = 0;
+        record.frame = await settle({
+          call: tried(() => [typeof setTimeout.call(w, () => 1), btoa.call(w, 'a'), typeof Reflect.apply(setTimeout, w, [() => 1])]),
+          get: tried(() => [get(window, 'document').call(w) === w.document, Reflect.get(window, 'document', w) === w.document, get(window, 'self').call(w) === w]),
+          set: tried(() => { Object.getOwnPropertyDescriptor(window, 'name').set.call(w, 'inner'); return [w.name, name]; }),
+          listener: tried(() => { addEventListener.call(w, 'x', () => heard++); dispatchEvent.call(w, new w.Event('x')); w.dispatchEvent(new Event('x')); return heard; }),
+          theirs: tried(() => [typeof w.setTimeout(() => 1), typeof w.setTimeout.call(window, () => 1), get(w, 'document').call(window) === document]),
+          theirsBare: tried(() => { const f = w.setTimeout, b = w.btoa; return [typeof f(() => 1), b('a'), get(w, 'document').call(undefined) === w.document]; }),
+          theirFunction: tried(() => [w.Function('return document')() === w.document, w.eval('parent.document === top.document'), typeof w.eval('parent.setTimeout(() => 1)')]),
+          theirCall: tried(() => [w.eval('btoa').call(window, 'a'), w.eval("addEventListener.call(parent, 'y', () => 1)"), w.eval('Reflect.apply(btoa, parent, ["a"])')]),
+          fetched: tried(() => Promise.all([fetch.call(w, '/child'), w.fetch.call(undefined, '/child'), w.fetch.call(window, '/child')]).then((all) => all.map((r) => r.status), (e) => e.message)),
+          postMessage: tried(() => [postMessage.call(w, 1, '*'), w.postMessage(1, '*'), Reflect.apply(postMessage, w, [1, '*'])]),
+        });
+        return record;
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        record = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    own = {
+        "bare": ["number", "YQ=="],
+        "undefined": ["number", "YQ=="],
+        "null": ["number", "YQ=="],
+        "window": ["number", "YQ==", "number"],
+        "get": [True, True, True],
+        "reflect get": True,
+        "set": ["n1", "n2"],
+        "handler": True,
+        "listener": 4,
+        "object": "TypeError: Illegal invocation",
+        "node": "TypeError: Illegal invocation",
+        "object get": "TypeError: Illegal invocation",
+        "object set": "TypeError: Illegal invocation",
+        "inherits": "TypeError: Illegal invocation",
+        "proxy": "TypeError: Illegal invocation",
+        "getComputedStyle": True,
+        "replaceable": [True, True, True],
+        "fetched": [200, 200, 200],
+    }
+    assert record["sloppy"] == own
+    assert record["strict"] == own
+    assert record["frame"] == {
+        "call": ["number", "YQ==", "number"],
+        "get": [True, True, True],
+        "set": ["inner", "n2"],
+        "listener": 2,
+        "theirs": ["number", "number", True],
+        "theirsBare": ["number", "YQ==", True],
+        "theirFunction": [True, True, "number"],
+        "theirCall": ["YQ==", None, "YQ=="],
+        "fetched": [200, 200, 200],
+        "postMessage": [None, None, None],
+    }
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_s_own_members_take_its_own_calls(page_url: str) -> None:
+    # What Chrome 157 gives for the same script.
+    script = """
+      (async () => {
+        const body = `
+          const record = (name, f) => { try { results[name] = f(); } catch (e) { results[name] = e.name + ': ' + e.message; } };
+          const results = {};
+          const get = Object.getOwnPropertyDescriptor(WorkerGlobalScope.prototype, 'location').get;
+          record('bare', () => { const f = setTimeout, b = btoa; return [typeof f(() => 1), b('a')]; });
+          record('undefined', () => [typeof setTimeout.call(undefined, () => 1), btoa.call(null, 'a')]);
+          record('self', () => [typeof Reflect.apply(setTimeout, self, [() => 1]), btoa.call(self, 'a')]);
+          record('get', () => [get.call(undefined) === location, get.call(null) === location, get.call(self) === location]);
+          record('listener', () => {
+            let count = 0;
+            const listener = () => count++;
+            addEventListener.call(null, 'x', listener);
+            dispatchEvent.call(undefined, new Event('x'));
+            const remove = removeEventListener;
+            remove('x', listener);
+            dispatchEvent(new Event('x'));
+            return count;
+          });
+          record('object', () => setTimeout.call({}, () => 1));
+          record('object get', () => get.call({}));
+          return results;
+        `;
+        const source = `postMessage.call(null, [Function(${JSON.stringify(body)})(), Function(${JSON.stringify("'use strict';" + body)})()])`;
+        const worker = new Worker(URL.createObjectURL(new Blob([source])));
+        return new Promise((resolve) => { worker.onmessage = (e) => resolve(e.data); worker.onerror = (e) => resolve(e.message); });
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        sloppy, strict = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    own = {
+        "bare": ["number", "YQ=="],
+        "undefined": ["number", "YQ=="],
+        "self": ["number", "YQ=="],
+        "get": [True, True, True],
+        "listener": 1,
+        "object": "TypeError: Illegal invocation",
+        "object get": "TypeError: Illegal invocation",
+    }
+    assert sloppy == own
+    assert strict == own
 
 
 @pytest.mark.usefixtures("page_program")
