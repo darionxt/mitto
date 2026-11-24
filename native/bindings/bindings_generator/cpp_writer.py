@@ -72,7 +72,7 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 #   it, which only a WeakRef or FinalizationRegistry can see; a class with it says in its header what it keeps.
 # - CEReactions: the Runtime has no custom elements, so there are no reactions to run around a call.
 # - CachedAccessor and CachedAttribute: a page sees the same value either way; caching only saves calls.
-# - CrossOrigin: only a frame of another origin sees it, and a Page has no frames yet.
+# - CrossOrigin: the receiver of a member that a caller of another origin may reach goes unchecked (_receiver_check()).
 # - NewObject: the class returns a new object, which Blink only checks.
 # - NoAllocDirectCall: the install plan puts the member where Blink does; V8's fast call itself only saves time.
 # - SameObject: the class keeps the object and returns it on every call, so the bindings keep nothing of their own.
@@ -1673,7 +1673,8 @@ class _InterfaceWriter:
             first = "isolate, context" if on_objects else "isolate"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, "
-                f"{callback}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
+                f"{callback}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect, "
+                f"{self._receiver_check(property_)});"
             ]
         if isinstance(member, ExposedConstruct):
             if member not in self.constructs:
@@ -1710,7 +1711,7 @@ class _InterfaceWriter:
                 signature = "v8::Local<v8::Signature>()"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "
-                f"{setter}, {attributes}, {side_effect}{data});"
+                f"{setter}, {attributes}, {side_effect}, {self._receiver_check(property_)}{data});"
             ]
         if isinstance(member, Constant):
             if on_objects:
@@ -1727,9 +1728,25 @@ class _InterfaceWriter:
             data = f", {self._known_gap_data(property_)}" if callback.startswith("&KnownGap") else ""
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, {callback}, "
-                f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect{data});"
+                f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect, "
+                f"{self._receiver_check(property_)}{data});"
             ]
         raise UnhandledError(f"{self.where(property_.name)}: the C++ writer does not install this kind of property")
+
+    def _receiver_check(self, property_: Property) -> str:
+        """Whether V8 checks the access to the receiver of an attribute's getter or an operation, as bind_gen's
+        cross_origin_check says: not for a static member, or for one that [CrossOrigin] lets another origin reach."""
+        member = property_.member
+        unchecked = property_.target == "interface"
+        if isinstance(member, Attribute):
+            values = member.extended_attributes.values_of("CrossOrigin")
+            unchecked |= "CrossOrigin" in member.extended_attributes and (not values or "Getter" in values)
+        elif isinstance(member, OperationGroup):
+            unchecked |= any("CrossOrigin" in overload.extended_attributes for overload in member.overloads)
+        if self.interface.name == "Window" and property_.name == "location":
+            # A Location checks no caller of its own yet, so a window gives its own to callers of its origin alone.
+            unchecked = False
+        return f"CrossOriginCheck::{'kDoNotCheck' if unchecked else 'kCheck'}"
 
     @staticmethod
     def _attributes(property_: Property) -> str:
@@ -1808,6 +1825,9 @@ class _InterfaceWriter:
                 "  instance_template->SetImmutableProto();",
                 "  prototype_template->SetImmutableProto();",
             ]
+        if interface.name == "Window":
+            # As bind_gen's V8Window has it: V8 asks for each access to a window whose security token is another.
+            lines.append("  instance_template->SetAccessCheckCallback(&Window::AccessCheckCallback);")
         if "Global" in interface.extended_attributes:
             # Web IDL's [[SetPrototypeOf]] of a global object and of the prototypes on its chain.
             lines += ["  instance_template->SetImmutableProto();", "  prototype_template->SetImmutableProto();"]

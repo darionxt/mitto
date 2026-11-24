@@ -539,6 +539,91 @@ def test_a_frame_s_cookie_store_and_its_parent_s_each_hear_of_changes(page_url: 
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_page_s_own_members_do_not_reach_a_frame_of_another_origin(page_url: str) -> None:
+    # A getter, a setter or a method of the page's window, called on the window of a frame of another origin, throws, as
+    # in Chrome 157 but for the members that another origin may reach.
+    script = """
+      (async () => {
+        const threw = (f) => { try { f(); return false; } catch (e) { return true; } };
+        const element = document.createElement('iframe');
+        element.src = `http://localhost:${location.port}/child?other`;
+        document.body.appendChild(element);
+        await new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const w = element.contentWindow;
+        const get = (name) => Object.getOwnPropertyDescriptor(window, name).get.call(w);
+        const set = (name, value) => Object.getOwnPropertyDescriptor(window, name).set.call(w, value);
+        const refused = {
+          document: () => get('document'), reflect: () => Reflect.get(window, 'document', w), location: () => get('location').href,
+          localStorage: () => get('localStorage'), name: () => get('name'), origin: () => get('origin'), navigator: () => get('navigator'),
+          frameElement: () => get('frameElement'), onload: () => get('onload'), setName: () => set('name', 'x'),
+          setOnload: () => set('onload', () => 1), setSelf: () => set('self', 1), setOpener: () => set('opener', 1),
+          fetch: () => fetch.call(w, '/'), setTimeout: () => setTimeout.call(w, () => 1), btoa: () => btoa.call(w, 'a'),
+          structuredClone: () => structuredClone.call(w, 1), stop: () => stop.call(w), open: () => open.call(w, 'about:blank', '_self'),
+          addEventListener: () => addEventListener.call(w, 'x', () => 1), dispatchEvent: () => dispatchEvent.call(w, new Event('x')),
+          getComputedStyle: () => getComputedStyle.call(w, document.body), property: () => w.document,
+        };
+        const reached = {
+          window: () => get('window') === w, self: () => get('self') === w, frames: () => get('frames') === w,
+          parent: () => get('parent') === window, top: () => get('top') === window, opener: () => get('opener') === null,
+          length: () => get('length') === 0, closed: () => get('closed') === false,
+          postMessage: () => postMessage.call(w, 1, '*') === undefined, blur: () => blur.call(w) === undefined,
+        };
+        const notRefused = Object.keys(refused).filter((name) => !threw(refused[name]));
+        const notReached = Object.keys(reached).filter((name) => threw(reached[name]) || !reached[name]());
+        return [element.contentDocument, notRefused, notReached];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == [None, [], []]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_window_that_its_frame_left_reaches_only_a_window_of_its_origin(page_url: str) -> None:
+    # A function of a window that its frame navigated away from takes the frame's current window for its bare members,
+    # which it may use in a window of its own origin, and not in another's, and has no named elements, as in Chrome 157.
+    script = """
+      (async () => {
+        const tried = (f) => { try { return f(); } catch (e) { return e.name === 'ReferenceError' ? e.message : 'refused'; } };
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const results = {};
+        for (const origin of ['', `http://localhost:${location.port}`]) {
+          const element = document.createElement('iframe');
+          element.name = 'n';
+          element.src = '/child?old';
+          document.body.appendChild(element);
+          await loaded(element);
+          const w = element.contentWindow;
+          w.eval("var mine = 'old'");
+          const f = w.eval(`[
+            () => c.localName, () => mine, () => window.document.URL, () => document.URL.includes('old') || document.URL,
+            () => name, () => origin, () => typeof setTimeout(() => 1), () => typeof localStorage, () => location.pathname,
+            () => 'document' in self, () => self === window, () => parent === top, () => length, () => closed,
+          ]`);
+          const before = f[0]();
+          element.src = origin + '/child?new';
+          await loaded(element);
+          results[origin ? 'other' : 'same'] = [before, ...f.map(tried)];
+          element.remove();
+        }
+        return results;
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        results = page.evaluate(script)
+    # What Chrome's `document` gives, the document that the window had, is a Known Gap: the frame's current document, if
+    # the window may access it, and otherwise it is refused.
+    new = f"{page_url}child?new"
+    assert results["same"] == [
+        *("p", "c is not defined", "old", new, new),
+        *("n", page_url.rstrip("/"), "number", "object", "/child", True, True, True, 0, False),
+    ]
+    assert results["other"] == [
+        *("p", "c is not defined", "old", "refused", "refused"),
+        *("refused", "refused", "refused", "refused", "refused", "refused", True, True, 0, False),
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_page_of_an_opaque_origin_is_of_its_own_origin() -> None:
     # The top-level about:blank, whose origin is opaque, opens and writes its own document, and reaches the document of
     # a frame that took its origin.

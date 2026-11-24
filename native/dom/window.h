@@ -93,6 +93,14 @@ class Window final : public WindowProperties, public ExecutionContext {
   // outside a context.
   static Window* Entered();
   static Window* Incumbent();
+  // Whether `accessing_context` may access the window that `accessed_object`,
+  // a global proxy, gives, as bind_gen's AccessCheckCallback() of Window asks
+  // BindingSecurity::ShouldAllowAccessTo(): for a window of the same origin.
+  // V8 asks for contexts of different security tokens, such as that of a
+  // window that its frame navigated away from, which loses its token.
+  static bool AccessCheckCallback(v8::Local<v8::Context> accessing_context,
+                                  v8::Local<v8::Object> accessed_object,
+                                  v8::Local<v8::Value> data);
 
   Window();
   ~Window() override;
