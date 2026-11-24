@@ -510,12 +510,11 @@ def test_a_frame_whose_response_sandboxes_it_is_not_isolated(session: mitto.Sess
     assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]
 
 
-def test_a_policy_s_second_sandbox_directive_counts_for_nothing(
-    session: mitto.Session, server: RecordingServer
-) -> None:
+def test_a_frame_s_policy_is_split_as_the_parser_splits_it(session: mitto.Session, server: RecordingServer) -> None:
     # The parser ignores a duplicate directive, so a sandbox that keeps allow-same-origin, then a bare one, keeps the
-    # frame's origin and its isolation, and so does a sandbox whose value has a character that is not ASCII, whose
-    # flags the parser leaves out (Chrome for Testing 157).
+    # frame's origin and its isolation. So does a sandbox whose value has a character that is not ASCII, or a vertical
+    # tab, which is no white space to the parser: it leaves the flags out. A form feed is white space, and that sandbox
+    # takes the frame's origin, so its document is not isolated (Chrome for Testing 157).
     server.route(
         "/f-dup",
         b"<!doctype html><title>d</title>",
@@ -528,6 +527,24 @@ def test_a_policy_s_second_sandbox_directive_counts_for_nothing(
         "text/html",
         [_COEP, ("Content-Security-Policy", "sandbox \u00e9")],
     )
+    server.route(
+        "/f-vt",
+        b"<!doctype html><title>v</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox allow-scripts\x0ballow-forms")],
+    )
+    server.route(
+        "/f-vt-name",
+        b"<!doctype html><title>n</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox\x0b; sandbox allow-same-origin")],
+    )
+    server.route(
+        "/f-ff",
+        b"<!doctype html><title>f</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox\x0callow-scripts")],
+    )
     script = """(async () => {
         const isolated = async (src) => {
             const frame = document.createElement('iframe');
@@ -536,10 +553,16 @@ def test_a_policy_s_second_sandbox_directive_counts_for_nothing(
             await new Promise((resolve) => frame.onload = resolve);
             return frame.contentWindow.crossOriginIsolated;
         };
-        return [await isolated('/f-dup'), await isolated('/f-bad')];
+        return [
+            await isolated('/f-dup'),
+            await isolated('/f-bad'),
+            await isolated('/f-vt'),
+            await isolated('/f-vt-name'),
+            await isolated('/f-ff'),
+        ];
     })()"""
 
-    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True]
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, True, True, False]
 
 
 def test_a_redirect_s_resource_policy_comes_before_its_recursion(

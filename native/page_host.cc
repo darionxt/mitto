@@ -612,6 +612,81 @@ std::string MimeTypeOf(const RequestEvent& event) {
   return mime_type;
 }
 
+// The characters that separate and trim the parts of a Content-Security-Policy,
+// which are not base::kWhitespaceASCII: a vertical tab is not among them.
+// Upstream: services/network/public/cpp/content_security_policy/content_security_policy.cc
+constexpr std::string_view kCspWhitespace =
+    base::as_string_view(base::kInfraAsciiWhitespace);
+
+// content_security_policy.cc's SplitAndTrim().
+std::vector<std::string_view> SplitPolicy(std::string_view input,
+                                          std::string_view delimiter) {
+  std::vector<std::string_view> result;
+  for (std::string_view piece :
+       base::SplitStringPiece(input, delimiter, base::KEEP_WHITESPACE,
+                              base::SPLIT_WANT_NONEMPTY)) {
+    piece = base::TrimString(piece, kCspWhitespace, base::TRIM_ALL);
+    if (!piece.empty()) {
+      result.push_back(piece);
+    }
+  }
+  return result;
+}
+
+// Whether a policy of a Content-Security-Policy header has a sandbox directive
+// without allow-same-origin, as ParseHeaderValue() and
+// AddContentSecurityPolicyFromHeader() read one. The policy's first sandbox
+// directive counts, as the parser ignores a duplicate, and one whose value has
+// a character that no directive value may have, such as one that is not ASCII,
+// sandboxes nothing.
+// Upstream: services/network/public/cpp/content_security_policy/content_security_policy.cc
+// Upstream: services/network/public/cpp/web_sandbox_flags.cc
+bool PolicySandboxesOrigin(std::string_view policy) {
+  for (const std::string_view directive : SplitPolicy(policy, ";")) {
+    const size_t name_end = directive.find_first_of(kCspWhitespace);
+    if (!base::EqualsCaseInsensitiveASCII(directive.substr(0, name_end),
+                                          "sandbox")) {
+      continue;
+    }
+    const std::string_view value = name_end == std::string_view::npos
+                                       ? std::string_view()
+                                       : directive.substr(name_end + 1);
+    return std::ranges::all_of(value,
+                               [](char c) {
+                                 return std::ranges::contains(kCspWhitespace,
+                                                              c) ||
+                                        base::IsAsciiPrintable(c);
+                               }) &&
+           std::ranges::none_of(
+               SplitPolicy(value, kCspWhitespace), [](std::string_view token) {
+                 return base::EqualsCaseInsensitiveASCII(token,
+                                                         "allow-same-origin");
+               });
+  }
+  return false;
+}
+
+// Whether a response's Content-Security-Policy, an enforced one, sandboxes its
+// document's origin, which gives Chrome's document of it an opaque origin, as
+// the browser's policy container takes the response's sandbox flags. A
+// report-only policy sandboxes nothing.
+// Upstream: services/network/public/cpp/content_security_policy/content_security_policy.cc
+bool SandboxesOrigin(std::string_view headers) {
+  for (const std::string_view line : base::SplitStringPieceUsingSubstr(
+           headers, "\r\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(':');
+    if (colon != std::string_view::npos &&
+        base::EqualsCaseInsensitiveASCII(
+            base::TrimWhitespaceASCII(line.substr(0, colon), base::TRIM_ALL),
+            "content-security-policy") &&
+        std::ranges::any_of(SplitPolicy(line.substr(colon + 1), ","),
+                            PolicySandboxesOrigin)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // NavigationRequest::OnResponseStarted() and download_utils::MustDownload():
 // Chrome makes no document of a navigation's response that is a 204 or a 205,
 // nor of a download, which is one that Content-Disposition says is an
@@ -620,56 +695,6 @@ std::string MimeTypeOf(const RequestEvent& event) {
 // Upstream: content/browser/renderer_host/navigation_request.cc
 // Upstream: content/browser/loader/navigation_url_loader_impl.cc
 // Upstream: content/browser/loader/download_utils_impl.cc
-// Whether a response's Content-Security-Policy, an enforced one, has a
-// sandbox directive without allow-same-origin, which gives Chrome's document
-// of it an opaque origin, as the browser's policy container takes the
-// response's sandbox flags. A report-only policy sandboxes nothing.
-// Upstream: services/network/public/cpp/content_security_policy/content_security_policy.cc
-bool SandboxesOrigin(std::string_view headers) {
-  for (const std::string_view line : base::SplitStringPieceUsingSubstr(
-           headers, "\r\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    const size_t colon = line.find(':');
-    if (colon == std::string_view::npos ||
-        !base::EqualsCaseInsensitiveASCII(
-            base::TrimWhitespaceASCII(line.substr(0, colon), base::TRIM_ALL),
-            "content-security-policy")) {
-      continue;
-    }
-    for (const std::string_view policy : base::SplitStringPiece(
-             line.substr(colon + 1), ",", base::TRIM_WHITESPACE,
-             base::SPLIT_WANT_NONEMPTY)) {
-      for (const std::string_view directive : base::SplitStringPiece(
-               policy, ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-        const std::vector<std::string_view> tokens = base::SplitStringPiece(
-            directive, " \t", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-        if (tokens.empty() ||
-            !base::EqualsCaseInsensitiveASCII(tokens.front(), "sandbox")) {
-          continue;
-        }
-        // A policy's first sandbox directive counts, and a later one of the
-        // same policy is ignored, as the parser ignores a duplicate directive.
-        // One whose value has a character that no directive value may have,
-        // such as one that is not ASCII, sandboxes nothing, as
-        // AddContentSecurityPolicyFromHeader() leaves its flags out.
-        if (!std::ranges::all_of(directive, [](char c) {
-              return base::IsAsciiWhitespace(c) || (c >= 0x21 && c <= 0x7e);
-            })) {
-          break;
-        }
-        if (std::ranges::none_of(base::span(tokens).subspan(size_t{1}),
-                                 [](std::string_view token) {
-                                   return base::EqualsCaseInsensitiveASCII(
-                                       token, "allow-same-origin");
-                                 })) {
-          return true;
-        }
-        break;
-      }
-    }
-  }
-  return false;
-}
-
 bool MakesDocument(const RequestEvent& event) {
   if (event.status == 204 || event.status == 205) {
     return false;
