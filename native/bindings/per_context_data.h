@@ -47,16 +47,16 @@ bool IsCrossOriginIsolated(v8::Local<v8::Context> context);
 // are made in the current context, as for a constructor's or a static
 // operation's call, which have no receiver.
 //
-// The scope of a receiver of another origin, a window whose [CrossOrigin]
-// members a script may call, holds no realm: what the call makes, and what the
-// scripts that run within it make, is of the caller's.
+// A call of a [CrossOrigin] member, whose receiver may be a window of another
+// origin, has a scope of no receiver: what the scripts that run within it make
+// is of their own realm.
 //
 // It lives on the stack, though PerIsolateData points at the innermost one.
 class ReceiverRealmScope final {
  public:
   ReceiverRealmScope(v8::Isolate* isolate, v8::Local<v8::Object> receiver);
-  // One of no receiver, within a call of one, for what the call makes in the
-  // current realm: a DOMException that it throws.
+  // One of no receiver, for what a call makes in the current realm whatever
+  // its receiver, such as a DOMException that it throws.
   explicit ReceiverRealmScope(v8::Isolate* isolate);
 
   ReceiverRealmScope(const ReceiverRealmScope&) = delete;
@@ -73,8 +73,7 @@ class ReceiverRealmScope final {
   const raw_ptr<ReceiverRealmScope> outer_;
   // The isolate's current context when the call began.
   v8::Local<v8::Context> current_;
-  // The receiver's creation context, or an empty one if it has none that the
-  // current context may reach.
+  // The receiver's creation context, or an empty one if it has none.
   v8::Local<v8::Context> receiver_;
 };
 

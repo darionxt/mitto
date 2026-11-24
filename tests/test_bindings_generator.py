@@ -1566,6 +1566,18 @@ def test_a_members_receiver_goes_unchecked_only_where_another_origin_may_reach_i
     assert set(checked.values()) == {"CrossOriginCheck::kCheck"}
     assert "instance_template->SetAccessCheckCallback(&Window::AccessCheckCallback);" in source
 
+    # And a call that goes unchecked has no realm of its receiver's, which may be of another origin.
+    def realm_of(callback: str) -> str:
+        body = source[source.index(f"void {callback}") :]
+        body = body[: body.index("\n}")]
+        return next(line.strip() for line in body.splitlines() if "ReceiverRealmScope" in line)
+
+    current = "const ReceiverRealmScope current_realm(isolate);"
+    receiver = "const ReceiverRealmScope receiver_realm(isolate, info.This());"
+    assert realm_of("ClosedAttributeGetCallback") == realm_of("CloseOperationCallback") == current
+    assert realm_of("LocationAttributeGetCallback") == realm_of("NameAttributeGetCallback") == receiver
+    assert realm_of("StopOperationCallback") == receiver
+
 
 def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None:
     # Element's [PutForwards=value] classList: bind_gen's make_steps_of_put_forwards().

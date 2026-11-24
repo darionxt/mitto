@@ -61,12 +61,9 @@ ReceiverRealmScope::ReceiverRealmScope(v8::Isolate* isolate,
       current_(isolate->GetCurrentContext()) {
   // A global proxy whose global was detached, as a frame's window that has
   // gone, has no creation context: its call makes wrappers in the current
-  // one. Contexts share a security token where the one may reach the other.
+  // one.
   v8::Local<v8::Context> receiver_context;
-  if (receiver->GetCreationContext(isolate).ToLocal(&receiver_context) &&
-      (receiver_context == current_ ||
-       receiver_context->GetSecurityToken()->StrictEquals(
-           current_->GetSecurityToken()))) {
+  if (receiver->GetCreationContext(isolate).ToLocal(&receiver_context)) {
     receiver_ = receiver_context;
   }
   PerIsolateData::From(isolate)->set_receiver_realm_scope(this);

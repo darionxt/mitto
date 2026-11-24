@@ -209,6 +209,9 @@ def _check_written(where: str, extended: ExtendedAttributes) -> None:
 # A call with a receiver makes the wrappers it returns in the receiver's relevant realm, as bind_gen converts a return
 # value with the receiver's ScriptState (per_context_data.h).
 _RECEIVER_REALM = ["const ReceiverRealmScope receiver_realm(isolate, info.This());"]
+# A call that another origin may make, of a member that returns no wrapper of its own, has no receiver's realm to make
+# any in, nor for the scripts that run within it, whose receiver may be a window of another origin.
+_CURRENT_REALM = ["const ReceiverRealmScope current_realm(isolate);"]
 
 
 def condition_test(condition: Condition, where: str) -> str | None:
@@ -469,13 +472,14 @@ class _InterfaceWriter:
 
     # The callbacks.
 
-    def _receiver(self) -> list[str]:
+    def _receiver(self, member: Attribute | OperationGroup | None = None) -> list[str]:
+        realm = _CURRENT_REALM if member is not None and self._is_reached_across_origins(member) else _RECEIVER_REALM
         return [
             f"{self.cls}* const impl = ReceiverOf<{self.cls}>(info, {self.v8_class}::kWrapperTypeInfo);",
             "if (!impl) {",
             "  return;",
             "}",
-            *_RECEIVER_REALM,
+            *realm,
         ]
 
     def _lenient_receiver(self) -> list[str]:
@@ -784,7 +788,7 @@ class _InterfaceWriter:
             )
         cpp_name = self.method_name(attribute)
         return_type = self.types.return_type(attribute.idl_type, where)
-        receiver = self._receiver()
+        receiver = self._receiver(attribute)
         if self.types.reduce(attribute.idl_type).kind is TypeKind.PROMISE:
             # Web IDL: an error in the getter of a promise attribute rejects the promise it gives, as for an operation
             # that returns one, so a receiver of another kind gives a rejected promise, as bind_gen's getter does.
@@ -1087,7 +1091,7 @@ class _InterfaceWriter:
             elif not group.is_static:
                 body += self._promise_receiver()
         elif not group.is_static:
-            body += self._receiver()
+            body += self._receiver(group)
         body.append(self._exception_state())
         if len(overloads) == 1:
             body += self._call(overloads[0], where, check_length=True)
@@ -1738,15 +1742,19 @@ class _InterfaceWriter:
         cross_origin_check says: not for a static member, or for one that [CrossOrigin] lets another origin reach."""
         member = property_.member
         unchecked = property_.target == "interface"
-        if isinstance(member, Attribute):
-            values = member.extended_attributes.values_of("CrossOrigin")
-            unchecked |= "CrossOrigin" in member.extended_attributes and (not values or "Getter" in values)
-        elif isinstance(member, OperationGroup):
-            unchecked |= any("CrossOrigin" in overload.extended_attributes for overload in member.overloads)
-        if self.interface.name == "Window" and property_.name == "location":
-            # A Location checks no caller of its own yet, so a window gives its own to callers of its origin alone.
-            unchecked = False
+        if isinstance(member, (Attribute, OperationGroup)):
+            unchecked |= self._is_reached_across_origins(member)
         return f"CrossOriginCheck::{'kDoNotCheck' if unchecked else 'kCheck'}"
+
+    def _is_reached_across_origins(self, member: Attribute | OperationGroup) -> bool:
+        """Whether [CrossOrigin] lets a caller of another origin call an attribute's getter or an operation."""
+        if isinstance(member, OperationGroup):
+            return any("CrossOrigin" in overload.extended_attributes for overload in member.overloads)
+        if self.interface.name == "Window" and member.name == "location":
+            # A Location checks no caller of its own yet, so a window gives its own to callers of its origin alone.
+            return False
+        values = member.extended_attributes.values_of("CrossOrigin")
+        return "CrossOrigin" in member.extended_attributes and (not values or "Getter" in values)
 
     @staticmethod
     def _attributes(property_: Property) -> str:
