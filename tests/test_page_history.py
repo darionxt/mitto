@@ -817,7 +817,8 @@ def test_each_frame_has_its_own_rate_limit(session: mitto.Session, server: Recor
 def test_what_an_unload_listener_does_to_the_history_goes_nowhere(
     session: mitto.Session, server: RecordingServer
 ) -> None:
-    url = server.page("/a", "<title>Unload</title>")
+    # A page that the back/forward cache does not keep, as it keeps the page that the listener's changes would stay of.
+    url = server.page("/a", "<title>Unload</title>", _NO_STORE)
     second = server.page("/b", "<title>B</title>")
     listen = "addEventListener('pagehide', () => history.pushState(null, '', '#p'));"
     entries = (
@@ -831,7 +832,7 @@ def test_what_an_unload_listener_does_to_the_history_goes_nowhere(
         page.evaluate(f"{listen} location.reload(); 0")
         assert _next_document(page).url == url
         assert page.evaluate(entries) == [1, ["/a"], 1, "reload"]
-        page.evaluate(f"{listen} location.href = '/b'; 0")
+        page.evaluate(_kept_out(f"{listen} location.href = '/b'; 0"))
         assert _next_document(page).url == second
         assert page.evaluate(entries) == [2, ["/a", "/b"], 2, "navigate"]
 

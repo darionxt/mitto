@@ -109,16 +109,15 @@ bool SessionIndexedDb::NamesWhatWent(const PageIndexedDbCall& call) const {
 }
 
 void SessionIndexedDb::Send(const PageIndexedDbCall& call) {
-  used_ = true;
   // What a collected object of a document before lets go has gone with it.
   if (NamesWhatWent(call)) {
     return;
   }
+  used_ = true;
   sender_->SendFromContext(document_, EncodeIndexedDb(document_, call));
 }
 
 void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
-  used_ = true;
   if (call.op == IndexedDbCallOp::kOpen) {
     // The upgrade's transaction, if the open needs one.
     transaction_connections_.insert_or_assign(call.transaction,
@@ -134,6 +133,7 @@ void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
   if (NamesWhatWent(call)) {
     return;
   }
+  used_ = true;
   // What the Session tells the connection that an open makes may come before
   // the context has run the open's success, such as the versionchange of an
   // upgrade that waits behind it, and goes to the context after that success,

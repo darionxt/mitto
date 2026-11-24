@@ -144,8 +144,28 @@ class LockManager::Connection final : public LockService::Client {
     return true;
   }
 
+  // Whether the back/forward cache keeps the manager's window frozen, and
+  // `call` waits for it, as a task of Blink's frozen frame does.
+  bool HoldIfFrozen(base::OnceClosure call) {
+    if (context_.IsEmpty()) {
+      return false;
+    }
+    const v8::HandleScope handle_scope(isolate_);
+    ExecutionContext* const execution_context =
+        ExecutionContext::From(isolate_, context_.Get(isolate_));
+    if (!execution_context || !execution_context->IsInBackForwardCache()) {
+      return false;
+    }
+    execution_context->HoldTask(TaskType::kWebLocks, std::move(call));
+    return true;
+  }
+
   // LockService::Client:
   void Granted(int64_t lock_id) override {
+    if (HoldIfFrozen(base::BindOnce(&Connection::Granted,
+                                    base::WrapRefCounted(this), lock_id))) {
+      return;
+    }
     if (!RunInContext(
             [lock_id](LockManager& manager) { manager.Granted(lock_id); })) {
       // The handle is dropped, which lets the lock go, at once, as the
@@ -154,9 +174,17 @@ class LockManager::Connection final : public LockService::Client {
     }
   }
   void Failed(int64_t lock_id) override {
+    if (HoldIfFrozen(base::BindOnce(&Connection::Failed,
+                                    base::WrapRefCounted(this), lock_id))) {
+      return;
+    }
     RunInContext([lock_id](LockManager& manager) { manager.Failed(lock_id); });
   }
   void Broken(int64_t lock_id) override {
+    if (HoldIfFrozen(base::BindOnce(&Connection::Broken,
+                                    base::WrapRefCounted(this), lock_id))) {
+      return;
+    }
     RunInContext([lock_id](LockManager& manager) { manager.Broken(lock_id); });
   }
 

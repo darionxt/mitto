@@ -136,6 +136,12 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   BytesConsumer* body_consumer = consumer;
   if (!cache_control || !CacheControlContainsNoStore(*cache_control)) {
     body_consumer = BufferingBytesConsumer::CreateWithDelay(consumer);
+  } else if (ExecutionContext* const execution_context =
+                 ExecutionContext::From(isolate_, context)) {
+    // ThreadableLoader::ResponseReceived(): a script's fetch() whose response
+    // says no-store keeps its context's page out of the back/forward cache,
+    // one that a link preloaded for it included.
+    execution_context->DidReceiveNoStoreForScriptRequest();
   }
   BodyStreamBuffer* const body =
       BodyStreamBuffer::Create(isolate_, body_consumer, signal_.Get());

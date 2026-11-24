@@ -221,7 +221,7 @@ class PageRequests {
     // has said whether its document is cross-origin isolated.
     bool navigation = false;
     bool isolation_said = false;
-    // Whether it is a script's request, as Blink's ThreadableLoader loads.
+    // Whether its response counts as a script's request's here: the favicon.
     bool script_request = false;
     // Whether it is a traversal that the Session may answer with a restore.
     bool may_restore = false;

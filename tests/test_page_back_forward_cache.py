@@ -478,3 +478,82 @@ def test_a_message_of_another_page_evicts_a_kept_page_whose_origin_the_current_p
         page.evaluate("history.back()")
         assert _next_document(page) == PageNavigation(url=first, status=200)
         assert page.evaluate("window.marker ?? null") is None
+
+
+def test_a_scheduled_task_of_a_kept_page_runs_once_it_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "scheduler.postTask(() => log.push('task'), {delay: 300}); window.marker = 1; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        _wait(page, 900)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 100)
+        assert page.evaluate("[window.marker, log]") == [1, [*_KEPT_AND_BACK, "task"]]
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        ("pushState", ["/a?ph", 3, ["/a", "/a?ph", "/b"]]),
+        ("replaceState", ["/a?ph", 2, ["/a?ph", "/b"]]),
+    ],
+)
+def test_what_a_pagehide_listener_of_a_kept_page_does_to_the_history_stays(
+    session: mitto.Session, server: RecordingServer, change: str, expected: list[Any]
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            f"addEventListener('pagehide', () => history.{change}({{x: 1}}, '', '?ph'));"
+            " window.marker = 1; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first + "?ph", status=200, restored=True)
+        # The listener's entry is the one that the page is kept at, with its state.
+        assert page.evaluate(
+            "[window.marker, location.pathname + location.search, history.length,"
+            " navigation.entries().map(entry => new URL(entry.url).pathname + new URL(entry.url).search),"
+            " history.state]"
+        ) == [1, *expected, {"x": 1}]
+
+
+@pytest.mark.parametrize(
+    ("consume", "restored"),
+    [
+        # A preload that no script's fetch takes.
+        (False, True),
+        # One that a fetch takes, whose response a script then has.
+        (True, False),
+    ],
+    ids=["unused", "consumed"],
+)
+def test_a_preload_keeps_a_no_store_page_out_only_once_a_fetch_takes_it(
+    session: mitto.Session, server: RecordingServer, consume: bool, restored: bool
+) -> None:
+    first = server.page("/ns", "<title>NS</title>" + _LOGGING, _NO_STORE)
+    second = server.page("/b", "<title>B</title>")
+    server.route("/preloaded", b"", "text/plain", _NO_STORE)
+    take = "fetch('/preloaded').then(r => r.text())" if consume else "Promise.resolve()"
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "const link = document.createElement('link'); link.rel = 'preload'; link.as = 'fetch';"
+            " link.href = '/preloaded'; link.crossOrigin = 'anonymous'; document.head.append(link);"
+            f" new Promise(r => setTimeout(r, 300)).then(() => {take}).then(() => {{"
+            " window.marker = 1; location.href = '/b'; return 0; })"
+        )
+        assert _next_document(page).url == second
+        assert page.evaluate("sessionStorage.hide") == ("true," if restored else "false,")
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=restored)
+        assert page.evaluate("window.marker ?? null") == (1 if restored else None)

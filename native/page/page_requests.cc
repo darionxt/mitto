@@ -131,11 +131,10 @@ uint64_t PageRequests::Start(PageRequest request,
   open.client = &client;
   open.streams_body = request.streams_body;
   open.timed = std::move(timed);
-  // What Blink's ThreadableLoader loads: fetch(), XMLHttpRequest, and the
-  // favicon that Chrome's renderer fetches for the browser.
-  open.script_request = request.kind == PageRequestKind::kFetch ||
-                        request.kind == PageRequestKind::kXhr ||
-                        request.kind == PageRequestKind::kFavicon;
+  // The favicon that Chrome's renderer fetches for the browser, which a
+  // ThreadableLoader loads as a script's request. A fetch() marks its
+  // context itself (FetchLoader), as one that a link preloaded does not.
+  open.script_request = request.kind == PageRequestKind::kFavicon;
   return number;
 }
 

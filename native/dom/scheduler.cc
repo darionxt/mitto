@@ -71,6 +71,25 @@ std::optional<v8::Local<v8::Context>> ResolverContext(
   return context;
 }
 
+// Whether the back/forward cache keeps the window of the promise that
+// `resolver` settles frozen, and `run` waits for it, as a task of Blink's
+// frozen frame does.
+bool HoldIfFrozen(v8::Isolate* isolate,
+                  v8::Local<v8::Promise::Resolver> resolver,
+                  base::OnceClosure run) {
+  v8::Local<v8::Context> context;
+  if (!resolver->GetPromise()->GetCreationContext(isolate).ToLocal(&context)) {
+    return false;
+  }
+  ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  if (!execution_context || !execution_context->IsInBackForwardCache()) {
+    return false;
+  }
+  execution_context->HoldTask(TaskType::kInternalDefault, std::move(run));
+  return true;
+}
+
 // What the scheduler counts of a task or a continuation that waits: once it
 // runs, or its signal aborts it, it no longer does, as Blink's cancelled task
 // is no longer queued.
@@ -118,6 +137,14 @@ class DOMTask final : public cppgc::GarbageCollected<DOMTask> {
 
   // The posted task, which no longer waits once it runs.
   void Run() {
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    const v8::HandleScope handle_scope(isolate);
+    if (HoldIfFrozen(
+            isolate, resolver_.Get(isolate),
+            base::BindOnce([](cppgc::Persistent<DOMTask> task) { task->Run(); },
+                           cppgc::Persistent<DOMTask>(this)))) {
+      return;
+    }
     pending_.End();
     Invoke();
   }
@@ -226,6 +253,17 @@ class DOMTaskContinuation final
 
   // DOMTaskContinuation::Invoke(): the promise resolves.
   void Invoke() {
+    v8::Isolate* const held_isolate = v8::Isolate::GetCurrent();
+    const v8::HandleScope held_scope(held_isolate);
+    if (!finished_ &&
+        HoldIfFrozen(held_isolate, resolver_.Get(held_isolate),
+                     base::BindOnce(
+                         [](cppgc::Persistent<DOMTaskContinuation> task) {
+                           task->Invoke();
+                         },
+                         cppgc::Persistent<DOMTaskContinuation>(this)))) {
+      return;
+    }
     pending_.End();
     if (finished_) {
       return;

@@ -8,6 +8,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -178,6 +179,7 @@ struct PageFrame::StoredDocument {
   // Its ID, and the entry it was stored at, the only one that restores it.
   uint64_t document = kNoDocument;
   int64_t item_sequence_number = 0;
+  scoped_refptr<FrameNavigationEntry> entry;
   uint64_t browsing_instance = 0;
   base::OneShotTimer time_to_live;
 };
@@ -1119,18 +1121,6 @@ Document& PageFrame::CommitNavigation(
   // A traversal that may have restored a stored document has a response
   // instead, as the Session would not restore it: the document goes.
   EndRestore();
-  // What the old document's unload listeners do to its URL and entries goes
-  // nowhere, as Chrome's browser ignores a document that it is replacing, and
-  // nothing after them runs a script.
-  const base::AutoReset<bool> unloading(&unloading_for_commit_, true);
-  // DocumentLoader::CommitNavigation(): nothing navigates the frame
-  // meanwhile, whatever the old document or its frames' listeners ask.
-  const FrameNavigationDisabler navigation_disabler(*this);
-  // A document that the back/forward cache takes has pagehide, persisted,
-  // and visibilitychange in place of its unload events, as Chrome's renderer
-  // dispatches them for the old page as the new one commits, and keeps
-  // loading. A listener may do what keeps it out after all, which unloads it
-  // with no more events, as Chrome evicts it once it has stored it.
   // The next document's browsing instance: a traversal's entry's, a new one
   // where the browser swaps proactively, and otherwise the current one's.
   const uint64_t next_browsing_instance =
@@ -1139,6 +1129,19 @@ Document& PageFrame::CommitNavigation(
           ? ++last_browsing_instance_
           : browsing_instance_;
   bool store = CanStoreDocument(old_document, next_browsing_instance);
+  // What the old document's unload listeners do to its URL and entries goes
+  // nowhere, as Chrome's browser ignores a document that it is replacing, and
+  // nothing after them runs a script. What the pagehide listeners of one that
+  // the back/forward cache takes do is its entry's, as Chrome takes it.
+  const base::AutoReset<bool> unloading(&unloading_for_commit_, !store);
+  // DocumentLoader::CommitNavigation(): nothing navigates the frame
+  // meanwhile, whatever the old document or its frames' listeners ask.
+  const FrameNavigationDisabler navigation_disabler(*this);
+  // A document that the back/forward cache takes has pagehide, persisted,
+  // and visibilitychange in place of its unload events, as Chrome's renderer
+  // dispatches them for the old page as the new one commits, and keeps
+  // loading. A listener may do what keeps it out after all, which unloads it
+  // with no more events, as Chrome evicts it once it has stored it.
   if (store) {
     old_document.HideForBackForwardCache();
     if (window_) {
@@ -1248,9 +1251,9 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
     // unloads.
     const v8::Context::Scope current_scope(context());
     Document& old_document = window_->GetDocument();
-    const base::AutoReset<bool> unloading(&unloading_for_commit_, true);
-    const FrameNavigationDisabler navigation_disabler(*this);
     bool store = CanStoreDocument(old_document, stored->browsing_instance);
+    const base::AutoReset<bool> unloading(&unloading_for_commit_, !store);
+    const FrameNavigationDisabler navigation_disabler(*this);
     if (store) {
       old_document.HideForBackForwardCache();
       if (window_) {
@@ -1301,9 +1304,8 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   SetStorageDocument(window.DocumentId());
   // The session history goes to the document's entry, and the Navigation API
   // takes the entries around it while the page is still frozen.
-  Navigation::EntryArrays arrays = history().DidRestoreDocument(
-      stored->item_sequence_number, *window.CurrentHistoryItem(),
-      window.DocumentId());
+  Navigation::EntryArrays arrays =
+      history().DidRestoreDocument(std::move(stored->entry));
   window.Navigation()->SetEntriesForRestore(arrays);
   // RemoveBackForwardCacheEviction(), then SetPageFrozen(false): what waited
   // runs from its tasks, the responses that came meanwhile among them.
@@ -1410,6 +1412,7 @@ void PageFrame::StoreDocument(std::unique_ptr<DocumentLoader> loader) {
       window.CurrentHistoryItem()
           ? window.CurrentHistoryItem()->item_sequence_number
           : 0;
+  stored->entry = history().CurrentRootRef();
   stored->context = std::move(context_);
   stored->window = window_.Get();
   window_ = nullptr;
