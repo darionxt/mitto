@@ -44,7 +44,9 @@ _SRCDOC_AS_CHROME = json.loads((_TESTS / "data" / "frames_srcdoc_cases.json").re
 _NAVIGATION_CASES = (_TESTS / "frames_navigation_cases.js").read_text()
 _NAVIGATION_AS_CHROME = json.loads((_TESTS / "data" / "frames_navigation_cases.json").read_text())
 # A frame's document whose script reads performance.timing while it parses.
-_TIMING_PAGE = b"""<!doctype html><script>
+# Its script runs once the response has ended, after a script that comes late: a body's end is a message of its own, in
+# Chrome too, which a script that runs as soon as the body has come may precede.
+_TIMING_PAGE = b"""<!doctype html><script src=/hold.js></script><script>
 const t = performance.timing;
 parent.timingAtParse = {
   domLoading: t.domLoading >= t.navigationStart && t.domLoading > 0,
@@ -75,11 +77,11 @@ def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], 
 
     /from-... gives the request's Referer, or "none"; /echo the headers in _ECHOED that came, in a script element of id h;
     /204 nothing; /redirect a redirect to /child?redirected; /drop no response at all, as status 0; /timing a document
-    whose script puts what it reads of performance.timing into parent.timingAtParse; /framed a page whose markup holds
-    an iframe of /framed-child; /opened a page whose script opens a frame's document and removes the frame a second
-    later; /slow, after 300 ms, and /child... and /dir/... a document
-    whose paragraph of id c holds its path; /nested a document with a frame of /slow?inner, whose load and its own go
-    into top.order; anything else the top-level page.
+    whose script puts what it reads of performance.timing into parent.timingAtParse, after /hold.js, an empty script
+    that comes after 300 ms; /framed a page whose markup holds an iframe of /framed-child; /opened a page whose script
+    opens a frame's document and removes the frame a second later; /slow, after 300 ms, and /child... and /dir/... a
+    document whose paragraph of id c holds its path; /nested a document with a frame of /slow?inner, whose load and its
+    own go into top.order; anything else the top-level page.
     """
     html_type = {"Content-Type": "text/html"}
     if path.startswith("/from-"):
@@ -98,6 +100,9 @@ def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], 
         return 200, html_type, _OPENED_PAGE
     if path == "/timing":
         return 200, html_type, _TIMING_PAGE
+    if path == "/hold.js":
+        time.sleep(0.3)
+        return 200, {"Content-Type": "text/javascript"}, b""
     if path == "/redirect":
         return 302, {"Location": "/child?redirected"}, b""
     if path == "/nested":
