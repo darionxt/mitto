@@ -692,6 +692,7 @@
    },
    "post": "undefined",
    "closed": "InvalidStateError: Failed to execute 'postMessage' on 'BroadcastChannel': Channel is closed",
+   "locks": "InvalidStateError: Failed to execute 'query' on 'LockManager': The document is not active.",
    "made": "undefined",
    "heard": [
     "gone heard 1"
@@ -732,6 +733,7 @@
    },
    "post": "undefined",
    "closed": "InvalidStateError: Failed to execute 'postMessage' on 'BroadcastChannel': Channel is closed",
+   "locks": "InvalidStateError: Failed to execute 'query' on 'LockManager': The document is not active.",
    "heard": [
     "gone heard 1"
    ]

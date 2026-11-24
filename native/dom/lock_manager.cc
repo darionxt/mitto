@@ -284,6 +284,8 @@ LockManager::LockManager(ExecutionContext& context)
         },
         cppgc::WeakPersistent<LockManager>(this)));
   } else {
+    // A window that has gone, whose navigator a script still holds.
+    context_destroyed_ = true;
     connection_->Close();
   }
 }

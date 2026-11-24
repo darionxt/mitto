@@ -41,7 +41,7 @@ def page_program(native_library: Any) -> None:
 @pytest.fixture
 def ports() -> Iterator[tuple[int, int]]:
     """The ports of two servers on 127.0.0.1 of an empty page, the child script, documents at /child that run it, and one at
-    /listen with a listener of storage events."""
+    /listen with a listener of storage events, which says how much its storages hold."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -53,7 +53,10 @@ def ports() -> Iterator[tuple[int, int]]:
             elif self.path.startswith("/child"):
                 body = f"<!doctype html><body><script>{_CHILD}</script>"
             elif self.path == "/listen":
-                body = "<!doctype html><script>addEventListener('storage', () => {})</script>"
+                body = (
+                    "<!doctype html><script>addEventListener('storage', () => {});"
+                    " postMessage.call(parent, localStorage.length + sessionStorage.length, '*')</script>"
+                )
             self.send_response(200)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(body)))
@@ -134,6 +137,8 @@ def test_frames_of_many_origins_listen_to_storage_events(ports: tuple[int, int])
     # Each binds two storage areas of its own, which a Page of Chrome's 1000 frames has room for.
     script = """
       (async () => {
+        const heard = [];
+        addEventListener('message', (event) => heard.push(event.data));
         for (let index = 0; index < 600; index++) {
           const element = document.createElement('iframe');
           const loaded = new Promise((resolve) => { element.onload = resolve; });
@@ -141,10 +146,11 @@ def test_frames_of_many_origins_listen_to_storage_events(ports: tuple[int, int])
           document.body.append(element);
           if (index % 8 === 7) await loaded;
         }
-        return frames.length;
+        while (heard.length < 600) await new Promise((resolve) => setTimeout(resolve, 10));
+        return [...new Set(heard)];
       })()
     """
     url = f"http://127.0.0.1:{ports[0]}/app/page"
     with mitto.Session() as session, session._open_page(url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == 600
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [0]
         assert page.evaluate("localStorage.length", timeout=_TIMEOUT_SECONDS) == 0

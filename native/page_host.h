@@ -336,6 +336,8 @@ class PageHost final : public PageChannel::Delegate {
     // A document's origin, its URL's, or for a frame's initial about:blank its
     // parent's; a worker's, its creator's, or an opaque one for data:.
     url::Origin origin;
+    // What its storage is keyed by, if it has any: CalculateStorageKey()'s.
+    std::optional<StorageKey> storage_key;
     // The document whose frame element holds a document's frame, or the
     // context that started a worker; kNoDocument for the top-level document.
     uint64_t parent = kNoDocument;
@@ -587,6 +589,9 @@ class PageHost final : public PageChannel::Delegate {
       const url::Origin& top_frame_origin,
       const url::Origin& frame_origin,
       const net::SiteForCookies& site_for_cookies);
+  // Keeps `context`, a document or a worker that the Page has made, as `id`.
+  void AddContext(uint64_t id, Context context);
+
   // The storage key of document `id`, as Chrome works it out for a frame with
   // third-party storage partitioning, which it turns on: the document's
   // origin, the site of the top-level document and whether a document from
@@ -594,10 +599,10 @@ class PageHost final : public PageChannel::Delegate {
   // one that is not of an HTTP or HTTPS URL, which have no storage, and for a
   // document under a top-level one of an opaque origin, whose key no other
   // top-level document ever has.
-  std::optional<StorageKey> DocumentStorageKey(uint64_t id) const;
+  std::optional<StorageKey> CalculateStorageKey(uint64_t id) const;
 
   // The storage key of context `id`'s IndexedDB and Cache API, as
-  // StorageKey::Serialize() writes it: DocumentStorageKey()'s, or for a
+  // StorageKey::Serialize() writes it: CalculateStorageKey()'s, or for a
   // context under a top-level document of an opaque origin one of that
   // document's own, which the Session keeps in memory. None for a context of
   // an opaque origin, or one that is not of an HTTP or HTTPS URL.

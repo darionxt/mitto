@@ -2400,9 +2400,8 @@ void PageHost::OnBroadcast(const PageBroadcast& broadcast,
   }
   // Nor does one under a top-level document of an opaque origin, whose key no
   // other Page's context has.
-  if (const std::optional<StorageKey> storage_key =
-          DocumentStorageKey(context_id)) {
-    network_->BroadcastFromPage(*this, *storage_key, broadcast);
+  if (context.storage_key) {
+    network_->BroadcastFromPage(*this, *context.storage_key, broadcast);
   }
 }
 
@@ -2560,8 +2559,8 @@ std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
   if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     return std::nullopt;
   }
-  if (const std::optional<StorageKey> storage_key = DocumentStorageKey(id)) {
-    return storage_key->Serialize();
+  if (context.storage_key) {
+    return context.storage_key->Serialize();
   }
   // A frame under a top-level document of an opaque origin, such as a data:
   // URL's, whose key has that origin's nonce, which no other top-level
@@ -2578,7 +2577,7 @@ std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
   return SerializeUnderOpaqueTop(context.origin, nonce->second);
 }
 
-std::optional<StorageKey> PageHost::DocumentStorageKey(uint64_t id) const {
+std::optional<StorageKey> PageHost::CalculateStorageKey(uint64_t id) const {
   // RenderFrameHostImpl::CalculateStorageKey(), with
   // net::features::kThirdPartyStoragePartitioning on, as in Chrome.
   // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
@@ -2630,8 +2629,7 @@ void PageHost::OnStorageBind(const PageStorageBind& bind, uint64_t document) {
     return;
   }
   StorageAreaImpl* area = nullptr;
-  if (const std::optional<StorageKey> storage_key =
-          DocumentStorageKey(document)) {
+  if (const std::optional<StorageKey>& storage_key = context.storage_key) {
     if (bind.kind == PageStorageKind::kLocal) {
       area = &network_->storage_context().LocalStorageArea(*storage_key);
     } else {
@@ -2778,9 +2776,8 @@ void PageHost::DeliverBroadcast(const StorageKey& storage_key,
   // it has one. A message too large for a frame with its key stays out, as one
   // too large for a frame stays in the Page that posts it.
   if (!channel_ || ended_ || refused_by_library_ ||
-      std::ranges::none_of(contexts_, [&](const auto& entry) {
-        return entry.second.origin.IsSameOriginWith(storage_key.origin()) &&
-               DocumentStorageKey(entry.first) == storage_key;
+      std::ranges::none_of(contexts_, [&storage_key](const auto& entry) {
+        return entry.second.storage_key == storage_key;
       })) {
     return;
   }
@@ -2995,7 +2992,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     if (contexts_.contains(replaced)) {
       ForgetContexts(ContextsUnder(replaced));
     }
-    contexts_.emplace(committed.document, std::move(context));
+    AddContext(committed.document, std::move(context));
     return;
   }
   // It takes the place of the top-level document and everything under it,
@@ -3007,7 +3004,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   about_blank_navigations_.clear();
   worker_scripts_.clear();
   const GURL url = context.url;
-  contexts_.emplace(committed.document, std::move(context));
+  AddContext(committed.document, std::move(context));
   // The records of the documents that the session history may go back to
   // stay, until the Page releases them, the oldest first past a bound.
   if (record) {
@@ -3514,7 +3511,13 @@ void PageHost::OnWorkerStarted(const PageWorkerStarted& started) {
       break;
   }
   last_context_id_ = started.worker;
-  contexts_.emplace(started.worker, std::move(worker));
+  AddContext(started.worker, std::move(worker));
+}
+
+void PageHost::AddContext(uint64_t id, Context context) {
+  const auto [added, inserted] = contexts_.emplace(id, std::move(context));
+  // Neither its origin nor its place in the frame tree changes while it lasts.
+  added->second.storage_key = CalculateStorageKey(id);
 }
 
 void PageHost::OnContextGone(uint64_t context_id) {

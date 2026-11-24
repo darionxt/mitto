@@ -140,6 +140,7 @@
       }
       const element = await add({src: '/child'});
       const {contentWindow} = element;
+      const {navigator: goneNavigator} = contentWindow;
       const held = new contentWindow.BroadcastChannel('gone');
       const channel = new BroadcastChannel('gone');
       const heard = [];
@@ -153,6 +154,8 @@
       results.post = told(() => held.postMessage('3'));
       held.close();
       results.closed = told(() => held.postMessage('4'));
+      const query = LockManager.prototype.query.call(goneNavigator.locks);
+      results.locks = await Promise.race([query.then(() => 'answered', String), settle(2000).then(() => 'nothing')]);
       if (way === 'removed') results.made = told(() => new contentWindow.BroadcastChannel('gone').postMessage('5'));
       await settle(60);
       results.heard = heard;
