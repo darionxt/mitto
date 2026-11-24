@@ -1423,6 +1423,18 @@ void Document::SetUrl(std::u16string url) {
   UpdateBaseUrl();
 }
 
+void Document::SetUrlKeepingOrigin(std::u16string url) {
+  // Not one that its URL does not say already, which a frame's about:blank or
+  // srcdoc inherits, or a sandbox makes opaque.
+  url::Origin origin = GetOrigin();
+  if (url::Origin::Create(GURL(url_)).IsSameOriginWith(origin) &&
+      !url::Origin::Create(GURL(url)).IsSameOriginWith(origin)) {
+    origin_ = std::move(origin);
+    keeps_origin_of_earlier_url_ = true;
+  }
+  SetUrl(std::move(url));
+}
+
 GURL Document::FallbackBaseUrl() const {
   GURL url(url_);
   if ((url.IsAboutSrcdoc() || url.IsAboutBlank()) &&
@@ -2042,8 +2054,9 @@ void Document::Open(Window* entered_window,
       }
     }
     const std::u16string spec = base::UTF8ToUTF16(url.possibly_invalid_spec());
-    if (spec != url_) {
-      SetUrl(spec);
+    // Not for an about:srcdoc opener, whose frame's content its URL is not.
+    if (spec != url_ && !url.IsAboutSrcdoc()) {
+      SetUrlKeepingOrigin(spec);
     }
     // DidOpenDocumentInputStream(): the browser takes what the opener gave
     // the document.

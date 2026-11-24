@@ -1318,7 +1318,9 @@ def test_a_traversal_s_request_does_not_wait_for_its_navigate_listeners(
         assert _next_document(page).url == second
 
 
-def test_window_chrome_says_a_traversal_is_back_forward(session: mitto.Session, server: RecordingServer) -> None:
+def test_window_chrome_says_a_traversal_is_back_forward_and_a_reload_reload(
+    session: mitto.Session, server: RecordingServer
+) -> None:
     first = server.page("/a", "<title>A</title>")
     second = server.page("/b", "<title>B</title>")
     kind = "[chrome.loadTimes().navigationType, chrome.csi().tran]"
@@ -1330,6 +1332,9 @@ def test_window_chrome_says_a_traversal_is_back_forward(session: mitto.Session, 
         page.evaluate("history.back()")
         assert _next_document(page).url == first
         assert page.evaluate(kind) == ["BackForward", 6]
+        page.evaluate("location.reload()")
+        assert _next_document(page).url == first
+        assert page.evaluate(kind) == ["Reload", 16]
 
 
 def test_a_document_keeps_loading_while_its_traversal_waits(session: mitto.Session, server: RecordingServer) -> None:
@@ -1355,3 +1360,139 @@ def test_a_document_keeps_loading_while_its_traversal_waits(session: mitto.Sessi
             "new Promise(r => setTimeout(() => r([location.pathname, !!document.getElementById('late'),"
             " document.readyState]), 300))"
         ) == ["/s", True, "complete"]
+
+
+# Has the about:blank of a new frame open the top document, which takes its URL, and gives what the document then says.
+_OPENED_BY_A_BLANK_FRAME = """new Promise(resolve => {
+  const frame = document.createElement('iframe');
+  document.body.append(frame);
+  window.done = resolve;
+  frame.contentWindow.setTimeout(frame.contentWindow.Function(`
+    const top = parent;
+    top.document.open();
+    top.document.write('<p>y</p>');
+    top.document.close();
+    top.done([top.location.href, top.self.origin, top.navigation.entries().length,
+              top.navigation.currentEntry && top.navigation.currentEntry.url]);
+  `), 0);
+})"""
+
+
+def test_the_navigation_api_keeps_its_entries_after_document_open(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        # document.open() gives the document about:blank, but the document keeps its origin, and its entries stay,
+        # the current one at the URL that it had, as in Chrome.
+        assert page.evaluate(_OPENED_BY_A_BLANK_FRAME) == ["about:blank", server.origin, 2, second]
+
+
+def test_a_traversal_goes_past_the_url_that_document_open_gave_a_document(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>", [("Cache-Control", "no-store")])
+    third = server.page("/c", "<title>C</title>")
+    state = (
+        "[navigation.entries().map(entry => entry.url.replace(origin, '')), navigation.currentEntry.index,"
+        " location.href.replace(origin, ''), history.state]"
+    )
+    shown = f"new Promise(resolve => {{ onpopstate = () => resolve({state}); }})"
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate(_OPENED_BY_A_BLANK_FRAME)
+        # Its entries are of the document's origin, also the one at about:blank, so their keys are found, and the
+        # document goes back to the URL that it had, and forward again.
+        entries = ["/a", "/b", "about:blank"]
+        assert page.evaluate(f"history.pushState(7, ''); {state}") == [entries, 2, "about:blank", 7]
+        assert page.evaluate(f"navigation.back().finished.then(() => {state})") == [entries, 1, "/b", None]
+        assert page.evaluate(f"navigation.forward().finished.then(() => {state})") == [entries, 2, "about:blank", 7]
+        assert page.evaluate(f"history.back(); {shown}") == [entries, 1, "/b", None]
+        assert page.evaluate(f"history.forward(); {shown}") == [entries, 2, "about:blank", 7]
+        # A new document of the page takes the URL within itself as well, and keeps its origin.
+        page.evaluate("location.href = origin + '/c'; 0")
+        assert _next_document(page).url == third
+        entries.append("/c")
+        page.evaluate("history.go(-2); 0")
+        assert _next_document(page).url == second
+        assert page.evaluate(state) == [entries, 1, "/b", None]
+        assert page.evaluate(f"history.forward(); {shown}") == [entries, 2, "about:blank", 7]
+        assert page.evaluate("origin") == server.origin
+        assert page.evaluate(f"history.back(); {shown}") == [entries, 1, "/b", None]
+        page.evaluate("history.go(2); 0")
+        assert _next_document(page).url == third
+        assert page.evaluate(state) == [entries, 3, "/c", None]
+
+
+def test_a_new_document_goes_back_past_the_url_that_document_open_gave_the_one_before(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>", [("Cache-Control", "no-store")])
+    second = server.page("/c", "<title>C</title>")
+    state = "[location.href.replace(origin, ''), history.state, history.length]"
+    shown = f"new Promise(resolve => {{ onpopstate = () => resolve({state}); }})"
+
+    with _open_page(session, first) as page:
+        page.evaluate("history.pushState(1, '', '/b')")
+        page.evaluate(_OPENED_BY_A_BLANK_FRAME)
+        page.evaluate("history.pushState(2, ''); location.href = origin + '/c'; 0")
+        assert _next_document(page).url == second
+        # A new document takes the first entry, and goes to the URLs that the one before had.
+        page.evaluate("history.go(-3); 0")
+        assert _next_document(page).url == first
+        assert page.evaluate(state) == ["/a", None, 4]
+        assert page.evaluate(f"history.go(2); {shown}") == ["about:blank", 2, 4]
+        assert page.evaluate(f"history.back(); {shown}") == ["/b", 1, 4]
+        assert page.evaluate(f"history.back(); {shown}") == ["/a", None, 4]
+
+
+def test_an_entry_of_the_url_that_document_open_gave_stays_in_the_list_of_the_next_document(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+    third = server.page("/c", "<title>C</title>")
+    state = "[navigation.entries().map(entry => entry.url.replace(origin, '')), navigation.currentEntry.index]"
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate(_OPENED_BY_A_BLANK_FRAME)
+        assert page.evaluate(f"history.replaceState(8, ''); {state}") == [["/a", "about:blank"], 1]
+        page.evaluate("location.href = origin + '/c'; 0")
+        assert _next_document(page).url == third
+        assert page.evaluate(state) == [["/a", "about:blank", "/c"], 2]
+
+
+def test_document_open_from_a_srcdoc_leaves_the_document_its_url(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    opened = """new Promise(resolve => {
+      const frame = document.createElement('iframe');
+      frame.srcdoc = '<p>s';
+      frame.onload = () => {
+        window.done = resolve;
+        frame.contentWindow.setTimeout(frame.contentWindow.Function(`
+          const top = parent;
+          top.document.open();
+          top.document.write('<p>y</p>');
+          top.document.close();
+          top.done([top.location.href, top.origin, top.document.baseURI]);
+        `), 0);
+      };
+      document.body.append(frame);
+    })"""
+    state = "[location.href, history.state, navigation.entries().map(entry => entry.url.replace(origin, ''))]"
+
+    with _open_page(session, first) as page:
+        assert page.evaluate(opened) == [first, server.origin, first]
+        assert page.evaluate(f"history.pushState(2, ''); {state}") == [first, 2, ["/a", "/a"]]
+        assert page.evaluate(f"history.pushState(3, '', '/z'); {state}") == [server.url("/z"), 3, ["/a", "/a", "/z"]]

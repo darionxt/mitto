@@ -768,7 +768,7 @@ void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
     const FetchReferrerPolicy policy =
         window_->GetDocument().GetReferrerPolicy();
     history().DidCommitSameDocumentNavigation(
-        item, type, document,
+        item, window_->GetDocument().GetOrigin(), type, document,
         policy == FetchReferrerPolicy::kDefault
             ? PageReferrerPolicy::kStrictOriginWhenCrossOrigin
             : ToPageReferrerPolicy(policy));
