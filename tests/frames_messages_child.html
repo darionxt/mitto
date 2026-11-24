@@ -10,6 +10,25 @@ const tell = (event) => told({
   type: event.type, data: event.data, origin: plain(event.origin), parent: event.source === parent, ports: event.ports.length,
   trusted: event.isTrusted,
 });
+if (location.search === '?elsewhere') postMessage.call(parent, 'elsewhere', 'https://example.com');
+if (location.search === '?hello') told('hello');
+if (location.search.startsWith('?three')) for (const number of [1, 2, 3]) told(`number ${number}`);
+if (location.search === '?threeAndGo') location.href = '/child?gone';
+if (location.search === '?port') {
+  const module = () => new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+  let port;
+  onmessage = (event) => {
+    if (event.data === 'send back') {
+      port.postMessage(module());
+      port.postMessage('back');
+      return;
+    }
+    port = event.ports[0];
+    port.onmessage = port.onmessageerror = ({type, data, origin, source, ports}) => {
+      told([type, data instanceof WebAssembly.Module ? 'module' : data && data.module ? 'with a module' : data, origin, source, ports.length]);
+    };
+  };
+}
 if (location.search === '?send') told({hello: ['child']});
 if (location.search === '?answer') onmessage = tell;
 if (location.search === '?collect') onmessage = (event) => { top.got.push(`collected ${event.data}`); };

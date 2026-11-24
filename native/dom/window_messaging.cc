@@ -3,11 +3,14 @@
 // that it is posted on from a task of that window's, as
 // LocalDOMWindow::SchedulePostMessage() posts it, and names the window that
 // posted it, the incumbent one, and that window's origin. One that a window
-// posts to itself carries the task state of the task that posted it.
+// posts to itself carries the task state of the task that posted it. One
+// between windows that Chrome has in two processes goes as RemoteDOMWindow
+// sends it, through the browser and LocalFrame::PostMessageEvent().
 //
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc
 // Upstream: third_party/blink/renderer/core/frame/dom_window.cc
 // Upstream: third_party/blink/renderer/core/frame/local_dom_window.cc
+// Upstream: third_party/blink/renderer/core/frame/local_frame.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
 
 #include <optional>
@@ -24,6 +27,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/message_event.h"
 #include "mitto/dom/message_port.h"
+#include "mitto/dom/remote_window.h"
 #include "mitto/dom/scheduler_task_context.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "mitto/dom/user_activation.h"
@@ -32,6 +36,7 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
 
@@ -97,6 +102,7 @@ void DispatchPostMessage(Window& window,
                          SerializedScriptValue data,
                          std::vector<MessagePortChannel> channels,
                          Window* source,
+                         RemoteWindow* remote_source,
                          const url::Origin& source_origin,
                          const TargetOrigin& target,
                          UserActivation* user_activation,
@@ -110,14 +116,26 @@ void DispatchPostMessage(Window& window,
   }
   const url::Origin recipient = window.GetSecurityOrigin();
   if (!target.any && !target.origin.IsSameOriginWith(recipient)) {
-    window.AddConsoleMessage(
-        ConsoleLevel::kWarning,
-        base::StrCat({"Failed to execute 'postMessage' on 'DOMWindow': The "
-                      "target origin provided ('",
-                      target.origin.Serialize(),
-                      "') does not match the recipient window's origin ('",
-                      recipient.Serialize(), "')."}));
+    // Between processes it is the browser that drops the message, without a
+    // word, as RenderFrameProxyHost::RouteMessageEvent() does.
+    if (IsInSameProcess(source_origin, recipient)) {
+      window.AddConsoleMessage(
+          ConsoleLevel::kWarning,
+          base::StrCat({"Failed to execute 'postMessage' on 'DOMWindow': The "
+                        "target origin provided ('",
+                        target.origin.Serialize(),
+                        "') does not match the recipient window's origin ('",
+                        recipient.Serialize(), "')."}));
+    }
     return;
+  }
+  // A frame of another process that has gone meanwhile, or that shows a
+  // document of this one, is no source, as SourceFrameForOptionalToken() finds
+  // no remote frame.
+  if (remote_source &&
+      (remote_source->IsFrameDetached() || remote_source->IsReplaced())) {
+    source = nullptr;
+    remote_source = nullptr;
   }
   const std::u16string origin = base::UTF8ToUTF16(source_origin.Serialize());
   // A value locked to its agent cluster, a SharedArrayBuffer's or a
@@ -125,12 +143,16 @@ void DispatchPostMessage(Window& window,
   // keyed by its origin, as Chrome keys it.
   if (data.IsLockedToAgentCluster() &&
       !source_origin.IsSameOriginWith(recipient)) {
-    window.DispatchEvent(MessageEvent::CreateError(origin, source));
+    MessageEvent* const error = MessageEvent::CreateError(origin, source);
+    error->SetRemoteSource(remote_source);
+    window.DispatchEvent(error);
     return;
   }
-  window.DispatchEvent(MessageEvent::CreateForMessage(
+  MessageEvent* const event = MessageEvent::CreateForMessage(
       std::move(data), origin, source, MessagePort::PortsOf(ports),
-      user_activation));
+      user_activation);
+  event->SetRemoteSource(remote_source);
+  window.DispatchEvent(event);
 }
 
 // DOMWindow::DoPostMessage().
@@ -179,18 +201,22 @@ void DoPostMessage(Window& window,
       base::BindOnce(
           [](cppgc::WeakPersistent<Window> window, SerializedScriptValue data,
              std::vector<MessagePortChannel> channels,
-             cppgc::Persistent<Window> source, url::Origin source_origin,
-             TargetOrigin target,
+             cppgc::Persistent<Window> source,
+             cppgc::Persistent<RemoteWindow> remote_source,
+             url::Origin source_origin, TargetOrigin target,
              cppgc::Persistent<UserActivation> user_activation,
              cppgc::Persistent<SchedulerTaskContext> task_state) {
             if (window) {
               DispatchPostMessage(*window, std::move(data), std::move(channels),
-                                  source.Get(), source_origin, target,
-                                  user_activation.Get(), task_state.Get());
+                                  source.Get(), remote_source.Get(),
+                                  source_origin, target, user_activation.Get(),
+                                  task_state.Get());
             }
           },
           cppgc::WeakPersistent<Window>(&window), std::move(data),
           *std::move(channels), cppgc::Persistent<Window>(&source),
+          cppgc::Persistent<RemoteWindow>(
+              RemoteWindow::From(source, window.GetSecurityOrigin())),
           source.GetSecurityOrigin(), *std::move(target),
           cppgc::Persistent<UserActivation>(user_activation),
           cppgc::Persistent<SchedulerTaskContext>(
@@ -205,9 +231,13 @@ v8::Local<v8::Value> Window::StructuredClone(
     const bindings::StructuredSerializeOptions& options,
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = exception_state.GetIsolate();
-  if (!HasContext()) {
+  v8::Local<v8::Context> context;
+  if (!HasContext() || !ContextOfGlobalProxy(isolate).ToLocal(&context)) {
     return v8::Undefined(isolate);
   }
+  // UniversalGlobalScope::structuredClone() enters the window's own context,
+  // whose objects the clone and what this throws are, whoever calls it.
+  const v8::Context::Scope context_scope(context);
   Transferables transferables;
   std::optional<SerializedScriptValue> serialized =
       MessagePort::SerializeMessageByMove(isolate, value, options.transfer,

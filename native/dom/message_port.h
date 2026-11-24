@@ -38,6 +38,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/serialized_script_value.h"
+#include "url/origin.h"
 #include "v8/include/cppgc/cross-thread-persistent.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
@@ -59,6 +60,7 @@ class ExceptionState;
 }  // namespace bindings
 
 class ExecutionContext;
+class MessageEvent;
 class MessagePortChannel;
 class SchedulerTaskContext;
 
@@ -71,6 +73,11 @@ struct TransferableMessage {
 
   SerializedScriptValue message;
   std::vector<MessagePortChannel> ports;
+  // The origin of the context that sent it, and the one that keys that
+  // context's agent cluster, which say whether the context that it comes to
+  // may read it.
+  url::Origin sender_origin;
+  url::Origin sender_agent_cluster;
   // Whether the message carries a snapshot of the sender's user activation.
   bool user_activation = false;
   // The scheduler's state of the task that posted it, which a port that is
@@ -189,6 +196,7 @@ class MessagePort final : public EventTarget {
       uint64_t generation,
       bool counted);
   void ReadAvailableMessage();
+  MessageEvent* CreateMessageEvent(TransferableMessage message);
   void DispatchMessageEvent(TransferableMessage message);
   // OnConnectionError(): the other end has closed and nothing waits.
   void OnConnectionError();

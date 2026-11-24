@@ -343,6 +343,450 @@
    "1",
    "2",
    "3"
-  ]
+  ],
+  "a source whose frame goes": {
+   "same origin": {
+    "its own origin": "frame null",
+    "the page's origin": "frame null",
+    "the page's origin and back": "frame null null",
+    "the page's site": "frame null",
+    "another site": "frame null",
+    "a third site and back": "frame null null",
+    "a data: URL": "frame null",
+    "about:blank": "frame null",
+    "removed": "frame frame",
+    "a third site, removed": "frame null null"
+   },
+   "same site": {
+    "its own origin": "frame null",
+    "the page's origin": "frame null",
+    "the page's origin and back": "frame null null",
+    "the page's site": "frame null",
+    "another site": "frame null",
+    "a third site and back": "frame null null",
+    "a data: URL": "frame null",
+    "about:blank": "frame null",
+    "removed": "frame frame",
+    "a third site, removed": "frame null null"
+   },
+   "another site": {
+    "its own origin": "frame frame",
+    "the page's origin": "frame null",
+    "the page's origin and back": "frame null null",
+    "the page's site": "frame null",
+    "another site": "frame frame",
+    "a third site and back": "frame frame frame",
+    "a data: URL": "frame null",
+    "about:blank": "frame null",
+    "removed": "frame frame",
+    "a third site, removed": "frame frame frame"
+   },
+   "data:": {
+    "its own origin": "frame null",
+    "the page's origin": "frame null",
+    "the page's origin and back": "frame null null",
+    "the page's site": "frame null",
+    "another site": "frame null",
+    "a third site and back": "frame null null",
+    "a data: URL": "frame null",
+    "about:blank": "frame null",
+    "removed": "frame frame",
+    "a third site, removed": "frame null null"
+   }
+  },
+  "a frame that goes while its messages wait": {
+   "same origin": {
+    "removed": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by the page": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by itself": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ]
+   },
+   "same site": {
+    "removed": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by the page": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by itself": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ]
+   },
+   "another site": {
+    "removed": [
+     "number 1 frame",
+     "number 2 null",
+     "number 3 null"
+    ],
+    "navigated by the page": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by itself": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ]
+   }
+  },
+  "an event that a page makes": {
+   "same origin": [
+    "frame frame",
+    "null null",
+    "null null",
+    "null null"
+   ],
+   "same site": [
+    "frame frame",
+    "null null",
+    "null null",
+    "null null"
+   ],
+   "another site": [
+    "frame frame",
+    "frame frame",
+    "null null",
+    "null null"
+   ]
+  },
+  "through a port": {
+   "same origin": {
+    "there": [
+     [
+      "message",
+      "module",
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "before",
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "with a module",
+      "",
+      null,
+      1
+     ],
+     [
+      "message",
+      "module",
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "after",
+      "",
+      null,
+      0
+     ]
+    ],
+    "back": [
+     [
+      "message",
+      "module",
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "back",
+      "",
+      null,
+      0
+     ]
+    ]
+   },
+   "same site": {
+    "there": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "before",
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "after",
+      "",
+      null,
+      0
+     ]
+    ],
+    "back": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "back",
+      "",
+      null,
+      0
+     ]
+    ]
+   },
+   "another site": {
+    "there": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "before",
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "after",
+      "",
+      null,
+      0
+     ]
+    ],
+    "back": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "back",
+      "",
+      null,
+      0
+     ]
+    ]
+   },
+   "data:": {
+    "there": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "before",
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "after",
+      "",
+      null,
+      0
+     ]
+    ],
+    "back": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "back",
+      "",
+      null,
+      0
+     ]
+    ]
+   },
+   "blob: worker": [
+    "message module",
+    "port back message",
+    "port message module",
+    "worker message module"
+   ],
+   "data: worker": [
+    "message module",
+    "port back messageerror",
+    "port messageerror",
+    "worker message module"
+   ]
+  },
+  "realms": {
+   "same origin": {
+    "clone": "DataCloneError of page",
+    "target": "SyntaxError of page",
+    "twice": "DataCloneError of page",
+    "not transferable": "DataCloneError of page",
+    "delegate": "NotSupportedError of page",
+    "arguments": "TypeError of page"
+   },
+   "same site": {
+    "clone": "DataCloneError of page",
+    "target": "SyntaxError of page",
+    "twice": "DataCloneError of page",
+    "not transferable": "DataCloneError of page",
+    "delegate": "NotSupportedError of page",
+    "arguments": "TypeError of page"
+   },
+   "another site": {
+    "clone": "DataCloneError of page",
+    "target": "SyntaxError of page",
+    "twice": "DataCloneError of page",
+    "not transferable": "DataCloneError of page",
+    "delegate": "NotSupportedError of page",
+    "arguments": "TypeError of page"
+   },
+   "within": {
+    "message": [
+     "signal of page",
+     "timeout of page",
+     "response of page",
+     "rect of page",
+     "controller of page",
+     "blob of page",
+     "event of page",
+     "element of page",
+     "named of page",
+     "exception of page",
+     "clone of page",
+     "activation of page",
+     "channel of page"
+    ],
+    "option": [
+     "signal of page",
+     "timeout of page",
+     "response of page",
+     "rect of page",
+     "controller of page",
+     "blob of page",
+     "event of page",
+     "element of page",
+     "named of page",
+     "exception of page",
+     "clone of page",
+     "activation of page",
+     "channel of page"
+    ],
+    "transfer": [
+     "signal of page",
+     "timeout of page",
+     "response of page",
+     "rect of page",
+     "controller of page",
+     "blob of page",
+     "event of page",
+     "element of page",
+     "named of page",
+     "exception of page",
+     "clone of page",
+     "activation of page",
+     "channel of page"
+    ]
+   },
+   "borrowed": {
+    "atob": "InvalidCharacterError of page",
+    "querySelector": "SyntaxError of page",
+    "appendChild": "HierarchyRequestError of page",
+    "clone": "DataCloneError of another",
+    "the frame's querySelector": "SyntaxError of another",
+    "the frame's postMessage": "DataCloneError of another",
+    "the frame's own": "SyntaxError of another",
+    "what the clone is": "another",
+    "what the frame's clone is": "page",
+    "what a method returns": "another",
+    "on a removed window": "DataCloneError of page",
+    "a removed window's": "DataCloneError of another"
+   }
+  }
  }
 }

@@ -410,6 +410,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     document->LockCompatibilityMode();
   }
   document->SetOrigin(origin);
+  DidShowDocumentOf(origin);
   document->SetReferrer(navigation.referrer);
   document->SetReferrerPolicy(navigation.referrer_policy);
   document->SetAboutBaseUrl(navigation.about_base_url);
@@ -463,6 +464,7 @@ void PageFrame::Detach() {
   }
   going_ = true;
   DetachChildren();
+  DetachRemoteWindows();
   const uint64_t document = window_ ? window_->DocumentId() : kNoDocument;
   if (window_) {
     DetachWindow();
@@ -1452,7 +1454,12 @@ Document& PageFrame::CommitDocument(
   if (parent_) {
     committed.replaces = window_->DocumentId();
   }
-  const url::Origin origin = url::Origin::Create(url);
+  // A data: URL's origin is opaque, made for its initiator's, in whose process
+  // Chrome has it.
+  const url::Origin origin =
+      committed.source == PageDocumentSource::kDataUrl
+          ? url::Origin::Resolve(url, provisional_request_.initiator_origin)
+          : url::Origin::Create(url);
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin, as DocumentLoader::CommitNavigation() reuses it. A top-level
   // frame's initial about:blank has an opaque origin, so it never does.
@@ -1511,6 +1518,7 @@ Document& PageFrame::CommitDocument(
   // The origin stays the one it was committed with, whatever URL an
   // about:blank frame that opens the document gives it, as Blink's does.
   document->SetOrigin(origin);
+  DidShowDocumentOf(origin);
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);

@@ -13,14 +13,18 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/memory/raw_ref.h"
 #include "url/gurl.h"
+#include "url/origin.h"
+#include "v8/include/cppgc/persistent.h"
 
 namespace mitto {
 
 class HTMLFrameOwnerElement;
 class NavigationRateLimiter;
+class RemoteWindow;
 class Window;
 
 class Frame {
@@ -65,6 +69,9 @@ class Frame {
   // keeps across them, as Blink's Frame::navigation_rate_limiter().
   virtual NavigationRateLimiter& GetNavigationRateLimiter() = 0;
 
+  // The frame's window in the process of `viewer`'s documents, another than
+  // its own document's, made the first time.
+  RemoteWindow* RemoteWindowFor(const url::Origin& viewer);
   // The top-level frame of this one's tree.
   Frame& Top();
   // FrameTree::ScopedChild(): the first child whose name is `name`, or null.
@@ -83,13 +90,21 @@ class Frame {
   bool IsNavigationAllowed() const { return navigation_disable_count_ == 0; }
 
  protected:
-  Frame() = default;
-  virtual ~Frame() = default;
+  Frame();
+  virtual ~Frame();
+
+  // The frame shows a document of `origin`, whose window takes the place of
+  // the frame's remote one in its process.
+  void DidShowDocumentOf(const url::Origin& origin);
+  // The frame was removed, which its remote windows outlive.
+  void DetachRemoteWindows();
 
  private:
   friend class FrameNavigationDisabler;
 
   int navigation_disable_count_ = 0;
+  // One for each process, for the frame's document now.
+  std::vector<cppgc::Persistent<RemoteWindow>> remote_windows_;
 };
 
 // Blink's FrameNavigationDisabler: while a frame's document commits, a script

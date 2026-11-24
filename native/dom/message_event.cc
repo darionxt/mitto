@@ -9,6 +9,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/message_port.h"
+#include "mitto/dom/remote_window.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/user_activation.h"
 #include "mitto/dom/window.h"
@@ -77,12 +78,12 @@ MessageEvent::MessageEvent(const std::u16string& type,
     : Event(type, init),
       origin_(init.origin),
       last_event_id_(init.last_event_id),
-      source_(init.source),
       user_activation_(init.user_activation) {
   // Blink keeps no data for null or undefined.
   if (!init.data.IsEmpty() && !init.data->IsNullOrUndefined()) {
     data_.Reset(v8::Isolate::GetCurrent(), init.data);
   }
+  SetSource(init.source);
   SetPorts(init.ports);
 }
 
@@ -102,6 +103,10 @@ MessageEvent::MessageEvent(const std::u16string& type,
 
 MessageEvent::~MessageEvent() = default;
 
+void MessageEvent::SetRemoteSource(RemoteWindow* window) {
+  remote_source_ = window;
+}
+
 const bindings::WrapperTypeInfo* MessageEvent::GetWrapperTypeInfo() const {
   return &bindings::V8MessageEvent::kWrapperTypeInfo;
 }
@@ -110,6 +115,7 @@ void MessageEvent::Trace(cppgc::Visitor* visitor) const {
   Event::Trace(visitor);
   visitor->Trace(data_);
   visitor->Trace(source_);
+  visitor->Trace(remote_source_);
   ports_.Trace(visitor);
   visitor->Trace(ports_array_);
   visitor->Trace(user_activation_);
@@ -129,6 +135,9 @@ v8::Local<v8::Value> MessageEvent::Data() {
 }
 
 EventTarget* MessageEvent::Source() const {
+  if (remote_source_) {
+    return remote_source_->IsReplaced() ? nullptr : source_.Get();
+  }
   Window* const window = source_ ? source_->ToWindow() : nullptr;
   return window && window->ContextOfGlobalProxy(v8::Isolate::GetCurrent())
                        .IsEmpty()
@@ -166,8 +175,20 @@ void MessageEvent::InitMessageEvent(const std::u16string& type,
   data_.Reset(isolate, data);
   origin_ = origin;
   last_event_id_ = last_event_id;
-  source_ = source;
+  SetSource(source);
   SetPorts(ports);
+}
+
+void MessageEvent::SetSource(EventTarget* source) {
+  source_ = source;
+  remote_source_ = nullptr;
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const Window* const window = source ? source->ToWindow() : nullptr;
+  const Window* const viewer =
+      window ? Window::From(isolate, isolate->GetCurrentContext()) : nullptr;
+  if (viewer) {
+    remote_source_ = RemoteWindow::From(*window, viewer->GetSecurityOrigin());
+  }
 }
 
 void MessageEvent::SetPorts(const std::vector<MessagePort*>& ports) {

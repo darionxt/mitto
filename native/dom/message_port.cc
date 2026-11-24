@@ -366,6 +366,11 @@ void MessagePort::PostMessage(v8::Local<v8::Value> message,
   }
   TransferableMessage sent(*std::move(serialized));
   sent.ports = *std::move(ports);
+  // A port may outlive its context, whose value then no other may read.
+  if (const ExecutionContext* const context = context_.Get()) {
+    sent.sender_origin = context->GetSecurityOrigin();
+    sent.sender_agent_cluster = context->AgentClusterOrigin();
+  }
   // PostMessageHelper::CreateUserActivationSnapshot(): only a window's.
   sent.user_activation =
       options.include_user_activation && ExecutionContext::Current().IsWindow();
@@ -575,20 +580,35 @@ void MessagePort::ReadAvailableMessage() {
   }
 }
 
-// DispatchMessageEvent() and CreateMessageEvent().
-void MessagePort::DispatchMessageEvent(TransferableMessage message) {
+// CreateMessageEvent(): a messageerror event for a value that this context may
+// not read, a WebAssembly module of another origin or a SharedArrayBuffer of
+// another agent cluster, wherever the port was when it was sent.
+MessageEvent* MessagePort::CreateMessageEvent(TransferableMessage message) {
+  ExecutionContext* const context = context_.Get();
+  if ((message.message.IsOriginCheckRequired() &&
+       !message.sender_origin.IsSameOriginWith(context->GetSecurityOrigin())) ||
+      (message.message.IsLockedToAgentCluster() &&
+       !message.sender_agent_cluster.IsSameOriginWith(
+           context->AgentClusterOrigin()))) {
+    return MessageEvent::CreateError(/*origin=*/std::nullopt);
+  }
   const std::vector<cppgc::Persistent<MessagePort>> ports =
-      EntanglePorts(context_.Get(), std::move(message.ports));
-  MessageEvent* const event = MessageEvent::CreateForMessage(
+      EntanglePorts(context, std::move(message.ports));
+  return MessageEvent::CreateForMessage(
       std::move(message.message), /*origin=*/std::nullopt, /*source=*/nullptr,
       PortsOf(ports),
       message.user_activation ? UserActivation::CreateSnapshot() : nullptr);
+}
+
+void MessagePort::DispatchMessageEvent(TransferableMessage message) {
+  SchedulerTaskContext* const task_state = message.task_state.Get();
+  MessageEvent* const event = CreateMessageEvent(std::move(message));
   // The task state of a channel that schedules within the window.
   std::optional<SchedulerTaskScope> task_scope;
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (initially_entangled_port_ && message.task_state &&
+  if (initially_entangled_port_ && task_state &&
       !SchedulerTaskContext::Current(isolate)) {
-    task_scope.emplace(isolate, message.task_state.Get());
+    task_scope.emplace(isolate, task_state);
   }
   DispatchEvent(event);
 }

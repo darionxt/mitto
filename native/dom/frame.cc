@@ -1,10 +1,13 @@
 #include "mitto/dom/frame.h"
 
 #include <string_view>
+#include <vector>
 
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/html_frame_owner_element.h"
+#include "mitto/dom/remote_window.h"
 #include "mitto/dom/window.h"
 
 namespace mitto {
@@ -29,6 +32,38 @@ bool AllowsScriptsAndOrigin(std::u16string_view sandbox) {
 }
 
 }  // namespace
+
+Frame::Frame() = default;
+Frame::~Frame() = default;
+
+RemoteWindow* Frame::RemoteWindowFor(const url::Origin& viewer) {
+  for (const cppgc::Persistent<RemoteWindow>& window : remote_windows_) {
+    if (IsInSameProcess(window->Viewer(), viewer)) {
+      return window.Get();
+    }
+  }
+  return remote_windows_
+      .emplace_back(bindings::MakeGarbageCollected<RemoteWindow>(viewer))
+      .Get();
+}
+
+void Frame::DidShowDocumentOf(const url::Origin& origin) {
+  std::erase_if(remote_windows_,
+                [&origin](const cppgc::Persistent<RemoteWindow>& window) {
+                  if (!IsInSameProcess(window->Viewer(), origin)) {
+                    return false;
+                  }
+                  window->Replace();
+                  return true;
+                });
+}
+
+void Frame::DetachRemoteWindows() {
+  for (const cppgc::Persistent<RemoteWindow>& window : remote_windows_) {
+    window->DetachFrame();
+  }
+  remote_windows_.clear();
+}
 
 Frame& Frame::Top() {
   Frame* frame = this;

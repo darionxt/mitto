@@ -249,6 +249,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   std::u16string Url() const override;
   EventTarget* ErrorEventTarget() override;
   url::Origin GetSecurityOrigin() const override;
+  url::Origin AgentClusterOrigin() const override;
   GURL CompleteUrl(std::u16string_view url) const override;
   GURL BaseUrl() const override;
   // The timers of geolocation's requests count too.

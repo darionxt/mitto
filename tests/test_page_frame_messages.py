@@ -1,9 +1,9 @@
 """Tests of window.postMessage() between a Page's documents, on a local server.
 
 tests/frames_messages_cases.js runs in a Page at an HTTP origin, with frames of tests/frames_messages_child.html of its own
-origin and of another, and gives what each message says of its sender, whom it reaches and what it carries.
-tests/data/frames_messages_cases.json holds what headless Chrome for Testing 157.0.8103.79 gave for the same scripts, with
-the page's origin as ORIGIN and the other as OTHER.
+origin, of another origin of its site and of another site, and gives what each message says of its sender, whom it reaches
+and what it carries. tests/data/frames_messages_cases.json holds what headless Chrome for Testing 157.0.8103.79 gave for the
+same scripts, with the page's origin as ORIGIN and the other site's as OTHER.
 """
 
 import http.server
@@ -37,7 +37,8 @@ def page_program(native_library: Any) -> None:
 
 @pytest.fixture
 def page_url() -> Iterator[str]:
-    """The URL of an empty page on 127.0.0.1, whose server answers /child?... with tests/frames_messages_child.html."""
+    """The URL of an empty page on 127.0.0.1, whose server answers /child?... with tests/frames_messages_child.html, with the
+    port of a second such server as its query."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -53,11 +54,13 @@ def page_url() -> Iterator[str]:
         def log_message(self, format: str, *args: Any) -> None:
             pass
 
-    server = QuietServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_port}/app/page"
-    server.shutdown()
-    server.server_close()
+    servers = [QuietServer(("127.0.0.1", 0), Handler) for _ in range(2)]
+    for server in servers:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{servers[0].server_port}/app/page?{servers[1].server_port}"
+    for server in servers:
+        server.shutdown()
+        server.server_close()
 
 
 @pytest.mark.usefixtures("page_program")
@@ -72,10 +75,12 @@ def test_messages_between_a_page_and_its_frames_are_chrome_s(page_url: str) -> N
 
 @pytest.mark.usefixtures("page_program")
 def test_a_message_for_another_origin_warns_in_its_recipient_s_console(page_url: str) -> None:
-    # The origins are the one that the sender named, its own for "/", and the recipient's, "null" for an opaque one.
+    # The origins are the one that the sender named, its own for "/", and the recipient's, "null" for an opaque one. Between
+    # sites, which Chrome keeps in processes of their own, a message for another origin is dropped without a word.
     script = """
       (async () => {
         const other = `http://localhost:${location.port}`;
+        const sameSite = `http://127.0.0.1:${location.search.slice(1)}`;
         const add = async (src) => {
           const element = document.createElement('iframe');
           element.src = src;
@@ -84,9 +89,12 @@ def test_a_message_for_another_origin_warns_in_its_recipient_s_console(page_url:
           return element;
         };
         postMessage.call((await add('/child')).contentWindow, 'a', 'https://example.com/path');
-        postMessage.call((await add(`${other}/child`)).contentWindow, 'b', '/');
+        postMessage.call((await add(`${sameSite}/child`)).contentWindow, 'b', '/');
         postMessage.call((await add('data:text/html,<p>x')).contentWindow, 'c', location.origin);
         postMessage('d', other);
+        postMessage.call((await add(`${other}/child`)).contentWindow, 'e', '/');
+        await add(`${other}/child?elsewhere`);
+        await add(`${sameSite}/child?elsewhere`);
         await new Promise((resolve) => setTimeout(resolve, 150));
       })()
     """
@@ -94,12 +102,14 @@ def test_a_message_for_another_origin_warns_in_its_recipient_s_console(page_url:
         page.evaluate(script, timeout=_TIMEOUT_SECONDS)
         warnings = [message.text for message in page.console_messages if "postMessage" in message.text]
 
-    origin = page_url.removesuffix("/app/page")
+    origin, _, port = page_url.partition("/app/page?")
+    same_site = f"http://127.0.0.1:{port}"
     other = origin.replace("127.0.0.1", "localhost")
     start = "Failed to execute 'postMessage' on 'DOMWindow': The target origin provided"
     assert warnings == [
         f"{start} ('https://example.com') does not match the recipient window's origin ('{origin}').",
-        f"{start} ('{origin}') does not match the recipient window's origin ('{other}').",
+        f"{start} ('{origin}') does not match the recipient window's origin ('{same_site}').",
         f"{start} ('{origin}') does not match the recipient window's origin ('null').",
         f"{start} ('{other}') does not match the recipient window's origin ('{origin}').",
+        f"{start} ('https://example.com') does not match the recipient window's origin ('{origin}').",
     ]
