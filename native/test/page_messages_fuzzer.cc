@@ -175,8 +175,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_EQ(frame->same_document_url.size() + 8, payload.size());
           break;
         case mitto::PageMessage::kAboutBlankNavigation:
-          CHECK_NE(frame->about_blank_initiator, mitto::kNoDocument);
-          CHECK_EQ(payload.size(), 16u);
+          CHECK_EQ(frame->about_blank_initiator == mitto::kNoDocument,
+                   frame->local_navigation_kind ==
+                       mitto::PageLocalNavigationKind::kEnded);
+          CHECK_EQ(payload.size(), 17u);
           break;
         case mitto::PageMessage::kDocumentOpened:
           CHECK_NE(frame->opener, mitto::kNoDocument);
@@ -195,9 +197,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_NE(committed.document, mitto::kNoDocument);
           CHECK_NE(committed.document, committed.parent);
           // A navigation's response, a srcdoc and an error page name one more
-          // ID, the number of the navigation or the document that a srcdoc or
-          // an error page replaces, and an about:blank two, its initiator and
-          // what it replaces.
+          // ID, the number of the navigation or the document that it
+          // replaces, and an about:blank, a data: or a blob: URL's document
+          // two, its initiator and what it replaces.
           switch (committed.source) {
             case mitto::PageDocumentSource::kInitialEmpty:
               CHECK_EQ(payload.size(), 17u);
@@ -209,6 +211,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
               break;
             case mitto::PageDocumentSource::kAboutBlank:
               CHECK_EQ(payload.size(), 33u);
+              break;
+            // A data: or blob: URL's document names its URL after them.
+            case mitto::PageDocumentSource::kDataUrl:
+            case mitto::PageDocumentSource::kBlob:
+              CHECK_GT(payload.size(), 33u);
+              CHECK_EQ(committed.url.size(), payload.size() - 33u);
               break;
           }
           break;

@@ -9,6 +9,7 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -17,6 +18,7 @@
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
 #include "mitto/dom/cookie_store.h"
+#include "mitto/dom/data_url.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/dom_timer.h"
@@ -34,6 +36,7 @@
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/dom/xml_document.h"
+#include "mitto/mime_types.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/dedicated_worker_messaging_proxy.h"
 #include "mitto/page/document_loader.h"
@@ -252,7 +255,7 @@ bool PageFrame::IsLoading() const {
   // Frame::IsLoading(): while a navigation waits or the document loads. A
   // frame's initial about:blank, whose load event never fires, holds nothing
   // back, as Blink's FrameLoader::Init() suppresses its finish.
-  if (provisional_ || pending_local_navigation_) {
+  if (provisional_ || pending_local_navigation_ || pending_data_url_answer_) {
     return true;
   }
   if (!window_ || !window_->HasDocument()) {
@@ -595,11 +598,12 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   if (parent_) {
     // The newest navigation of a frame takes the place of a srcdoc or an
     // about:blank that waits, whatever its URL. A frame's navigation to a
-    // data: or blob: URL is a Known Gap for now: the frame keeps its document,
-    // which the navigation aborted, so the parent, whose load event it may
-    // have held back, checks again.
+    // blob: URL is a Known Gap for now: the frame keeps its document, which
+    // the navigation aborted, so the parent, whose load event it may have
+    // held back, checks again.
     CancelLocalNavigation();
     if (!request.url.IsAboutSrcdoc() && !request.url.IsAboutBlank() &&
+        !request.url.SchemeIs(url::kDataScheme) &&
         !request.url.SchemeIsHTTPOrHTTPS()) {
       CancelProvisionalNavigation();
       CheckParentLoadSoon();
@@ -647,15 +651,19 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     } else {
       navigation.committed.source = PageDocumentSource::kAboutBlank;
       navigation.committed.initiator = request.initiator;
-      // The Session takes what the about:blank inherits of its initiator now.
-      runner_->send().Run(
-          EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator));
       navigation.origin = request.initiator_origin;
       navigation.referrer_policy = request.initiator_referrer_policy;
       navigation.about_base_url = request.initiator_base_url;
       navigation.cookie_url = request.initiator_cookie_url;
     }
     StopAllLoaders();
+    // The Session takes what the about:blank inherits of its initiator now,
+    // once it has heard that a data: URL or an about:blank that waited ends.
+    if (navigation.committed.source == PageDocumentSource::kAboutBlank) {
+      runner_->send().Run(
+          EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator,
+                                     PageLocalNavigationKind::kAboutBlank));
+    }
     CommitWithoutNetworkSoon(std::move(navigation));
     return;
   }
@@ -683,6 +691,11 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   if (TraversalWaits()) {
     return;
   }
+  // Chrome's browser answers a frame's data: URL itself.
+  if (parent_ && request.url.SchemeIs(url::kDataScheme)) {
+    BeginDataUrlNavigation(request);
+    return;
+  }
   const base::TimeTicks now = base::TimeTicks::Now();
   // Navigator::Navigate(): a navigation the same as the one that waits, of
   // the same initiator, origin, referrer and history handling, which started
@@ -702,14 +715,12 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   }
   // Otherwise the newest wins, as the browser's FrameTreeNode takes the new
   // NavigationRequest, and the one that waited ends with ERR_ABORTED.
-  if (provisional_) {
-    runner_->requests().Cancel(provisional_->number());
-    provisional_.reset();
-  }
+  CancelProvisionalNavigation();
   provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
   traversal_item_.reset();
   traversal_record_.reset();
   provisional_request_ = request;
+  ++provisional_request_serial_;
   provisional_start_ = now;
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
@@ -745,6 +756,117 @@ bool PageFrame::IsSelfReferential(const GURL& url) const {
     }
   }
   return false;
+}
+
+void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
+  StopAllLoaders();
+  // Chrome's browser answers a frame's data: URL itself, as
+  // DataURLLoaderFactory does, with no request on the wire, from a later
+  // task. It takes the initiator's policy container now, as Chrome's browser
+  // gives a local URL's document the initiator's as the navigation starts,
+  // and the navigation's start is now; the URL waits for that task, which
+  // decodes it only if no newer navigation took its place.
+  runner_->send().Run(
+      EncodeAboutBlankNavigation(window_->DocumentId(), request.initiator,
+                                 PageLocalNavigationKind::kDataUrl));
+  provisional_request_ = request;
+  ++provisional_request_serial_;
+  provisional_start_ = base::TimeTicks::Now();
+  auto answer = std::make_unique<DataUrlAnswer>();
+  answer->number = ++last_data_url_answer_;
+  answer->start = provisional_start_;
+  pending_data_url_answer_ = std::move(answer);
+  EventLoop::Get()
+      ->TaskRunner(TaskType::kInternalLoading)
+      ->PostTask(FROM_HERE, base::BindOnce(&PageFrame::AnswerDataUrl,
+                                           weak_factory_.GetWeakPtr(),
+                                           pending_data_url_answer_->number));
+}
+
+void PageFrame::AnswerDataUrl(uint64_t number) {
+  if (!pending_data_url_answer_ || pending_data_url_answer_->number != number) {
+    return;
+  }
+  const std::unique_ptr<DataUrlAnswer> answer =
+      std::move(pending_data_url_answer_);
+  // The navigation that waits is this one, which no newer one has taken the
+  // place of, and its request, with the URL, goes once it ends.
+  const uint64_t serial = provisional_request_serial_;
+  const auto forget_request = [this, serial] {
+    if (provisional_request_serial_ == serial) {
+      provisional_request_ = NavigationRequest();
+    }
+  };
+  const NavigationRequest& request = provisional_request_;
+  // An error page for a URL that does not parse, and no document for one
+  // that would be a download, as for a response: no document of the data:
+  // URL commits, so the Session forgets what it took of the initiator.
+  std::optional<DataUrlResponse> data = ParseDataUrl(request.url);
+  if (!data) {
+    EndLocalNavigation();
+    forget_request();
+    LocalNavigation navigation;
+    navigation.url = GURL(kErrorPageUrl);
+    navigation.committed.source = PageDocumentSource::kErrorPage;
+    CommitWithoutNetworkSoon(std::move(navigation));
+    return;
+  }
+  if (!IsSupportedMimeType(data->mime_type) ||
+      MustDownloadMimeType(data->mime_type)) {
+    EndLocalNavigation();
+    forget_request();
+    LetParentCheckCompleted();
+    return;
+  }
+  // Otherwise a document of an opaque origin, through a DocumentLoader as a
+  // response, which has the initiator's referrer policy too, and whether a
+  // header gave the initiator a Content-Security-Policy.
+  provisional_ = std::make_unique<DocumentLoader>(runner_->requests(), *this);
+  provisional_->AnswerByPage();
+  provisional_->SetInheritedReferrerPolicy(request.initiator_referrer_policy);
+  provisional_->SetInheritedHeaderCsp(request.initiator_has_header_csp);
+  const base::WeakPtr<DocumentLoader> loader = provisional_->GetWeakPtr();
+  PageResponseStarted response;
+  response.status = 200;
+  response.url = request.url.spec();
+  response.headers = base::StrCat({"content-type: ", data->content_type, "\n"});
+  // Of no connection, and no protocol that ALPN chose.
+  response.connection_info = "unknown";
+  response.navigation_start =
+      (answer->start - base::TimeTicks()).InMicroseconds();
+  // The network quality of no host, as a data: URL has none, not the old
+  // document's, which its host rounded.
+  response.connection = runner_->start().connection;
+  // The document's referrer, which the initiator's outgoing referrer gives a
+  // navigation to the URL under the navigation's referrer policy, as for a
+  // srcdoc or an about:blank.
+  response.referrer = GenerateReferrer(request.referrer_policy, request.url,
+                                       request.initiator_referrer)
+                          .spec();
+  // DataURLLoaderFactory::OnWrite(): the body's encoded size is the payload's.
+  PageResponseEnded totals;
+  totals.encoded_body_size = base::checked_cast<int64_t>(data->body.size());
+  const v8::HandleScope handle_scope(runner_->isolate());
+  loader->OnResponseStarted(response);
+  if (loader && !data->body.empty()) {
+    loader->OnResponseBody(std::move(data->body));
+  }
+  if (loader) {
+    loader->OnResponseTotals(totals);
+  }
+  if (loader) {
+    loader->OnResponseEnded(kNetOk);
+  }
+  forget_request();
+}
+
+void PageFrame::EndLocalNavigation() {
+  // From the document's context, which goes nowhere once the Session has
+  // forgotten the document.
+  runner_->sender()->SendFromContext(
+      window_->DocumentId(),
+      EncodeAboutBlankNavigation(window_->DocumentId(), kNoDocument,
+                                 PageLocalNavigationKind::kEnded));
 }
 
 void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
@@ -1074,9 +1196,11 @@ PageFrame& PageFrame::Top() {
 }
 
 bool PageFrame::HasProvisionalNavigation() const {
-  // A srcdoc or an about:blank that waits to commit is the browser's
-  // navigation that FrameLoader's client navigation stands for.
-  return provisional_ != nullptr || pending_local_navigation_ != nullptr;
+  // A srcdoc, an about:blank or a data: URL that waits to commit, or to end
+  // as a download, is the browser's navigation that FrameLoader's client
+  // navigation stands for.
+  return provisional_ != nullptr || pending_local_navigation_ != nullptr ||
+         pending_data_url_answer_ != nullptr;
 }
 
 void PageFrame::StopAllLoaders() {
@@ -1088,8 +1212,18 @@ void PageFrame::StopAllLoaders() {
 }
 
 void PageFrame::CancelProvisionalNavigation() {
+  // A data: URL that waits for its task ends with no document, and its request
+  // goes with it, which holds the URL.
+  if (pending_data_url_answer_) {
+    pending_data_url_answer_.reset();
+    provisional_request_ = NavigationRequest();
+    ++provisional_request_serial_;
+    EndLocalNavigation();
+  }
   if (provisional_) {
-    runner_->requests().Cancel(provisional_->number());
+    if (!provisional_->answered_by_page()) {
+      runner_->requests().Cancel(provisional_->number());
+    }
     provisional_.reset();
   }
   traversal_item_.reset();
@@ -1100,6 +1234,12 @@ void PageFrame::CancelProvisionalNavigation() {
 void PageFrame::CancelLocalNavigation() {
   if (!pending_local_navigation_) {
     return;
+  }
+  // An about:blank that the Session took its initiator's state for ends with
+  // no document.
+  if (pending_local_navigation_->committed.source ==
+      PageDocumentSource::kAboutBlank) {
+    EndLocalNavigation();
   }
   pending_local_navigation_.reset();
   CheckParentLoadSoon();
@@ -1114,19 +1254,23 @@ Document* PageFrame::CommitNavigation(
     const std::optional<std::u16string>& xml_content_type) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
   Document& old_document = Window::Current().GetDocument();
+  // The loader of the Page's opening navigation, which the library started,
+  // and not one of a data: URL, which the Page answered itself.
+  const bool opening = !committing->answered_by_page() &&
+                       committing->number() == kNavigationRequest;
   // How the navigation goes in the session history, the opening one in
   // place of the initial entry, and the entry it comes from.
   FrameLoadType type = FrameLoadType::kReplaceCurrentItem;
   // The entry that a traversal goes to, which the commit takes before any
   // listener runs.
   std::optional<HistoryItem> traversal_target;
-  if (committing->number() != kNavigationRequest) {
+  if (!opening) {
     traversal_target = std::exchange(traversal_item_, std::nullopt);
   }
   const bool traversal = traversal_target.has_value();
   if (traversal) {
     type = FrameLoadType::kBackForward;
-  } else if (committing->number() != kNavigationRequest) {
+  } else if (!opening) {
     type = provisional_request_.reload    ? FrameLoadType::kReload
            : provisional_request_.replace ? FrameLoadType::kReplaceCurrentItem
                                           : FrameLoadType::kStandard;
@@ -1168,7 +1312,9 @@ Document* PageFrame::CommitNavigation(
       DetachChildren();
     }
     if (detaching_) {
-      runner_->requests().Cancel(committing->number());
+      if (!committing->answered_by_page()) {
+        runner_->requests().Cancel(committing->number());
+      }
       base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
           FROM_HERE, std::move(committing));
       return nullptr;
@@ -1188,8 +1334,7 @@ Document* PageFrame::CommitNavigation(
   timing.unload_event_end = unload_event_end;
   timing.has_same_origin_as_previous_document =
       url::IsSameOriginWith(old_url, url);
-  timing.is_reload = !traversal && current_->number() != kNavigationRequest &&
-                     provisional_request_.reload;
+  timing.is_reload = !traversal && !opening && provisional_request_.reload;
   timing.is_back_forward = traversal;
   // The new document's entry, which the session history takes, before any of
   // its scripts runs. The isolate's current context is the old document's
@@ -1257,13 +1402,20 @@ void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
     CommitWithoutNetworkSoon(std::move(navigation));
     return;
   }
+  LetParentCheckCompleted();
+}
+
+void PageFrame::LetParentCheckCompleted() {
   // FrameLoader::DidFinishNavigation(): a frame that no longer loads has its
   // parent check whether all of its frames have loaded.
-  if (parent_ && !IsLoading() && parent_->window_ &&
-      parent_->window_->HasDocument()) {
-    const v8::Context::Scope context_scope(parent_->context());
-    parent_->window_->GetDocument().CheckCompleted();
+  if (!parent_ || IsLoading() || !parent_->window_ ||
+      !parent_->window_->HasDocument()) {
+    return;
   }
+  v8::Isolate* const isolate = runner_->isolate();
+  const v8::HandleScope handle_scope(isolate);
+  const v8::Context::Scope context_scope(parent_->context());
+  parent_->window_->GetDocument().CheckCompleted();
 }
 
 DocumentLoadTiming& PageFrame::document_load_timing() {
@@ -1285,10 +1437,18 @@ Document& PageFrame::CommitDocument(
   if (!parent_) {
     runner_->TopLevelContextGoes();
   }
-  // A frame's document takes the place of the frame's in the Session.
+  // A frame's document takes the place of the frame's in the Session: the
+  // response of its navigation, or a data: URL's, which the Session never
+  // saw.
   PageDocumentCommitted committed;
-  committed.source = PageDocumentSource::kNavigationResponse;
+  committed.source = parent_ && url.SchemeIs(url::kDataScheme)
+                         ? PageDocumentSource::kDataUrl
+                         : PageDocumentSource::kNavigationResponse;
   committed.navigation = navigation;
+  if (committed.source == PageDocumentSource::kDataUrl) {
+    committed.initiator = provisional_request_.initiator;
+    committed.url = url.spec();
+  }
   if (parent_) {
     committed.replaces = window_->DocumentId();
   }

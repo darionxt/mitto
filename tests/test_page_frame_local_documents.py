@@ -58,6 +58,15 @@ def origin() -> Iterator[str]:
                 headers["Set-Cookie"] = "c1=v1; Path=/app"
                 if policy := urllib.parse.parse_qs(path.query).get("rp"):
                     headers["Referrer-Policy"] = policy[0]
+                # A Content-Security-Policy that blocks nothing, for ?csp.
+                if "csp" in urllib.parse.parse_qs(path.query, keep_blank_values=True):
+                    headers["Content-Security-Policy-Report-Only"] = "script-src 'nonce-abc'"
+            elif path.path in ("/assets/importer.js", "/assets/imported.js"):
+                # A module of another origin than a data: URL's document's, which imports the other.
+                seen[path.path] = self.headers.get("Referer") or "none"
+                body = b'import "./imported.js";' if path.path == "/assets/importer.js" else b"export default 1;"
+                content_type = "text/javascript"
+                headers["Access-Control-Allow-Origin"] = "*"
             elif path.path.startswith("/assets/"):
                 seen[path.path] = self.headers.get("Referer") or "none"
                 body, content_type = b"export default 1;", "text/javascript"
@@ -104,6 +113,25 @@ def origin() -> Iterator[str]:
                 body, content_type = b"<!doctype html><p>dup", "text/html"
             elif path.path == "/sib":
                 body, content_type = b"<!doctype html><p>sibling", "text/html"
+            elif path.path == "/streamtop":
+                # Half the document, then the rest a second later: the first half navigates its srcdoc frame to a
+                # data: URL, and the srcdoc's pagehide removes the frame as the data: document commits.
+                first = (
+                    b"<!doctype html><iframe id=f srcdoc='<p>a'></iframe><script>"
+                    b"const f = document.getElementById('f'); f.addEventListener('load', () => {"
+                    b" f.contentWindow.addEventListener('pagehide', () => f.remove());"
+                    b" f.contentWindow.location.href = 'data:text/html,<p>d'; }, {once: true});</script>"
+                )
+                rest = b"<p id=tail>tail"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(first) + len(rest)))
+                self.end_headers()
+                self.wfile.write(first)
+                self.wfile.flush()
+                time.sleep(1)
+                self.wfile.write(rest)
+                return
             elif path.path == "/nocontent":
                 status, body, content_type = 204, b"", "text/html"
             elif path.path == "/late":
@@ -1602,3 +1630,422 @@ def test_a_storage_bucket_that_a_frame_s_initial_about_blank_opened_ends_no_page
       }})()
     """
     assert _evaluate(origin, script) == ["settled", "settled"]
+
+
+def _data_frame(script: str) -> str:
+    """JavaScript that adds a frame of a data: URL whose document runs `script`, which names the parent's origin O."""
+    return (
+        "const frame = document.createElement('iframe');"
+        "frame.src = 'data:text/html,<script>const O = \"' + location.origin + '\";' + " + script + " + '<\\/script>';"
+        "document.body.appendChild(frame);"
+    )
+
+
+_SEEN = "const seen = async (path) => (await fetch('/seen?path=' + path)).text();"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_navigates_to_a_fragment_within_its_document(origin: str) -> None:
+    # The frame's document of an opaque origin changes its fragment, and the Page goes on.
+    report = '\'location.hash = "x"; setTimeout(() => fetch(O + "/assets/hash-" + location.hash.slice(1)), 50);\''
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        {_data_frame(report)}
+        for (let i = 0; i < 300 && (await seen('/assets/hash-x')) === 'unseen'; i++) await settle(10);
+        return (await seen('/assets/hash-x')) !== 'unseen';
+      }})()
+    """
+    assert _evaluate(origin, script) is True
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_s_referrer_follows_its_element_s_referrer_policy(origin: str) -> None:
+    # The parent's URL has a fragment, which no referrer keeps; the data: URL's document is of another origin.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        location.hash = 'frag';
+        const full = location.href.split('#')[0];
+        const outcomes = ['none', 'full', 'origin', 'other'];
+        const add = (policy, tag) => {{
+          const frame = document.createElement('iframe');
+          if (policy) frame.referrerPolicy = policy;
+          frame.src = 'data:text/html,<script>const r = document.referrer; fetch("' + location.origin + '/assets/ref-'
+            + tag + '-" + (r === "" ? "none" : r === "' + full + '" ? "full" : r === "' + location.origin
+            + '/" ? "origin" : "other"))<\\/script>';
+          document.body.appendChild(frame);
+        }};
+        const tags = {{'': 'default', 'same-origin': 'same', 'unsafe-url': 'unsafe', 'no-referrer': 'none',
+                      'origin': 'origin'}};
+        for (const [policy, tag] of Object.entries(tags)) add(policy, tag);
+        const found = async (tag) => {{
+          for (const outcome of outcomes) {{
+            if ((await seen('/assets/ref-' + tag + '-' + outcome)) !== 'unseen') return outcome;
+          }}
+          return null;
+        }};
+        const results = {{}};
+        for (const tag of Object.values(tags)) {{
+          for (let i = 0; i < 300 && (await found(tag)) === null; i++) await settle(10);
+          results[tag] = await found(tag);
+        }}
+        return results;
+      }})()
+    """
+    assert _evaluate(origin, script) == {
+        "default": "origin",
+        "same": "none",
+        "unsafe": "full",
+        "none": "none",
+        "origin": "origin",
+    }
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_s_document_takes_its_initiator_s_referrer_policy(origin: str) -> None:
+    # The parent's referrer policy is no-referrer, which the data: URL's document takes, so its module's import
+    # sends no Referer.
+    load = "'<script type=module src=\"' + location.origin + '/assets/importer.js\"><\\/script><script>'"
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        const frame = document.createElement('iframe');
+        frame.src = 'data:text/html,' + {load} + '<\\/script>';
+        document.body.appendChild(frame);
+        for (let i = 0; i < 300 && (await seen('/assets/imported.js')) === 'unseen'; i++) await settle(10);
+        return await seen('/assets/imported.js');
+      }})()
+    """
+    assert _evaluate(origin, script, "rp=no-referrer") == "none"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_that_reloads_counts_as_a_reload(origin: str) -> None:
+    report = (
+        '\'fetch(O + "/assets/navtype-" + performance.getEntriesByType("navigation")[0].type + "-"'
+        ' + (name || "first")).catch(() => 0).then(() => {'
+        ' if (!name) { name = "reloaded"; location.reload(); } });\''
+    )
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        {_data_frame(report)}
+        const outcomes = ['navigate-first', 'reload-first', 'navigate-reloaded', 'reload-reloaded'];
+        const found = async () => {{
+          const all = [];
+          for (const outcome of outcomes) {{
+            if ((await seen('/assets/navtype-' + outcome)) !== 'unseen') all.push(outcome);
+          }}
+          return all;
+        }};
+        for (let i = 0; i < 300 && (await found()).length < 2; i++) await settle(10);
+        return found();
+      }})()
+    """
+    assert _evaluate(origin, script) == ["navigate-first", "reload-reloaded"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_s_navigation_entry_counts_its_body(origin: str) -> None:
+    # A transfer is the encoded body and 300 bytes for the headers, for a response from no cache, of no connection.
+    report = (
+        '\'const e = performance.getEntriesByType("navigation")[0], t = chrome.loadTimes();'
+        ' fetch(O + "/assets/sizes-" + [e.encodedBodySize, e.decodedBodySize, e.transferSize - e.encodedBodySize,'
+        ' e.deliveryType || "none", t.connectionInfo, t.npnNegotiatedProtocol || "none"].join("-"));\''
+    )
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        {_data_frame(report)}
+        const size = decodeURIComponent(frame.src.slice(frame.src.indexOf(',') + 1)).length;
+        const path = '/assets/sizes-' + size + '-' + size + '-300-none-unknown-none';
+        for (let i = 0; i < 300 && (await seen(path)) === 'unseen'; i++) await settle(10);
+        return (await seen(path)) !== 'unseen';
+      }})()
+    """
+    assert _evaluate(origin, script) is True
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_that_its_pagehide_removes_as_a_data_url_commits_leaves_the_parent_s_response(origin: str) -> None:
+    # The data: URL's loader has no request of its own: the parent's document, which still loads, gets all of it.
+    with (
+        mitto.Session() as session,
+        session._open_page(f"{origin}/streamtop", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(
+            "(async () => { await new Promise((resolve) => setTimeout(resolve, 1500));"
+            " return [document.getElementById('f') === null, document.getElementById('tail') !== null]; })()",
+            timeout=_TIMEOUT_SECONDS,
+        ) == [True, True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_mhtml_data_url_is_a_download(origin: str) -> None:
+    # Chrome downloads a data: URL of multipart/related or message/rfc822, so the frame keeps its document and fires
+    # no load.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        const add = (type) => {{
+          const frame = document.createElement('iframe');
+          let loads = 0;
+          frame.addEventListener('load', () => loads++);
+          frame.src = 'data:' + type + ',<script>parent.ran = true<\\/script>';
+          document.body.appendChild(frame);
+          return () => [frame.contentDocument && frame.contentDocument.URL, loads];
+        }};
+        const results = [add('multipart/related'), add('message/rfc822'), add('text/html')];
+        await settle(500);
+        return [window.ran === true, ...results.map((result) => result())];
+      }})()
+    """
+    assert _evaluate(origin, script) == [False, ["about:blank", 0], ["about:blank", 0], [None, 1]]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_s_document_hides_nonces_under_its_initiator_s_csp_header(origin: str) -> None:
+    # The parent's response has a Content-Security-Policy header, which the data: URL's document takes with the
+    # policy container, so its script's nonce attribute reads empty.
+    report = '\'fetch(O + "/assets/nonce-" + (document.currentScript.getAttribute("nonce") || "hidden"));\''
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        const frame = document.createElement('iframe');
+        frame.src = 'data:text/html,<script nonce=abc>const O = "' + location.origin + '";' + {report}
+          + '<\\/script>';
+        document.body.appendChild(frame);
+        const found = async () => {{
+          for (const outcome of ['hidden', 'abc']) {{
+            if ((await seen('/assets/nonce-' + outcome)) !== 'unseen') return outcome;
+          }}
+          return null;
+        }};
+        for (let i = 0; i < 300 && (await found()) === null; i++) await settle(10);
+        return found();
+      }})()
+    """
+    assert _evaluate(origin, script, "csp") == "hidden"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_of_a_feed_type_is_an_xml_document_of_it(origin: str) -> None:
+    # Chrome's network service shows a feed as text, but a data: URL never goes through it: its document is an XML
+    # document of the feed's type, whose XHTML script runs, as one of application/xml does.
+    script = f"""
+      (async () => {{
+        {_SETTLE}
+        {_SEEN}
+        const add = (type, tag) => {{
+          const frame = document.createElement('iframe');
+          frame.src = 'data:' + type + ',<feed xmlns="http://www.w3.org/2005/Atom">'
+            + '<script xmlns="http://www.w3.org/1999/xhtml">fetch("' + location.origin + '/assets/feed-' + tag + '-"'
+            + ' + document.contentType.replace(/[^a-z]/g, "_") + "-" + document.documentElement.localName)'
+            + '<\\/script></feed>';
+          document.body.appendChild(frame);
+        }};
+        add('application/atom+xml', 'atom');
+        add('application/rss+xml', 'rss');
+        add('application/xml', 'xml');
+        for (let i = 0; i < 300 && (await seen('/assets/feed-xml-application_xml-feed')) === 'unseen'; i++) {{
+          await settle(10);
+        }}
+        await settle(200);
+        const outcomes = ['application_atom_xml-feed', 'application_rss_xml-feed', 'application_xml-feed',
+                          'text_plain-html', 'text_xml-feed'];
+        const found = async (tag) => {{
+          for (const outcome of outcomes) {{
+            if ((await seen('/assets/feed-' + tag + '-' + outcome)) !== 'unseen') return outcome;
+          }}
+          return null;
+        }};
+        return Promise.all(['atom', 'rss', 'xml'].map(found));
+      }})()
+    """
+    assert _evaluate(origin, script) == [
+        "application_atom_xml-feed",
+        "application_rss_xml-feed",
+        "application_xml-feed",
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_navigation_that_takes_a_waiting_data_url_s_place_wins(origin: str) -> None:
+    # Two navigations of a frame in one task, the first or the second to a data: URL: the second alone commits, and the
+    # frame goes on to navigate.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        {_SEEN}
+        // A data: URL's document asks for its name, which the server remembers.
+        let way = '';
+        const tag = (name) => '/assets/takes-' + way.replace(/ /g, '-') + '-' + name;
+        const data = (name) => 'data:text/html,<script>fetch("' + location.origin + tag(name) + '")<\\/script>';
+        const ways = {{
+          'data blank': (f) => {{ f.src = data('first'); f.src = 'about:blank?1'; }},
+          'blank data': (f) => {{ f.src = 'about:blank?1'; f.src = data('second'); }},
+          'data data': (f) => {{ f.src = data('first'); f.src = data('second'); }},
+          'data srcdoc': (f) => {{ f.src = data('first'); f.srcdoc = '<p>srcdoc'; }},
+          'data network': (f) => {{ f.src = data('first'); f.src = '/app/page'; }},
+          'data blank data': (f) => {{ f.src = data('first'); f.src = 'about:blank?1'; f.src = data('third'); }},
+          'data blank blank': (f) => {{ f.src = data('first'); f.src = 'about:blank?1'; f.src = 'about:blank?2'; }},
+          'data open': (f) => {{ f.src = data('first'); f.contentDocument.open(); f.contentDocument.close(); }},
+        }};
+        const results = {{}};
+        for (way in ways) {{
+          const element = document.createElement('iframe');
+          element.srcdoc = '<p>start';
+          document.body.appendChild(element);
+          await loaded(element);
+          element.removeAttribute('srcdoc');
+          await loaded(element);
+          let loads = 0;
+          element.addEventListener('load', () => loads++);
+          ways[way](element);
+          await settle(400);
+          const inner = element.contentDocument;
+          const paragraph = inner && inner.querySelector('p');
+          const first = [inner && inner.URL.replace(location.origin, ''), paragraph && paragraph.textContent];
+          const next = loaded(element);
+          element.removeAttribute('srcdoc');
+          element.src = data('last');
+          await next;
+          await settle(50);
+          const ran = [];
+          for (const name of ['first', 'second', 'third', 'last']) {{
+            if ((await seen(tag(name))) !== 'unseen') ran.push(name);
+          }}
+          results[way] = [...first, loads, ran.join(' ')];
+          element.remove();
+        }}
+        return results;
+      }})()
+    """
+    assert _evaluate(origin, script) == {
+        "data blank": ["about:blank?1", None, 2, "last"],
+        "blank data": [None, None, 2, "second last"],
+        "data data": [None, None, 2, "second last"],
+        "data srcdoc": ["about:srcdoc", "srcdoc", 2, "last"],
+        "data network": ["/app/page", "top", 2, "last"],
+        "data blank data": [None, None, 2, "third last"],
+        "data blank blank": ["about:blank?2", None, 2, "last"],
+        "data open": ["/app/page", None, 2, "last"],
+    }
+
+
+# What a data: URL's document reaches of its parent and its own frames, which it reports by navigating to ORIGIN/app/report.
+_DATA_REACH = """
+  const tried = (f) => {
+    try {
+      const value = f();
+      return value === null ? 'null' : typeof value === 'object' ? 'object' : String(value);
+    } catch (e) {
+      return 'refused';
+    }
+  };
+  const get = (name) => Object.getOwnPropertyDescriptor(window, name).get;
+  (async () => {
+    const reached = {};
+    for (const [name, w] of [['parent', parent], ['top', top]]) {
+      reached[name] = [
+        () => w.document, () => get('document').call(w), () => Reflect.get(window, 'document', w),
+        () => get('localStorage').call(w), () => get('name').call(w), () => setTimeout.call(w, () => 1),
+        () => addEventListener.call(w, 'x', () => 1), () => w.eval('1'),
+      ].map(tried).join(' ');
+    }
+    reached.own = [
+      () => origin, () => frameElement, () => localStorage, () => document.cookie, () => isSecureContext,
+      () => get('document').call(undefined) === document, () => btoa.call(null, 'a'),
+    ].map(tried).join(' ');
+    const ways = {
+      blank: () => 1, srcdoc: (f) => { f.srcdoc = '<p>x'; }, network: (f) => { f.src = 'ORIGIN/app/page'; },
+      data: (f) => { f.src = 'data:text/html,<p>x'; },
+    };
+    for (const way in ways) {
+      const element = document.createElement('iframe');
+      const load = new Promise((resolve) => { element.onload = resolve; });
+      ways[way](element);
+      document.documentElement.append(element);
+      await load;
+      const w = element.contentWindow;
+      reached['a child of ' + way] = [
+        () => element.contentDocument, () => w.document, () => get('document').call(w), () => w.eval('origin'),
+      ].map(tried).join(' ');
+    }
+    location.href = 'ORIGIN/app/page?' + encodeURIComponent(JSON.stringify(reached));
+  })();
+"""
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_data_url_frame_and_its_parent_reach_only_their_own_realms(origin: str) -> None:
+    # The document's opaque origin is of no other's: its window, also once its element is gone, refuses its parent's
+    # members and a window that the frame left, and its script reaches neither its parent nor a frame of its own of
+    # another origin, while the about:blank and the srcdoc that take its origin are its own.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        {_SEEN}
+        const refused = (f) => {{ try {{ f(); return false; }} catch (e) {{ return true; }} }};
+        const get = (name) => Object.getOwnPropertyDescriptor(window, name).get;
+        const uses = {{
+          document: (w) => get('document').call(w), storage: (w) => get('localStorage').call(w),
+          name: (w) => get('name').call(w), fetch: (w) => fetch.call(w, '/app/page'), timer: (w) => setTimeout.call(w, () => 1),
+          listener: (w) => addEventListener.call(w, 'x', () => 1), property: (w) => w.document,
+        }};
+        const reached = (w) => Object.keys(uses).filter((name) => !refused(() => uses[name](w)));
+        const element = document.createElement('iframe');
+        element.src = '/app/page';
+        document.body.appendChild(element);
+        await loaded(element);
+        const oldDocument = element.contentDocument;
+        const old = element.contentWindow.eval(
+          '[() => x.id, () => document.URL.startsWith("data:") || name, () => window.document, () => localStorage, () => origin]'
+        );
+        element.src = 'data:text/html,<p id=x>secret';
+        await loaded(element);
+        const w = element.contentWindow;
+        const results = {{own: reached(w), left: old.map(refused).join(' '), document: element.contentDocument}};
+        // Its request, which the server remembers, shows a script that runs in the data: URL's window too, whose origin
+        // keeps it from the parent.
+        const child = oldDocument.createElement('script');
+        child.textContent = `fetch('${{location.origin}}/assets/left-ran')`;
+        Node.prototype.appendChild.call(oldDocument.body, child);
+        await settle(200);
+        results.ran = await seen('/assets/left-ran');
+        element.remove();
+        results.removed = reached(w);
+        const reporter = document.createElement('iframe');
+        reporter.src = 'data:text/html,' + encodeURIComponent('<script>' + {_DATA_REACH!r}.replaceAll('ORIGIN', location.origin) + '<\\/script>');
+        document.body.appendChild(reporter);
+        for (let i = 0; i < 400 && !(reporter.contentDocument && reporter.contentDocument.URL.includes('?')); i++) await settle(25);
+        results.reports = JSON.parse(decodeURIComponent(reporter.contentDocument.URL.split('?')[1]));
+        return results;
+      }})()
+    """
+    refused = " ".join(["refused"] * 8)
+    assert _evaluate(origin, script) == {
+        "own": [],
+        "left": "true true true true true",
+        "document": None,
+        "ran": "unseen",
+        "removed": [],
+        "reports": {
+            "parent": refused,
+            "top": refused,
+            "own": "null null refused refused false true YQ==",
+            "a child of blank": "object object object null",
+            "a child of srcdoc": "object object object null",
+            "a child of network": "null refused refused refused",
+            "a child of data": "null refused refused refused",
+        },
+    }
