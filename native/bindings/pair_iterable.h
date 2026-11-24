@@ -68,9 +68,11 @@ class PairIterationSource
  protected:
   PairIterationSource();
 
-  // The next pair, as the page sees its key and value, or false if there is
-  // none left.
+  // The next pair, as the page sees the key and value that `kind` has of it,
+  // or false if there is none left. The other one is left as it is, so that
+  // keys() converts no value.
   virtual bool FetchNextItem(v8::Isolate* isolate,
+                             PairIterationKind kind,
                              v8::Local<v8::Value>* key,
                              v8::Local<v8::Value>* value) = 0;
 };

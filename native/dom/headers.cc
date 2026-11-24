@@ -30,6 +30,7 @@ class Headers::IterationSource final : public bindings::PairIterationSource {
 
  protected:
   bool FetchNextItem(v8::Isolate* isolate,
+                     bindings::PairIterationKind kind,
                      v8::Local<v8::Value>* key,
                      v8::Local<v8::Value>* value) override {
     // Blink's Headers resets each iterator's list when its own changes.
@@ -41,8 +42,12 @@ class Headers::IterationSource final : public bindings::PairIterationSource {
       return false;
     }
     const auto& [name, line_value] = (*lines_)[current_++];
-    *key = bindings::ToV8ByteString(isolate, name);
-    *value = bindings::ToV8ByteString(isolate, line_value);
+    if (kind != bindings::PairIterationKind::kValue) {
+      *key = bindings::ToV8ByteString(isolate, name);
+    }
+    if (kind != bindings::PairIterationKind::kKey) {
+      *value = bindings::ToV8ByteString(isolate, line_value);
+    }
     return true;
   }
 

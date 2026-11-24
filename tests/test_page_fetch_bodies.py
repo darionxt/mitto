@@ -288,8 +288,8 @@ BODIES = {
     ),
     "formData() after the body is used": (
         "const r = new Response('a=1', { headers: { 'content-type': 'application/x-www-form-urlencoded' } });"
-        " await r.text(); try { r.formData(); } catch (e) { return e.name + ': ' + e.message; } return 'no error'",
-        "value: no error",
+        " await r.text(); try { return await settle(r.formData()); } catch (e) { return 'threw ' + e; }",
+        "value: rejected TypeError: Failed to execute 'formData' on 'Response': body stream already read",
     ),
 }
 

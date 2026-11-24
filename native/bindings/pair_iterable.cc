@@ -46,7 +46,7 @@ v8::Local<v8::Object> PairIterationSource::Next(
     v8::Local<v8::Context> result_context) {
   v8::Local<v8::Value> key;
   v8::Local<v8::Value> value;
-  if (!FetchNextItem(isolate, &key, &value)) {
+  if (!FetchNextItem(isolate, kind, &key, &value)) {
     const v8::Context::Scope result_scope(result_context);
     return CreateIterResultObject(isolate, v8::Undefined(isolate), true);
   }
@@ -78,7 +78,7 @@ bool PairIterationSource::ForEach(v8::Isolate* isolate,
     const v8::HandleScope handle_scope(isolate);
     v8::Local<v8::Value> key;
     v8::Local<v8::Value> value;
-    if (!FetchNextItem(isolate, &key, &value)) {
+    if (!FetchNextItem(isolate, PairIterationKind::kKeyValue, &key, &value)) {
       return true;
     }
     v8::Local<v8::Value> arguments[] = {value, key, object};

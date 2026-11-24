@@ -61,14 +61,19 @@ class URLSearchParams::IterationSource final
 
  protected:
   bool FetchNextItem(v8::Isolate* isolate,
+                     bindings::PairIterationKind kind,
                      v8::Local<v8::Value>* key,
                      v8::Local<v8::Value>* value) override {
     if (current_ >= params_->params_.size()) {
       return false;
     }
     const auto& [name, param_value] = params_->params_[current_++];
-    *key = bindings::ToV8String(isolate, name);
-    *value = bindings::ToV8String(isolate, param_value);
+    if (kind != bindings::PairIterationKind::kValue) {
+      *key = bindings::ToV8String(isolate, name);
+    }
+    if (kind != bindings::PairIterationKind::kKey) {
+      *value = bindings::ToV8String(isolate, param_value);
+    }
     return true;
   }
 
