@@ -444,7 +444,7 @@ void UpdateForSameDocumentNavigation(
     item.protect_url_in_navigation_api = document.ProtectsUrlInNavigationApi();
   }
   window.SetCurrentHistoryItem(item);
-  document.SetUrl(base::UTF8ToUTF16(url.spec()));
+  document.SetUrlKeepingOrigin(base::UTF8ToUTF16(url.spec()));
   if (NavigationClient* const client = window.GetNavigationClient()) {
     client->DidCommitSameDocumentNavigation(item, type);
   }

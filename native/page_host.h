@@ -698,6 +698,10 @@ class PageHost final : public PageChannel::Delegate {
     size_t same_document_url_bytes = 0;
   };
   std::map<uint64_t, NavigationRecord> records_;
+  // The URLs that document.open() gave the Page's top-level documents, without
+  // their fragments, the most recent last: an entry may be at one, to which a
+  // traversal takes a later document of the page within itself.
+  std::vector<GURL> opened_urls_;
   // The documents whose CookieStores listen, by ID: what tells each of each
   // change, and what its cookie calls are made for.
   struct CookieStoreListener {

@@ -246,10 +246,16 @@ bool Navigation::HasEntriesAndEventsDisabled() const {
   if (!window_ || !window_->HasContext()) {
     return true;
   }
-  // Of the document's origin, not its URL's, which document.open() may have
-  // made about:blank, as Blink reads the window's security origin.
+  // Blink reads the window's security origin, which document.open() leaves as
+  // it was when it gives the document another's URL. A frame's document that
+  // inherits its origin, about:blank or srcdoc, has none, a Known Gap until
+  // frames have entries of their own.
   const Document& document = window_->GetDocument();
-  return document.IsInitialEmptyDocument() || document.GetOrigin().opaque();
+  const url::Origin origin =
+      document.KeepsOriginOfEarlierUrl()
+          ? document.GetOrigin()
+          : url::Origin::Create(GURL(document.UrlForBinding()));
+  return document.IsInitialEmptyDocument() || origin.opaque();
 }
 
 int64_t Navigation::DocumentSequence() const {
