@@ -75,6 +75,12 @@ Headers* Headers::Create(Guard guard) {
   return bindings::MakeGarbageCollected<Headers>(guard);
 }
 
+Headers* Headers::Clone() const {
+  Headers* const headers = Create(guard_);
+  headers->list_ = list_;
+  return headers;
+}
+
 Headers::Headers(Guard guard) : guard_(guard) {}
 
 Headers::~Headers() = default;

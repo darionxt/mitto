@@ -510,10 +510,7 @@ Request* Request::Clone(bindings::ExceptionState& exception_state) {
   }
   request->url_ = url_;
   request->method_ = method_;
-  request->headers_ = Headers::Create(headers_->guard());
-  for (const auto& [name, value] : headers_->list()) {
-    request->headers_->AppendLine(name, value);
-  }
+  request->headers_ = headers_->Clone();
   request->mode_ = mode_;
   request->credentials_ = credentials_;
   request->referrer_ = referrer_;

@@ -133,7 +133,7 @@ PageCacheResponse ToPageCacheResponse(const Response& response) {
     }
   }
   page_response.response_time =
-      base::Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds();
+      stored.ResponseTime().ToDeltaSinceWindowsEpoch().InMicroseconds();
   return page_response;
 }
 

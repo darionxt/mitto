@@ -1,17 +1,24 @@
 #include "mitto/page_cache_storage.h"
 
 #include <algorithm>
+#include <array>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "crypto/hmac.h"
+#include "crypto/random.h"
 #include "mitto/cache_storage/cache_storage.h"
 #include "mitto/cache_storage/cache_storage_context.h"
 #include "mitto/page_messages.h"
@@ -53,6 +60,29 @@ CacheQueryOptions ToCacheOptions(const PageCacheQueryOptions& options) {
   return cache_options;
 }
 
+// The range of the padding of an opaque response.
+constexpr uint64_t kPaddingRange = 14431 * 1024;
+
+// What hides the size of an opaque response in the usage that a page reads:
+// the same for each copy of the response, such as a clone or one that a match
+// gave, so that no page averages it away.
+//
+// Upstream: storage/common/quota/padding_key.cc
+int64_t ComputeStableResponsePadding(std::string_view response_url,
+                                     base::Time response_time) {
+  static const std::array<uint8_t, 16> padding_key =
+      crypto::RandBytesAsArray<16>();
+  const std::string key = base::StrCat(
+      {response_url, "-",
+       base::NumberToString(
+           response_time.ToDeltaSinceWindowsEpoch().InMicroseconds())});
+  const auto hmac =
+      crypto::hmac::SignSha256(padding_key, base::as_byte_span(key));
+  return static_cast<int64_t>(
+      base::U64FromNativeEndian(base::as_byte_span(hmac).first<8>()) %
+      kPaddingRange);
+}
+
 CacheResponse ToCacheResponse(const PageCacheResponse& response) {
   CacheResponse cache_response;
   for (const std::string& url : response.url_list) {
@@ -67,6 +97,12 @@ CacheResponse ToCacheResponse(const PageCacheResponse& response) {
   cache_response.response_time = base::Time::FromDeltaSinceWindowsEpoch(
       base::Microseconds(response.response_time));
   cache_response.body_size = response.body_size;
+  if (ShouldPadResponseType(cache_response.response_type)) {
+    cache_response.padding = ComputeStableResponsePadding(
+        response.url_list.empty() ? std::string_view()
+                                  : std::string_view(response.url_list.back()),
+        cache_response.response_time);
+  }
   return cache_response;
 }
 

@@ -193,10 +193,14 @@ Response* ResponseFromCache(CacheStorageHost& host,
   const std::u16string url = response.url_list.empty()
                                  ? std::u16string()
                                  : base::UTF8ToUTF16(response.url_list.back());
+  const base::Time response_time = base::Time::FromDeltaSinceWindowsEpoch(
+      base::Microseconds(response.response_time));
   if (response.body == 0) {
-    return Response::CreateFetched(type, response.status, response.status_text,
-                                   url, response.url_list.size() > 1, headers,
-                                   nullptr);
+    Response* const fetched = Response::CreateFetched(
+        type, response.status, response.status_text, url,
+        response.url_list.size() > 1, headers, nullptr);
+    fetched->SetResponseTime(response_time);
+    return fetched;
   }
   // The loader goes to the host, and its consumer to the body, which drops
   // the stored body once it goes.
@@ -206,9 +210,11 @@ Response* ResponseFromCache(CacheStorageHost& host,
   BodyStreamBuffer* const body = BodyStreamBuffer::Create(
       isolate, loader->consumer(), /*signal=*/nullptr);
   host.AdoptStoredBody(response.body, std::move(loader));
-  return Response::CreateFetched(type, response.status, response.status_text,
-                                 url, response.url_list.size() > 1, headers,
-                                 body);
+  Response* const fetched =
+      Response::CreateFetched(type, response.status, response.status_text, url,
+                              response.url_list.size() > 1, headers, body);
+  fetched->SetResponseTime(response_time);
+  return fetched;
 }
 
 bool CacheContextIsAlive(v8::Isolate* isolate,

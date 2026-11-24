@@ -45,6 +45,10 @@ class Headers final : public bindings::ScriptWrappable {
   static Headers* Create(Guard guard);
 
   explicit Headers(Guard guard);
+
+  // A copy of its lines and its guard, as Blink's FetchHeaderList::Clone()
+  // copies them.
+  Headers* Clone() const;
   ~Headers() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;

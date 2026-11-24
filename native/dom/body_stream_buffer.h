@@ -35,6 +35,7 @@ class ExceptionState;
 }  // namespace bindings
 
 class AbortSignal;
+class ExecutionContext;
 class ReadableStream;
 
 class BodyStreamBuffer final : public UnderlyingByteSourceBase,
@@ -114,8 +115,13 @@ class BodyStreamBuffer final : public UnderlyingByteSourceBase,
   // the load and the consumer stop, and it no longer keeps itself alive.
   void ContextDestroyed();
   void StopLoading();
+  // Whether the context that it was made in is still there, as Blink's
+  // script state is valid.
+  bool HasContext() const;
 
   const raw_ptr<v8::Isolate> isolate_;
+  // The context that it was made in, or that of the body it comes from.
+  cppgc::WeakMember<ExecutionContext> context_;
   cppgc::Member<ReadableStream> stream_;
   cppgc::Member<BytesConsumer> consumer_;
   // While it is loading, it keeps itself alive, as Blink's keep_alive_ does.

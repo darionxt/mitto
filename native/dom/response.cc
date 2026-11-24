@@ -245,10 +245,8 @@ Response* Response::Clone(bindings::ExceptionState& exception_state) {
   response->status_text_ = status_text_;
   response->url_ = url_;
   response->redirected_ = redirected_;
-  response->headers_ = mitto::Headers::Create(headers_->guard());
-  for (const auto& [name, value] : headers_->list()) {
-    response->headers_->AppendLine(name, value);
-  }
+  response->response_time_ = response_time_;
+  response->headers_ = headers_->Clone();
   if (internal_response_) {
     response->internal_response_ = internal_response_->Clone(exception_state);
     if (exception_state.HadException()) {
@@ -270,6 +268,23 @@ Response* Response::Clone(bindings::ExceptionState& exception_state) {
 
 std::string Response::ContentType() const {
   return headers_->GetValue("content-type").value_or("");
+}
+
+void Response::SetResponseTime(base::Time response_time) {
+  response_time_ = response_time;
+  if (internal_response_) {
+    internal_response_->response_time_ = response_time;
+  }
+}
+
+bool Response::IsBodyUsed() const {
+  const BodyStreamBuffer* const body_buffer = InternalBodyBuffer();
+  return body_buffer && body_buffer->IsStreamDisturbed();
+}
+
+BodyStreamBuffer* Response::InternalBodyBuffer() const {
+  return internal_response_ ? internal_response_->body_buffer_.Get()
+                            : body_buffer_.Get();
 }
 
 BodyStreamBuffer* Response::BodyBuffer() const {
@@ -305,7 +320,8 @@ std::u16string Response::Type() const {
 void Response::ReadAll(base::OnceCallback<void(std::optional<std::string> body,
                                                bool aborted)> done) {
   CHECK(!IsBodyLocked() && !IsBodyUsed());
-  if (!body_buffer_) {
+  BodyStreamBuffer* const body_buffer = InternalBodyBuffer();
+  if (!body_buffer) {
     std::move(done).Run(std::string(), /*aborted=*/false);
     return;
   }
@@ -314,8 +330,8 @@ void Response::ReadAll(base::OnceCallback<void(std::optional<std::string> body,
       bindings::MakeGarbageCollected<ReadAllClient>(std::move(done));
   bindings::ExceptionState exception_state(isolate);
   const v8::TryCatch try_catch(isolate);
-  body_buffer_->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(),
-                             client, exception_state);
+  body_buffer->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(),
+                            client, exception_state);
   if (exception_state.HadException()) {
     client->DidFetchDataLoadFailed();
   }
