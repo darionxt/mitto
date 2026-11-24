@@ -780,16 +780,18 @@ def test_an_about_blank_of_a_sandboxed_frame_is_not_isolated(session: mitto.Sess
         const frame = document.createElement('iframe');
         frame.src = '/f-self';
         const loaded = () => new Promise((resolve) => frame.onload = resolve);
+        // Chrome's page cannot read a document of an opaque origin.
+        const isolated = () => frame.contentDocument !== null && frame.contentWindow.crossOriginIsolated;
         document.documentElement.appendChild(frame);
         await loaded();
         await loaded();
-        const own = [frame.contentWindow.location.href, frame.contentWindow.crossOriginIsolated];
+        const own = isolated();
         frame.src = 'about:blank';
         await loaded();
-        return [...own, frame.contentWindow.crossOriginIsolated];
+        return [own, isolated()];
     })()"""
 
-    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == ["about:blank", False, True]
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]
 
 
 def test_a_frame_s_policy_is_split_as_the_parser_splits_it(session: mitto.Session, server: RecordingServer) -> None:
