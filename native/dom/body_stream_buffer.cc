@@ -154,17 +154,16 @@ BodyStreamBuffer::BodyStreamBuffer(v8::Isolate* isolate,
                                    BytesConsumer* consumer,
                                    AbortSignal* signal)
     : isolate_(isolate),
-      context_(ExecutionContext::From(isolate, isolate->GetCurrentContext())),
       consumer_(consumer),
       signal_(signal),
-      made_from_readable_stream_(false) {}
+      made_from_readable_stream_(false) {
+  SetContext(ExecutionContext::From(isolate, isolate->GetCurrentContext()));
+}
 
 BodyStreamBuffer::BodyStreamBuffer(v8::Isolate* isolate, ReadableStream* stream)
-    : isolate_(isolate),
-      context_(ExecutionContext::From(isolate, isolate->GetCurrentContext())),
-      stream_(stream),
-      made_from_readable_stream_(true) {
+    : isolate_(isolate), stream_(stream), made_from_readable_stream_(true) {
   DCHECK(stream_);
+  SetContext(ExecutionContext::From(isolate, isolate->GetCurrentContext()));
 }
 
 BodyStreamBuffer::~BodyStreamBuffer() = default;
@@ -246,6 +245,17 @@ void BodyStreamBuffer::StartLoading(FetchDataLoader* loader,
 
 bool BodyStreamBuffer::HasContext() const {
   return context_ && context_->HasContext();
+}
+
+void BodyStreamBuffer::SetContext(ExecutionContext* context) {
+  context_ = context;
+  made_without_context_ = !HasContext();
+}
+
+void BodyStreamBuffer::RunInOwnContext(base::FunctionRef<void()> run) {
+  if (!RunInContext(context_.Get(), run)) {
+    run();
+  }
 }
 
 void BodyStreamBuffer::ContextDestroyed() {
@@ -490,7 +500,7 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
     }
     ReadableStream* stream1 = nullptr;
     ReadableStream* stream2 = nullptr;
-    const auto tee = [&] {
+    RunInOwnContext([&] {
       // A stream that a page made may have a default controller.
       if (stream_->GetController()->IsByteStreamController()) {
         stream_->ByteStreamTee(isolate_, &stream1, &stream2, exception_state);
@@ -499,11 +509,7 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
         stream_->Tee(isolate_, &stream1, &stream2, /*clone_for_branch2=*/true,
                      exception_state);
       }
-    };
-    // A stream tees in a context that has gone too.
-    if (!RunInContext(context_.Get(), tee)) {
-      tee();
-    }
+    });
     if (exception_state.HadException()) {
       stream_broken_ = true;
       return;
@@ -512,8 +518,8 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
         bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate_, stream1);
     *branch2 =
         bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate_, stream2);
-    (*branch1)->context_ = context_;
-    (*branch2)->context_ = context_;
+    (*branch1)->SetContext(context_.Get());
+    (*branch2)->SetContext(context_.Get());
     return;
   }
   BytesConsumer* const handle = ReleaseHandle(exception_state);
@@ -521,13 +527,15 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
     stream_broken_ = true;
     return;
   }
-  RunInContext(context_.Get(), [&] {
+  RunInOwnContext([&] {
     BytesConsumer* dest1 = nullptr;
     BytesConsumer* dest2 = nullptr;
     BytesConsumerTee(context_.Get(), handle, &dest1, &dest2);
     *branch1 = Create(isolate_, dest1, signal_.Get());
     *branch2 = Create(isolate_, dest2, signal_.Get());
   });
+  (*branch1)->SetContext(context_.Get());
+  (*branch2)->SetContext(context_.Get());
 }
 
 BodyStreamBuffer* BodyStreamBuffer::CreateProxy(
@@ -539,9 +547,10 @@ BodyStreamBuffer* BodyStreamBuffer::CreateProxy(
     return nullptr;
   }
   BodyStreamBuffer* proxy = nullptr;
-  RunInContext(context_.Get(), [&] {
+  RunInOwnContext([&] {
     proxy = BodyStreamBuffer::Create(isolate_, consumer, signal_.Get());
   });
+  proxy->SetContext(context_.Get());
   if (!made_from_readable_stream_) {
     return proxy;
   }
@@ -554,7 +563,7 @@ BodyStreamBuffer* BodyStreamBuffer::CreateProxy(
   // to be made from a ReadableStream as well.
   auto* const stream_proxy = bindings::MakeGarbageCollected<BodyStreamBuffer>(
       isolate_, proxy->Stream());
-  stream_proxy->context_ = context_;
+  stream_proxy->SetContext(context_.Get());
   return stream_proxy;
 }
 
@@ -568,7 +577,7 @@ BytesConsumer* BodyStreamBuffer::ReleaseHandle(
         "Body stream has suffered a fatal error and cannot be inspected");
     return nullptr;
   }
-  if (!HasContext()) {
+  if (!HasContext() && !made_without_context_) {
     exception_state.ThrowDOMException(
         "InvalidStateError",
         "Cannot release body in a window or worker that has been detached");

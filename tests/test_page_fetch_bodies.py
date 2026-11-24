@@ -410,7 +410,8 @@ def test_request_and_response_members_do_what_chrome_does(program: Path, script:
 
 @pytest.fixture
 def page_url(native_library: Any) -> Iterator[str]:
-    """The URL of an empty page on 127.0.0.1, or skip if no Page program lies beside the library."""
+    """The URL of an empty page on 127.0.0.1, whose /referer gives any origin the Referer line that came, or skip if no
+    Page program lies beside the library."""
     library_path = _native.find_library()
     assert library_path is not None
     if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
@@ -422,6 +423,9 @@ def page_url(native_library: Any) -> Iterator[str]:
         def do_GET(self) -> None:
             body = b"<!doctype html><title>t</title><body>"
             self.send_response(200)
+            if self.path == "/referer":
+                body = self.headers.get("Referer", "none").encode()
+                self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -747,6 +751,42 @@ _REALM_SCRIPTS |= {
         "request threw InvalidStateError: Failed to execute 'clone' on 'Request': "
         "Cannot release body in a window or worker that has been detached; request without a body pending",
     ),
+    "bodies made after their frame has gone": (
+        _CLONE_PRELUDE
+        + """
+        return all(async ([kind, make]) => {
+            const f = frame(); const { Response, Request, Blob, ReadableStream } = f.contentWindow;
+            f.remove();
+            const r = make({ Response, Request, Blob, ReadableStream }); const c = r.clone();
+            return kind + " " + await outcome(c.text());
+        });
+        """,
+        "; ".join(
+            f"{kind} rejected InvalidStateError: Failed to execute 'text' on '{interface}': "
+            "Cannot load body from a frame or worker than has been detached"
+            if interface
+            else f"{kind} pending"
+            for kind, interface in (
+                ("string", "Response"),
+                ("blob", "Response"),
+                ("stream", "Response"),
+                ("null", None),
+                ("request", "Request"),
+                ("request without a body", None),
+            )
+        ),
+    ),
+    "a Request made from a Request of a frame that had gone": (
+        """
+        const f = frame(); const theirs = f.contentWindow.Request; f.remove();
+        const r = new theirs("https://example.test/", { method: "POST", body: "x" });
+        const copy = new theirs(r); const other = new theirs("https://example.test/", { method: "POST", body: "x" });
+        const mine = new Request(other);
+        return [r.bodyUsed, copy.bodyUsed, await outcome(copy.text()), other.bodyUsed, mine.bodyUsed].join("; ");
+        """,
+        "true; false; rejected InvalidStateError: Failed to execute 'text' on 'Request': "
+        "Cannot load body from a frame or worker than has been detached; true; false",
+    ),
     "a Request made from a Request of a frame that goes": (
         """
         const f = frame(); const w = f.contentWindow;
@@ -814,6 +854,22 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
         """,
         "accept-language,x-version / accept-language,x-version / accept-language,x-version / "
         "accept-language,x-version / accept-language / accept-language,x-version / accept-language / accept-language",
+    ),
+    "what goes as a blob's referrer": (
+        """
+        const script = `
+            const referrer = URL.createObjectURL(new Blob(["x"]));
+            const of = async (init) => (await fetch("${location.origin}/referer", { referrer, ...init })).text();
+            (async () => postMessage([await of({}), await of({ referrerPolicy: "unsafe-url" })].join()))();`;
+        const run = (url) => new Promise((resolve) => { new Worker(url).onmessage = (event) => resolve(event.data); });
+        const referrer = URL.createObjectURL(new Blob(["x"]));
+        const mine = await (await fetch("/referer", { referrer, referrerPolicy: "unsafe-url" })).text();
+        const frame = document.createElement("iframe"); document.body.append(frame);
+        const theirs = await frame.contentWindow.fetch(location.origin + "/referer", { referrer: location.origin + "/r" });
+        return [await run("data:text/javascript," + encodeURIComponent(script)), mine,
+                (await theirs.text()).replace(location.origin, "here")].join();
+        """,
+        "none,none,none,here/r",
     ),
     "the referrers of an opaque origin's blobs": (
         """

@@ -375,7 +375,13 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   if (request->credentials() != FetchCredentialsMode::kSameOrigin) {
     data.credentials = request->credentials();
   }
+  // A referrer that is no HTTP or HTTPS URL, such as a blob: URL, sends none,
+  // as SecurityPolicy::GenerateReferrer() has it.
   data.referrer = request->referrer();
+  if (data.referrer != kClientReferrer &&
+      !GURL(data.referrer).SchemeIsHTTPOrHTTPS()) {
+    data.referrer = kNoReferrer;
+  }
   // A request whose policy is the empty string goes with the document's. A
   // worker's would go with the policy of its script's response, which it does
   // not have: a Known Gap.

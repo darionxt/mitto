@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 
+#include "base/functional/function_ref.h"
 #include "base/memory/raw_ptr.h"
 #include "mitto/dom/bytes_consumer.h"
 #include "mitto/dom/fetch_data_loader.h"
@@ -115,13 +116,19 @@ class BodyStreamBuffer final : public UnderlyingByteSourceBase,
   // the load and the consumer stop, and it no longer keeps itself alive.
   void ContextDestroyed();
   void StopLoading();
-  // Whether the context that it was made in is still there, as Blink's
-  // script state is valid.
+  // Whether its context is still there, as Blink's script state is valid.
   bool HasContext() const;
+  // Sets the context, which the constructors set to the current one.
+  void SetContext(ExecutionContext* context);
+  // Runs `run` in its context, or in the current one if that has gone.
+  void RunInOwnContext(base::FunctionRef<void()> run);
 
   const raw_ptr<v8::Isolate> isolate_;
   // The context that it was made in, or that of the body it comes from.
   cppgc::WeakMember<ExecutionContext> context_;
+  // Whether that context had gone before this was made, which Blink's
+  // observer of it then never hears of.
+  bool made_without_context_ = false;
   cppgc::Member<ReadableStream> stream_;
   cppgc::Member<BytesConsumer> consumer_;
   // While it is loading, it keeps itself alive, as Blink's keep_alive_ does.
