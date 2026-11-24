@@ -13710,7 +13710,7 @@
 {"test": "html/semantics/embedded-content/the-img-element/data-url.html", "subtest": "data URL image", "chrome": "PASS", "mitto": "FAIL: Uncaught TypeError: Cannot read properties of null (reading 'drawImage')", "owner": "M10"},
 {"test": "html/semantics/embedded-content/the-img-element/environment-changes/picture-resize-complete.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "M9"},
 {"test": "html/semantics/embedded-content/the-img-element/environment-changes/viewport-change.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
-{"test": "html/semantics/embedded-content/the-img-element/image-loading-lazy-base-url-2.html", "subtest": "When a loading=lazy image is loaded, it loads relative to the document's base URL computed at parse-time.", "chrome": "FAIL: assert_unreached: The image request should not load relative to the current (incorrect) base URL. Reached unreachable code", "mitto": "PASS", "owner": "M9"},
+{"test": "html/semantics/embedded-content/the-img-element/image-loading-lazy-base-url-2.html", "subtest": null, "chrome": null, "mitto": "FLAKY", "owner": "#291"},
 {"test": "html/semantics/embedded-content/the-img-element/image-loading-lazy-in-cross-origin-iframe-001.sub.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "M9"},
 {"test": "html/semantics/embedded-content/the-img-element/image-loading-lazy-in-cross-origin-iframe-002.sub.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "M9"},
 {"test": "html/semantics/embedded-content/the-img-element/image-loading-lazy-in-script-disabled-iframe.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "M9"},
