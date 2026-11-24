@@ -297,6 +297,9 @@ void ScriptRunner::EndTask() {
   // As Blink's scheduler does after each task. Its end queues the report of
   // the promises left rejected with no handler, as every checkpoint's does.
   v8::MicrotasksScope::PerformCheckpoint(isolate_);
+  if (frame_) {
+    frame_->PauseStoredMicrotasks();
+  }
   QueueRejectionReport();
   // Results wait for the reports queued before them.
   if (reports_queued_ > 0) {

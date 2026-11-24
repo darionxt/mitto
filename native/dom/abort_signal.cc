@@ -437,7 +437,8 @@ void AbortSignal::TimeoutFired() {
                          [](cppgc::Persistent<AbortSignal> signal) {
                            signal->TimeoutFired();
                          },
-                         cppgc::Persistent<AbortSignal>(this)));
+                         cppgc::Persistent<AbortSignal>(this)),
+                     /*delayed=*/true);
     return;
   }
   // Let go of the signal once this returns.

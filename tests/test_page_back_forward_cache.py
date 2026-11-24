@@ -790,8 +790,7 @@ def test_the_performance_timeline_has_the_visibility_of_a_kept_page(
     with _open_page(session, first) as page:
         page.evaluate(
             f"window.states = []; addEventListener('pagehide', () => states.push({names}));"
-            f" document.addEventListener('visibilitychange', () => states.push({names}));"
-            " performance.mark('before'); location.href = '/b'; 0"
+            f" document.addEventListener('visibilitychange', () => states.push({names})); location.href = '/b'; 0"
         )
         assert _next_document(page).url == second
         page.evaluate("history.back()")
@@ -800,6 +799,22 @@ def test_the_performance_timeline_has_the_visibility_of_a_kept_page(
             "[states, performance.getEntriesByType('visibility-state').map(entry => [entry.startTime > 0,"
             " entry.duration])]"
         ) == [["visible", "visible,hidden", "visible,hidden,visible"], [[False, 0], [True, 0], [True, 0]]]
+
+
+def test_a_page_whose_scripts_never_read_its_timeline_has_its_visibility_too(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate(
+            "performance.getEntriesByType('visibility-state').map(entry => [entry.name, entry.startTime > 0])"
+        ) == [["visible", False], ["hidden", True], ["visible", True]]
 
 
 def test_a_watch_that_a_resume_listener_clears_hears_no_timeout_that_waited(
@@ -922,3 +937,89 @@ def test_a_credential_request_keeps_a_page_out(
         page.evaluate("history.back()")
         assert _next_document(page) == PageNavigation(url=first, status=200, restored=kept)
         assert page.evaluate("window.marker ?? null") == (1 if kept else None)
+
+
+def test_a_promise_that_v8_settles_while_its_page_is_kept_has_its_reactions_as_it_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    # A module of one function, which V8 compiles on another thread.
+    module = "new Uint8Array([0,97,115,109,1,0,0,0,1,4,1,96,0,0,3,2,1,0,10,4,1,2,0,11])"
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            f"const bytes = {module}; document.addEventListener('freeze', () => {{"
+            " WebAssembly.compile(bytes).then(() => { log.push('compiled'); localStorage.compiled = 'yes'; }); });"
+            " document.addEventListener('resume', () => Promise.resolve().then(() => log.push('resumed')));"
+            " localStorage.clear(); window.marker = 1; location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        _wait(page, 500)
+        # The page's agent runs no microtask while it is frozen.
+        assert page.evaluate("localStorage.compiled ?? null") is None
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate("[window.marker, log]") == [
+            1,
+            [
+                "pageshow:false",
+                "pagehide:true",
+                "visibilitychange:hidden",
+                "freeze",
+                "compiled",
+                "resume",
+                "resumed",
+                "visibilitychange:visible",
+                "pageshow:true",
+            ],
+        ]
+        # Its microtasks go on as before.
+        assert page.evaluate("Promise.resolve(1).then(x => x + 1)") == 2
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate("Promise.resolve(log.at(-1)).then(x => x)") == "pageshow:true"
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "expected"),
+    [
+        # What waited in a queue comes before what a pageshow listener posts, and what was delayed after it.
+        ("scheduler.postTask(() => log.push('old'))", "scheduler.postTask(() => log.push('new'))", ["old", "new"]),
+        (
+            "scheduler.yield().then(() => log.push('old'))",
+            "scheduler.yield().then(() => log.push('new'))",
+            ["old", "new"],
+        ),
+        ("setTimeout(() => log.push('old'), 0)", "setTimeout(() => log.push('new'), 0)", ["old", "new"]),
+        ("channel.port2.postMessage('old')", "channel.port2.postMessage('new')", ["old", "new"]),
+        (
+            "scheduler.postTask(() => log.push('old'), {delay: 100})",
+            "scheduler.postTask(() => log.push('new'))",
+            ["new", "old"],
+        ),
+        ("setTimeout(() => log.push('old'), 100)", "setTimeout(() => log.push('new'), 0)", ["new", "old"]),
+    ],
+    ids=["task", "yield", "timeout", "message", "delayed-task", "delayed-timeout"],
+)
+def test_what_waited_comes_before_what_a_pageshow_listener_posts_but_for_what_was_delayed(
+    session: mitto.Session, server: RecordingServer, before: str, after: str, expected: list[str]
+) -> None:
+    first = server.page("/a", "<title>A</title><script>window.log = [];</script>")
+    second = server.page("/b", "<title>B</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "const channel = new MessageChannel(); channel.port1.onmessage = event => log.push(event.data);"
+            f" document.addEventListener('freeze', () => {{ {before}; }});"
+            f" addEventListener('pageshow', event => {{ if (event.persisted) {{ {after}; }} }});"
+            " location.href = '/b'; 0"
+        )
+        assert _next_document(page).url == second
+        _wait(page, 400)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 100)
+        assert page.evaluate("log") == expected

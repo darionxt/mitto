@@ -246,7 +246,8 @@ void Geolocation::Fire(GeoNotifier* notifier) {
                            }
                          },
                          cppgc::Persistent<Geolocation>(this),
-                         cppgc::Persistent<GeoNotifier>(notifier)));
+                         cppgc::Persistent<GeoNotifier>(notifier)),
+                     /*delayed=*/true);
     return;
   }
   const v8::Context::Scope context_scope(context);

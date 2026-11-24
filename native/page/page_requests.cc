@@ -469,7 +469,7 @@ void PageRequests::DeliverHeld(uint64_t number) {
       ProcessResponseStarted(*started);
     } else if (auto* const body = std::get_if<PageResponseBody>(&message)) {
       held_bytes_ -= body->bytes.size();
-      ProcessResponseBody(std::move(*body), /*credited=*/true);
+      ProcessResponseBody(std::move(*body), /*held=*/true);
     } else if (auto* const ended = std::get_if<PageResponseEnded>(&message)) {
       ProcessResponseEnded(*ended);
     } else {
@@ -540,12 +540,17 @@ void PageRequests::HoldBody(PageResponseBody body) {
   }
   // ResponseBodyLoader reads on while its page is frozen, so that the
   // connection does not wait for it, up to the limit, past which the page
-  // goes: kNetworkExceedsBufferLimit.
-  SendCredit(number, size);
+  // goes: kNetworkExceedsBufferLimit. One that a traversal may restore stays,
+  // and its connections wait then.
   held_bytes_ += size;
   HoldMessage(number, std::move(body));
-  if (held_bytes_ > kMaxHeldBytes && IsFrozen(*open) &&
-      open->timed->execution_context->IsWindow()) {
+  if (held_bytes_ <= kMaxHeldBytes) {
+    open->credited += size;
+    SendCredit(number, size);
+    return;
+  }
+  open->untaken += size;
+  if (IsFrozen(*open) && open->timed->execution_context->IsWindow()) {
     static_cast<Window*>(open->timed->execution_context.Get())
         ->EvictFromBackForwardCache();
   }
@@ -657,16 +662,16 @@ void PageRequests::OnResponseBody(PageResponseBody body) {
     HoldBody(std::move(body));
     return;
   }
-  ProcessResponseBody(std::move(body), /*credited=*/false);
+  ProcessResponseBody(std::move(body), /*held=*/false);
 }
 
-void PageRequests::ProcessResponseBody(PageResponseBody body, bool credited) {
+void PageRequests::ProcessResponseBody(PageResponseBody body, bool held) {
   Open* const open = Find(body.number, "a body");
   if (!open) {
     return;
   }
   if (!open->started ||
-      (!credited && body.bytes.size() > kBodyWindow - open->untaken)) {
+      (!held && body.bytes.size() > kBodyWindow - open->untaken)) {
     refuse_.Run(base::StrCat({"more of the body of request ",
                               base::NumberToString(body.number),
                               " than the Page has given credit for"}));
@@ -679,7 +684,9 @@ void PageRequests::ProcessResponseBody(PageResponseBody body, bool credited) {
   if (open->timed) {
     open->timed->decoded_body_size += body.bytes.size();
   }
-  (credited ? open->credited : open->untaken) += body.bytes.size();
+  if (!held) {
+    open->untaken += body.bytes.size();
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
   const RequestContextScope context_scope(

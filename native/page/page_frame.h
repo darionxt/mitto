@@ -160,6 +160,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // its place, thaws, and shows again, as Chrome's browser restores a page
   // from its BackForwardCacheImpl. `loader` goes.
   void RestoreDocument(DocumentLoader& loader);
+  // The microtasks of the documents that the back/forward cache keeps wait from
+  // now, at a task's end, until they come back.
+  void PauseStoredMicrotasks();
   // How the current window's document loads, which its document's loading
   // fills in, and performance.timing and window.chrome read.
   DocumentLoadTiming& document_load_timing();

@@ -666,10 +666,9 @@ void Document::ShowFromBackForwardCache() {
 
 void Document::DidChangePageVisibility() {
   // Page::SetVisibilityState(): the page's observers, the window's Performance
-  // among them, hear of it before the document does.
-  if (mitto::Performance* const performance = window_->PerformanceIfExists()) {
-    performance->AddVisibilityStateEntry(!Hidden());
-  }
+  // among them, which Chrome has made by then, hear of it before the document
+  // does.
+  window_->Performance()->AddVisibilityStateEntry(!Hidden());
   DispatchVisibilityChange();
 }
 

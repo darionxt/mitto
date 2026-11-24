@@ -24,7 +24,7 @@ void WindowTasks::PostTask(TaskType type,
   CHECK(event_loop);
   event_loop->TaskRunner(type)->PostTask(
       from_here, base::BindOnce(&WindowTasks::Run, weak_factory_.GetWeakPtr(),
-                                type, std::move(task)));
+                                type, /*delayed=*/false, std::move(task)));
 }
 
 void WindowTasks::PostDelayedTask(TaskType type,
@@ -36,7 +36,7 @@ void WindowTasks::PostDelayedTask(TaskType type,
   event_loop->TaskRunner(type)->PostDelayedTask(
       from_here,
       base::BindOnce(&WindowTasks::Run, weak_factory_.GetWeakPtr(), type,
-                     std::move(task)),
+                     /*delayed=*/delay.is_positive(), std::move(task)),
       delay);
 }
 
@@ -47,9 +47,15 @@ void WindowTasks::Resume() {
   }
 }
 
-void WindowTasks::Run(TaskType type, base::OnceClosure task) {
+void WindowTasks::ResumeDelayed() {
+  for (auto& [type, task] : std::exchange(held_delayed_, {})) {
+    PostTask(type, std::move(task));
+  }
+}
+
+void WindowTasks::Run(TaskType type, bool delayed, base::OnceClosure task) {
   if (frozen_) {
-    held_.emplace_back(type, std::move(task));
+    (delayed ? held_delayed_ : held_).emplace_back(type, std::move(task));
     return;
   }
   const v8::HandleScope handle_scope(isolate_);

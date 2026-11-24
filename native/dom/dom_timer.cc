@@ -138,7 +138,9 @@ class DOMTimerCoordinator::DOMTimer {
   void Fired() {
     DOMTimerCoordinator& coordinator = *coordinator_;
     if (coordinator.frozen_) {
-      coordinator.held_.push_back(id_);
+      (next_fire_time_.is_null() ? coordinator.held_
+                                 : coordinator.held_delayed_)
+          .push_back(id_);
       return;
     }
     coordinator.timer_nesting_level_ = nesting_level_;
@@ -261,7 +263,15 @@ void DOMTimerCoordinator::Stop() {
 
 void DOMTimerCoordinator::Resume() {
   frozen_ = false;
-  for (const int32_t id : std::exchange(held_, {})) {
+  RunSoon(std::exchange(held_, {}));
+}
+
+void DOMTimerCoordinator::ResumeDelayed() {
+  RunSoon(std::exchange(held_delayed_, {}));
+}
+
+void DOMTimerCoordinator::RunSoon(const std::vector<int32_t>& ids) {
+  for (const int32_t id : ids) {
     if (const auto found = timers_.find(id); found != timers_.end()) {
       found->second->RunSoon();
     }

@@ -105,8 +105,6 @@ class Window final : public WindowProperties, public ExecutionContext {
   Window* Self() { return this; }
   mitto::Document* Document() const { return document_.Get(); }
   mitto::Performance* Performance() override;
-  // The same, or null before a script has asked for it.
-  mitto::Performance* PerformanceIfExists() const { return performance_.Get(); }
   // The document's.
   CacheStorageHost* GetCacheStorageHost() const override;
   IndexedDbHost* GetIndexedDbHost() const override;

@@ -54,6 +54,7 @@
 #include "url/origin.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-primitive.h"
 
 namespace mitto {
@@ -185,6 +186,10 @@ struct PageFrame::StoredDocument {
   uint64_t browsing_instance = 0;
   // The frame's name, which Chrome's frame of the page keeps with it.
   std::u16string name;
+  // The microtasks of the context, which wait in a queue of their own once the
+  // task that stored it has ended, as kBackForwardCachePauseMicrotasks pauses
+  // those of a frozen page's agent.
+  cppgc::Persistent<v8::MicrotaskQueue> microtasks;
   base::OneShotTimer time_to_live;
   // How long its requests may go on before it goes.
   base::OneShotTimer loading_grace_period;
@@ -1258,6 +1263,13 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   CHECK(found != stored_documents_.end());
   std::unique_ptr<StoredDocument> stored = std::move(*found);
   stored_documents_.erase(found);
+  // Its microtasks go to the isolate's queue again, while no context is
+  // entered, as V8 has it. Nothing of it runs before it thaws.
+  CHECK(!isolate->InContext());
+  if (stored->microtasks) {
+    stored->context.Get(isolate)->SetMicrotaskQueue(
+        context()->GetMicrotaskQueue());
+  }
   traversal_item_.reset();
   pending_traversal_index_.reset();
   // The Session keeps the document's own record, and the entry's, until the
@@ -1325,9 +1337,20 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   // RemoveBackForwardCacheEviction(), then SetPageFrozen(false): what waited
   // runs from its tasks, the responses that came meanwhile among them.
   window.SetIsInBackForwardCache(false);
-  for (auto& [type, task] : window.TakeHeldTasks()) {
-    PostTaskInContext(&window, type, std::move(task));
-  }
+  std::vector<ExecutionContext::HeldTask> held = window.TakeHeldTasks();
+  const auto post = [&window, &held](bool delayed) {
+    for (ExecutionContext::HeldTask& task : held) {
+      if (task.delayed != delayed) {
+        continue;
+      }
+      if (task.runner) {
+        task.runner->PostTask(FROM_HERE, std::move(task.task));
+      } else {
+        PostTaskInContext(&window, task.type, std::move(task.task));
+      }
+    }
+  };
+  post(/*delayed=*/false);
   timers_->Resume();
   idle_tasks_->Resume();
   animation_frames_->Resume();
@@ -1342,12 +1365,26 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
                                       base::Unretained(&runner_->requests()),
                                       request)));
   }
+  // The microtasks that waited, and what they queue, run as the page thaws.
+  if (stored->microtasks) {
+    stored->microtasks->PerformCheckpoint(isolate);
+    v8::MicrotasksScope::PerformCheckpoint(isolate);
+  }
   // LocalFrame::DidResume()'s resume, then the page shows again, then its
   // pageshow, persisted, with the traversal's start as its time.
   Document& document = window.GetDocument();
   document.DispatchResumeEvent();
   document.ShowFromBackForwardCache();
   document.DispatchPersistedPageshowEvent(traversal_start_);
+  // What was delayed, and came due while the page was frozen, comes after what
+  // the listeners posted.
+  post(/*delayed=*/true);
+  if (timers_) {
+    timers_->ResumeDelayed();
+  }
+  if (window_tasks_) {
+    window_tasks_->ResumeDelayed();
+  }
   // Document::EnqueuePageRevealEvent(): pagereveal in the page's first frame
   // again, before its callbacks, as WebViewImpl enqueues it once the page
   // shows.
@@ -1535,6 +1572,24 @@ PageFrame::StoredDocument* PageFrame::FindStoredDocument(
     }
   }
   return nullptr;
+}
+
+void PageFrame::PauseStoredMicrotasks() {
+  v8::Isolate* const isolate = runner_->isolate();
+  // V8 gives a context another queue only while it runs and enters nothing.
+  if (isolate->InContext() ||
+      v8::MicrotasksScope::GetCurrentDepth(isolate) > 0 ||
+      v8::MicrotasksScope::IsRunningMicrotasks(isolate)) {
+    return;
+  }
+  const v8::HandleScope handle_scope(isolate);
+  for (const std::unique_ptr<StoredDocument>& stored : stored_documents_) {
+    if (!stored->microtasks) {
+      stored->microtasks =
+          v8::MicrotaskQueue::New(isolate, v8::MicrotasksPolicy::kScoped);
+      stored->context.Get(isolate)->SetMicrotaskQueue(stored->microtasks.Get());
+    }
+  }
 }
 
 void PageFrame::EvictLoadingDocument(uint64_t document) {

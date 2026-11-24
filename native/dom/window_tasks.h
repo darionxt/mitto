@@ -47,17 +47,20 @@ class WindowTasks {
   // FrameScheduler's frozen queues, as the back/forward cache freezes a
   // window: a task whose turn comes while frozen does not run, and Resume()
   // posts each again, in the order their turns came, as a frozen queue keeps
-  // its tasks until it thaws.
+  // its tasks until it thaws, and ResumeDelayed() the delayed ones, after what
+  // the page's resume and pageshow listeners post.
   void Freeze() { frozen_ = true; }
   void Resume();
+  void ResumeDelayed();
 
  private:
-  void Run(TaskType type, base::OnceClosure task);
+  void Run(TaskType type, bool delayed, base::OnceClosure task);
 
   const raw_ptr<v8::Isolate> isolate_;
   const v8::Global<v8::Context> context_;
   bool frozen_ = false;
   std::vector<std::pair<TaskType, base::OnceClosure>> held_;
+  std::vector<std::pair<TaskType, base::OnceClosure>> held_delayed_;
   base::WeakPtrFactory<WindowTasks> weak_factory_{this};
 };
 

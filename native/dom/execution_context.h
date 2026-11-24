@@ -194,11 +194,27 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // A task posted to the context waits while the back/forward cache keeps its
   // window frozen, as a task queue of Blink's frozen frame does, and is held
   // here. TakeHeldTasks() empties it for the window that comes back, which
-  // posts them again in the order they were held.
-  void HoldTask(TaskType type, base::OnceClosure task) {
-    held_tasks_.emplace_back(type, std::move(task));
-  }
-  std::vector<std::pair<TaskType, base::OnceClosure>> TakeHeldTasks() {
+  // posts them again in the order they were held, the delayed ones after what
+  // its resume and pageshow listeners post, as Blink's queues take the delayed
+  // tasks that came due only once they run again.
+  struct HeldTask {
+    HeldTask();
+    HeldTask(HeldTask&&);
+    HeldTask& operator=(HeldTask&&);
+    ~HeldTask();
+
+    TaskType type = TaskType::kInternalDefault;
+    // The queue it goes back to as it is, or null for the one of `type`, where
+    // it runs in the context.
+    scoped_refptr<base::SingleThreadTaskRunner> runner;
+    base::OnceClosure task;
+    bool delayed = false;
+  };
+  void HoldTask(TaskType type, base::OnceClosure task, bool delayed = false);
+  void HoldTaskOf(scoped_refptr<base::SingleThreadTaskRunner> runner,
+                  base::OnceClosure task,
+                  bool delayed);
+  std::vector<HeldTask> TakeHeldTasks() {
     return std::exchange(held_tasks_, {});
   }
   // Whether a script's request of the context, by fetch(), XMLHttpRequest or
@@ -320,7 +336,7 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   bool cross_origin_isolated_capability_ = false;
   bool in_back_forward_cache_ = false;
   bool received_no_store_for_script_request_ = false;
-  std::vector<std::pair<TaskType, base::OnceClosure>> held_tasks_;
+  std::vector<HeldTask> held_tasks_;
   bool used_back_forward_cache_blocker_ = false;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;

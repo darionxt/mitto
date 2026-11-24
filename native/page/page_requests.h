@@ -217,8 +217,8 @@ class PageRequests {
     // Bytes the Session has sent that the client has not taken yet, and that
     // it has no credit for: at most kBodyWindow.
     size_t untaken = 0;
-    // Those that waited while its window was frozen, which gave the Session
-    // credit as they came.
+    // Those that came while its window was frozen and gave the Session credit
+    // then.
     size_t credited = 0;
     bool started = false;
     // For a body that streams: how much of it the Session has given credit
@@ -251,7 +251,8 @@ class PageRequests {
   // frozen, or something of it waits already.
   bool ShouldHold(uint64_t number) const;
   void HoldMessage(uint64_t number, Held message);
-  // Holds a part of a body, whose bytes give the Session credit now.
+  // Holds a part of a body, whose bytes give the Session credit now, while the
+  // bodies that wait are within the limit.
   void HoldBody(PageResponseBody body);
   void SendCredit(uint64_t number, size_t bytes);
   // Whether `open` is a request of a window that the back/forward cache keeps
@@ -259,8 +260,8 @@ class PageRequests {
   static bool IsFrozen(const Open& open);
   // What the On...() methods do with what they do not hold.
   void ProcessResponseStarted(const PageResponseStarted& response);
-  // Whose bytes gave the Session credit already if `credited`.
-  void ProcessResponseBody(PageResponseBody body, bool credited);
+  // Whose bytes were counted as it was held, if `held`.
+  void ProcessResponseBody(PageResponseBody body, bool held);
   void ProcessResponseEnded(const PageResponseEnded& ended);
   void ProcessRequestBodyCredit(const PageCredit& credit);
 

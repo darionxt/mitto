@@ -104,6 +104,33 @@ void ExecutionContext::BindToContext(v8::Isolate* isolate,
       v8::External::New(isolate, this, v8::kExternalPointerTypeTagDefault));
 }
 
+ExecutionContext::HeldTask::HeldTask() = default;
+ExecutionContext::HeldTask::HeldTask(HeldTask&&) = default;
+ExecutionContext::HeldTask& ExecutionContext::HeldTask::operator=(HeldTask&&) =
+    default;
+ExecutionContext::HeldTask::~HeldTask() = default;
+
+void ExecutionContext::HoldTask(TaskType type,
+                                base::OnceClosure task,
+                                bool delayed) {
+  HeldTask held;
+  held.type = type;
+  held.task = std::move(task);
+  held.delayed = delayed;
+  held_tasks_.push_back(std::move(held));
+}
+
+void ExecutionContext::HoldTaskOf(
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
+    base::OnceClosure task,
+    bool delayed) {
+  HeldTask held;
+  held.runner = std::move(runner);
+  held.task = std::move(task);
+  held.delayed = delayed;
+  held_tasks_.push_back(std::move(held));
+}
+
 ExecutionContext::ExecutionContext() = default;
 ExecutionContext::~ExecutionContext() = default;
 
