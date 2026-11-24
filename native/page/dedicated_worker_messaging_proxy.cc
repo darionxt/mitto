@@ -7,12 +7,14 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "mitto/bindings/per_isolate_data.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
@@ -150,6 +152,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
       bindings::PerIsolateData::From(v8::Isolate::GetCurrent());
   // GlobalScopeCreationParams: what the worker takes of its creator.
   params_.origin = context.GetSecurityOrigin();
+  params_.outside_origin = context.GetSecurityOrigin();
   params_.name = options.name;
   params_.script_url = url;
   params_.module = options.module;
@@ -203,7 +206,44 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
                            weak_factory_.GetWeakPtr(), /*net_error=*/0));
     return;
   }
-  // A worker of a blob: URL is a Known Gap: its script never comes.
+  // A blob: URL's script comes from the blob that it names now, as Blink
+  // resolves the URL to a token when the Worker is made, which the browser's
+  // BlobURLLoader then reads, so revoking the URL after does not stop it. A
+  // blob:null URL's worker, of an opaque origin, is a Known Gap.
+  if (url.SchemeIsBlob()) {
+    std::optional<BlobUrlRegistry::Entry> entry =
+        BlobUrlRegistry::Get().ResolveEntry(url);
+    if (!entry || !entry->blob || url::Origin::Create(url).opaque()) {
+      EventLoop::Get()
+          ->TaskRunner(TaskType::kInternalLoading)
+          ->PostTask(FROM_HERE,
+                     base::BindOnce(
+                         &DedicatedWorkerMessagingProxy::DidFailToFetchScript,
+                         weak_factory_.GetWeakPtr()));
+      return;
+    }
+    LocalSchemeFetch::Answer answer = LocalSchemeFetch::AnswerBlobUrl(
+        url, std::move(entry->blob), "GET", std::nullopt);
+    response_started_ = true;
+    response_.url = url;
+    response_.status = answer.head.status;
+    response_.headers = std::move(answer.head.headers);
+    response_.body = answer.TakeBody();
+    PageWorkerStarted started;
+    started.creator = context.ContextId();
+    started.source = PageWorkerSource::kBlob;
+    started.module = options_.module;
+    started.url = url.spec();
+    StartThread(std::move(started));
+    // As the browser's loader hands it over, from a task of its own.
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kInternalLoading)
+        ->PostTask(
+            FROM_HERE,
+            base::BindOnce(&DedicatedWorkerMessagingProxy::OnResponseEnded,
+                           weak_factory_.GetWeakPtr(), /*net_error=*/0));
+    return;
+  }
   if (!url.SchemeIsHTTPOrHTTPS()) {
     EventLoop::Get()
         ->TaskRunner(TaskType::kInternalLoading)

@@ -9,6 +9,10 @@
 #include "mitto/dom/element.h"
 #include "mitto/dom/script_element_base.h"
 #include "mitto/dom/window.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-object.h"
 
 namespace mitto {
 
@@ -72,10 +76,12 @@ void PendingScript::ExecuteScriptBlock() {
   if (!element) {
     return;
   }
-  // A script that has moved to another context or document does not run.
+  // A script that has moved to another context or document does not run, nor
+  // one in a document that no frame shows.
   Document& document = element->GetDocument();
   Window* const window = document.DefaultView();
-  if (!window || window != original_window || &document != original_document) {
+  if (!window || !window->HasContext() || window != original_window ||
+      &document != original_document) {
     return;
   }
   // Step 2 of execute the script element: a script that is null fires
@@ -94,7 +100,19 @@ void PendingScript::ExecuteScriptBlock() {
     // module script leaves none.
     Element* const current_script = is_module ? nullptr : element;
     document.PushCurrentScript(current_script);
-    RunScript();
+    {
+      // In the context of the document's window, which the script enters, as
+      // V8ScriptRunner has it, whichever window's function inserted the
+      // element.
+      v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+      const v8::HandleScope handle_scope(isolate);
+      v8::Local<v8::Context> context;
+      if (window->ToV8(isolate)->GetCreationContext(isolate).ToLocal(
+              &context)) {
+        const v8::Context::Scope context_scope(context);
+        RunScript();
+      }
+    }
     document.PopCurrentScript(current_script);
   }
   // Step 6.

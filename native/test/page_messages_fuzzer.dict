@@ -77,3 +77,9 @@
 "\x00\x00"
 "\x01\x01"
 "https://example.com/"
+# A traversal of the session history: the number, the record, a byte of flags,
+# 1 for an entry that a navigation within the document made, and the URL; and
+# the records released, each a 64-bit number.
+"\x18\x01\x00\x00"
+"\x19\x01\x00\x00"
+"\x01"

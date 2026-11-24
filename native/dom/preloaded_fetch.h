@@ -53,6 +53,9 @@ class PreloadedFetch final : public FetchController {
   // Tells the client of the response, once it has started, and of the body
   // that it has not heard of yet.
   void Forward();
+  // After a call to the client: whether the fetch goes on, or was cancelled
+  // under the call, which destroys it now.
+  bool ReturnedFromClient();
 
   cppgc::Persistent<Resource> resource_;
   // The resource's client while this lives, but for one that the client
@@ -62,6 +65,10 @@ class PreloadedFetch final : public FetchController {
   // Whether the task has come, after which the client hears what comes.
   bool delivering_ = false;
   bool response_started_ = false;
+  // Whether the client is being called, and whether the fetch was cancelled
+  // under the call.
+  bool calling_client_ = false;
+  bool cancel_pending_ = false;
   size_t body_sent_ = 0;
   base::WeakPtrFactory<PreloadedFetch> weak_factory_{this};
 };

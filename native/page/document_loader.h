@@ -51,6 +51,9 @@ class DocumentLoader final : public PageRequests::Client,
   ~DocumentLoader() override;
 
   uint64_t number() const { return number_; }
+  // Whether the navigation's response came after a redirect, which its
+  // frame's commit reads.
+  bool redirected() const { return redirected_; }
   void SetNumber(uint64_t number) { number_ = number; }
   // Makes this the loader of a response that the Page answers itself, a
   // data: URL's, of which the Session hears nothing: no credit and no cancel.
@@ -104,6 +107,8 @@ class DocumentLoader final : public PageRequests::Client,
       FetchReferrerPolicy::kDefault;
   bool inherited_header_csp_ = false;
   bool response_started_ = false;
+  // Whether the response came after a redirect.
+  bool redirected_ = false;
   // Whether the document of the response is cross-origin isolated, which
   // its window's agent is, as Blink's agent cluster key from the browser
   // says.

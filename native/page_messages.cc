@@ -202,6 +202,8 @@ bool IsKnown(uint32_t type) {
          type == static_cast<uint32_t>(PageMessage::kNetworkHint) ||
          (type >= static_cast<uint32_t>(PageMessage::kStorageBuckets) &&
           type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer)) ||
+         (type >= static_cast<uint32_t>(PageMessage::kTraversalRequest) &&
+          type <= static_cast<uint32_t>(PageMessage::kRecordsReleased)) ||
          type == static_cast<uint32_t>(PageMessage::kIsolation);
 }
 
@@ -2202,11 +2204,31 @@ std::string EncodeDocumentOpened(uint64_t document, uint64_t opener) {
                              EncodeUint64(opener));
 }
 
+std::string EncodeTraversalRequest(uint64_t document,
+                                   const PageTraversalRequest& traversal) {
+  const char fixed[2] = {traversal.same_document_entry ? '\1' : '\0',
+                         static_cast<char>(traversal.referrer_policy)};
+  return EncodeDocumentFrame(
+      PageMessage::kTraversalRequest, document,
+      base::StrCat({EncodeUint64(traversal.number),
+                    EncodeUint64(traversal.record), std::string_view(fixed, 2),
+                    traversal.url}));
+}
+
+std::string EncodeRecordsReleased(const std::vector<uint64_t>& records) {
+  std::string payload;
+  for (const uint64_t record : records) {
+    payload += EncodeUint64(record);
+  }
+  return EncodeFrame(PageMessage::kRecordsReleased, payload);
+}
+
 bool NamesDocument(PageMessage type) {
   switch (type) {
     case PageMessage::kSameDocumentNavigation:
     case PageMessage::kAboutBlankNavigation:
     case PageMessage::kDocumentOpened:
+    case PageMessage::kTraversalRequest:
     case PageMessage::kRequest:
     case PageMessage::kGetCookies:
     case PageMessage::kSetCookie:
@@ -2634,6 +2656,49 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
         return base::unexpected("a document opened by no document");
       }
       return frame;
+    case PageMessage::kTraversalRequest: {
+      if (payload.size() < 19) {
+        return base::unexpected(WrongSize("traversal request", payload.size()));
+      }
+      const std::string_view bytes = payload;
+      frame.traversal.number = DecodeUint64(bytes.substr(0, 8));
+      frame.traversal.record = DecodeUint64(bytes.substr(8, 8));
+      const uint8_t flags = static_cast<uint8_t>(bytes[16]);
+      if (frame.traversal.record == kNoDocument) {
+        return base::unexpected("a traversal to the record of document 0");
+      }
+      if (flags > 1) {
+        return base::unexpected(base::StrCat(
+            {"a traversal request with flags ", base::NumberToString(flags)}));
+      }
+      frame.traversal.same_document_entry = flags == 1;
+      const uint8_t policy = static_cast<uint8_t>(bytes[17]);
+      if (policy > kLastReferrerPolicy) {
+        return base::unexpected(
+            base::StrCat({"a traversal request with referrer policy ",
+                          base::NumberToString(policy)}));
+      }
+      frame.traversal.referrer_policy = static_cast<PageReferrerPolicy>(policy);
+      if (!IsText(bytes.substr(18))) {
+        return base::unexpected("a traversal request whose URL is not UTF-8");
+      }
+      frame.traversal.url = std::string(bytes.substr(18));
+      return frame;
+    }
+    case PageMessage::kRecordsReleased: {
+      if (payload.empty() || payload.size() % 8 != 0) {
+        return base::unexpected(WrongSize("records released", payload.size()));
+      }
+      const std::string_view bytes = payload;
+      for (size_t i = 0; i < bytes.size(); i += 8) {
+        const uint64_t record = DecodeUint64(bytes.substr(i, 8));
+        if (record == kNoDocument) {
+          return base::unexpected("a released record of document 0");
+        }
+        frame.released_records.push_back(record);
+      }
+      return frame;
+    }
     case PageMessage::kStorageBind: {
       base::expected<PageStorageBind, std::string> bind =
           ReadStorageBind(payload);
@@ -2948,6 +3013,8 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kNetworkHint:
     case PageMessage::kRequestBodyPart:
     case PageMessage::kRequestBodyEnded:
+    case PageMessage::kTraversalRequest:
+    case PageMessage::kRecordsReleased:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

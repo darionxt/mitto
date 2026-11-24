@@ -988,6 +988,32 @@ def test_a_srcdoc_s_navigation_counts_from_its_start(origin: str) -> None:
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_frame_s_load_waits_no_more_for_a_child_whose_sandboxed_srcdoc_commits_nothing(origin: str) -> None:
+    # The child's srcdoc waits for a script when it gains a sandbox and a new srcdoc: the navigation aborts it, and
+    # the outer frame's load fires, as Chrome's does once the new srcdoc has loaded.
+    script = f"""
+      (async () => {{
+        {_LOADED}
+        {_SETTLE}
+        const outer = document.createElement('iframe');
+        outer.srcdoc = '<iframe srcdoc="<script src=/stall><\\/script>"></iframe>';
+        document.body.appendChild(outer);
+        const outerLoaded = loaded(outer);
+        let inner = null;
+        for (let i = 0; i < 200; i++) {{
+          inner = outer.contentDocument && outer.contentDocument.querySelector('iframe');
+          if (inner && inner.contentDocument && inner.contentDocument.URL === 'about:srcdoc') break;
+          await settle(10);
+        }}
+        inner.sandbox = '';
+        inner.srcdoc = '<p>x';
+        return Promise.race([outerLoaded.then(() => true), settle(1500).then(() => false)]);
+      }})()
+    """
+    assert _evaluate(origin, script) is True
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_frame_s_navigation_fires_beforeunload_at_its_frames_too(origin: str) -> None:
     # beforeunload at the frame's document, then at its frame's, before either unloads; a navigation that the inner
     # one's listener starts of the outer frame starts nothing. Whether unload fires is a Known Gap, which this leaves

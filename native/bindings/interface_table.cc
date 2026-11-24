@@ -54,6 +54,14 @@ bool HasSignature(const MemberInfo& member) {
            (kMemberStatic | kMemberLenientThis | kMemberReturnsPromise));
 }
 
+// No interface of a table has a [CrossOrigin] member, so a static one alone
+// goes unchecked.
+CrossOriginCheck CheckOf(const MemberInfo& member) {
+  return member.target == MemberTarget::kInterface
+             ? CrossOriginCheck::kDoNotCheck
+             : CrossOriginCheck::kCheck;
+}
+
 // [Replaceable]: bind_gen's make_steps_of_replaceable(), a data property of
 // the page's value on the receiver.
 void ReplaceableSetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -147,15 +155,16 @@ void InstallOnTemplates(v8::Isolate* isolate,
         InstallAttribute(isolate, target, signature, member.name,
                          member.owner->interface_name, &KnownGapAttributeGetter,
                          SetterOf(member), AttributesOf(member),
-                         v8::SideEffectType::kHasNoSideEffect,
+                         v8::SideEffectType::kHasNoSideEffect, CheckOf(member),
                          DataOfMember(isolate, member));
         break;
       case MemberKind::kOperation:
-        InstallOperation(
-            isolate, target, signature, member.name,
-            member.owner->interface_name, OperationCallbackOf(member),
-            member.length, AttributesOf(member),
-            v8::SideEffectType::kHasSideEffect, DataOfMember(isolate, member));
+        InstallOperation(isolate, target, signature, member.name,
+                         member.owner->interface_name,
+                         OperationCallbackOf(member), member.length,
+                         AttributesOf(member),
+                         v8::SideEffectType::kHasSideEffect, CheckOf(member),
+                         DataOfMember(isolate, member));
         break;
       case MemberKind::kConstant:
         InstallConstant(isolate, target, member.name, member.value);
@@ -370,14 +379,14 @@ void InstallContextPropertiesFromTable(v8::Local<v8::Context> context,
             isolate, context, target, member_signature, member.name,
             info.interface_name, &KnownGapAttributeGetter, SetterOf(member),
             AttributesOf(member), v8::SideEffectType::kHasNoSideEffect,
-            DataOfMember(isolate, member));
+            CheckOf(member), DataOfMember(isolate, member));
         break;
       case MemberKind::kOperation:
         InstallOperationOnObject(
             isolate, context, target, member_signature, member.name,
             info.interface_name, OperationCallbackOf(member), member.length,
             AttributesOf(member), v8::SideEffectType::kHasSideEffect,
-            DataOfMember(isolate, member));
+            CheckOf(member), DataOfMember(isolate, member));
         break;
       case MemberKind::kConstant:
         InstallConstantOnObject(isolate, context, target, member.name,

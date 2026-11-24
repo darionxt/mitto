@@ -32,6 +32,7 @@
 #include "mitto/dom/frame.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/history.h"
+#include "mitto/dom/history_item.h"
 #include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/idb_factory.h"
 #include "mitto/dom/idle_task_controller.h"
@@ -98,6 +99,20 @@ Window* Window::Incumbent() {
     return nullptr;
   }
   return From(isolate, isolate->GetIncumbentContext());
+}
+
+// static
+bool Window::AccessCheckCallback(v8::Local<v8::Context> accessing_context,
+                                 v8::Local<v8::Object> accessed_object,
+                                 v8::Local<v8::Value> data) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  Window* const accessing = From(isolate, accessing_context);
+  Window* const accessed =
+      bindings::V8Window::ToWrappable(isolate, accessed_object);
+  return accessing && accessing->HasDocument() && accessed &&
+         accessed->HasDocument() &&
+         accessing->GetSecurityOrigin().IsSameOriginWith(
+             accessed->GetSecurityOrigin());
 }
 
 Window::Window() = default;
@@ -325,9 +340,13 @@ mitto::Location* Window::Location() {
   return location_.Get();
 }
 
+void Window::SetCurrentHistoryItem(const HistoryItem& item) {
+  current_history_item_ = std::make_unique<HistoryItem>(item);
+}
+
 mitto::History* Window::History() {
   if (!history_) {
-    history_ = History::Create();
+    history_ = History::Create(this);
   }
   return history_.Get();
 }
@@ -460,13 +479,17 @@ StorageBucketHost* Window::GetStorageBucketHost() const {
 
 mitto::Performance* Window::Performance() {
   if (!performance_) {
-    performance_ = Performance::Create(TimeOrigin(), &GetDocumentLoadTiming());
+    performance_ = Performance::Create(TimeOrigin(), &GetDocumentLoadTiming(),
+                                       CrossOriginIsolatedCapability());
   }
   return performance_.Get();
 }
 
 void Window::SetDocumentLoadTiming(DocumentLoadTiming* timing) {
   document_load_timing_ = timing;
+  if (timing) {
+    timing->cross_origin_isolated_capability = CrossOriginIsolatedCapability();
+  }
 }
 
 DocumentLoadTiming& Window::GetDocumentLoadTiming() {

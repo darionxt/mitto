@@ -77,6 +77,49 @@ bool IsStorageAsBlinkWrites(PageStorageKind kind,
   return local(key) && (!value || local(*value));
 }
 
+// Blink's CanChangeToUrlForHistoryApi() for a document at `document_url` of
+// `document_origin`: the same scheme, user, password, host and port, any
+// path, query and fragment for HTTP and HTTPS, and for a document whose origin
+// is opaque only another query or fragment.
+bool CanChangeToUrlForHistoryApi(const GURL& url,
+                                 const url::Origin& document_origin,
+                                 const GURL& document_url) {
+  if (!url.is_valid()) {
+    return false;
+  }
+  if (url.scheme() != document_url.scheme() ||
+      url.username() != document_url.username() ||
+      url.password() != document_url.password() ||
+      url.host() != document_url.host() || url.port() != document_url.port()) {
+    return false;
+  }
+  if (url.SchemeIsHTTPOrHTTPS()) {
+    return true;
+  }
+  const bool differ_in_path = url.path() != document_url.path();
+  const bool differ_in_query = url.query() != document_url.query();
+  if (url.SchemeIsFile() && differ_in_path) {
+    return false;
+  }
+  if (document_origin.opaque()) {
+    return !differ_in_path;
+  }
+  if (url.IsStandard()) {
+    return true;
+  }
+  return !differ_in_path && !differ_in_query;
+}
+
+// How many documents' navigations the library keeps for traversals: past
+// this, the oldest go. The session history holds 50 entries, and the Page
+// releases what none holds.
+constexpr size_t kMaxNavigationRecords = 100;
+// How many URLs that navigations within a document gave it the library keeps
+// for traversals to its entries, and how many bytes of them: past these, the
+// least recent go, and a traversal to one of them goes nowhere.
+constexpr size_t kMaxSameDocumentUrls = 200;
+constexpr size_t kMaxSameDocumentUrlBytes = 4 * 1024 * 1024;
+
 constexpr std::string_view kVersionKey = "version";
 // What net::HttpConnectionInfoToString() and net::NextProtoToString() call a
 // protocol that is not known.
@@ -905,6 +948,11 @@ class PageHost::Request final : public RequestClient {
   // download manager reads it.
   bool keeps_document() const { return keeps_document_; }
   void set_keeps_document() { keeps_document_ = true; }
+  // What a navigation went as, which a traversal to its document repeats.
+  const FetchParams& navigation_fetch() const { return navigation_fetch_; }
+  void set_navigation_fetch(const FetchParams& fetch) {
+    navigation_fetch_ = fetch;
+  }
 
   // A navigation's response that Chrome's network service holds back while
   // it sniffs the MIME type from the start of the body, as URLLoader does.
@@ -1195,6 +1243,7 @@ class PageHost::Request final : public RequestClient {
   const raw_ref<PageHost> host_;
   const uint64_t number_;
   const GURL first_url_;
+  FetchParams navigation_fetch_;
   bool keeps_document_ = false;
   std::optional<Sniffing> sniffing_;
   ResponseChecks response_checks_;
@@ -1403,6 +1452,9 @@ void PageHost::StartRequest(uint64_t number,
     request->set_keepalive_share(std::make_unique<KeepaliveShare>(
         network_->keepalive_in_flight(), keepalive_in_flight_,
         KeepaliveBytes(url, headers)));
+  }
+  if (checks.is_navigation && options.fetch) {
+    request->set_navigation_fetch(*options.fetch);
   }
   Request& client = *request;
   requests_.emplace(number, std::move(request));
@@ -1823,7 +1875,9 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
         .status = event.status,
         .coep = policies->coep,
         .coop_ignored =
-            request.coop_ignored() + (IgnoresCoop(url, headers) ? 1 : 0)};
+            request.coop_ignored() + (IgnoresCoop(url, headers) ? 1 : 0),
+        .fetch = request.navigation_fetch(),
+        .referrer = event.referrer};
   }
   // Where a frame's document, or a worker, that the Page makes of it comes
   // from.
@@ -2761,6 +2815,12 @@ void PageHost::EndWithSession() {
   End(MITTO_PAGE_ERROR_SESSION_DESTROYED, "the Session was destroyed");
 }
 
+PageHost::NavigationRecord::NavigationRecord() = default;
+PageHost::NavigationRecord::NavigationRecord(NavigationRecord&&) = default;
+PageHost::NavigationRecord& PageHost::NavigationRecord::operator=(
+    NavigationRecord&&) = default;
+PageHost::NavigationRecord::~NavigationRecord() = default;
+
 void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   if (committed.document <= last_context_id_) {
     Refuse(base::StrCat({"a document numbered ",
@@ -2783,6 +2843,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   std::optional<int32_t> navigated_status;
   // How many of its navigation's responses had a COOP that was ignored.
   int coop_ignored = 0;
+  // What a traversal to the document repeats.
+  std::optional<NavigationRecord> record;
   // The frame's document that the new one replaces, if any.
   uint64_t replaced = kNoDocument;
   switch (committed.source) {
@@ -2813,6 +2875,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
                                ", which has no response"}));
           return;
         }
+        record.emplace();
+        record->fetch = std::move(found->second.fetch);
+        record->url = found->second.url;
+        record->referrer = std::move(found->second.referrer);
         context.url = std::move(found->second.url);
         context.coep = found->second.coep;
         navigated_status = found->second.status;
@@ -2937,6 +3003,14 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   worker_scripts_.clear();
   const GURL url = context.url;
   contexts_.emplace(committed.document, std::move(context));
+  // The records of the documents that the session history may go back to
+  // stay, until the Page releases them, the oldest first past a bound.
+  if (record) {
+    records_.insert_or_assign(committed.document, std::move(*record));
+    if (records_.size() > kMaxNavigationRecords) {
+      records_.erase(records_.begin());
+    }
+  }
   // The old document's Cache API goes with it, as its pipes go with its
   // context in Chrome: its puts that wait for a body fail, and what it held
   // is let go. The new document's numbers go on from its.
@@ -3006,11 +3080,18 @@ void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
   }
   const GURL url = opener->second.url.GetWithoutRef();
   context.cookie_url = CookieUrlOf(opener->second);
-  const bool changed = url != context.url;
-  context.url = url;
+  // Document::open() sets no URL for an about:srcdoc opener.
+  const bool changed = url != context.url && !url.IsAboutSrcdoc();
+  if (changed) {
+    context.url = url;
+  }
   // The Page's URL is its top-level document's.
   if (!changed || context.parent != kNoDocument) {
     return;
+  }
+  if (const auto found = records_.find(document);
+      found != records_.end() && url.IsAboutBlank()) {
+    found->second.had_about_blank = true;
   }
   PageEvent event;
   event.type = MITTO_PAGE_EVENT_URL_CHANGED;
@@ -3018,28 +3099,61 @@ void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
   Push(std::move(event));
 }
 
+bool PageHost::MayHaveAboutBlankEntry(const Context& context) const {
+  return context.parent == kNoDocument && !context.is_worker &&
+         std::ranges::any_of(records_, [&context](const auto& entry) {
+           return entry.second.had_about_blank &&
+                  context.origin.IsSameOriginWith(entry.second.url);
+         });
+}
+
 void PageHost::OnSameDocumentNavigation(uint64_t document,
                                         const std::string& url) {
-  // The browser checks a renderer's same-document URL as
-  // CanChangeToUrlForHistoryApi() does: of the document's origin, or only its
-  // fragment changed, as about:blank's can. A frame's
-  // about:blank or srcdoc may have committed at another such URL, such as
-  // about:blank?v=1, which the library does not hear of, so one about:blank
-  // or about:srcdoc URL may follow another: the document keeps its origin,
-  // and the Page holds it to its path and query.
+  // RenderFrameHostImpl::ValidateURLAndOrigin() for a same-document URL: one
+  // that the history API gives the document, as CanChangeToUrlForHistoryApi()
+  // lets it. A frame's about:blank or srcdoc may have committed at another
+  // such URL, such as about:blank?v=1, which the library does not hear of, so
+  // one about:blank or about:srcdoc URL may follow another: the document
+  // keeps its origin, and the Page holds it to its path and query. A URL that
+  // document.open() gives a document, the library hears of with type 73, and a
+  // traversal takes the top-level document, the only one with entries, to the
+  // about:blank that it gave it or one before it of its origin, and from there
+  // to any URL of its origin.
   Context& context = contexts_.find(document)->second;
   GURL& document_url = context.url;
   const GURL new_url(url);
+  const bool is_entry_url =
+      (new_url.IsAboutBlank() ||
+       (document_url.IsAboutBlank() &&
+        url::Origin::Create(new_url).IsSameOriginWith(context.origin))) &&
+      MayHaveAboutBlankEntry(context);
   if (!new_url.is_valid() ||
-      (!url::Origin::Create(document_url)
-            .IsSameOriginWith(url::Origin::Create(new_url)) &&
-       document_url.GetWithoutRef() != new_url.GetWithoutRef() &&
+      (!CanChangeToUrlForHistoryApi(new_url, context.origin, document_url) &&
+       !is_entry_url &&
        !(document_url.IsAboutBlank() && new_url.IsAboutBlank()) &&
        !(document_url.IsAboutSrcdoc() && new_url.IsAboutSrcdoc()))) {
     Refuse("a same-document navigation to another origin");
     return;
   }
   document_url = new_url;
+  // A traversal may go back to an entry of this URL.
+  if (const auto found = records_.find(document); found != records_.end()) {
+    NavigationRecord& record = found->second;
+    record.had_about_blank |= new_url.IsAboutBlank();
+    const auto same = std::ranges::find(record.same_document_urls, new_url);
+    if (same != record.same_document_urls.end()) {
+      record.same_document_url_bytes -= same->spec().size();
+      record.same_document_urls.erase(same);
+    }
+    record.same_document_urls.push_back(new_url);
+    record.same_document_url_bytes += new_url.spec().size();
+    while (record.same_document_urls.size() > kMaxSameDocumentUrls ||
+           record.same_document_url_bytes > kMaxSameDocumentUrlBytes) {
+      record.same_document_url_bytes -=
+          record.same_document_urls.front().spec().size();
+      record.same_document_urls.erase(record.same_document_urls.begin());
+    }
+  }
   // The Page's URL is its top-level document's.
   if (context.parent != kNoDocument) {
     return;
@@ -3048,6 +3162,96 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
   changed.type = MITTO_PAGE_EVENT_URL_CHANGED;
   changed.url = new_url.spec();
   Push(std::move(changed));
+}
+
+void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
+                                  uint64_t document) {
+  if (traversal.number <= last_request_number_) {
+    Refuse(base::StrCat({"a traversal numbered ",
+                         base::NumberToString(traversal.number),
+                         ", after a request numbered ",
+                         base::NumberToString(last_request_number_)}));
+    return;
+  }
+  last_request_number_ = traversal.number;
+  if (requests_.size() >= kMaxPageRequests) {
+    Refuse(base::StrCat({"more than ", base::NumberToString(kMaxPageRequests),
+                         " requests at once"}));
+    return;
+  }
+  const Context& context = contexts_.at(document);
+  if (context.is_worker || context.parent != kNoDocument) {
+    Refuse("a traversal that the top-level document does not leave");
+    return;
+  }
+  const auto found = records_.find(traversal.record);
+  if (found == records_.end()) {
+    Refuse("a traversal to a document that the library has no record of");
+    return;
+  }
+  // An entry of the navigation goes with the policy of its own request, which
+  // the record keeps, whatever document asks.
+  if (!traversal.same_document_entry &&
+      traversal.referrer_policy != PageReferrerPolicy::kDocument) {
+    Refuse("a referrer policy for a traversal to a navigation's entry");
+    return;
+  }
+  const NavigationRecord& record = found->second;
+  const GURL url(traversal.url);
+  PageEvent started;
+  started.type = MITTO_PAGE_EVENT_NAVIGATION_STARTED;
+  started.url = traversal.url;
+  Push(std::move(started));
+  // Only to a URL that the library saw the document take: its navigation's,
+  // or one that a navigation within it gave it, which the library may have
+  // let go of since, and then the traversal goes nowhere, with no request.
+  if (traversal.same_document_entry
+          ? !url.SchemeIsHTTPOrHTTPS() ||
+                std::ranges::find(record.same_document_urls, url) ==
+                    record.same_document_urls.end()
+          : url != record.url) {
+    PageResponseEnded ended;
+    ended.number = traversal.number;
+    ended.net_error = net::ERR_ABORTED;
+    channel_->Send(EncodeResponseEnded(ended));
+    PushNavigated(traversal.url, 0, net::ERR_ABORTED);
+    return;
+  }
+  // NavigationControllerImpl::CreateNavigationRequestFromEntry(): the
+  // entry's own Initiator, referrer and user activation, whichever document
+  // asks. An entry that a navigation within the document made has the
+  // document's origin as its Initiator, and the document's Referer.
+  const PageRequestTemplate& navigation =
+      options_.requests.at(PageRequestKind::kNavigation);
+  RequestOptions options = navigation.options;
+  *options.fetch = record.fetch;
+  if (traversal.same_document_entry) {
+    options.fetch->initiator = record.url;
+    options.fetch->opaque_initiator.reset();
+  }
+  if (traversal.referrer_policy != PageReferrerPolicy::kDocument) {
+    options.fetch->referrer_policy =
+        ToNetReferrerPolicy(traversal.referrer_policy);
+  }
+  // The Referer that the navigation sent last, to which the policy of its
+  // first request applies again, as Chrome's FrameNavigationEntry keeps the
+  // committed referrer with the request's policy.
+  if (record.referrer.empty()) {
+    options.fetch->referrer_policy = net::ReferrerPolicy::NO_REFERRER;
+    options.fetch->referrer_source.reset();
+  } else {
+    options.fetch->referrer_source = GURL(record.referrer);
+  }
+  options.skip_cache_validation = true;
+  StartRequest(traversal.number, document, context.origin, url,
+               navigation.headers, std::move(options), std::nullopt, nullptr,
+               FetchChecks{.is_navigation = true, .top_level = true});
+}
+
+void PageHost::OnRecordsReleased(const std::vector<uint64_t>& records) {
+  for (const uint64_t record : records) {
+    records_.erase(record);
+  }
 }
 
 void PageHost::PushNavigated(std::string url,
@@ -3482,6 +3686,12 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     case PageMessage::kDocumentOpened:
       OnDocumentOpened(frame->document, frame->opener);
+      return;
+    case PageMessage::kTraversalRequest:
+      OnTraversalRequest(frame->traversal, frame->document);
+      return;
+    case PageMessage::kRecordsReleased:
+      OnRecordsReleased(frame->released_records);
       return;
     case PageMessage::kIndexedDb:
       OnIndexedDb(std::move(frame->indexed_db_call), frame->document,

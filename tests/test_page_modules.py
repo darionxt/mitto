@@ -698,3 +698,20 @@ def test_a_module_script_its_imports_and_a_module_preload_go_with_the_documents_
         assert {
             path: referer for path, referer in server.referers.items() if path.startswith("/policy/")
         } == dict.fromkeys(("/policy/preloaded.js", "/policy/root.js", "/policy/imported.js"), server.url())
+
+
+def test_a_blob_modules_import_meta_url_keeps_its_fragment(session: mitto.Session, server: ScriptServer) -> None:
+    # As in Chrome 157: the response of a blob: URL keeps the fragment that Response's url getter leaves out.
+    server.case = Case({"/": _page("<p>blob</p>")})
+    page = session._open_page(server.url(), timeout=_TIMEOUT_SECONDS)  # pyright: ignore[reportPrivateUsage]
+    with page:
+        meta = page.evaluate(
+            """(async () => {
+              const url = URL.createObjectURL(new Blob(['export const u = import.meta.url;'], {type: 'text/javascript'}));
+              const fetched = await fetch(url + '#variant');
+              return [(await import(url + '#variant')).u === url + '#variant', fetched.url === url];
+            })()""",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert meta == [True, True]

@@ -148,6 +148,23 @@ uint64_t PageRequests::StartNavigation(uint64_t initiator,
   return number;
 }
 
+uint64_t PageRequests::StartTraversal(PageTraversalRequest traversal,
+                                      Client& client) {
+  const uint64_t context = Window::Current().DocumentId();
+  const uint64_t number = sender_->SendRequest(
+      context,
+      [&](uint64_t number) {
+        traversal.number = number;
+        return EncodeTraversalRequest(context, traversal);
+      },
+      route_);
+  // A navigation, whose response the Session says the cross-origin isolation
+  // of first, as of any navigation.
+  open_[number].client = &client;
+  open_[number].navigation = true;
+  return number;
+}
+
 uint64_t PageRequests::Send(uint64_t context, PageRequest& request) {
   // Its response can come only once this thread is done with this task, so
   // it finds the request open.
