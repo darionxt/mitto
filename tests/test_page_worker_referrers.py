@@ -36,6 +36,7 @@ const cases = (async () => {
         `/ask?case=${id}&what=script&script=1&worker=1&policy=${encodeURIComponent(policy)}`
           + `&static=${type === 'module' ? 1 : ''}`, {type});
       await new Promise((resolve) => { worker.onmessage = resolve; worker.onerror = resolve; });
+      worker.terminate();
     }
   }
   return 'done';
