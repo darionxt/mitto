@@ -289,11 +289,13 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
     ),
-    # A keepalive fetch that goes on after the worker that started it closes.
-    "/keepalive.js": (
+    # A fetch that a worker starts as it closes.
+    "/closing.js": (
         "text/javascript",
-        b"fetch('/beacon', { method: 'POST', body: 'kept', keepalive: true }); close();",
+        b"fetch('/beacon', { method: 'POST', body: 'kept' }); close();",
     ),
+    # A keepalive fetch that redirects once the worker that started it has ended.
+    "/keepalive.js": ("text/javascript", b"fetch('/held', { keepalive: true }); postMessage('started');"),
     # A module that a worker of a data: URL imports, with what it imports in turn, one of them behind a redirect, none
     # of them with a CORS header.
     "/graph-a.js": (
@@ -326,7 +328,10 @@ _POSTED: list[tuple[str, bytes]] = []
 # The Referer and the header lines of each GET, by path, and the paths that redirect, to where.
 _REFERERS: dict[str, str | None] = {}
 _HEADERS: dict[str, list[tuple[str, str]]] = {}
-_REDIRECTS = {"/redirect-w.js": "/v2/w.js", "/redirect-c.js": "/graph-c.js"}
+_REDIRECTS = {"/redirect-w.js": "/v2/w.js", "/redirect-c.js": "/graph-c.js", "/held": "/after"}
+# When /held redirects, and when it has been asked for.
+_RELEASED = threading.Event()
+_HELD = threading.Event()
 # The headers of the last GET of /echo, which any origin may read, and how many preflights of it came.
 _ECHOED: dict[str, str] = {}
 _PREFLIGHTS: list[str] = []
@@ -362,6 +367,9 @@ def server() -> Iterator[str]:
                 self.end_headers()
                 self.wfile.write(b"echo")
                 return
+            if path == "/held":
+                _HELD.set()
+                _RELEASED.wait(_TIMEOUT_SECONDS)
             if path in _REDIRECTS:
                 self.send_response(302)
                 self.send_header("Location", _REDIRECTS[path])
@@ -867,10 +875,10 @@ def test_a_workers_high_entropy_values_are_the_windows(server: str) -> None:
 
 
 @pytest.mark.usefixtures("page_program")
-def test_a_workers_keepalive_fetch_outlives_the_worker(server: str) -> None:
+def test_a_fetch_that_a_worker_starts_as_it_closes_is_sent(server: str) -> None:
     _POSTED.clear()
     script = """new Promise((resolve) => {
-        new Worker('/keepalive.js');
+        new Worker('/closing.js');
         setTimeout(() => resolve('waited'), 500);
     })"""
 
@@ -879,6 +887,29 @@ def test_a_workers_keepalive_fetch_outlives_the_worker(server: str) -> None:
     while not _POSTED and time.monotonic() < deadline:
         time.sleep(0.05)
     assert _POSTED == [("/beacon", b"kept")]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_keepalive_fetch_ends_with_the_worker(server: str) -> None:
+    # Only a document's goes on, so Chrome 157 does not follow the redirect of a worker's.
+    _RELEASED.clear()
+    _HELD.clear()
+    _REFERERS.pop("/after", None)
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/keepalive.js');
+        worker.onmessage = () => {
+            worker.terminate();
+            setTimeout(() => resolve('terminated'), 500);
+        };
+    })"""
+
+    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "terminated"
+        assert _HELD.is_set()
+        _RELEASED.set()
+        time.sleep(0.5)
+
+    assert "/after" not in _REFERERS
 
 
 @pytest.mark.usefixtures("page_program")
