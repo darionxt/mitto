@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/time/time.h"
 #include "net/base/request_priority.h"
@@ -104,6 +105,11 @@ struct FetchParams {
 
   // The names of the headers that are the caller's, in lower case.
   std::set<std::string> fixed_headers;
+
+  // The names of those that a page's script set, in lower case and in the order
+  // that they go into Blink's HTTPHeaderMap, ahead of what Blink adds. The
+  // request's headers then go in the order that the map gives them.
+  std::vector<std::string> script_headers;
 };
 
 // What a request is started with, besides its URL and headers.

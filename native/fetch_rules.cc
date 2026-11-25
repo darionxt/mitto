@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/strings/string_util.h"
 #include "mitto/cors_preflight.h"
 #include "mitto/http_header_map.h"
@@ -91,12 +92,26 @@ bool IsInHTTPHeaderMap(std::string_view name, bool origin_in_map) {
 }
 
 // Puts what Blink holds in its HTTPHeaderMap in the order the map gives it,
-// ahead of everything else, which keeps its order.
-void SortAsHTTPHeaderMap(net::URLRequest& request, bool origin_in_map) {
+// ahead of everything else, which keeps its order: the headers of
+// `script_headers`, which come with the request, and what Blink adds.
+void SortAsHTTPHeaderMap(net::URLRequest& request,
+                         bool origin_in_map,
+                         base::span<const std::string> script_headers) {
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   std::vector<std::string_view> names;
+  const auto is_in_map = [&names](std::string_view name) {
+    return std::ranges::any_of(names, [name](std::string_view held) {
+      return base::EqualsCaseInsensitiveASCII(held, name);
+    });
+  };
+  for (const std::string& name : script_headers) {
+    if (headers.HasHeader(name)) {
+      names.push_back(name);
+    }
+  }
   for (std::string_view listed : kHTTPHeaderMapInsertionOrder) {
-    if (headers.HasHeader(listed) && IsInHTTPHeaderMap(listed, origin_in_map)) {
+    if (headers.HasHeader(listed) && IsInHTTPHeaderMap(listed, origin_in_map) &&
+        !is_in_map(listed)) {
       names.push_back(listed);
     }
   }
@@ -112,7 +127,7 @@ void SortAsHTTPHeaderMap(net::URLRequest& request, bool origin_in_map) {
   }
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
        headers.GetHeaderVector()) {
-    if (!IsInHTTPHeaderMap(header.key, origin_in_map)) {
+    if (!is_in_map(header.key)) {
       sorted.SetHeader(header.key, header.value);
     }
   }
@@ -331,10 +346,12 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
     }
   }
 
-  // With no hint added, the Persona's order is what the map gives, and leaving
-  // it alone keeps a caller's lines where they are.
-  if (added_a_hint_that_is_not_sent_by_default) {
-    SortAsHTTPHeaderMap(request, OriginIsBlinksLine());
+  // With no hint added and no line of a page's script, the Persona's order is
+  // what the map gives, and leaving it alone keeps a caller's lines where they
+  // are.
+  if (added_a_hint_that_is_not_sent_by_default ||
+      !params_.script_headers.empty()) {
+    SortAsHTTPHeaderMap(request, OriginIsBlinksLine(), params_.script_headers);
   }
 }
 
