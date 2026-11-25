@@ -170,8 +170,7 @@ class PageRequests {
   // its window is frozen, as the task in which Blink's loader flushes what it
   // deferred.
   void DeliverHeld(uint64_t number);
-  // Whether a request of `context` is still open that its document's end would
-  // end with it.
+  // Whether a request of `context` is still open.
   bool IsLoading(const ExecutionContext& context) const;
   // Cancels each request of `context`, as when the back/forward cache drops
   // its window, which hears nothing more of them.
@@ -242,8 +241,6 @@ class PageRequests {
     bool isolation_said = false;
     // Whether its response counts as a script's request's here: the favicon.
     bool script_request = false;
-    // Whether it outlives its document.
-    bool keepalive = false;
     // Whether it is a traversal that the Session may answer with a restore.
     bool may_restore = false;
   };

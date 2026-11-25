@@ -1648,6 +1648,9 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   if (timers_) {
     timers_->ResumeDelayed();
   }
+  if (idle_tasks_) {
+    idle_tasks_->ResumeDelayed();
+  }
   if (window_tasks_) {
     window_tasks_->ResumeDelayed();
   }

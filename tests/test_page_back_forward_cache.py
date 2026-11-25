@@ -1058,8 +1058,13 @@ def test_a_page_that_goes_takes_the_reactions_that_waited_with_it(
             ["new", "old"],
         ),
         ("setTimeout(() => log.push('old'), 100)", "setTimeout(() => log.push('new'), 0)", ["new", "old"]),
+        (
+            "requestIdleCallback(deadline => log.push('old:' + deadline.didTimeout), {timeout: 50})",
+            "setTimeout(() => log.push('new'), 0)",
+            ["new", "old:true"],
+        ),
     ],
-    ids=["task", "yield", "timeout", "message", "signal", "delayed-signal", "delayed-task", "delayed-timeout"],
+    ids=["task", "yield", "timeout", "message", "signal", "delayed-signal", "delayed-task", "delayed-timeout", "idle"],
 )
 def test_what_waited_comes_before_what_a_pageshow_listener_posts_but_for_what_was_delayed(
     session: mitto.Session, server: RecordingServer, before: str, after: str, expected: list[str]
@@ -1080,3 +1085,65 @@ def test_what_waited_comes_before_what_a_pageshow_listener_posts_but_for_what_wa
         assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
         _wait(page, 100)
         assert page.evaluate("log") == expected
+
+
+def test_a_page_has_opened_once_a_document_that_had_not_loaded_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    held = threading.Event()
+    server.routes["/held"] = Route(b"x", headers=[("Content-Type", "text/plain")], hold=held)
+    first = server.page(
+        "/a",
+        "<title>A</title>" + _LOGGING + "<script>"
+        "addEventListener('load', () => log.push('load'));"
+        "document.addEventListener('DOMContentLoaded', () => {"
+        "  setTimeout(() => { window.marker = 1; navigation.navigate('/b', {history: 'push'}); }, 50);"
+        "});"
+        "</script><img src='/held'>",
+    )
+    server.page("/b", "<title>B</title><script>setTimeout(() => history.back(), 0)</script><img src='/held'>")
+
+    try:
+        # No document loads: the first stopped as it left, and the second as the cache gave the first its place again.
+        with _open_page(session, first) as page:
+            assert page.evaluate("[location.pathname, window.marker, log.at(-1), document.readyState]") == [
+                "/a",
+                1,
+                "pageshow:true",
+                "complete",
+            ]
+            held.set()
+            _wait(page, 200)
+            assert page.evaluate("log.includes('load')") is False
+    finally:
+        held.set()
+
+
+def test_a_kept_page_whose_pagehide_listener_traversed_can_traverse_once_it_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>")
+    second = server.page("/b", "<title>B</title><script>window.log = [];</script>")
+    third = server.page("/c", "<title>C</title>")
+
+    with _open_page(session, first) as page:
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        # A Known Gap: the traversal of the listener goes on in Chrome, to the first page.
+        page.evaluate(
+            "addEventListener('pagehide', () => {"
+            "  window.first = navigation.back().finished;"
+            "  first.then(() => log.push('finished'), error => log.push(error.name));"
+            "}, {once: true});"
+            "addEventListener('pageshow', () => log.push(navigation.back().finished === first), {once: true});"
+            " location.href = '/c'; 0"
+        )
+        assert _next_document(page).url == third
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=second, status=200, restored=True)
+        assert _next_document(page).url == first
+        page.evaluate("history.forward()")
+        assert _next_document(page) == PageNavigation(url=second, status=200, restored=True)
+        # The promises of the one before it never settle.
+        _wait(page, 100)
+        assert page.evaluate("log") == [False]

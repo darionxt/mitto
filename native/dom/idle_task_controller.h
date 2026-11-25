@@ -48,11 +48,13 @@ class IdleTaskController {
 
   // ScriptedIdleTaskController::ContextLifecycleStateChanged(), as the
   // back/forward cache freezes a window: a callback whose idle period or
-  // timeout comes while frozen does not run, and Resume() asks for its idle
-  // period again and runs its timeout's task, as Blink reschedules them once
-  // the context runs again.
+  // timeout comes while frozen does not run, Resume() asks for its idle
+  // period again, and ResumeDelayed() runs its timeout's task, with the rest
+  // of what was delayed, as Blink reschedules them once the context runs
+  // again.
   void Freeze() { frozen_ = true; }
   void Resume();
+  void ResumeDelayed();
 
   // How many callbacks wait.
   size_t size() const { return tasks_.size(); }

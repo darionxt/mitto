@@ -134,7 +134,6 @@ uint64_t PageRequests::Start(PageRequest request,
   Open& open = open_[number];
   open.client = &client;
   open.streams_body = request.streams_body;
-  open.keepalive = request.keepalive;
   open.timed = std::move(timed);
   // The favicon that Chrome's renderer fetches for the browser, which a
   // ThreadableLoader loads as a script's request. A fetch() marks its
@@ -487,7 +486,7 @@ void PageRequests::DeliverHeld(uint64_t number) {
 bool PageRequests::IsLoading(const ExecutionContext& context) const {
   return std::ranges::any_of(open_, [&](const auto& entry) {
     const auto& [number, open] = entry;
-    if (!open.client || open.keepalive || !open.timed ||
+    if (!open.client || !open.timed ||
         open.timed->execution_context != &context) {
       return false;
     }

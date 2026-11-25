@@ -105,6 +105,14 @@ void IdleTaskController::Stop() {
 
 void IdleTaskController::Resume() {
   frozen_ = false;
+  for (const uint32_t id : std::exchange(held_idle_tasks_, {})) {
+    if (tasks_.contains(id)) {
+      PostSchedulerIdleTask(id);
+    }
+  }
+}
+
+void IdleTaskController::ResumeDelayed() {
   for (const uint32_t id : std::exchange(held_timeouts_, {})) {
     const auto found = tasks_.find(id);
     if (found == tasks_.end()) {
@@ -115,11 +123,6 @@ void IdleTaskController::Resume() {
         ->PostTask(FROM_HERE,
                    base::BindOnce(&IdleTask::OnTimeout,
                                   found->second->timeout_factory.GetWeakPtr()));
-  }
-  for (const uint32_t id : std::exchange(held_idle_tasks_, {})) {
-    if (tasks_.contains(id)) {
-      PostSchedulerIdleTask(id);
-    }
   }
 }
 

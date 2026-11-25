@@ -136,7 +136,8 @@ class PageRecord:
         navigated: How the navigation that opened the Page went, once its event has come.
         loaded: Whether the window's load event of a document of the Page has been dispatched.
         stopped_loading: Whether a document stopped loading before it had loaded, with no new document to load after it:
-            a navigation that it started ended with no document of its own.
+            a navigation that it started ended with no document of its own, or the back/forward cache restored the
+            document before it.
         document_url: The URL of the Page's document, once a navigation has given it one.
     """
 
@@ -218,6 +219,10 @@ class PageRecord:
             if self._loading is not None:
                 self._loading.done = True
             self._loading = None
+            # The document that comes back stopped loading when it started the navigation that left it, and so may never
+            # fire its load event, and the one that it takes the place of does not either.
+            if not self.loaded:
+                self.stopped_loading = True
             return
         if event.net_error == 0:
             self.document_url = event.url

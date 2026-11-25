@@ -672,6 +672,9 @@ void Navigation::SetEntriesForRestore(const EntryArrays& arrays) {
     ongoing_navigate_event_ = nullptr;
     ongoing_tracker_ = nullptr;
   }
+  // Nor does a traversal that it asked for as it left wait for it, whose
+  // promises never settle, so that it can ask for the same one again.
+  upcoming_traverse_trackers_.clear();
   NavigationHistoryEntry* const current = CurrentEntry();
   // Rooted until they are among the entries, as a collection that the next
   // one's allocation makes may come first.
