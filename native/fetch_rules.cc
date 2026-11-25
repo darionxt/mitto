@@ -370,7 +370,8 @@ std::vector<std::string> FetchRules::ScriptHeadersInMap(
     return names;
   }
   // A script sets none of the forbidden ones, and in mode no-cors only those
-  // that need no preflight. A caller may set any.
+  // that need no preflight, but for the lines that a request of cache.keys()
+  // keeps, which a page sends. A caller may set any.
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   for (const std::string& name : params_.script_headers) {
     const std::optional<std::string> line = headers.GetHeader(name);
@@ -380,6 +381,7 @@ std::vector<std::string> FetchRules::ScriptHeadersInMap(
     const std::string_view value = NormalizeHeaderValue(*line);
     if (!IsForbiddenRequestHeader(name, value) &&
         (params_.mode != RequestMode::kNoCors ||
+         params_.script_headers_of_a_page ||
          IsNoCorsSafelistedHeader(name, value))) {
       names.push_back(name);
     }

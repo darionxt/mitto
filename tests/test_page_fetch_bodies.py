@@ -421,8 +421,8 @@ def test_request_and_response_members_do_what_chrome_does(program: Path, script:
 
 @pytest.fixture
 def page_url(native_library: Any) -> Iterator[str]:
-    """The URL of an empty page on 127.0.0.1, whose /referer gives any origin the Referer line that came, or skip if no
-    Page program lies beside the library."""
+    """The URL of an empty page on 127.0.0.1, whose /referer gives any origin the Referer line that came, and /names the
+    names of the lines that came, in their order, or skip if no Page program lies beside the library."""
     library_path = _native.find_library()
     assert library_path is not None
     if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
@@ -437,6 +437,8 @@ def page_url(native_library: Any) -> Iterator[str]:
             if self.path == "/referer":
                 body = self.headers.get("Referer", "none").encode()
                 self.send_header("Access-Control-Allow-Origin", "*")
+            elif self.path.startswith("/names"):
+                body = ",".join(name for name in self.headers if name.lower() not in {"host", "connection"}).encode()
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -1015,6 +1017,26 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
         "InvalidStateError: Failed to execute 'put' on 'Cache': Cannot load body from a frame or worker than has been "
         "detached; InvalidStateError: Failed to execute 'put' on 'Cache': Cannot load body from a frame or worker than has "
         "been detached; put",
+    ),
+    "the order of the lines of a cache's requests": (
+        """
+        const cache = await caches.open("names"); const out = [];
+        for (const lines of [[["X-Version", "1"], ["Accept-Language", "fr"], ["Content-Type", "application/json"]],
+                             [["X-Zeta", "1"], ["Accept", "text/plain"], ["X-Alpha", "2"]]]) {
+            const url = location.origin + "/names?" + out.length;
+            await cache.put(new Request(url, { headers: lines }), new Response("x"));
+            const key = (await cache.keys()).find((r) => r.url === url);
+            for (const request of [key, new Request(key)]) out.push(await (await fetch(request)).text());
+        }
+        return out.join(" / ");
+        """,
+        "sec-ch-ua-platform,X-Version,Accept-Language,sec-ch-ua,Content-Type,sec-ch-ua-mobile,User-Agent,Accept,"
+        "Sec-Fetch-Site,Sec-Fetch-Mode,Sec-Fetch-Dest,Accept-Encoding / sec-ch-ua-platform,X-Version,Accept-Language,"
+        "sec-ch-ua,Content-Type,sec-ch-ua-mobile,User-Agent,Accept,Sec-Fetch-Site,Sec-Fetch-Mode,Sec-Fetch-Dest,"
+        "Accept-Encoding / X-Zeta,X-Alpha,sec-ch-ua-platform,User-Agent,Accept,sec-ch-ua,sec-ch-ua-mobile,"
+        "Sec-Fetch-Site,Sec-Fetch-Mode,Sec-Fetch-Dest,Accept-Encoding,Accept-Language / X-Zeta,X-Alpha,"
+        "sec-ch-ua-platform,User-Agent,Accept,sec-ch-ua,sec-ch-ua-mobile,Sec-Fetch-Site,Sec-Fetch-Mode,"
+        "Sec-Fetch-Dest,Accept-Encoding,Accept-Language",
     ),
     "the Range line of a copy of a cache's request": (
         """

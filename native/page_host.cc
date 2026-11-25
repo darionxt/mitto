@@ -1750,6 +1750,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       })) {
     headers.RemoveHeader(net::HttpRequestHeaders::kContentType);
   }
+  options.fetch->script_headers_of_a_page = true;
   for (const auto& [name, value] : lines) {
     // A line that Blink's map holds goes by the name that the script wrote.
     if (options.fetch->header_order != HeaderOrder::kGiven) {
