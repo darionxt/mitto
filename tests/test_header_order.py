@@ -142,9 +142,16 @@ def test_a_no_cors_fetch_orders_only_the_lines_that_a_script_may_set(server: Cap
         safe = {"Accept": "a/b", "Content-Language": "de", "Accept-Language": "\tde "}
         safelisted = _ask(session, server, run, "safelisted", RequestKind.FETCH, mode="no-cors", headers=safe)
 
+        # A type that a script could not give, which the safelisted lines do not take along.
+        typed = _ask(
+            session, server, run, "typed", RequestKind.FETCH, mode="no-cors", headers={**safe, "Content-Type": "a/json"}
+        )
+
     net = next(index for index, name in enumerate(plain) if name.lower() in _NET_LINES)
     assert refused == [*plain[:net], "X-Alpha", *plain[net:]]
     assert safelisted == chrome
+    assert typed.index("Content-Type") > typed.index("Sec-Fetch-Dest")
+    assert [name for name in typed if name != "Content-Type"] == safelisted
 
 
 @pytest.mark.parametrize("kind", _OTHER_KINDS)

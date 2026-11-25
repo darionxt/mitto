@@ -97,6 +97,7 @@ bool IsInHTTPHeaderMap(std::string_view name, bool origin_in_map) {
 // `script_headers`, which come with the request, and what Blink adds.
 void SortAsHTTPHeaderMap(net::URLRequest& request,
                          bool origin_in_map,
+                         bool content_type_in_map,
                          base::span<const std::string> script_headers) {
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   std::vector<std::string_view> names;
@@ -112,7 +113,8 @@ void SortAsHTTPHeaderMap(net::URLRequest& request,
   }
   for (std::string_view listed : kHTTPHeaderMapInsertionOrder) {
     if (headers.HasHeader(listed) && IsInHTTPHeaderMap(listed, origin_in_map) &&
-        !is_in_map(listed)) {
+        !is_in_map(listed) &&
+        (listed != "content-type" || content_type_in_map)) {
       names.push_back(listed);
     }
   }
@@ -359,7 +361,12 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
   if (added_a_hint_that_is_not_sent_by_default || !script_headers.empty() ||
       (has_a_hint_of_the_caller &&
        params_.header_order != HeaderOrder::kGiven)) {
-    SortAsHTTPHeaderMap(request, OriginIsBlinksLine(), script_headers);
+    // A caller's that a script could not set is not in the map.
+    const bool content_type_in_map =
+        params_.header_order == HeaderOrder::kGiven ||
+        !IsFixed(net::HttpRequestHeaders::kContentType);
+    SortAsHTTPHeaderMap(request, OriginIsBlinksLine(), content_type_in_map,
+                        script_headers);
   }
 }
 
@@ -374,8 +381,11 @@ std::vector<std::string> FetchRules::ScriptHeadersInMap(
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   for (const std::string& name : params_.script_headers) {
     const std::optional<std::string> line = headers.GetHeader(name);
-    const std::string_view value = NormalizeHeaderValue(line.value_or(""));
-    if (line && !IsForbiddenRequestHeader(name, value) &&
+    if (!line) {
+      continue;
+    }
+    const std::string_view value = NormalizeHeaderValue(*line);
+    if (!IsForbiddenRequestHeader(name, value) &&
         (params_.mode != RequestMode::kNoCors ||
          IsNoCorsSafelistedHeader(name, value))) {
       names.push_back(name);
@@ -386,7 +396,7 @@ std::vector<std::string> FetchRules::ScriptHeadersInMap(
   }
   // Blink adds a body's type to them.
   if (headers.HasHeader(net::HttpRequestHeaders::kContentType) &&
-      !std::ranges::contains(names, "content-type")) {
+      !IsFixed(net::HttpRequestHeaders::kContentType)) {
     names.emplace_back("content-type");
   }
   if (params_.header_order == HeaderOrder::kFetch) {
