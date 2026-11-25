@@ -24,7 +24,8 @@ class Window;
 bool CanNavigate(Frame& source, Frame& target, const GURL& url);
 
 // SecurityOrigin::CanDisplay(): whether the document of `window` may show
-// `url`, and if not, its console says why: no blob: URL of another origin.
+// `url`, and if not, its console says why: no file: URL, no blob: or
+// filesystem: URL of another origin, and none of Chrome's own schemes.
 bool CanDisplay(Window& window, const GURL& url);
 
 // FrameTree::FindOrCreateFrameForNavigation(): the frame that `name` names for

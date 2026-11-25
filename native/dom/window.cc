@@ -318,10 +318,10 @@ v8::Local<v8::Value> Window::OpenerForBindings() const {
 // data property of the window, and null disowns the opener.
 void Window::SetOpenerForBindings(v8::Local<v8::Value> opener,
                                   bindings::ExceptionState& exception_state) {
-  if (!frame_) {
+  if (!HasContext()) {
     return;
   }
-  if (opener->IsNull()) {
+  if (opener->IsNull() && frame_) {
     frame_->SetOpener(nullptr);
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();

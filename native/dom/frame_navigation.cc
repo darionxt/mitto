@@ -2,7 +2,10 @@
 
 #include <stddef.h>
 
+#include <algorithm>
+#include <array>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/strings/strcat.h"
@@ -180,9 +183,16 @@ bool CanNavigate(Frame& source, Frame& target, const GURL& url) {
 }
 
 bool CanDisplay(Window& window, const GURL& url) {
-  if (!url.SchemeIsBlob() ||
-      BlobUrlRegistry::Get().OriginOf(url).IsSameOriginWith(
-          window.GetSecurityOrigin())) {
+  // The local scheme, and those that Chrome's renderer isolates.
+  static constexpr auto kSchemes = std::to_array<std::string_view>(
+      {"chrome", "chrome-distiller", "chrome-error", "chrome-native",
+       "chrome-search", "devtools", "file", "googlechrome", "view-source"});
+  const bool inner = url.SchemeIsBlob() || url.SchemeIsFileSystem();
+  const url::Origin origin = url.SchemeIsBlob()
+                                 ? BlobUrlRegistry::Get().OriginOf(url)
+                                 : url::Origin::Create(url);
+  if (inner ? origin.IsSameOriginWith(window.GetSecurityOrigin())
+            : !std::ranges::contains(kSchemes, url.scheme())) {
     return true;
   }
   window.AddConsoleMessage(
