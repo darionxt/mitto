@@ -63,7 +63,17 @@
         nothing: () => container.get({}),
       };
       for (const name in attempts) credentials[name] = await within((async () => attempts[name]())());
-      const request = typeof Notification === 'undefined' ? 'none' : Notification.permission === 'default' ? 'asked' : await within(Notification.requestPermission());
+      const request = typeof Notification === 'undefined' ? 'none' : Notification.permission === 'default' ? 'asked' : await (async () => {
+        // The callback of a frame that has gone by then runs no more.
+        const heard = [];
+        const doomed = document.createElement('iframe');
+        document.documentElement.append(doomed);
+        const asked = [within(Notification.requestPermission((permission) => heard.push(permission)))];
+        // A sandboxed document's frame is of another origin than it.
+        if (origin !== 'null') asked.push(within(Notification.requestPermission(doomed.contentWindow.Function('heard', 'return () => heard.push("late")')(heard))));
+        doomed.remove();
+        return [await Promise.all(asked), heard];
+      })();
       return {geolocation, watch, keyboard, again, hints, worker, opaque, gamepads, credentials, request};
     },
   };

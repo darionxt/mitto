@@ -30,8 +30,10 @@
 #include <map>
 #include <string>
 
+#include "base/memory/scoped_refptr.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/permission_status.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-object.h"
 #include "v8/include/v8-promise.h"
@@ -52,10 +54,14 @@ class Permissions final : public bindings::ScriptWrappable {
                                bindings::ExceptionState& exception_state);
 
  private:
-  // The name that each kind of permission gives its PermissionStatus: that
-  // of the first descriptor the document asked about, as Blink keeps one
-  // listener for each kind.
-  std::map<int, std::u16string> names_;
+  // What each kind of permission gives its PermissionStatus, as Blink keeps
+  // one listener for each kind: the name of the first descriptor that the
+  // document asked about, and the state of the latest answer.
+  struct Listener {
+    std::u16string name;
+    scoped_refptr<PermissionStatus::SharedState> state;
+  };
+  std::map<int, Listener> listeners_;
 };
 
 }  // namespace mitto

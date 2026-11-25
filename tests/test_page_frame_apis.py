@@ -10,6 +10,7 @@ import collections
 import http.server
 import json
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -82,12 +83,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         kind, body = "text/html", "<!doctype html><body>"
         if path == "/child.js":
             kind, body = "text/javascript", _CHILD
-        elif path in ("/child", "/nest", "/without", *_HEADERS):
+        elif path in ("/child", "/nest", "/without", "/late", *_HEADERS):
             body = f"<!doctype html><script>{_CHILD}</script>"
         self.send_response(200)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body.encode())))
-        if path in ("/without", "/app/without"):
+        if path == "/late":
+            # Long enough for what a script asks of the frame's initial document.
+            time.sleep(0.5)
+        if path in ("/without", "/late", "/app/without"):
             self.send_header("Permissions-Policy", ", ".join(f"{feature}=()" for feature in _WITHHELD))
         elif path in _HEADERS:
             self.send_header("Permissions-Policy", _HEADERS[path])

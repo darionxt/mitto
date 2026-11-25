@@ -175,9 +175,17 @@ v8::Local<v8::Promise> Notification::RequestPermission(
           [](v8::Global<v8::Function> callback, v8::Isolate* isolate) {
             const v8::Local<v8::Value> denied =
                 v8::String::NewFromUtf8Literal(isolate, "denied");
-            if (!callback.IsEmpty()) {
-              const v8::Local<v8::Context> context =
-                  isolate->GetCurrentContext();
+            // The callback runs in its own context, if that is there still.
+            v8::Local<v8::Context> context;
+            if (!callback.IsEmpty() &&
+                callback.Get(isolate)->GetCreationContext(isolate).ToLocal(
+                    &context)) {
+              const ExecutionContext* const owner =
+                  ExecutionContext::From(isolate, context);
+              if (!owner || !owner->HasContext()) {
+                return denied;
+              }
+              const v8::Context::Scope context_scope(context);
               // As Blink's V8ScriptRunner::CallFunction(): what the callback
               // queued runs once it returns.
               const v8::MicrotasksScope microtasks_scope(

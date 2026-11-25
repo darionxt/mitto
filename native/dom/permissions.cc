@@ -4,6 +4,8 @@
 #include <optional>
 #include <string_view>
 
+#include "base/functional/bind.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_context.h"
 #include "mitto/bindings/per_context_data.h"
@@ -14,7 +16,6 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/frame.h"
-#include "mitto/dom/permission_status.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
 #include "net/base/url_util.h"
@@ -579,14 +580,22 @@ v8::Local<v8::Promise> Permissions::Query(
            .ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
-  const auto [entry, inserted] = names_.try_emplace(
-      static_cast<int>(descriptor->kind), std::u16string(descriptor->name));
-  const std::u16string_view state =
-      StateOf(descriptor->kind, ExecutionContext::Current());
+  Listener& listener = listeners_[static_cast<int>(descriptor->kind)];
+  if (!listener.state) {
+    listener.name = descriptor->name;
+    listener.state = base::MakeRefCounted<PermissionStatus::SharedState>();
+  }
   // A new PermissionStatus each time, once the browser has answered.
-  ResolveFromTask(isolate, resolver,
-                  PermissionStatus::Create(entry->second, std::u16string(state))
-                      ->ToV8(isolate));
+  ResolveFromTaskWith(
+      isolate, resolver,
+      base::BindOnce(
+          [](const Listener& listener, std::u16string_view state,
+             v8::Isolate* isolate) -> v8::Local<v8::Value> {
+            listener.state->data = state;
+            return PermissionStatus::Create(listener.name, listener.state)
+                ->ToV8(isolate);
+          },
+          listener, StateOf(descriptor->kind, ExecutionContext::Current())));
   return resolver->GetPromise();
 }
 
