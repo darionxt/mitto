@@ -250,6 +250,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                        .substr(mitto::kFrameHeaderSize),
                    payload);
           break;
+        case mitto::PageMessage::kDocumentStored:
+        case mitto::PageMessage::kDocumentRestored:
+        case mitto::PageMessage::kDocumentEvicted:
+          CHECK_NE(frame->cached_document, mitto::kNoDocument);
+          CHECK_EQ(payload.size(), 8u);
+          break;
         case mitto::PageMessage::kContextGone:
           CHECK_NE(frame->gone_context, mitto::kNoDocument);
           CHECK_EQ(payload.size(), 8u);
@@ -318,6 +324,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kStorageBucketsAnswer:
         case mitto::PageMessage::kRequestBodyCredit:
         case mitto::PageMessage::kIsolation:
+        case mitto::PageMessage::kRestore:
           // Only a Session sends these.
           NOTREACHED();
       }

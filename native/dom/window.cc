@@ -477,6 +477,10 @@ StorageBucketHost* Window::GetStorageBucketHost() const {
   return GetDocument().GetStorageBucketHost();
 }
 
+bool Window::HasPublicKeyRequest() const {
+  return navigator_ && navigator_->HasPublicKeyRequest();
+}
+
 mitto::Performance* Window::Performance() {
   if (!performance_) {
     performance_ = Performance::Create(TimeOrigin(), &GetDocumentLoadTiming(),

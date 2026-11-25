@@ -2295,6 +2295,7 @@ int32_t mitto_page_next_event(MittoPage* page,
   if (next.type == MITTO_PAGE_EVENT_NAVIGATED) {
     event->status = next.status;
     event->net_error = next.net_error;
+    event->restored = next.restored ? 1 : 0;
   }
   if (next.type == MITTO_PAGE_EVENT_NAVIGATED ||
       next.type == MITTO_PAGE_EVENT_NAVIGATION_STARTED ||

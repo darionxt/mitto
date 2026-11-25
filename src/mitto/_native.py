@@ -87,7 +87,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 12
+ABI_VERSION = 13
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -266,6 +266,7 @@ class MittoPageEvent(ctypes.Structure):
         ("net_error", ctypes.c_int32),
         ("url", ctypes.POINTER(ctypes.c_char)),
         ("url_size", ctypes.c_size_t),
+        ("restored", ctypes.c_int32),
     )
 
 
@@ -781,11 +782,14 @@ class PageNavigated:
         net_error: 0 if the navigation has a document, ERR_ABORTED (-3) with a status if it ended with none, and otherwise
             the negative Chromium net error code it failed with, which NativePage.request_error() turns into the error
             that a request raises for it.
+        restored: Whether the Page's back/forward cache restored the document, which a traversal of the session history
+            went back to with no request.
     """
 
     url: str
     status: int
     net_error: int
+    restored: bool = False
 
     @property
     def kept_document(self) -> bool:
@@ -1825,7 +1829,12 @@ def _copy_page_event(native: MittoPageEvent) -> NativePageEvent:
         case PageEventType.KNOWN_GAP:
             return KnownGap(name=message)
         case PageEventType.NAVIGATED:
-            return PageNavigated(url=_event_url(native), status=native.status, net_error=native.net_error)
+            return PageNavigated(
+                url=_event_url(native),
+                status=native.status,
+                net_error=native.net_error,
+                restored=bool(native.restored),
+            )
         case PageEventType.LOADED:
             return PageLoaded()
         case PageEventType.NAVIGATION_STARTED:

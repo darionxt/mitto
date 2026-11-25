@@ -60,6 +60,7 @@
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/node_lists_node_data.h"
 #include "mitto/dom/page_transition_event.h"
+#include "mitto/dom/performance.h"
 #include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/processing_instruction.h"
@@ -589,14 +590,7 @@ void Document::DispatchUnloadEvents() {
   const bool page_visible = !Hidden();
   load_event_progress_ = LoadEventProgress::kUnloadVisibilityChangeInProgress;
   if (page_visible) {
-    for (const char16_t* type :
-         {u"visibilitychange", u"webkitvisibilitychange"}) {
-      bindings::EventInit init;
-      init.bubbles = true;
-      Event* const event = Event::Create(type, init);
-      event->SetTrusted(true);
-      DispatchEvent(event);
-    }
+    DispatchVisibilityChange();
   }
   if (frame_went()) {
     return;
@@ -611,6 +605,85 @@ void Document::DispatchUnloadEvents() {
     unload_event_end_ = base::TimeTicks::Now();
   }
   load_event_progress_ = LoadEventProgress::kUnloadEventHandled;
+}
+
+void Document::HideForBackForwardCache() {
+  // LocalDOMWindow::DispatchPagehideEvent(), not for a document that has
+  // started to unload.
+  if (!window_ ||
+      load_event_progress_ >= LoadEventProgress::kPageHideInProgress) {
+    return;
+  }
+  window_->DispatchEventWithTarget(
+      PageTransitionEvent::CreateTrusted(u"pagehide", /*persisted=*/true),
+      this);
+  const bool was_visible = !Hidden();
+  page_hidden_ = true;
+  if (was_visible) {
+    DidChangePageVisibility();
+  }
+}
+
+void Document::DispatchFreezeEvent() {
+  const base::AutoReset<bool> freezing(&freezing_in_progress_, true);
+  bindings::EventInit init;
+  Event* const event = Event::Create(u"freeze", init);
+  event->SetTrusted(true);
+  DispatchEvent(event);
+}
+
+bool Document::RefusesRequestWhileFreezing(const GURL& url) {
+  if (!freezing_in_progress_ || !window_) {
+    return false;
+  }
+  window_->AddConsoleMessage(
+      ConsoleLevel::kError,
+      base::StrCat({"Only fetch keepalive is allowed during onfreeze: ",
+                    url.possibly_invalid_spec()}));
+  return true;
+}
+
+void Document::DispatchResumeEvent() {
+  bindings::EventInit init;
+  Event* const event = Event::Create(u"resume", init);
+  event->SetTrusted(true);
+  DispatchEvent(event);
+}
+
+void Document::ShowFromBackForwardCache() {
+  page_hidden_ = false;
+  if (window_ && !Hidden()) {
+    DidChangePageVisibility();
+  }
+}
+
+void Document::DidChangePageVisibility() {
+  // Page::SetVisibilityState(): the page's observers, the window's Performance
+  // among them, which Chrome has made by then, hear of it before the document
+  // does.
+  window_->Performance()->AddVisibilityStateEntry(!Hidden());
+  DispatchVisibilityChange();
+}
+
+void Document::DispatchPersistedPageshowEvent(
+    base::TimeTicks navigation_start) {
+  if (window_) {
+    window_->DispatchEventWithTarget(
+        PageTransitionEvent::CreatePersistedPageshow(navigation_start), this);
+  }
+}
+
+void Document::DispatchVisibilityChange() {
+  // Document::DidChangeVisibilityState(): the event, then its deprecated
+  // twin, both of which bubble.
+  for (const char16_t* type :
+       {u"visibilitychange", u"webkitvisibilitychange"}) {
+    bindings::EventInit init;
+    init.bubbles = true;
+    Event* const event = Event::Create(type, init);
+    event->SetTrusted(true);
+    DispatchEvent(event);
+  }
 }
 
 std::u16string Document::CompatMode() const {
@@ -1717,6 +1790,7 @@ void Document::CancelParsing() {
   // Firefox has it and Blink copies, so as not to cancel the navigation.
   if (parser_ && parser_->IsParsing()) {
     ignore_opens_and_writes_for_abort_ = true;
+    parser_aborted_ = true;
   }
   DetachParser();
   parsing_state_ = ParsingState::kFinishedParsing;

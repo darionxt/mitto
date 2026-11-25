@@ -22,6 +22,7 @@
 #include "mitto/dom/lock.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/cppgc/persistent.h"
@@ -144,8 +145,64 @@ class LockManager::Connection final : public LockService::Client {
     return true;
   }
 
+  // The window that the back/forward cache keeps frozen, whose callbacks wait
+  // for it as the tasks of Blink's frozen frames do, or null.
+  ExecutionContext* Frozen() {
+    if (context_.IsEmpty()) {
+      return nullptr;
+    }
+    const v8::HandleScope handle_scope(isolate_);
+    return FrozenContext(isolate_, context_.Get(isolate_));
+  }
+
+  // What the browser answered whether the context may use storage, which a
+  // Page's documents always may, as a task of its own.
+  static void AnswerStorageCheck(scoped_refptr<Connection> connection,
+                                 base::OnceClosure callback) {
+    if (ExecutionContext* const frozen = connection->Frozen()) {
+      frozen->HoldTask(
+          TaskType::kWebLocks,
+          base::BindOnce(&Connection::AnswerStorageCheck, std::move(connection),
+                         std::move(callback)));
+      return;
+    }
+    connection->RunInContext([&callback](LockManager& manager) {
+      manager.cached_allowed_ = true;
+      std::move(callback).Run();
+    });
+  }
+
+  // The service's snapshot that query() gives its promise.
+  static void AnswerQuery(scoped_refptr<Connection> connection,
+                          v8::Global<v8::Promise::Resolver> resolver,
+                          std::vector<LockService::Info> pending,
+                          std::vector<LockService::Info> held) {
+    if (ExecutionContext* const frozen = connection->Frozen()) {
+      frozen->HoldTask(
+          TaskType::kWebLocks,
+          base::BindOnce(&Connection::AnswerQuery, std::move(connection),
+                         std::move(resolver), std::move(pending),
+                         std::move(held)));
+      return;
+    }
+    connection->RunInContext([&](LockManager&) {
+      v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+      const v8::Local<v8::Object> snapshot =
+          PlainObject(isolate, {{"held", LockInfoArray(isolate, held)},
+                                {"pending", LockInfoArray(isolate, pending)}});
+      std::ignore = resolver.Get(isolate)->Resolve(isolate->GetCurrentContext(),
+                                                   snapshot);
+    });
+  }
+
   // LockService::Client:
   void Granted(int64_t lock_id) override {
+    if (ExecutionContext* const frozen = Frozen()) {
+      frozen->HoldTask(TaskType::kWebLocks,
+                       base::BindOnce(&Connection::Granted,
+                                      base::WrapRefCounted(this), lock_id));
+      return;
+    }
     if (!RunInContext(
             [lock_id](LockManager& manager) { manager.Granted(lock_id); })) {
       // The handle is dropped, which lets the lock go, at once, as the
@@ -154,9 +211,21 @@ class LockManager::Connection final : public LockService::Client {
     }
   }
   void Failed(int64_t lock_id) override {
+    if (ExecutionContext* const frozen = Frozen()) {
+      frozen->HoldTask(TaskType::kWebLocks,
+                       base::BindOnce(&Connection::Failed,
+                                      base::WrapRefCounted(this), lock_id));
+      return;
+    }
     RunInContext([lock_id](LockManager& manager) { manager.Failed(lock_id); });
   }
   void Broken(int64_t lock_id) override {
+    if (ExecutionContext* const frozen = Frozen()) {
+      frozen->HoldTask(TaskType::kWebLocks,
+                       base::BindOnce(&Connection::Broken,
+                                      base::WrapRefCounted(this), lock_id));
+      return;
+    }
     RunInContext([lock_id](LockManager& manager) { manager.Broken(lock_id); });
   }
 
@@ -401,15 +470,8 @@ void LockManager::CheckStorageAccessAllowed(base::OnceClosure callback) {
   // comes from a task of its own; a Page's documents may always use storage.
   Post(base::BindOnce(
       [](scoped_refptr<Connection> connection, base::OnceClosure callback) {
-        Post(base::BindOnce(
-            [](scoped_refptr<Connection> connection,
-               base::OnceClosure callback) {
-              connection->RunInContext([&callback](LockManager& manager) {
-                manager.cached_allowed_ = true;
-                std::move(callback).Run();
-              });
-            },
-            std::move(connection), std::move(callback)));
+        Post(base::BindOnce(&Connection::AnswerStorageCheck,
+                            std::move(connection), std::move(callback)));
       },
       connection_, std::move(callback)));
 }
@@ -548,22 +610,8 @@ v8::Local<v8::Promise> LockManager::Query(
         // own.
         LockService::Get().QueryState(
             std::move(origin),
-            base::BindOnce(
-                [](scoped_refptr<Connection> connection,
-                   v8::Global<v8::Promise::Resolver> resolver,
-                   std::vector<LockService::Info> pending,
-                   std::vector<LockService::Info> held) {
-                  connection->RunInContext([&](LockManager&) {
-                    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-                    const v8::Local<v8::Object> snapshot = PlainObject(
-                        isolate,
-                        {{"held", LockInfoArray(isolate, held)},
-                         {"pending", LockInfoArray(isolate, pending)}});
-                    std::ignore = resolver.Get(isolate)->Resolve(
-                        isolate->GetCurrentContext(), snapshot);
-                  });
-                },
-                std::move(connection), std::move(resolver)));
+            base::BindOnce(&Connection::AnswerQuery, std::move(connection),
+                           std::move(resolver)));
       },
       connection_, origin_,
       v8::Global<v8::Promise::Resolver>(isolate, resolver)));

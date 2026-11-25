@@ -13,6 +13,7 @@
 
 #include "base/base64.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_window.h"
@@ -21,6 +22,7 @@
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
@@ -31,6 +33,7 @@
 #include "mitto/dom/resource.h"
 #include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "mitto/dom/worker_global_scope.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -99,6 +102,33 @@ void ExecutionContext::BindToContext(v8::Isolate* isolate,
   context->SetEmbedderDataV2(
       kBoundExecutionContextIndex,
       v8::External::New(isolate, this, v8::kExternalPointerTypeTagDefault));
+}
+
+ExecutionContext::HeldTask::HeldTask() = default;
+ExecutionContext::HeldTask::HeldTask(HeldTask&&) = default;
+ExecutionContext::HeldTask& ExecutionContext::HeldTask::operator=(HeldTask&&) =
+    default;
+ExecutionContext::HeldTask::~HeldTask() = default;
+
+void ExecutionContext::HoldTask(TaskType type,
+                                base::OnceClosure task,
+                                bool delayed) {
+  HeldTask held;
+  held.type = type;
+  held.task = std::move(task);
+  held.delayed = delayed;
+  held_tasks_.push_back(std::move(held));
+}
+
+void ExecutionContext::HoldTaskOf(
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
+    base::OnceClosure task,
+    bool delayed) {
+  HeldTask held;
+  held.runner = std::move(runner);
+  held.task = std::move(task);
+  held.delayed = delayed;
+  held_tasks_.push_back(std::move(held));
 }
 
 ExecutionContext::ExecutionContext() = default;
@@ -303,9 +333,29 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     std::ignore = resolver->Reject(context, signal->Reason());
     return resolver->GetPromise();
   }
+  const GURL& url = request->url();
+  // A request that the document refuses as it freezes fails from a task, which
+  // waits for the document to come back.
+  if (IsWindow() && !request->keepalive() &&
+      static_cast<Window*>(this)->GetDocument().RefusesRequestWhileFreezing(
+          url)) {
+    PostTaskInContext(
+        this, TaskType::kNetworking,
+        base::BindOnce(
+            [](v8::Isolate* isolate,
+               v8::Global<v8::Promise::Resolver> resolver) {
+              const v8::HandleScope handle_scope(isolate);
+              std::ignore = resolver.Get(isolate)->Reject(
+                  isolate->GetCurrentContext(),
+                  v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                      isolate, "Failed to fetch")));
+            },
+            base::Unretained(isolate),
+            v8::Global<v8::Promise::Resolver>(isolate, resolver)));
+    return resolver->GetPromise();
+  }
   // A data: or a blob: URL, which Chrome answers without its network service,
   // as Blink's FetchManager::Loader::PerformSchemeFetch() fetches it.
-  const GURL& url = request->url();
   if (url.SchemeIs(url::kDataScheme) || url.SchemeIs(url::kBlobScheme)) {
     const bool readable = url.SchemeIs(url::kDataScheme) ||
                           request->blob_url_origin()
