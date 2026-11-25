@@ -4,7 +4,9 @@ Each test opens a Page at a blank page of the server and starts workers whose sc
 of them is held to what Chrome 157 does for the same scripts (docs/runtime.md, "Dedicated workers").
 """
 
+import contextlib
 import http.server
+import socket
 import threading
 import time
 from collections.abc import Iterator
@@ -294,7 +296,7 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"fetch('/beacon', { method: 'POST', body: 'kept' }); close();",
     ),
-    # A keepalive fetch that redirects once the worker that started it has ended.
+    # A keepalive fetch that the server holds.
     "/keepalive.js": ("text/javascript", b"fetch('/held', { keepalive: true });"),
     # A module that a worker of a data: URL imports, with what it imports in turn, one of them behind a redirect, none
     # of them with a CORS header.
@@ -328,10 +330,10 @@ _POSTED: list[tuple[str, bytes]] = []
 # The Referer and the header lines of each GET, by path, and the paths that redirect, to where.
 _REFERERS: dict[str, str | None] = {}
 _HEADERS: dict[str, list[tuple[str, str]]] = {}
-_REDIRECTS = {"/redirect-w.js": "/v2/w.js", "/redirect-c.js": "/graph-c.js", "/held": "/after"}
-# When /held redirects, and when it has been asked for.
-_RELEASED = threading.Event()
+_REDIRECTS = {"/redirect-w.js": "/v2/w.js", "/redirect-c.js": "/graph-c.js"}
+# Whether /held, which is never answered, has been asked for, and whether the client has then let go of it.
 _HELD = threading.Event()
+_LET_GO = threading.Event()
 # The headers of the last GET of /echo, which any origin may read, and how many preflights of it came.
 _ECHOED: dict[str, str] = {}
 _PREFLIGHTS: list[str] = []
@@ -369,7 +371,16 @@ def server() -> Iterator[str]:
                 return
             if path == "/held":
                 _HELD.set()
-                _RELEASED.wait(_TIMEOUT_SECONDS)
+                self.connection.settimeout(_TIMEOUT_SECONDS)
+                with contextlib.suppress(TimeoutError):
+                    try:
+                        closed = self.connection.recv(1, socket.MSG_PEEK) == b""
+                    except ConnectionError:
+                        closed = True
+                    if closed:
+                        _LET_GO.set()
+                self.close_connection = True
+                return
             if path in _REDIRECTS:
                 self.send_response(302)
                 self.send_header("Location", _REDIRECTS[path])
@@ -892,27 +903,18 @@ def test_a_fetch_that_a_worker_starts_as_it_closes_is_sent(server: str) -> None:
 @pytest.mark.parametrize("ending", ["terminate", "close"])
 @pytest.mark.usefixtures("page_program")
 def test_a_workers_keepalive_fetch_ends_with_the_worker(server: str, ending: str) -> None:
-    # Only a document's goes on, so Chrome 157 does not follow the redirect of a worker's.
-    _RELEASED.clear()
+    # Only a document's goes on: Chrome 157 follows no redirect of a worker's that has ended.
     _HELD.clear()
-    _REFERERS.pop("/after", None)
+    _LET_GO.clear()
     with mitto.Session() as session:
         with session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
             page.evaluate("self.worker = new Worker('/keepalive.js'); 0", timeout=_TIMEOUT_SECONDS)
             assert _HELD.wait(_TIMEOUT_SECONDS)
             if ending == "terminate":
-                page.evaluate(
-                    "new Promise((resolve) => { worker.terminate(); setTimeout(resolve, 500); })",
-                    timeout=_TIMEOUT_SECONDS,
-                )
-                _RELEASED.set()
-                time.sleep(0.5)
-        if ending == "close":
-            # The Page has closed, and its Session goes on.
-            _RELEASED.set()
-            time.sleep(0.5)
-
-    assert "/after" not in _REFERERS
+                page.evaluate("worker.terminate()", timeout=_TIMEOUT_SECONDS)
+                assert _LET_GO.wait(_TIMEOUT_SECONDS)
+        # The Page has closed, and its Session goes on.
+        assert _LET_GO.wait(_TIMEOUT_SECONDS)
 
 
 @pytest.mark.usefixtures("page_program")
