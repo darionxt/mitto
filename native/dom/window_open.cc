@@ -16,6 +16,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/frame_loader.h"
@@ -139,15 +140,14 @@ Window* Window::Open(const std::u16string& url,
     }
   }
   WindowFeatures window_features = ParseWindowFeatures(features);
-  // A blob: URL of another site than the top-level page's, which its storage
-  // key names, takes no opener. One of an opaque origin is of the document's.
+  // A blob: URL of another site than the storage key's top-level one, the
+  // top-level page's, or an opaque document's own, takes no opener.
   if (completed.SchemeIsBlob() && frame_) {
-    const url::Origin blob_origin = url::Origin::Create(completed);
     const url::Origin origin = entered->GetSecurityOrigin();
-    if (origin.opaque()
-            ? !blob_origin.opaque()
-            : !IsSameSite(blob_origin,
-                          frame_->Top().DomWindow()->GetSecurityOrigin())) {
+    if (!IsSameSite(BlobUrlRegistry::Get().OriginOf(completed),
+                    origin.opaque()
+                        ? origin
+                        : frame_->Top().DomWindow()->GetSecurityOrigin())) {
       window_features.noopener = true;
     }
   }

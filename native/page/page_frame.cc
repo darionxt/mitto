@@ -1363,6 +1363,15 @@ Document* PageFrame::CommitNavigation(
   }
   current_ = std::move(committing);
   const GURL old_url(old_document.UrlForBinding());
+  // RenderFrameHostManager::ShouldProactivelySwapBrowsingInstance(): a page is
+  // in another browsing context group than one that it leaves for the
+  // back/forward cache, so nothing in it opened it.
+  if (!parent_ && old_url.SchemeIsHTTPOrHTTPS() &&
+      (type == FrameLoadType::kBackForward ||
+       (type == FrameLoadType::kStandard &&
+        old_url.GetWithoutRef() != url.GetWithoutRef()))) {
+    SetOpener(nullptr);
+  }
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
   Document& document =
@@ -1592,9 +1601,6 @@ Document& PageFrame::CommitDocument(
   Window::Current().SetDocument(document);
   if (!parent_) {
     ClearPolicyMessages();
-    // A page is in a browsing context group of its own, as no other window is
-    // in it.
-    SetOpener(nullptr);
   }
   for (PolicyMessage& message : policy_messages) {
     window_->AddConsoleMessage(
