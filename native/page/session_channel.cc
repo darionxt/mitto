@@ -241,6 +241,17 @@ class SessionLink final : public PageChannel::Delegate
             base::BindOnce(&SessionLink::ResponseOnMainThread,
                            base::Unretained(this), *std::move(frame)));
         return;
+      case PageMessage::kRestore:
+        if (!started_) {
+          Refuse("a restore came before the start");
+          return;
+        }
+        // In place of a traversal's response, in order with the responses.
+        networking_->PostTask(
+            FROM_HERE,
+            base::BindOnce(&SessionLink::ResponseOnMainThread,
+                           base::Unretained(this), *std::move(frame)));
+        return;
       case PageMessage::kIsolation:
         if (!started_) {
           Refuse("a cross-origin isolation came before the start");
@@ -388,6 +399,9 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kNetworkHint:
       case PageMessage::kTraversalRequest:
       case PageMessage::kRecordsReleased:
+      case PageMessage::kDocumentStored:
+      case PageMessage::kDocumentRestored:
+      case PageMessage::kDocumentEvicted:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -499,6 +513,9 @@ class SessionLink final : public PageChannel::Delegate
         return;
       case PageMessage::kIsolation:
         runner_->OnIsolation(frame.isolation);
+        return;
+      case PageMessage::kRestore:
+        runner_->OnRestore(frame.restore);
         return;
       default:
         NOTREACHED();

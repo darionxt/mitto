@@ -24,6 +24,7 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "mitto/cross_origin_resource_policy.h"
+#include "mitto/header_rules.h"
 #include "mitto/mime_types.h"
 #include "mitto/mitto.h"
 #include "mitto/page_cache_storage.h"
@@ -115,6 +116,10 @@ bool CanChangeToUrlForHistoryApi(const GURL& url,
 // this, the oldest go. The session history holds 50 entries, and the Page
 // releases what none holds.
 constexpr size_t kMaxNavigationRecords = 100;
+
+// How many documents the Page's back/forward cache keeps, as Chrome's
+// BackForwardCacheImpl's "cache_size" says.
+constexpr size_t kBackForwardCacheSize = 6;
 // How many URLs that navigations within a document gave it the library keeps
 // for traversals to its entries, and how many bytes of them: past these, the
 // least recent go, and a traversal to one of them goes nowhere.
@@ -1818,6 +1823,16 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
 }
 
 void PageHost::OnCancel(uint64_t number) {
+  // A traversal that the library answered with a restore, which the Page let
+  // go before it came, has ended, and the Page lets the document go.
+  if (pending_restore_ && pending_restore_->number == number) {
+    const auto stored = stored_documents_.find(pending_restore_->document);
+    pending_restore_.reset();
+    if (stored != stored_documents_.end()) {
+      PushNavigated(stored->second.context.url.spec(), 0, net::ERR_ABORTED);
+    }
+    return;
+  }
   // A navigation that the Page let go after its response came, before it
   // made a document of it, as when another takes its place, has ended too.
   if (const auto pending = navigation_responses_.find(number);
@@ -2041,7 +2056,9 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
         .coop_ignored =
             request.coop_ignored() + (IgnoresCoop(url, headers) ? 1 : 0),
         .fetch = request.navigation_fetch(),
-        .referrer = event.referrer};
+        .referrer = event.referrer,
+        .no_store = CacheControlContainsNoStore(
+            HeaderField(event.headers, "cache-control"))};
   }
   // Where a frame's document, or a worker, that the Page makes of it comes
   // from. A frame's document has its response's embedder policy, as Chrome's
@@ -2199,9 +2216,8 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
     // A response that has come whole is one the context may name as the
     // referrer of what it imports.
     if (net_error == net::OK && request.started()) {
-      if (const auto context = contexts_.find(request.context());
-          context != contexts_.end()) {
-        context->second.response_urls.insert(request.response_url());
+      if (Context* const context = FindContext(request.context())) {
+        context->response_urls.insert(request.response_url());
       }
     }
     PageResponseEnded ended;
@@ -2958,10 +2974,17 @@ void PageHost::DeliverBroadcast(const url::Origin& origin,
   // has one. A message too large for a frame with its origin stays out, as
   // one too large for a frame stays in the Page that posts it.
   if (!channel_ || ended_ || refused_by_library_ ||
-      std::ranges::none_of(contexts_, [&origin](const auto& entry) {
-        return DocumentHasCookies(ContextUrl(entry.second)) &&
-               entry.second.origin.IsSameOriginWith(origin);
-      })) {
+      (std::ranges::none_of(
+           contexts_,
+           [&origin](const auto& entry) {
+             return DocumentHasCookies(ContextUrl(entry.second)) &&
+                    entry.second.origin.IsSameOriginWith(origin);
+           }) &&
+       std::ranges::none_of(stored_documents_, [&origin](const auto& entry) {
+         const Context& context = entry.second.context;
+         return DocumentHasCookies(ContextUrl(context)) &&
+                context.origin.IsSameOriginWith(origin);
+       }))) {
     return;
   }
   PageBroadcast received = broadcast;
@@ -3026,6 +3049,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   Context context;
   context.parent = committed.parent;
   std::optional<int32_t> navigated_status;
+  bool navigated_no_store = false;
   // How many of its navigation's responses had a COOP that was ignored.
   int coop_ignored = 0;
   // What a traversal to the document repeats.
@@ -3069,6 +3093,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         context.coep = found->second.coep;
         context.cross_origin_isolated = found->second.cross_origin_isolated;
         navigated_status = found->second.status;
+        navigated_no_store = found->second.no_store;
         coop_ignored = found->second.coop_ignored;
         navigation_responses_.erase(found);
       } else {
@@ -3189,16 +3214,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     contexts_.emplace(committed.document, std::move(context));
     return;
   }
-  // It takes the place of the top-level document and everything under it,
-  // whose messages all came before this. Their keepalive requests go on
-  // without them, and the Page, which let them go, hears that they ended.
-  LetKeepaliveRequestsGo(nullptr);
-  contexts_.clear();
-  frame_navigation_responses_.clear();
-  about_blank_navigations_.clear();
-  worker_scripts_.clear();
   const GURL url = context.url;
-  contexts_.emplace(committed.document, std::move(context));
+  ReplaceTopLevelDocument(committed.document, std::move(context));
   // The records of the documents that the session history may go back to
   // stay, until the Page releases them, the oldest first past a bound.
   if (record) {
@@ -3207,18 +3224,25 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
       records_.erase(records_.begin());
     }
   }
-  // The old document's Cache API goes with it, as its pipes go with its
-  // context in Chrome: its puts that wait for a body fail, and what it held
-  // is let go. The new document's numbers go on from its.
-  if (cache_storage_) {
-    next_cache_storage_number_ = cache_storage_->NextNumber();
-    cache_storage_.reset();
+  top_level_status_ = navigated_status.value_or(0);
+  // A document of a no-store response is watched for changes to its URL's
+  // cookies, which keep the back/forward cache from restoring it, from now:
+  // its response's own have come by then, which Chrome's listener ignores.
+  if (navigated_no_store && url.SchemeIsHTTPOrHTTPS()) {
+    NoStoreWatch& watch = no_store_watches_[committed.document];
+    watch.subscription =
+        network_->cookie_store().GetChangeDispatcher().AddCallbackForUrl(
+            url, std::nullopt,
+            base::BindRepeating(
+                [](PageHost* host, uint64_t document,
+                   const net::CookieChangeInfo& change) {
+                  if (const auto found = host->no_store_watches_.find(document);
+                      found != host->no_store_watches_.end()) {
+                    found->second.cookie_changed = true;
+                  }
+                },
+                base::Unretained(this), committed.document));
   }
-  // Its IndexedDB's connections close, as a renderer's context closes them
-  // when it goes.
-  indexed_db_.reset();
-  // The old document's CookieStore listened over a pipe that went with it.
-  cookie_store_listeners_.clear();
   // The navigation's document has taken the place of the Page's, after every
   // message of the old one, its load among them.
   if (navigated_status) {
@@ -3232,6 +3256,90 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     event.level = static_cast<int32_t>(ConsoleLevel::kError);
     event.message = std::string(kCoopIgnoredOnUntrustworthyOrigin);
     PushReport(std::move(event));
+  }
+}
+
+void PageHost::ReplaceTopLevelDocument(uint64_t id, Context context) {
+  // A restore that the Page has not made by now never comes.
+  pending_restore_.reset();
+  // Its keepalive requests go on without it and everything under it, and
+  // the Page, which let them go, hears that they ended. A stored document's
+  // stay its own.
+  std::set<uint64_t> going;
+  for (const auto& [context_id, going_context] : contexts_) {
+    going.insert(context_id);
+  }
+  LetKeepaliveRequestsGo(&going);
+  contexts_.clear();
+  frame_navigation_responses_.clear();
+  about_blank_navigations_.clear();
+  worker_scripts_.clear();
+  contexts_.emplace(id, std::move(context));
+  // The old document's Cache API goes with it, as its pipes go with its
+  // context in Chrome: its puts that wait for a body fail, and what it held
+  // is let go. The new document's numbers go on from its.
+  if (cache_storage_) {
+    next_cache_storage_number_ = cache_storage_->NextNumber();
+    cache_storage_.reset();
+  }
+  // Its IndexedDB's connections close, as a renderer's context closes them
+  // when it goes.
+  indexed_db_.reset();
+  // The old document's CookieStore listened over a pipe that went with it.
+  cookie_store_listeners_.clear();
+  // Only the top-level document and the stored ones stay watched.
+  std::erase_if(no_store_watches_, [this, id](const auto& entry) {
+    return entry.first != id && !stored_documents_.contains(entry.first);
+  });
+}
+
+void PageHost::OnDocumentStored(uint64_t document) {
+  const auto found = contexts_.find(document);
+  if (found == contexts_.end() || found->second.is_worker ||
+      found->second.parent != kNoDocument) {
+    Refuse("a stored document that is not the top-level one");
+    return;
+  }
+  // The Page's cache keeps a document with no frames or workers under it,
+  // and no more than six besides one that a traversal may restore.
+  if (ContextsUnder(document).size() != 1 ||
+      stored_documents_.size() > kBackForwardCacheSize) {
+    Refuse("a stored document that the back/forward cache cannot keep");
+    return;
+  }
+  StoredDocument& stored = stored_documents_[document];
+  stored.context = std::move(found->second);
+  stored.status = top_level_status_;
+  contexts_.erase(found);
+}
+
+void PageHost::OnDocumentRestored(uint64_t document) {
+  const auto found = stored_documents_.find(document);
+  if (!pending_restore_ || pending_restore_->document != document ||
+      found == stored_documents_.end()) {
+    Refuse("a restored document that the library did not ask to restore");
+    return;
+  }
+  StoredDocument stored = std::move(found->second);
+  stored_documents_.erase(found);
+  const std::string url = stored.context.url.spec();
+  ReplaceTopLevelDocument(document, std::move(stored.context));
+  top_level_status_ = stored.status;
+  PushNavigated(url, stored.status, net::OK, /*restored=*/true);
+}
+
+void PageHost::OnDocumentEvicted(uint64_t document) {
+  if (stored_documents_.erase(document) == 0) {
+    Refuse("an evicted document that the back/forward cache does not keep");
+    return;
+  }
+  no_store_watches_.erase(document);
+  // Its keepalive requests outlive it, and the Page, which let them go,
+  // hears that they ended.
+  const std::set<uint64_t> gone = {document};
+  LetKeepaliveRequestsGo(&gone);
+  if (pending_restore_ && pending_restore_->document == document) {
+    pending_restore_.reset();
   }
 }
 
@@ -3392,6 +3500,12 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
     Refuse("a referrer policy for a traversal to a navigation's entry");
     return;
   }
+  const auto stored = stored_documents_.find(traversal.stored_document);
+  if (traversal.stored_document != kNoDocument &&
+      stored == stored_documents_.end()) {
+    Refuse("a traversal to the entry of a document that is not stored");
+    return;
+  }
   const NavigationRecord& record = found->second;
   const GURL url(traversal.url);
   PageEvent started;
@@ -3412,6 +3526,23 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
     channel_->Send(EncodeResponseEnded(ended));
     PushNavigated(traversal.url, 0, net::ERR_ABORTED);
     return;
+  }
+  // BackForwardCacheImpl::GetOrEvictEntry(): the entry that a stored
+  // document was stored at restores it, with no request, unless its response
+  // said no-store and a cookie of its URL has changed since, as
+  // UpdateCanStoreToIncludeCacheControlNoStore() decides at the default
+  // level, restore-unless-cookie-change. Then the traversal makes its
+  // request, and the Page lets the document go.
+  // The document was at the entry's URL as it was stored, so one of another
+  // URL is another entry's.
+  if (stored != stored_documents_.end() && stored->second.context.url == url) {
+    const auto watch = no_store_watches_.find(traversal.stored_document);
+    if (watch == no_store_watches_.end() || !watch->second.cookie_changed) {
+      pending_restore_ = PendingRestore{.number = traversal.number,
+                                        .document = traversal.stored_document};
+      channel_->Send(EncodeRestore(traversal.number));
+      return;
+    }
   }
   // NavigationControllerImpl::CreateNavigationRequestFromEntry(): the
   // entry's own Initiator, referrer and user activation, whichever document
@@ -3452,12 +3583,14 @@ void PageHost::OnRecordsReleased(const std::vector<uint64_t>& records) {
 
 void PageHost::PushNavigated(std::string url,
                              int32_t status,
-                             int32_t net_error) {
+                             int32_t net_error,
+                             bool restored) {
   PageEvent navigated;
   navigated.type = MITTO_PAGE_EVENT_NAVIGATED;
   navigated.status = status;
   navigated.net_error = net_error;
   navigated.url = std::move(url);
+  navigated.restored = restored;
   Push(std::move(navigated));
 }
 
@@ -3477,8 +3610,21 @@ GURL PageHost::CookieUrlOf(const Context& context) {
                                        : ContextUrl(context);
 }
 
+PageHost::Context* PageHost::FindContext(uint64_t id) {
+  if (const auto found = contexts_.find(id); found != contexts_.end()) {
+    return &found->second;
+  }
+  const auto stored = stored_documents_.find(id);
+  return stored != stored_documents_.end() ? &stored->second.context : nullptr;
+}
+
 const PageHost::Context* PageHost::ContextOf(uint64_t id, uint32_t type) {
   const auto found = contexts_.find(id);
+  // What a document that the back/forward cache keeps sends while it is
+  // stored goes unheard, as Chrome's frozen page could send nothing.
+  if (found == contexts_.end() && stored_documents_.contains(id)) {
+    return nullptr;
+  }
   if (found == contexts_.end()) {
     Refuse(base::StrCat({"message type ", base::NumberToString(type),
                          " of context ", base::NumberToString(id),
@@ -3659,6 +3805,12 @@ GURL PageHost::TopDocumentUrl() const {
   }
   return GURL();
 }
+
+PageHost::NoStoreWatch::NoStoreWatch() = default;
+PageHost::NoStoreWatch::NoStoreWatch(NoStoreWatch&&) = default;
+PageHost::NoStoreWatch& PageHost::NoStoreWatch::operator=(NoStoreWatch&&) =
+    default;
+PageHost::NoStoreWatch::~NoStoreWatch() = default;
 
 PageHost::CookieStoreListener::CookieStoreListener() = default;
 PageHost::CookieStoreListener::CookieStoreListener(CookieStoreListener&&) =
@@ -3922,6 +4074,15 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kRecordsReleased:
       OnRecordsReleased(frame->released_records);
       return;
+    case PageMessage::kDocumentStored:
+      OnDocumentStored(frame->cached_document);
+      return;
+    case PageMessage::kDocumentRestored:
+      OnDocumentRestored(frame->cached_document);
+      return;
+    case PageMessage::kDocumentEvicted:
+      OnDocumentEvicted(frame->cached_document);
+      return;
     case PageMessage::kIndexedDb:
       OnIndexedDb(std::move(frame->indexed_db_call), frame->document,
                   document_url);
@@ -3974,6 +4135,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kStorageBucketsAnswer:
     case PageMessage::kRequestBodyCredit:
     case PageMessage::kIsolation:
+    case PageMessage::kRestore:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }
