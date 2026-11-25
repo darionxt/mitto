@@ -258,6 +258,11 @@ class PageFrame final : public NavigationClient, public Frame {
                               const GURL& url,
                               ParsedPolicy container_policy,
                               ParsedPolicy declared = {});
+  // NavigationRequest::CommitNavigation(): whether a document of `origin` that
+  // the frame commits under `sandbox` may navigate the top-level frame, as a
+  // document of that frame's origin may, and one of another origin only where
+  // the sandbox lets it and its parent's document may too.
+  bool CanNavigateTop(const url::Origin& origin, SandboxFlags sandbox) const;
   // Warns of a sandbox that its frame's document can take away.
   void WarnIfSandboxIneffective();
   // Gives the current context's window its timers, what its fetch() goes

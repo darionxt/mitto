@@ -15,6 +15,7 @@
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_exception.h"
+#include "mitto/dom/element.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/history_item.h"
@@ -768,7 +769,13 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
   fields.cancelable = !(traverse && params.cross_document);
   fields.hash_change = params.fragment && params.url != document_url &&
                        EqualIgnoringFragment(params.url, document_url);
-  fields.source_element = params.source_element;
+  // Only an element that the window's document may reach, as a link of another
+  // origin's is not.
+  if (params.source_element &&
+      window_->GetSecurityOrigin().IsSameOriginWith(
+          params.source_element->GetDocument().GetOrigin())) {
+    fields.source_element = params.source_element;
+  }
   fields.url = params.url;
   fields.fragment = params.fragment;
   fields.load_type = params.load_type;

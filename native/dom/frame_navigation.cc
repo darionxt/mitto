@@ -59,17 +59,22 @@ std::string DomainOf(std::string_view host) {
       host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
 }
 
-// FrameTree::TraverseNext(): `root` and the frames under it, in tree order.
-std::vector<Frame*> FramesUnder(Frame& root) {
-  std::vector<Frame*> frames = {&root};
-  for (size_t index = 0; index < frames.size(); ++index) {
-    std::vector<Frame*> children;
-    for (size_t child = 0; child < frames[index]->ChildCount(); ++child) {
-      children.push_back(frames[index]->ChildAt(child));
+// The first of `root` and the frames under it, in tree order, that `found`
+// takes, or null.
+template <typename Found>
+Frame* FindUnder(Frame& root, const Found& found) {
+  std::vector<Frame*> pending = {&root};
+  while (!pending.empty()) {
+    Frame* const frame = pending.back();
+    pending.pop_back();
+    if (found(*frame)) {
+      return frame;
     }
-    frames.insert(frames.begin() + index + 1, children.begin(), children.end());
+    for (size_t index = frame->ChildCount(); index > 0; --index) {
+      pending.push_back(frame->ChildAt(index - 1));
+    }
   }
-  return frames;
+  return nullptr;
 }
 
 // FrameTree::FindFrameForNavigationInternal(): the frame that `name` names, or
@@ -88,18 +93,13 @@ Frame* FindFrame(Frame& source, std::u16string_view name, const GURL& url) {
     return nullptr;
   }
   // Its own frames first, then the rest of the tree.
-  for (Frame* const frame : FramesUnder(source)) {
-    if (frame->Name() == name && CanNavigate(source, *frame, url)) {
-      return frame;
-    }
-  }
-  for (Frame* const frame : FramesUnder(source.Top())) {
-    if (frame->Name() == name && !frame->IsDescendantOf(source) &&
-        CanNavigate(source, *frame, url)) {
-      return frame;
-    }
-  }
-  return nullptr;
+  Frame* const under = FindUnder(source, [&](Frame& frame) {
+    return frame.Name() == name && CanNavigate(source, frame, url);
+  });
+  return under ? under : FindUnder(source.Top(), [&](Frame& frame) {
+    return frame.Name() == name && !frame.IsDescendantOf(source) &&
+           CanNavigate(source, frame, url);
+  });
 }
 
 }  // namespace
@@ -132,9 +132,12 @@ bool CanNavigate(Frame& source, Frame& target, const GURL& url) {
     }
     if (is_top) {
       if (!document.IsSandboxed(SandboxFlags::kTopNavigation)) {
-        // can_navigate_top_without_user_gesture holds for what a sandbox
-        // allows to.
-        return true;
+        // A sandbox gives a document no more than its parent's has.
+        return document.CanNavigateTop() ||
+               refuse(
+                   "The frame attempting to navigate the top-level window is "
+                   "cross-origin and either it or one of its ancestors is not "
+                   "allowed to navigate the top frame.\n");
       }
       return refuse(
           document.IsSandboxed(SandboxFlags::kTopNavigationByUserActivation)
@@ -157,8 +160,11 @@ bool CanNavigate(Frame& source, Frame& target, const GURL& url) {
         "The frame attempting navigation is neither same-origin with the "
         "target, nor is it the target's parent or opener.");
   }
-  // The top-level frame, which opened the document, or to its own site.
-  if (source.Opener() == &target || target_origin.IsSameOriginWith(url)) {
+  // The top-level frame, which opened the document, or which one that the
+  // document may navigate opened, or to its own site.
+  if (source.Opener() == &target ||
+      (target.Opener() && CanAccessAncestor(origin, *target.Opener())) ||
+      target_origin.IsSameOriginWith(url)) {
     return true;
   }
   const std::string domain = DomainOf(target_origin.host());

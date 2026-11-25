@@ -220,6 +220,8 @@ void PageFrame::Start(const PageConnection& connection) {
     document.SetSandboxFlags(sandbox);
     document.SetInSandboxedProcess(
         parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
+    document.SetCanNavigateTop(
+        parent_->window_->GetDocument().CanNavigateTop());
     ApplyPermissionsPolicy(document, GURL(), PendingContainerPolicy());
     // Its about base URL is its creator's base URL, as Blink's
     // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
@@ -435,6 +437,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(navigation.sandbox);
   document->SetInSandboxedProcess(navigation.sandboxed_process);
+  document->SetCanNavigateTop(CanNavigateTop(origin, navigation.sandbox));
   ApplyPermissionsPolicy(*document, url, navigation.container_policy);
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
@@ -589,6 +592,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(old_document.GetSandboxFlags());
   document->SetInSandboxedProcess(old_document.IsInSandboxedProcess());
+  document->SetCanNavigateTop(old_document.CanNavigateTop());
   ApplyPermissionsPolicy(*document, url, PendingContainerPolicy());
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
@@ -1569,6 +1573,7 @@ Document& PageFrame::CommitDocument(
   document->SetOrigin(origin);
   document->SetSandboxFlags(sandbox);
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
+  document->SetCanNavigateTop(CanNavigateTop(origin, sandbox));
   std::vector<PolicyMessage> policy_messages;
   ApplyPermissionsPolicy(
       *document, url, provisional_container_policy_,
@@ -1587,6 +1592,9 @@ Document& PageFrame::CommitDocument(
   Window::Current().SetDocument(document);
   if (!parent_) {
     ClearPolicyMessages();
+    // A page is in a browsing context group of its own, as no other window is
+    // in it.
+    SetOpener(nullptr);
   }
   for (PolicyMessage& message : policy_messages) {
     window_->AddConsoleMessage(
@@ -1600,6 +1608,21 @@ Document& PageFrame::CommitDocument(
     cookie_store->DocumentChanged();
   }
   return *document;
+}
+
+bool PageFrame::CanNavigateTop(const url::Origin& origin,
+                               SandboxFlags sandbox) const {
+  if (!parent_) {
+    return true;
+  }
+  const PageFrame* top = parent_;
+  while (top->parent_) {
+    top = top->parent_;
+  }
+  return origin.IsSameOriginWith(top->window_->GetSecurityOrigin()) ||
+         (parent_->window_->GetDocument().CanNavigateTop() &&
+          sandbox != SandboxFlags::kNone &&
+          (sandbox & SandboxFlags::kTopNavigation) == SandboxFlags::kNone);
 }
 
 ParsedPolicy PageFrame::PendingContainerPolicy() const {

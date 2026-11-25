@@ -22,7 +22,9 @@
 #include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace mitto {
 
@@ -69,9 +71,17 @@ WindowFeatures ParseWindowFeatures(const std::u16string& features) {
       }
       value = std::string_view(buffer).substr(value_begin, i - value_begin);
     }
+    // Blink's loose StringToInt(): the number that starts the value, or 0 for
+    // none or one too large.
+    size_t number_end =
+        value.starts_with('-') || value.starts_with('+') ? 1 : 0;
+    while (number_end < value.size() && base::IsAsciiDigit(value[number_end])) {
+      ++number_end;
+    }
     int number = 0;
-    // StringToInt() reads what it can of a number's start.
-    base::StringToInt(value, &number);
+    if (!base::StringToInt(value.substr(0, number_end), &number)) {
+      number = 0;
+    }
     const bool set =
         value.empty() || value == "yes" || value == "true" || number != 0;
     if (key == "noopener") {
@@ -82,6 +92,15 @@ WindowFeatures ParseWindowFeatures(const std::u16string& features) {
   }
   result.noopener = result.noopener || result.noreferrer;
   return result;
+}
+
+// Whether the origins are of one net::SchemefulSite.
+bool IsSameSite(const url::Origin& a, const url::Origin& b) {
+  return a.IsSameOriginWith(b) ||
+         (!a.opaque() && !b.opaque() && a.scheme() == b.scheme() &&
+          net::registry_controlled_domains::SameDomainOrHost(
+              a, b,
+              net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES));
 }
 
 // Whether `target` names a frame by where it is, which open() gives back
@@ -119,7 +138,19 @@ Window* Window::Open(const std::u16string& url,
       return nullptr;
     }
   }
-  const WindowFeatures window_features = ParseWindowFeatures(features);
+  WindowFeatures window_features = ParseWindowFeatures(features);
+  // A blob: URL of another site than the top-level page's, which its storage
+  // key names, takes no opener. One of an opaque origin is of the document's.
+  if (completed.SchemeIsBlob() && frame_) {
+    const url::Origin blob_origin = url::Origin::Create(completed);
+    const url::Origin origin = entered->GetSecurityOrigin();
+    if (origin.opaque()
+            ? !blob_origin.opaque()
+            : !IsSameSite(blob_origin,
+                          frame_->Top().DomWindow()->GetSecurityOrigin())) {
+      window_features.noopener = true;
+    }
+  }
   // An empty target is _blank. The Page program's own window has no frame, and
   // names itself alone.
   mitto::Frame* frame = nullptr;

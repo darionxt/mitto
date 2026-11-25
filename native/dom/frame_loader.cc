@@ -32,6 +32,7 @@
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/navigation_rate_limiter.h"
 #include "mitto/dom/pop_state_event.h"
+#include "mitto/dom/remote_window.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
@@ -39,6 +40,7 @@
 #include "url/url_canon.h"
 #include "url/url_constants.h"
 #include "url/url_util.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -176,6 +178,19 @@ bool IsDataUrlMimeTypeSupported(const GURL& url) {
   return IsSupportedMimeType(mime_type.empty() ? "text/plain" : mime_type);
 }
 
+// Whether a document of another origin than `window`'s starts a navigation.
+bool IsOfAnotherOrigin(const Window* origin_window, const Window& window) {
+  return origin_window && !origin_window->GetSecurityOrigin().IsSameOriginWith(
+                              window.GetSecurityOrigin());
+}
+
+// Whether that document is in another process, where `window`'s frame is a
+// remote one.
+bool IsOfAnotherProcess(const Window* origin_window, const Window& window) {
+  return origin_window &&
+         !IsInSameProcess(origin_window->Process(), window.Process());
+}
+
 // LocalFrame::NavigationShouldReplaceCurrentHistoryEntry(): a navigation to
 // the document's own URL, and one that a script starts while the document
 // loads without the user's activation, but for a link and window.open(),
@@ -183,7 +198,14 @@ bool IsDataUrlMimeTypeSupported(const GURL& url) {
 bool ShouldReplaceCurrentEntry(Window& window,
                                const FrameLoadRequest& request) {
   Document& document = window.GetDocument();
-  if (request.url == GURL(document.UrlForBinding())) {
+  // RemoteFrame::Navigate(): a document of another process knows neither this
+  // one's URL nor whether it loads.
+  if (IsOfAnotherProcess(request.origin_window, window)) {
+    return false;
+  }
+  // Not for a document of another origin, which would tell the URL by it.
+  if (request.url == GURL(document.UrlForBinding()) &&
+      !IsOfAnotherOrigin(request.origin_window, window)) {
     return true;
   }
   return !document.LoadEventFinished() &&
@@ -214,6 +236,25 @@ void MaybeEnqueueHashChange(Window& window,
   }
 }
 
+// DocumentLoader::CommitSameDocumentNavigationInternal() for a navigation of
+// the window's document to `url`, its own but for the fragment.
+void CommitFragment(Window& window, const GURL& url, FrameLoadType type) {
+  Document& document = window.GetDocument();
+  MaybeEnqueueHashChange(window, url, GURL(document.UrlForBinding()));
+  UpdateForSameDocumentNavigation(window, url, /*history_item=*/nullptr,
+                                  SameDocumentNavigationType::kFragment,
+                                  /*state=*/nullptr, type,
+                                  /*fire_popstate=*/true);
+  if (!window.HasContext()) {
+    return;
+  }
+  // FrameLoader::ProcessScrollForSameDocumentNavigation(), after the events
+  // of the commit: this navigation's fragment indicates the document's
+  // target, also when a listener has navigated on meanwhile, as Blink takes
+  // the URL that it commits.
+  document.ProcessUrlFragment(url);
+}
+
 // DocumentLoader::CommitSameDocumentNavigation() for a navigation to a
 // fragment: the document takes `url` at once, a new entry or the current one
 // replaced, the Session hears of it, popstate fires at the window with a null
@@ -234,20 +275,45 @@ void CommitSameDocumentNavigation(Window& window,
       Navigation::DispatchResult::kContinue) {
     return;
   }
-  Document& document = window.GetDocument();
-  MaybeEnqueueHashChange(window, url, GURL(document.UrlForBinding()));
-  UpdateForSameDocumentNavigation(window, url, /*history_item=*/nullptr,
-                                  SameDocumentNavigationType::kFragment,
-                                  /*state=*/nullptr, type,
-                                  /*fire_popstate=*/true);
-  if (!window.HasContext()) {
+  // From a task of its own for a document of another origin, which would time
+  // the commit.
+  if (IsOfAnotherOrigin(request.origin_window, window)) {
+    if (window.GetTasks()) {
+      window.GetTasks()->PostTask(
+          TaskType::kInternalLoading,
+          base::BindOnce(
+              [](cppgc::WeakPersistent<Document> document, const GURL& url,
+                 FrameLoadType type) {
+                Window& window = Window::Current();
+                if (document && window.HasDocument() &&
+                    &window.GetDocument() == document.Get()) {
+                  CommitFragment(window, url, type);
+                }
+              },
+              cppgc::WeakPersistent<Document>(&window.GetDocument()), url,
+              type));
+    }
     return;
   }
-  // FrameLoader::ProcessScrollForSameDocumentNavigation(), after the events
-  // of the commit: this navigation's fragment indicates the document's
-  // target, also when a listener has navigated on meanwhile, as Blink takes
-  // the URL that it commits.
-  document.ProcessUrlFragment(url);
+  CommitFragment(window, url, type);
+}
+
+// RenderFrameImpl::CommitSameDocumentNavigation() of a navigation that a
+// document of another process started: `document` goes to `url`, if it is still
+// the current window's and the same but for its fragment.
+void CommitFragmentFromBrowser(cppgc::WeakPersistent<Document> document,
+                               const GURL& url) {
+  Window& window = Window::Current();
+  if (!document || !window.HasDocument() ||
+      &window.GetDocument() != document.Get()) {
+    return;
+  }
+  if (!EqualIgnoringFragment(url, GURL(document->UrlForBinding()))) {
+    return;
+  }
+  FrameLoadRequest request;
+  request.url = url;
+  CommitSameDocumentNavigation(window, request, FrameLoadType::kStandard);
 }
 
 // Runs the script of a javascript: URL in the current window, from its task,
@@ -348,7 +414,16 @@ void StartNavigation(Window& window,
   // ShouldPerformFragmentNavigation().
   if (type != FrameLoadType::kReload && url.has_ref() &&
       EqualIgnoringFragment(url, GURL(document.UrlForBinding()))) {
-    CommitSameDocumentNavigation(window, request, type);
+    if (!IsOfAnotherProcess(request.origin_window, window)) {
+      CommitSameDocumentNavigation(window, request, type);
+    } else if (window.GetTasks()) {
+      // It comes from the browser, in a task of its own, to the URL that the
+      // document has then.
+      window.GetTasks()->PostTask(
+          TaskType::kInternalLoading,
+          base::BindOnce(&CommitFragmentFromBrowser,
+                         cppgc::WeakPersistent<Document>(&document), url));
+    }
     return;
   }
   if (url.SchemeIs(url::kJavaScriptScheme)) {

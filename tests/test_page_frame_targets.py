@@ -49,19 +49,26 @@ class _Server(QuietServer):
         self.finished = threading.Event()
         self.expected: list[dict[str, Any]] = []
         self.acts: dict[int, dict[str, Any]] = {}
+        # The events of each act, with their place among what their document logged.
+        self._events: dict[int, list[tuple[int, str]]] = {}
         self._lock = threading.Condition()
 
     def plain(self, text: str) -> str:
         """Return `text` without what changes from run to run: the port, and the queries of the cases' URLs."""
         origins = text.replace(f"http://127.0.0.1:{self.server_port}", "A")
         origins = origins.replace(f"http://localhost:{self.server_port}", "B")
+        origins = origins.replace(f"http%3A%2F%2F127.0.0.1%3A{self.server_port}", "A")
         return re.sub(r"(/(?:moved|frame|top|nest))[?][^' ]*", r"\1", origins)
 
-    def add(self, at: int, kind: str, value: str) -> None:
+    def add(self, at: int, kind: str, value: str, order: int = 0) -> None:
         with self._lock:
             act = self.acts.setdefault(at, {"result": None, "moved": [], "requests": [], "navigate": []})
             if kind == "result":
                 act["result"] = value
+            elif kind == "navigate":
+                events = self._events.setdefault(at, [])
+                events.append((order, value))
+                act["navigate"] = [event for _, event in sorted(events)]
             else:
                 act[kind].append(value)
             self._lock.notify_all()
@@ -70,12 +77,16 @@ class _Server(QuietServer):
         """Wait until act `at` has given its result, and unless `result_only` all that it gave in Chrome, and a little more."""
         expected = self.expected[at]
 
+        def count(act: dict[str, Any], kind: str) -> int:
+            # How many entries the history has gained is told after the wait.
+            return sum(not value.endswith("more entries") for value in act[kind])
+
         def done() -> bool:
             act = self.acts.get(at)
             if act is None or act["result"] is None:
                 return False
             return result_only or all(
-                len(act[kind]) >= len(expected[kind]) for kind in ("moved", "requests", "navigate")
+                count(act, kind) >= count(expected, kind) for kind in ("moved", "requests", "navigate")
             )
 
         with self._lock:
@@ -121,7 +132,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 moved = " ".join((entry["moved"], entry["referrer"] or "-", entry["opener"]))
                 self.server.add(entry["at"], "moved", moved)
             else:
-                self.server.add(entry["at"], "navigate", entry["navigate"])
+                self.server.add(entry["at"], "navigate", entry["navigate"], entry["order"])
         self.send_response(204)
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -150,6 +161,8 @@ def test_what_a_frame_navigates_is_chrome_s(server: _Server, actor: str) -> None
         while not server.finished.wait(0.05) and time.monotonic() < deadline:
             # Runs the page's events, whichever document it has.
             page.evaluate("1", timeout=_TIMEOUT_SECONDS)
+        # What came since the last time.
+        page.evaluate("1", timeout=_TIMEOUT_SECONDS)
         console = collections.Counter(server.plain(message.text).strip() for message in page.console_messages)
 
     assert server.finished.is_set()
