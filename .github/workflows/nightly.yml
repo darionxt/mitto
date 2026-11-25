@@ -77,6 +77,11 @@ jobs:
     name: CI
     needs: moved
     if: needs.moved.outputs.build == 'true'
+    # One of CI's jobs reads what earlier runs did. It does not run here, but a called workflow is refused if any of its
+    # jobs asks for more than this.
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/ci.yml
     with:
       from-nothing: true

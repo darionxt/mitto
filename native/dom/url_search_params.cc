@@ -7,6 +7,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_url_search_params.h"
 #include "mitto/dom/url.h"
 #include "url/url_util.h"
@@ -47,6 +48,39 @@ void EncodeStringAsFormData(std::string& buffer, std::string_view string) {
 }
 
 }  // namespace
+
+class URLSearchParams::IterationSource final
+    : public bindings::PairIterationSource {
+ public:
+  explicit IterationSource(URLSearchParams* params) : params_(params) {}
+
+  void Trace(cppgc::Visitor* visitor) const override {
+    bindings::PairIterationSource::Trace(visitor);
+    visitor->Trace(params_);
+  }
+
+ protected:
+  bool FetchNextItem(v8::Isolate* isolate,
+                     bindings::PairIterationKind kind,
+                     v8::Local<v8::Value>* key,
+                     v8::Local<v8::Value>* value) override {
+    if (current_ >= params_->params_.size()) {
+      return false;
+    }
+    const auto& [name, param_value] = params_->params_[current_++];
+    if (kind != bindings::PairIterationKind::kValue) {
+      *key = bindings::ToV8String(isolate, name);
+    }
+    if (kind != bindings::PairIterationKind::kKey) {
+      *value = bindings::ToV8String(isolate, param_value);
+    }
+    return true;
+  }
+
+ private:
+  const cppgc::Member<URLSearchParams> params_;
+  size_t current_ = 0;
+};
 
 // static
 URLSearchParams* URLSearchParams::Create(
@@ -99,6 +133,10 @@ URLSearchParams::URLSearchParams(const std::u16string& query, URL* url_object)
 
 URLSearchParams::~URLSearchParams() = default;
 
+bindings::PairIterationSource* URLSearchParams::CreateIterationSource() {
+  return bindings::MakeGarbageCollected<IterationSource>(this);
+}
+
 const bindings::WrapperTypeInfo* URLSearchParams::GetWrapperTypeInfo() const {
   return &bindings::V8URLSearchParams::kWrapperTypeInfo;
 }
@@ -124,18 +162,16 @@ void URLSearchParams::SetInputWithoutUpdate(std::u16string_view query) {
       name_value_end = query.size();
     }
     if (name_value_end > start) {
-      size_t end_of_name = query.find(u'=', start);
-      if (end_of_name == std::u16string_view::npos ||
-          end_of_name > name_value_end) {
-        end_of_name = name_value_end;
-      }
+      // The search for an equals sign stays in the pair, so that pairs without
+      // one cost no more.
+      const std::u16string_view pair =
+          query.substr(start, name_value_end - start);
+      const size_t end_of_name = pair.find(u'=');
       std::u16string value;
-      if (end_of_name != name_value_end) {
-        value = DecodeString(query.substr(
-            end_of_name + 1, name_value_end - end_of_name - 1));
+      if (end_of_name != std::u16string_view::npos) {
+        value = DecodeString(pair.substr(end_of_name + 1));
       }
-      AppendWithoutUpdate(
-          DecodeString(query.substr(start, end_of_name - start)), value);
+      AppendWithoutUpdate(DecodeString(pair.substr(0, end_of_name)), value);
     }
     start = name_value_end + 1;
   }

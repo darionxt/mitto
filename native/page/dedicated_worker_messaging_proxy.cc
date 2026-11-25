@@ -491,6 +491,7 @@ std::unique_ptr<WorkerMessagingProxy> PageWorkerStarter::StartWorker(
     Worker& worker,
     const GURL& url,
     const WorkerStartOptions& options) {
+  started_ = true;
   std::erase_if(workers_, [](const cppgc::WeakPersistent<Worker>& started) {
     return !started;
   });

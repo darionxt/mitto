@@ -8,11 +8,14 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/timer/timer.h"
 #include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/animation_frame_controller.h"
@@ -32,8 +35,10 @@
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/dom/page_reveal_event.h"
 #include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/dom/xml_document.h"
 #include "mitto/mime_types.h"
@@ -54,6 +59,7 @@
 #include "url/origin.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-primitive.h"
 
 namespace mitto {
@@ -64,9 +70,18 @@ namespace {
 constexpr base::TimeDelta kDuplicateWindow = base::Milliseconds(3000);
 
 // What a traversal request's payload holds beside its URL: the document's ID,
-// the number and the record, each a 64-bit number, a byte of flags and one of
-// the referrer policy.
-constexpr size_t kTraversalOverhead = 3 * 8 + 2;
+// the number, the record and the stored document, each a 64-bit number, a byte
+// of flags and one of the referrer policy.
+constexpr size_t kTraversalOverhead = 4 * 8 + 2;
+
+// How many pages BackForwardCacheImpl keeps, its "cache_size", and how long,
+// kDefaultTimeToLiveInBackForwardCacheInSeconds, or for a page of a no-store
+// response the "ttl" of CacheControlNoStoreEnterBackForwardCache.
+constexpr size_t kBackForwardCacheSize = 6;
+constexpr base::TimeDelta kTimeToLive = base::Seconds(600);
+constexpr base::TimeDelta kNoStoreTimeToLive = base::Minutes(3);
+// MojoURLLoaderClient's kGracePeriodToFinishLoadingWhileInBackForwardCache.
+constexpr base::TimeDelta kLoadingGracePeriod = base::Seconds(60);
 
 // net::OK and net::ERR_ABORTED, the net errors of a navigation that ended
 // with no document and no failure.
@@ -157,6 +172,39 @@ PageFrame::LocalNavigation& PageFrame::LocalNavigation::operator=(
     LocalNavigation&&) = default;
 PageFrame::LocalNavigation::~LocalNavigation() = default;
 
+struct PageFrame::StoredDocument {
+  StoredDocument() = default;
+  StoredDocument(const StoredDocument&) = delete;
+  StoredDocument& operator=(const StoredDocument&) = delete;
+  ~StoredDocument() = default;
+
+  // The window's context, with its own global proxy, and what runs in it.
+  v8::Global<v8::Context> context;
+  cppgc::Persistent<Window> window;
+  std::unique_ptr<DOMTimerCoordinator> timers;
+  std::unique_ptr<IdleTaskController> idle_tasks;
+  std::unique_ptr<AnimationFrameController> animation_frames;
+  std::unique_ptr<PageFetcher> fetcher;
+  std::unique_ptr<WindowTasks> window_tasks;
+  std::unique_ptr<PageWorkerStarter> worker_starter;
+  raw_ptr<ChromeObjectData> chrome_object_data = nullptr;
+  std::unique_ptr<DocumentLoader> loader;
+  // Its ID, and the entry it was stored at, the only one that restores it.
+  uint64_t document = kNoDocument;
+  int64_t item_sequence_number = 0;
+  scoped_refptr<FrameNavigationEntry> entry;
+  uint64_t browsing_instance = 0;
+  // The frame's name, which Chrome's frame of the page keeps with it.
+  std::u16string name;
+  // The microtasks of the context, which wait in a queue of their own once the
+  // task that stored it has ended, as kBackForwardCachePauseMicrotasks pauses
+  // those of a frozen page's agent.
+  cppgc::Persistent<v8::MicrotaskQueue> microtasks;
+  base::OneShotTimer time_to_live;
+  // How long its requests may go on before it goes.
+  base::OneShotTimer loading_grace_period;
+};
+
 PageFrame::PageFrame(ScriptRunner& runner,
                      uint64_t id,
                      PageFrame* parent,
@@ -179,7 +227,10 @@ void PageFrame::Start(const PageConnection& connection) {
   // gives it. Its time origin is when its context was made.
   const url::Origin origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
-  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin));
+  origin_sandboxed_ = OwnerSandboxesOrigin();
+  context_.Reset(isolate,
+                 NewContext(base::TimeTicks::Now(), origin,
+                            IsolatedLikeParent(origin, origin_sandboxed_)));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   window_->BindToContext(isolate, context());
   if (parent_) {
@@ -340,9 +391,13 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   committed.replaces = window_->DocumentId();
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin, as DocumentLoader::CommitNavigation() reuses it, and makes a
-  // new one for any other.
-  const bool reuse_window = old_document.IsInitialEmptyDocument() &&
-                            old_document.GetOrigin().IsSameOriginWith(origin);
+  // new one for any other, or for one of another isolation, as Chrome's
+  // origin then differs, an opaque one under a sandbox.
+  const bool isolated = IsolatedLikeParent(origin, navigation.origin_sandboxed);
+  const bool reuse_window =
+      old_document.IsInitialEmptyDocument() &&
+      old_document.GetOrigin().IsSameOriginWith(origin) &&
+      window_->CrossOriginIsolatedCapability() == isolated;
   {
     // DocumentLoader::CommitNavigation(): no script of the old document or
     // of its frames starts a navigation of this frame meanwhile.
@@ -365,6 +420,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
       return;
     }
   }
+  origin_sandboxed_ = navigation.origin_sandboxed;
   Document* document = nullptr;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
@@ -388,8 +444,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     // The new window's time origin is the navigation's start, as Blink's is,
     // before the old document's unload events and the task that commits.
     const v8::Local<v8::Context> context =
-        NewContext(navigation.start, origin,
-                   /*cross_origin_isolated=*/false, global_proxy);
+        NewContext(navigation.start, origin, isolated, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
@@ -596,6 +651,11 @@ void PageFrame::ExpectOpeningNavigation() {
 }
 
 void PageFrame::BeginNavigation(const NavigationRequest& request) {
+  // A navigation that a pagehide listener of a document that the back/forward
+  // cache takes starts goes nowhere, a Known Gap: Chrome's goes on.
+  if (IgnoresLeavingDocument() || leaving_ == Leaving::kStays) {
+    return;
+  }
   if (parent_) {
     // The newest navigation of a frame takes the place of a srcdoc or an
     // about:blank that waits, whatever its URL. A frame's navigation to a
@@ -617,6 +677,12 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     LocalNavigation navigation;
     navigation.start = base::TimeTicks::Now();
     navigation.url = request.url;
+    // An about:blank that the frame's own document starts has its origin,
+    // which a sandbox of its response keeps opaque in Chrome.
+    navigation.origin_sandboxed =
+        OwnerSandboxesOrigin() ||
+        (request.url.IsAboutBlank() && origin_sandboxed_ &&
+         request.initiator == window_->DocumentId());
     navigation.reload = request.reload;
     // Its document's referrer is what the initiator's outgoing referrer gives
     // a navigation to its URL under the initiator's referrer policy, as
@@ -723,6 +789,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   provisional_request_ = request;
   ++provisional_request_serial_;
   provisional_start_ = now;
+  provisional_origin_sandboxed_ = OwnerSandboxesOrigin();
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
   // A frame's navigation names the frame's document that the new one takes
@@ -872,7 +939,7 @@ void PageFrame::EndLocalNavigation() {
 
 void PageFrame::DidCommitSameDocumentNavigation(const HistoryItem& item,
                                                 FrameLoadType type) {
-  if (unloading_for_commit_) {
+  if (IgnoresLeavingDocument()) {
     return;
   }
   // The traversal has committed, as Chrome's controller drops its pending
@@ -946,7 +1013,7 @@ void PageFrame::NotifyNavigationApiOfDisposedEntries() {
 }
 
 void PageFrame::DidUpdateCurrentHistoryItem(const HistoryItem& item) {
-  if (!parent_ && !unloading_for_commit_) {
+  if (!parent_ && leaving_ != Leaving::kUnloads) {
     history().UpdateCurrentItem(item);
   }
 }
@@ -987,16 +1054,20 @@ void PageFrame::NavigateBackForward(int offset) {
   if (!IsNavigationAllowed()) {
     return;
   }
-  // RenderFrameHostImpl::GoToEntryAtOffset(): ignored while a history
-  // navigation waits, without the user's activation.
-  if (TraversalWaits()) {
-    return;
-  }
   // GoToOffsetFromRenderer(): from the entry that a waiting traversal goes
   // to, or the current one, and nowhere past the entries.
   const HistoryCounts counts = history().Counts();
   const int index = static_cast<int>(CurrentEntryIndex()) + offset;
   if (index < 0 || index >= counts.length) {
+    return;
+  }
+  // As a navigation of a document that leaves.
+  if (IgnoresLeavingDocument() || leaving_ == Leaving::kStays) {
+    return;
+  }
+  // RenderFrameHostImpl::GoToEntryAtOffset(): ignored while a history
+  // navigation waits, without the user's activation.
+  if (TraversalWaits()) {
     return;
   }
   QueueTraversal(static_cast<size_t>(index), std::nullopt);
@@ -1005,7 +1076,8 @@ void PageFrame::NavigateBackForward(int offset) {
 void PageFrame::NavigateToNavigationApiKey(const std::u16string& key) {
   // RenderFrameHostImpl::NavigateToNavigationApiKey(): ignored while a
   // history navigation waits, without the user's activation.
-  if (Top().TraversalWaits() || !Top().IsNavigationAllowed()) {
+  if (!Top().IsNavigationAllowed() || Top().IgnoresLeavingDocument() ||
+      Top().leaving_ == Leaving::kStays || Top().TraversalWaits()) {
     return;
   }
   // A child frame's entries are none of the session history's yet.
@@ -1141,6 +1213,21 @@ bool PageFrame::BeginTraversal(const FrameNavigationEntry& entry) {
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   traversal_item_ = target;
   traversal_record_ = traversal.record;
+  traversal_browsing_instance_ = BrowsingInstanceOf(traversal.record);
+  traversal_start_ = provisional_start_;
+  EndRestore();
+  // The entry that a stored document was stored at restores it, if the
+  // Session agrees, and another entry of its document evicts it, as Chrome
+  // evicts a page whose browsing instance a traversal goes to.
+  if (const StoredDocument* const stored =
+          FindStoredDocument(target.item_sequence_number)) {
+    traversal.stored_document = stored->document;
+    restore_document_ = stored->document;
+  } else {
+    // EvictFramesInRelatedSiteInstances(): the pages whose browsing instance
+    // the traversal goes into, this one's entry among them.
+    EvictBrowsingInstance(traversal_browsing_instance_);
+  }
   provisional_->SetNumber(
       runner_->requests().StartTraversal(std::move(traversal), *provisional_));
   // MaybeDispatchNavigateEventForCrossDocumentTraversal(): for an entry of
@@ -1168,12 +1255,20 @@ void PageFrame::ReleaseRecords(uint64_t live_document) {
       held.insert(*record);
     }
   }
+  // A stored document's own, which no entry may hold though one restores it,
+  // repeats its navigation for the entries that it makes once it is back.
+  for (const std::unique_ptr<StoredDocument>& stored : stored_documents_) {
+    held.insert(stored->document);
+  }
   std::vector<uint64_t> released;
   for (const uint64_t record : held_records_) {
     if (!held.contains(record)) {
       released.push_back(record);
     }
   }
+  std::erase_if(browsing_instances_, [&held](const auto& entry) {
+    return !held.contains(entry.first);
+  });
   held_records_ = std::move(held);
   if (!released.empty()) {
     runner_->send().Run(EncodeRecordsReleased(released));
@@ -1229,6 +1324,7 @@ void PageFrame::CancelProvisionalNavigation() {
   }
   traversal_item_.reset();
   traversal_record_.reset();
+  EndRestore();
   CancelLocalNavigation();
 }
 
@@ -1280,15 +1376,36 @@ Document* PageFrame::CommitNavigation(
   const HistoryItem* const old_item = Window::Current().CurrentHistoryItem();
   const std::optional<HistoryItem> old_history_item =
       old_item ? std::optional<HistoryItem>(*old_item) : std::nullopt;
+  // A traversal that may have restored a stored document has a response
+  // instead, as the Session would not restore it: the document goes.
+  EndRestore();
+  // The next document's browsing instance: a traversal's entry's, a new one
+  // where the browser swaps proactively, and otherwise the current one's.
+  const uint64_t next_browsing_instance =
+      traversal ? traversal_browsing_instance_
+      : SwapsBrowsingInstance(old_document, type, url)
+          ? ++last_browsing_instance_
+          : browsing_instance_;
+  const bool may_store = CanStoreDocument(old_document, next_browsing_instance);
+  // A document that the back/forward cache takes has pagehide, persisted,
+  // and visibilitychange in place of its unload events, as Chrome's renderer
+  // dispatches them for the old page as the new one commits, and keeps
+  // loading. What its listeners do to its URL and entries is its entry's,
+  // until the browser has it in the cache, where it freezes.
+  const bool store =
+      may_store && LeaveForBackForwardCache(
+                       old_document, next_browsing_instance, Leaving::kStays);
   // What the old document's unload listeners do to its URL and entries goes
   // nowhere, as Chrome's browser ignores a document that it is replacing, and
   // nothing after them runs a script.
-  const base::AutoReset<bool> unloading(&unloading_for_commit_, true);
+  const base::AutoReset<Leaving> leaving(&leaving_, Leaving::kUnloads);
   {
     // DocumentLoader::CommitNavigation(): no script of the old document or
     // of its frames starts a navigation of this frame meanwhile.
     const FrameNavigationDisabler navigation_disabler(*this);
-    if (old_document.IsInitialEmptyDocument()) {
+    if (may_store) {
+      // It had its events.
+    } else if (old_document.IsInitialEmptyDocument()) {
       // FrameLoader::DetachDocument(), for a frame that has committed no
       // navigation yet: the unload events first, then the loading stops.
       old_document.DispatchUnloadEvents();
@@ -1321,13 +1438,22 @@ Document* PageFrame::CommitNavigation(
       return nullptr;
     }
   }
-  current_ = std::move(committing);
   const GURL old_url(old_document.UrlForBinding());
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
+  if (store) {
+    StoreDocument(std::exchange(current_, std::move(committing)));
+  } else {
+    current_ = std::move(committing);
+  }
   Document& document =
       CommitDocument(current_->number(), url, navigation_start, connection,
                      cross_origin_isolated, xml_content_type);
+  if (!parent_) {
+    browsing_instance_ = next_browsing_instance;
+    browsing_instances_[document.DefaultView()->DocumentId()] =
+        next_browsing_instance;
+  }
   // The old document's unload times go to a new one of its origin, as
   // Blink's UnloadEventTimingInfo carries them.
   DocumentLoadTiming& timing = document_load_timing();
@@ -1382,11 +1508,456 @@ Document* PageFrame::CommitNavigation(
   return &document;
 }
 
+void PageFrame::RestoreDocument(DocumentLoader& loader) {
+  v8::Isolate* const isolate = runner_->isolate();
+  const v8::HandleScope handle_scope(isolate);
+  // The traversal's loader is on the stack below this, so it goes from a
+  // later task.
+  base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
+                                                             Take(loader));
+  // The Page keeps the document that a traversal may restore until it ends,
+  // so the Session restores only what is here.
+  CHECK(restore_document_);
+  const uint64_t restored = *std::exchange(restore_document_, std::nullopt);
+  const auto found = std::ranges::find_if(
+      stored_documents_,
+      [restored](const auto& stored) { return stored->document == restored; });
+  CHECK(found != stored_documents_.end());
+  std::unique_ptr<StoredDocument> stored = std::move(*found);
+  stored_documents_.erase(found);
+  // Its microtasks go to the isolate's queue again, while no context is
+  // entered, as V8 has it. Nothing of it runs before it thaws.
+  CHECK(!isolate->InContext());
+  if (stored->microtasks) {
+    stored->context.Get(isolate)->SetMicrotaskQueue(
+        context()->GetMicrotaskQueue());
+  }
+  traversal_item_.reset();
+  pending_traversal_index_.reset();
+  // The Session keeps the document's own record, and the entry's, until the
+  // history is at the entry again.
+  pinned_record_ = restored;
+  {
+    // The current document leaves as at any commit, into the cache, or it
+    // unloads, but the browser has committed the restore already, so what it
+    // does to its URL and entries goes nowhere.
+    const v8::Context::Scope current_scope(context());
+    Document& old_document = window_->GetDocument();
+    const bool may_store =
+        CanStoreDocument(old_document, stored->browsing_instance);
+    const bool store = may_store && LeaveForBackForwardCache(
+                                        old_document, stored->browsing_instance,
+                                        Leaving::kCached);
+    const base::AutoReset<Leaving> leaving(&leaving_, Leaving::kUnloads);
+    const FrameNavigationDisabler navigation_disabler(*this);
+    if (!may_store) {
+      if (current_) {
+        current_->StopLoading();
+      }
+      old_document.DispatchUnloadEvents();
+    }
+    runner_->TopLevelContextGoes();
+    if (store) {
+      StoreDocument(std::move(current_));
+    } else {
+      DetachChildren();
+      DetachWindow();
+      context()->DetachGlobal();
+    }
+  }
+  // RestoreEntry(): the stored window becomes the frame's again.
+  context_ = std::move(stored->context);
+  window_ = stored->window.Get();
+  timers_ = std::move(stored->timers);
+  idle_tasks_ = std::move(stored->idle_tasks);
+  animation_frames_ = std::move(stored->animation_frames);
+  fetcher_ = std::move(stored->fetcher);
+  window_tasks_ = std::move(stored->window_tasks);
+  worker_starter_ = std::move(stored->worker_starter);
+  chrome_object_data_ = stored->chrome_object_data;
+  name_ = std::move(stored->name);
+  current_ = std::move(stored->loader);
+  browsing_instance_ = stored->browsing_instance;
+  MemoryInfo::SetProcessLockedToSite(true);
+  const v8::Local<v8::Context> context = this->context();
+  const v8::Context::Scope context_scope(context);
+  Window& window = *window_;
+  window.SetFrame(this);
+  DidShowDocument(window);
+  window.SetNavigationClient(this);
+  window.SetBackForwardCacheEviction(base::RepeatingClosure());
+  runner_->sender()->SendDocumentRestored(window.DocumentId());
+  // The Session's storage answers the restored document again, as its hosts
+  // had followed the one before it.
+  SetStorageDocument(window.DocumentId());
+  // The session history goes to the document's entry, and the Navigation API
+  // takes the entries around it while the page is still frozen.
+  Navigation::EntryArrays arrays =
+      history().DidRestoreDocument(std::move(stored->entry));
+  traversal_record_.reset();
+  pinned_record_.reset();
+  window.Navigation()->SetEntriesForRestore(arrays);
+  // RemoveBackForwardCacheEviction(), then SetPageFrozen(false): what waited
+  // runs from its tasks, the responses that came meanwhile among them.
+  window.SetIsInBackForwardCache(false);
+  std::vector<ExecutionContext::HeldTask> held = window.TakeHeldTasks();
+  const auto post = [&window, &held](bool delayed) {
+    for (ExecutionContext::HeldTask& task : held) {
+      if (task.delayed != delayed) {
+        continue;
+      }
+      if (task.runner) {
+        task.runner->PostTask(FROM_HERE, std::move(task.task));
+      } else {
+        PostTaskInContext(&window, task.type, std::move(task.task));
+      }
+    }
+  };
+  post(/*delayed=*/false);
+  timers_->Resume();
+  idle_tasks_->Resume();
+  animation_frames_->Resume();
+  window_tasks_->Resume();
+  for (const uint64_t request : runner_->requests().HeldRequestsOf(window)) {
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kNetworkingUnfreezable)
+        ->PostTask(FROM_HERE,
+                   base::BindOnce(
+                       &ScriptRunner::RunTask, base::Unretained(&*runner_),
+                       base::BindOnce(&PageRequests::DeliverHeld,
+                                      base::Unretained(&runner_->requests()),
+                                      request)));
+  }
+  // The microtasks that waited run as the page thaws, then what they queued,
+  // which no script that they ran on the way checks for, as one queue has it.
+  if (stored->microtasks) {
+    {
+      const v8::Isolate::SuppressMicrotaskExecutionScope suppress(
+          isolate, context->GetMicrotaskQueue());
+      stored->microtasks->PerformCheckpoint(isolate);
+    }
+    v8::MicrotasksScope::PerformCheckpoint(isolate);
+  }
+  // LocalFrame::DidResume()'s resume, then the page shows again, then its
+  // pageshow, persisted, with the traversal's start as its time.
+  Document& document = window.GetDocument();
+  document.DispatchResumeEvent();
+  document.ShowFromBackForwardCache();
+  document.DispatchPersistedPageshowEvent(traversal_start_);
+  // What was delayed, and came due while the page was frozen, comes after what
+  // the listeners posted.
+  post(/*delayed=*/true);
+  if (timers_) {
+    timers_->ResumeDelayed();
+  }
+  if (idle_tasks_) {
+    idle_tasks_->ResumeDelayed();
+  }
+  if (window_tasks_) {
+    window_tasks_->ResumeDelayed();
+  }
+  // Document::EnqueuePageRevealEvent(): pagereveal in the page's first frame
+  // again, before its callbacks, as WebViewImpl enqueues it once the page
+  // shows.
+  window.EnqueueAnimationFrameEvent(window, *PageRevealEvent::CreateTrusted());
+  ReleaseRecords(window.DocumentId());
+}
+
+bool PageFrame::LeaveForBackForwardCache(Document& document,
+                                         uint64_t next_browsing_instance,
+                                         Leaving leaving) {
+  left_page_evicted_ = false;
+  {
+    const base::AutoReset<Leaving> hiding(&leaving_, leaving);
+    document.HideForBackForwardCache();
+  }
+  if (window_) {
+    const base::AutoReset<Leaving> freezing(&leaving_, Leaving::kCached);
+    document.DispatchFreezeEvent();
+  }
+  // A feature that is not sticky counts only now, as the browser asks once the
+  // page has frozen: kWebAuthentication.
+  if (window_ && !left_page_evicted_ && !window_->HasPublicKeyRequest() &&
+      CanStoreDocument(document, next_browsing_instance)) {
+    return true;
+  }
+  if (current_) {
+    current_->StopLoading();
+  }
+  return false;
+}
+
+bool PageFrame::IgnoresLeavingDocument() {
+  if (leaving_ == Leaving::kCached) {
+    left_page_evicted_ = true;
+  }
+  return leaving_ == Leaving::kCached || leaving_ == Leaving::kUnloads;
+}
+
+bool PageFrame::MayStoreDocument(const Document& document) const {
+  // PopulateReasonsForMainDocument(): a response of status 200, to a GET,
+  // which each navigation of a Page is, and no unload listener, which the
+  // window has where the seed does not deprecate unload for its document.
+  // The sticky features that a Page has: a parser that was stopped while it
+  // parsed, WebOTP and the password store, and, for a no-store response, a
+  // script's request whose response said no-store too.
+  return current_ && window_ && current_->status() == 200 &&
+         !window_->HasEventListeners(u"unload") && !document.ParserAborted() &&
+         !window_->UsedBackForwardCacheBlocker() &&
+         !(current_->no_store() && window_->ReceivedNoStoreForScriptRequest());
+}
+
+bool PageFrame::SwapsBrowsingInstance(const Document& document,
+                                      FrameLoadType type,
+                                      const GURL& url) const {
+  // From a tab's page of an HTTP or HTTPS URL, which the cache may keep, and
+  // neither in place of the entry, nor a reload, nor to the same URL but for
+  // its fragment.
+  const GURL document_url(document.UrlForBinding());
+  return !parent_ && !document.IsInitialEmptyDocument() &&
+         document_url.SchemeIsHTTPOrHTTPS() &&
+         type != FrameLoadType::kReplaceCurrentItem &&
+         type != FrameLoadType::kReload &&
+         !document_url.EqualsIgnoringRef(url) && MayStoreDocument(document);
+}
+
+bool PageFrame::CanStoreDocument(const Document& document,
+                                 uint64_t next_browsing_instance) const {
+  // A tab's page, which a navigation's response loaded, whose browsing
+  // instance the next page does not share: kBrowsingInstanceNotSwapped.
+  if (parent_ || !current_ || !window_ || document.IsInitialEmptyDocument() ||
+      next_browsing_instance == browsing_instance_ ||
+      !GURL(document.UrlForBinding()).SchemeIsHTTPOrHTTPS() ||
+      !MayStoreDocument(document)) {
+    return false;
+  }
+  // PopulateNonStickyReasonsForDocument(): not before DOMContentLoaded.
+  if (!chrome_object_data_ || chrome_object_data_->load_timing
+                                  ->dom_content_loaded_event_end.is_null()) {
+    return false;
+  }
+  // Known Gaps: the cache keeps no frames and freezes no workers yet, and
+  // the Session keeps a top-level document's Cache API, IndexedDB, Storage
+  // Buckets and CookieStore listeners only while it is the current one.
+  if (!children_.empty() ||
+      (worker_starter_ && worker_starter_->HasStarted())) {
+    return false;
+  }
+  const CacheStorageHost* const cache_storage = cache_storage_host();
+  const IndexedDbHost* const indexed_db = indexed_db_host();
+  const StorageBucketHost* const storage_buckets = storage_bucket_host();
+  const CookieStore* const cookie_store = window_->GetCookieStoreIfExists();
+  return !(cache_storage && cache_storage->UsedByDocument()) &&
+         !(indexed_db && indexed_db->UsedByDocument()) &&
+         !(storage_buckets && storage_buckets->UsedByDocument()) &&
+         !(cookie_store && cookie_store->IsObserving());
+}
+
+uint64_t PageFrame::BrowsingInstanceOf(uint64_t document) {
+  const auto found = browsing_instances_.find(document);
+  return found != browsing_instances_.end() ? found->second
+                                            : ++last_browsing_instance_;
+}
+
+void PageFrame::StoreDocument(std::unique_ptr<DocumentLoader> loader) {
+  v8::Isolate* const isolate = runner_->isolate();
+  const v8::HandleScope handle_scope(isolate);
+  auto stored = std::make_unique<StoredDocument>();
+  Window& window = *window_;
+  stored->document = window.DocumentId();
+  stored->browsing_instance = browsing_instance_;
+  stored->item_sequence_number =
+      window.CurrentHistoryItem()
+          ? window.CurrentHistoryItem()->item_sequence_number
+          : 0;
+  stored->entry = history().CurrentRootRef();
+  stored->name = name_;
+  stored->context = std::move(context_);
+  stored->window = window_.Get();
+  window_ = nullptr;
+  stored->timers = std::move(timers_);
+  stored->idle_tasks = std::move(idle_tasks_);
+  stored->animation_frames = std::move(animation_frames_);
+  stored->fetcher = std::move(fetcher_);
+  stored->window_tasks = std::move(window_tasks_);
+  stored->worker_starter = std::move(worker_starter_);
+  stored->chrome_object_data = std::exchange(chrome_object_data_, nullptr);
+  const bool no_store = loader->no_store();
+  stored->loader = std::move(loader);
+  const uint64_t document = stored->document;
+  {
+    // It is no frame's window while the cache keeps it, and evicts itself
+    // once a script tries to run in it.
+    const v8::Context::Scope context_scope(stored->context.Get(isolate));
+    window.SetFrame(nullptr);
+    window.SetNavigationClient(nullptr);
+    window.SetIsInBackForwardCache(true);
+    window.SetBackForwardCacheEviction(base::BindRepeating(
+        [](base::WeakPtr<PageFrame> frame, uint64_t document) {
+          // From a task, as the script that tried to run is on the stack.
+          base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+              FROM_HERE,
+              base::BindOnce(&PageFrame::EvictDocument, frame, document));
+        },
+        weak_factory_.GetWeakPtr(), document));
+  }
+  Freeze(*stored);
+  // The Session keeps its context, before it hears of the next document.
+  runner_->sender()->SendDocumentStored(document);
+  stored->time_to_live.Start(FROM_HERE,
+                             no_store ? kNoStoreTimeToLive : kTimeToLive,
+                             base::BindOnce(&PageFrame::EvictDocument,
+                                            base::Unretained(this), document));
+  stored->loading_grace_period.Start(
+      FROM_HERE, kLoadingGracePeriod,
+      base::BindOnce(&PageFrame::EvictLoadingDocument, base::Unretained(this),
+                     document));
+  stored_documents_.push_front(std::move(stored));
+  // BackForwardCacheImpl::EnforceCacheSizeLimit(): the oldest go past the
+  // limit, but one that a traversal may restore.
+  while (stored_documents_.size() > kBackForwardCacheSize) {
+    const auto oldest = std::ranges::find_if(
+        stored_documents_.rbegin(), stored_documents_.rend(),
+        [this](const auto& stored) {
+          return stored->document != restore_document_;
+        });
+    if (oldest == stored_documents_.rend()) {
+      break;
+    }
+    EvictDocument((*oldest)->document);
+  }
+}
+
+void PageFrame::Freeze(StoredDocument& stored) {
+  stored.timers->Freeze();
+  stored.idle_tasks->Freeze();
+  stored.animation_frames->Freeze();
+  stored.window_tasks->Freeze();
+}
+
+PageFrame::StoredDocument* PageFrame::FindStoredDocument(
+    int64_t item_sequence_number) {
+  for (const std::unique_ptr<StoredDocument>& stored : stored_documents_) {
+    if (stored->item_sequence_number == item_sequence_number) {
+      return stored.get();
+    }
+  }
+  return nullptr;
+}
+
+void PageFrame::PauseStoredMicrotasks() {
+  v8::Isolate* const isolate = runner_->isolate();
+  // V8 gives a context another queue only while it runs and enters nothing.
+  if (isolate->InContext() ||
+      v8::MicrotasksScope::GetCurrentDepth(isolate) > 0 ||
+      v8::MicrotasksScope::IsRunningMicrotasks(isolate)) {
+    return;
+  }
+  const v8::HandleScope handle_scope(isolate);
+  for (const std::unique_ptr<StoredDocument>& stored : stored_documents_) {
+    if (!stored->microtasks) {
+      stored->microtasks =
+          v8::MicrotaskQueue::New(isolate, v8::MicrotasksPolicy::kScoped);
+      stored->context.Get(isolate)->SetMicrotaskQueue(stored->microtasks.Get());
+    }
+  }
+}
+
+void PageFrame::EvictLoadingDocument(uint64_t document) {
+  const auto found = std::ranges::find_if(
+      stored_documents_,
+      [document](const auto& stored) { return stored->document == document; });
+  if (found != stored_documents_.end() &&
+      runner_->requests().IsLoading(*(*found)->window)) {
+    EvictDocument(document);
+  }
+}
+
+void PageFrame::EvictDocument(uint64_t document) {
+  if (document == restore_document_) {
+    return;
+  }
+  const auto found = std::ranges::find_if(
+      stored_documents_,
+      [document](const auto& stored) { return stored->document == document; });
+  if (found == stored_documents_.end()) {
+    return;
+  }
+  std::unique_ptr<StoredDocument> stored = std::move(*found);
+  stored_documents_.erase(found);
+  v8::Isolate* const isolate = runner_->isolate();
+  const v8::HandleScope handle_scope(isolate);
+  const v8::Local<v8::Context> context = stored->context.Get(isolate);
+  Window& window = *stored->window;
+  {
+    // Its requests go, and what came of them meanwhile. What waits in its
+    // queues goes with it.
+    const v8::Context::Scope context_scope(context);
+    window.SetBackForwardCacheEviction(base::RepeatingClosure());
+    window.SetIsInBackForwardCache(false);
+    window.TakeHeldTasks();
+    // A keepalive request outlives the page, as it would outlive an unload,
+    // which its fetcher lets go, before what else the window asked for goes.
+    stored->fetcher->Stop();
+    runner_->requests().CancelAllOf(window);
+    window.SetTimers(nullptr);
+    window.SetIdleTasks(nullptr);
+    window.SetAnimationFrames(nullptr);
+    window.SetFetcher(nullptr);
+    window.SetTasks(nullptr);
+    window.SetWorkerStarter(nullptr);
+  }
+  stored->timers->Stop();
+  stored->idle_tasks->Stop();
+  stored->animation_frames->Stop();
+  stored->window_tasks->Stop();
+  stored->loader->StopLoading();
+  runner_->reporter().ContextDestroyed(context);
+  stored->chrome_object_data->detached = true;
+  runner_->sender()->SendDocumentEvicted(document);
+  // What ran in it may be on the stack, so it goes from a later task.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&PageFrame::Drop, base::Unretained(isolate),
+                                std::move(stored)));
+}
+
+// static
+void PageFrame::Drop(v8::Isolate* isolate,
+                     std::unique_ptr<StoredDocument> stored) {
+  const v8::HandleScope handle_scope(isolate);
+  // V8 keeps what waits in a queue, and the context of each, until its queue
+  // has had its turn, which passes over those of a context without one.
+  stored->context.Get(isolate)->DetachGlobal();
+  if (stored->microtasks) {
+    stored->microtasks->PerformCheckpoint(isolate);
+  }
+}
+
+void PageFrame::EvictBrowsingInstance(uint64_t browsing_instance) {
+  std::vector<uint64_t> documents;
+  for (const std::unique_ptr<StoredDocument>& stored : stored_documents_) {
+    if (stored->browsing_instance == browsing_instance) {
+      documents.push_back(stored->document);
+    }
+  }
+  for (const uint64_t document : documents) {
+    EvictDocument(document);
+  }
+}
+
+void PageFrame::EndRestore() {
+  if (const std::optional<uint64_t> document =
+          std::exchange(restore_document_, std::nullopt)) {
+    EvictDocument(*document);
+  }
+}
+
 void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
                                                int net_error) {
   if (provisional_.get() == &loader) {
     traversal_item_.reset();
     traversal_record_.reset();
+    EndRestore();
   }
   // The loader is on the stack below this, so it goes from a later task.
   base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
@@ -1459,12 +2030,26 @@ Document& PageFrame::CommitDocument(
       committed.source == PageDocumentSource::kDataUrl
           ? url::Origin::Resolve(url, provisional_request_.initiator_origin)
           : url::Origin::Create(url);
+  // A frame's document is isolated where the Session says and its parent's
+  // window is, so that none is more so than its parent, whose own sandbox the
+  // Session cannot see yet.
+  const bool isolated =
+      parent_ ? cross_origin_isolated &&
+                    IsolatedLikeParent(origin, provisional_origin_sandboxed_)
+              : cross_origin_isolated;
+  // The Session isolates what the parent's window lets be, but for a response
+  // that sandboxes its document's origin.
+  origin_sandboxed_ = provisional_origin_sandboxed_ ||
+                      (!cross_origin_isolated &&
+                       IsolatedLikeParent(origin, /*origin_sandboxed=*/false));
   // Blink keeps the window of a frame's initial about:blank for a document of
-  // its origin, as DocumentLoader::CommitNavigation() reuses it. A top-level
-  // frame's initial about:blank has an opaque origin, so it never does.
-  const Document& old_document = window_->GetDocument();
-  const bool reuse_window = old_document.IsInitialEmptyDocument() &&
-                            old_document.GetOrigin().IsSameOriginWith(origin);
+  // its origin and isolation, as DocumentLoader::CommitNavigation() reuses
+  // it. A top-level frame's initial about:blank has an opaque origin, so it
+  // never does, and one whose window the back/forward cache took has none.
+  const bool reuse_window =
+      window_ && window_->GetDocument().IsInitialEmptyDocument() &&
+      window_->GetDocument().GetOrigin().IsSameOriginWith(origin) &&
+      window_->CrossOriginIsolatedCapability() == isolated;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
   if (reuse_window) {
@@ -1476,10 +2061,16 @@ Document& PageFrame::CommitDocument(
     window_->SetDocumentId(SendDocumentCommitted(committed));
   } else {
     // The frame keeps its WindowProxy, which takes the new window, as
-    // LocalWindowProxy detaches the old global object from it.
-    const v8::Local<v8::Object> global_proxy = context()->Global();
-    DetachWindow();
-    context()->DetachGlobal();
+    // LocalWindowProxy detaches the old global object from it. A window that
+    // the back/forward cache took keeps its context and its global proxy, and
+    // the new window gets a WindowProxy of its own, as Chrome's proactive
+    // browsing instance swap gives the next page a new frame.
+    v8::Local<v8::Object> global_proxy;
+    if (!context_.IsEmpty()) {
+      global_proxy = context()->Global();
+      DetachWindow();
+      context()->DetachGlobal();
+    }
     // What the new document's DOMHighResTimeStamp counts from, as Blink takes
     // it from the navigation's start.
     const base::TimeTicks now = base::TimeTicks::Now();
@@ -1492,7 +2083,7 @@ Document& PageFrame::CommitDocument(
       MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
     }
     const v8::Local<v8::Context> context =
-        NewContext(time_origin, origin, cross_origin_isolated, global_proxy);
+        NewContext(time_origin, origin, isolated, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
@@ -1533,6 +2124,34 @@ Document& PageFrame::CommitDocument(
     cookie_store->DocumentChanged();
   }
   return *document;
+}
+
+bool PageFrame::IsolatedLikeParent(const url::Origin& origin,
+                                   bool origin_sandboxed) const {
+  // An ancestor's sandbox counts through its document, as committed: its
+  // isolation, which the parent's window carries.
+  return parent_ && !origin_sandboxed &&
+         parent_->window_->CrossOriginIsolatedCapability() &&
+         parent_->window_->GetDocument().GetOrigin().IsSameOriginWith(origin);
+}
+
+bool PageFrame::OwnerSandboxesOrigin() const {
+  // A sandbox without allow-same-origin gives Chrome's documents of the frame
+  // an opaque origin, which the default allowlist does not take, though the
+  // Page does not make that origin yet.
+  const HTMLFrameOwnerElement* const owner = owner_.Get();
+  const std::u16string* const sandbox =
+      owner && owner->HasHTMLTagName(u"iframe")
+          ? owner->FindAttribute(u"sandbox")
+          : nullptr;
+  return sandbox &&
+         std::ranges::none_of(base::SplitStringPiece(*sandbox, u"\t\n\f\r ",
+                                                     base::KEEP_WHITESPACE,
+                                                     base::SPLIT_WANT_NONEMPTY),
+                              [](std::u16string_view token) {
+                                return base::EqualsCaseInsensitiveASCII(
+                                    token, u"allow-same-origin");
+                              });
 }
 
 v8::Local<v8::Context> PageFrame::NewContext(
@@ -1612,16 +2231,20 @@ uint64_t PageFrame::SendDocumentCommitted(PageDocumentCommitted committed) {
   }
   // What the frame's document before asked of the Session's storage goes
   // with it.
+  SetStorageDocument(committed.document);
+  return committed.document;
+}
+
+void PageFrame::SetStorageDocument(uint64_t document) {
   if (CacheStorageHost* const host = cache_storage_host()) {
-    host->DocumentCommitted(committed.document);
+    host->DocumentCommitted(document);
   }
   if (StorageBucketHost* const host = storage_bucket_host()) {
-    host->DocumentCommitted(committed.document);
+    host->DocumentCommitted(document);
   }
   if (IndexedDbHost* const host = indexed_db_host()) {
-    host->DocumentCommitted(committed.document);
+    host->DocumentCommitted(document);
   }
-  return committed.document;
 }
 
 v8::Local<v8::Value> PageFrame::TokenOfOpaqueOrigin(

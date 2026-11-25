@@ -61,6 +61,10 @@ class CredentialsContainer final : public bindings::ScriptWrappable {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   void Trace(cppgc::Visitor* visitor) const override;
 
+  // Whether the browser holds a WebAuthn request, which keeps the page out of
+  // the back/forward cache until it ends, as kWebAuthentication.
+  bool HasPublicKeyRequest() const { return public_key_request_ != nullptr; }
+
   // The members of the interface.
   v8::Local<v8::Promise> Get(const bindings::CredentialRequestOptions& options,
                              bindings::ExceptionState& exception_state);

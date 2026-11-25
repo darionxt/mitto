@@ -254,6 +254,10 @@ StorageBucketManager* Navigator::StorageBuckets() {
   return storage_buckets_.Get();
 }
 
+bool Navigator::HasPublicKeyRequest() const {
+  return credentials_ && credentials_->HasPublicKeyRequest();
+}
+
 CredentialsContainer* Navigator::Credentials() {
   if (!credentials_) {
     credentials_ = CredentialsContainer::Create();

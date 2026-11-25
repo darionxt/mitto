@@ -59,10 +59,11 @@ void KnownGapConstructorOfClass(const v8::FunctionCallbackInfo<v8::Value>& info,
                                 const OperationInfo& operation,
                                 uint16_t number);
 // next() and return() of an iterator over nothing, which a Known Gap gives:
-// { value: undefined, done: true }, or for return() the value it gets, and for
+// { done: true, value: undefined }, or for return() the value it gets, and for
 // an async iterator a promise resolved with it, as Blink's iterators give once
 // they are done. The next() of an iterator over a list gives each of its items
-// in turn first, { value: item, done: false }.
+// in turn first, { done: false, value: item }, and that of a class's pair
+// iterable each pair that its source gives (pair_iterable.h).
 void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info);
 
 // An iterator of `iterator`, the iterator interface of a maplike or setlike
