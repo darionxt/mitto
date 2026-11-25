@@ -62,9 +62,11 @@ PermissionsPolicyState::PermissionsPolicyState(
     const ParsedPolicy& container_policy,
     const url::Origin& origin,
     bool unload_deprecated,
+    bool is_headerless,
     ParsedPolicy declared)
     : origin_(origin),
       unload_deprecated_(unload_deprecated),
+      is_headerless_(is_headerless),
       declared_(WithLocalNetworks(std::move(declared))) {
   const base::span<const PolicyFeature> features = PolicyFeatures();
   CHECK_LE(features.size(), kMaxFeatures);
@@ -78,9 +80,10 @@ PermissionsPolicyState::PermissionsPolicyState(
           parent->HasValueFor(feature, parent->origin_, IsForNone(feature)) &&
           parent->HasValueFor(feature, origin, IsForNone(feature)) &&
           (container ? container->Contains(origin)
-                     : feature.default_allowlist ==
-                               PolicyFeature::Default::kEnableForAll ||
-                           origin.IsSameOriginWith(parent->origin_));
+                     : !IsForNone(feature) &&
+                           (feature.default_allowlist ==
+                                PolicyFeature::Default::kEnableForAll ||
+                            origin.IsSameOriginWith(parent->origin_)));
     }
     if (inherited) {
       inherited_.set(IndexOf(feature));
@@ -104,9 +107,12 @@ bool PermissionsPolicyState::IsEnabledFor(const PolicyFeature& feature,
           FindDeclared(declared_, feature)) {
     return declared->Contains(origin);
   }
-  return !IsForNone(feature) &&
-         (feature.default_allowlist == PolicyFeature::Default::kEnableForAll ||
-          origin_.IsSameOriginWith(origin));
+  // A document of no headers has what is for none that it inherits.
+  if (IsForNone(feature)) {
+    return is_headerless_;
+  }
+  return feature.default_allowlist == PolicyFeature::Default::kEnableForAll ||
+         origin_.IsSameOriginWith(origin);
 }
 
 bool PermissionsPolicyState::HasValueFor(const PolicyFeature& feature,

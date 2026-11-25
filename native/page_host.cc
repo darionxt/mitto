@@ -625,7 +625,11 @@ std::optional<std::string> HeaderValue(std::string_view lines,
     }
     const std::string_view item =
         base::TrimWhitespaceASCII(line.substr(colon + 1), base::TRIM_ALL);
-    value = value ? base::StrCat({*value, ", ", item}) : std::string(item);
+    if (value) {
+      base::StrAppend(&*value, {", ", item});
+    } else {
+      value = std::string(item);
+    }
   }
   return value;
 }

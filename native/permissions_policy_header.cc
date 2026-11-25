@@ -16,6 +16,10 @@ namespace mitto {
 namespace {
 
 constexpr size_t kMaxLength = 1 << 16;
+// The most that the messages of a header hold, which repeat a feature's name
+// for each of its items, so that a header never makes a message for the Page
+// that is too large. What is past it is left out.
+constexpr size_t kMaxMessagesLength = 1 << 20;
 
 // A header's bytes are Latin-1, as Blink's strings of them.
 std::string FromLatin1(std::string_view bytes) {
@@ -30,6 +34,13 @@ std::string FromLatin1(std::string_view bytes) {
 // ParsePermissionsPolicyToIR().
 PolicyNode ParsePermissionsPolicy(std::string_view policy) {
   PolicyNode node;
+  size_t messages_length = 0;
+  const auto warn = [&](std::string text) {
+    messages_length += text.size();
+    if (messages_length <= kMaxMessagesLength) {
+      node.messages.push_back({.text = std::move(text)});
+    }
+  };
   if (policy.size() > kMaxLength) {
     node.messages.push_back(
         {true,
@@ -54,21 +65,19 @@ PolicyNode ParsePermissionsPolicy(std::string_view policy) {
       if (const std::string* const value = item.GetIfToken()) {
         // The special keywords are tokens.
         if (*value != "*" && *value != "self") {
-          node.messages.push_back(
-              {.text = base::StrCat(
-                   {"Invalid allowlist item(", *value, ") for feature ",
-                    entry.feature,
-                    ". Allowlist item must be *, self or quoted url."})});
+          warn(base::StrCat(
+              {"Invalid allowlist item(", *value, ") for feature ",
+               entry.feature,
+               ". Allowlist item must be *, self or quoted url."}));
           return;
         }
         token = *value == "*" ? *value : base::StrCat({"'", *value, "'"});
       } else if (const std::string* const text = item.GetIfString()) {
         token = *text;
       } else {
-        node.messages.push_back(
-            {.text = base::StrCat(
-                 {"Invalid allowlist item for feature ", entry.feature,
-                  ". Allowlist item must be *, self, or quoted url."})});
+        warn(
+            base::StrCat({"Invalid allowlist item for feature ", entry.feature,
+                          ". Allowlist item must be *, self, or quoted url."}));
         return;
       }
       if (!token.empty()) {
@@ -82,9 +91,8 @@ PolicyNode ParsePermissionsPolicy(std::string_view policy) {
                    member.GetIfInnerList()) {
       for (const auto& one : list->items) {
         if (!one.params.empty()) {
-          node.messages.push_back(
-              {.text = base::StrCat(
-                   {"Feature ", entry.feature, "'s parameters are ignored."})});
+          warn(base::StrCat(
+              {"Feature ", entry.feature, "'s parameters are ignored."}));
         }
         process_item(one.item);
       }

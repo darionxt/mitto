@@ -284,6 +284,7 @@ class Document : public Node {
   void ApplyPermissionsPolicy(mitto::Document* parent,
                               const ParsedPolicy& container_policy,
                               const DeprecatedUnload& deprecated_unload,
+                              bool is_headerless,
                               ParsedPolicy declared);
   // ExecutionContext::IsFeatureEnabled().
   bool IsFeatureEnabled(std::string_view feature);

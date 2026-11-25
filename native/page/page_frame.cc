@@ -1613,6 +1613,7 @@ void PageFrame::ApplyPermissionsPolicy(Document& document,
   if (!parent_ && declared.empty()) {
     return;
   }
+  const GURL url(document.UrlForBinding());
   // SecurityContextInit::ApplyPermissionsPolicy(): a sandboxed frame has it
   // only if its element says so.
   if (document.IsSandboxed(SandboxFlags::kNavigation) &&
@@ -1624,7 +1625,10 @@ void PageFrame::ApplyPermissionsPolicy(Document& document,
   }
   document.ApplyPermissionsPolicy(
       parent_ ? &parent_->window_->GetDocument() : nullptr, container_policy,
-      runner_->start().features.deprecated_unload, std::move(declared));
+      runner_->start().features.deprecated_unload,
+      url.IsAboutBlank() || url.IsAboutSrcdoc() ||
+          url.SchemeIs(url::kDataScheme) || url.SchemeIsBlob(),
+      std::move(declared));
 }
 
 // DocumentLoader::WarnIfSandboxIneffective().

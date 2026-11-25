@@ -173,7 +173,7 @@ std::unique_ptr<PermissionsPolicyState> HTMLFrameOwnerElement::FrameState(
       &window.GetDocument().GetPermissionsPolicyState(), container_policy_,
       origin,
       IsUnloadDeprecated(window.Start().features.deprecated_unload, origin),
-      ParsedPolicy());
+      /*is_headerless=*/false, ParsedPolicy());
 }
 
 url::Origin HTMLFrameOwnerElement::OriginForPermissionsPolicy() const {

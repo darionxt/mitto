@@ -26,5 +26,29 @@
       element.remove();
     }
   }
+  if (location.pathname === '/with' && JSON.parse(decodeURIComponent(location.search.slice(1))).unload) {
+    const listens = (view) => {
+      let ran = false;
+      view.addEventListener('unload', () => { ran = true; });
+      view.dispatchEvent(new view.Event('unload'));
+      return ran;
+    };
+    const unload = [policy.allowsFeature('unload'), listens(window), policy.getAllowlistForFeature('unload')];
+    for (const allow of [null, 'unload', `unload 'none'`, 'unload *', `unload 'self'`]) {
+      for (const [kind, attributes] of Object.entries({same: {src: '/child'}, 'same of its own': {src: `/with?${encodeURIComponent(JSON.stringify({pp: ['unload=*']}))}`}, srcdoc: {srcdoc: 'x'}, blank: {}, data: {src: 'data:text/html,x'}})) {
+        const element = document.createElement('iframe');
+        if (allow !== null) element.allow = allow;
+        for (const name in attributes) element.setAttribute(name, attributes[name]);
+        const done = new Promise((resolve) => { element.onload = resolve; });
+        document.documentElement.append(element);
+        await done;
+        const inner = element.contentDocument;
+        unload.push([allow, kind, element.featurePolicy.allowsFeature('unload'), inner && [inner.featurePolicy.allowsFeature('unload'), listens(element.contentWindow), inner.featurePolicy.getAllowlistForFeature('unload')]]);
+        element.remove();
+      }
+    }
+    postMessage.call(parent, unload, '*');
+    return;
+  }
   postMessage.call(parent, say, '*');
 })()

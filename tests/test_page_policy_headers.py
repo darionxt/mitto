@@ -55,7 +55,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/app/page":
             assert isinstance(self.server, QuietServer)
             port = self.server.server_port
-            headers.append(("Permissions-Policy", f'microphone=(), usb=(self "http://localhost:{port}")'))
+            headers.append(("Permissions-Policy", f'microphone=(), unload=*, usb=(self "http://localhost:{port}")'))
         self.send_response(200)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body.encode())))

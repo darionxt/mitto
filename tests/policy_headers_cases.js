@@ -1,12 +1,13 @@
 // What a response's Permissions-Policy and Feature-Policy headers give its document and that document's frames. The page is at
-// /app/page, whose own header is `microphone=(), usb=(self "OTHER")`, and /with?HEADERS answers with the headers that its query
+// /app/page, whose own header is `microphone=(), unload=*, usb=(self "OTHER")`, and /with?HEADERS answers with the headers that its query
 // names, 66,000 letters for LONG in them, and runs tests/policy_headers_child.js. The value is a promise for a record by the headers, which
 // tests/data/policy_headers_cases.json holds as Chrome gave it.
 (async () => {
   const OTHER = `http://localhost:${location.port}`;
   const plain = (value) => JSON.parse(JSON.stringify(value).replaceAll(OTHER, 'OTHER').replaceAll(location.origin, 'ORIGIN'));
-  const ask = async (headers) => {
+  const ask = async (headers, allow = '') => {
     const element = document.createElement('iframe');
+    element.allow = allow;
     element.src = `/with?${encodeURIComponent(JSON.stringify(headers))}`;
     const heard = new Promise((resolve) => addEventListener('message', function listener({source, data}) {
       if (source !== element.contentWindow) return;
@@ -51,5 +52,9 @@
     'both': {pp: ['camera=()'], fp: [`camera *; gamepad 'none'`]}, 'both, two overlaps': {pp: ['camera=(), gamepad=self'], fp: [`gamepad *; camera *`]}, 'two headers': {pp: ['camera=()', 'gamepad=()']}, 'two headers of one': {pp: ['camera=()', 'camera=*']},
     'two headers, one bad': {pp: ['camera=()', 'gamepad=(']}, 'two feature headers': {fp: [`camera 'none'`, `camera *; gamepad 'none'`]}, 'both bad': {pp: ['camera=('], fp: ['unknown *']}, 'too long': {pp: ['camera=(), gamepad="LONG"']}, 'too long a feature header': {fp: [`camera 'none'; LONG`]},
   })) record[name] = differing(await ask(headers));
+  // unload, whose default allowlist is none on the page's host, as each frame's document and its element have it.
+  for (const [header, allow] of [[null, 'unload'], ['unload=*', 'unload'], ['unload=self', 'unload'], ['unload=()', 'unload'], ['unload=("OTHER")', 'unload'], ['unload=*', '']]) {
+    record[`unload: ${header}, allow="${allow}"`] = await ask({unload: true, pp: header ? [fill(header)] : []}, allow);
+  }
   return plain(record);
 })()

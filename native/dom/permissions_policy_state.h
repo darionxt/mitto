@@ -74,11 +74,13 @@ class PermissionsPolicyState {
  public:
   // CreateFromParentPolicy(): of a document of `origin` under one of `parent`,
   // null for a top-level document, in a frame of `container_policy`, whose
-  // response's headers say `declared`.
+  // response's headers say `declared`, and which is headerless if no response
+  // makes it, as IsHeaderlessUrl() says.
   PermissionsPolicyState(const PermissionsPolicyState* parent,
                          const ParsedPolicy& container_policy,
                          const url::Origin& origin,
                          bool unload_deprecated,
+                         bool is_headerless,
                          ParsedPolicy declared);
   ~PermissionsPolicyState();
 
@@ -105,6 +107,7 @@ class PermissionsPolicyState {
 
   const url::Origin origin_;
   const bool unload_deprecated_;
+  const bool is_headerless_;
   std::bitset<kMaxFeatures> inherited_;
   const ParsedPolicy declared_;
 };
