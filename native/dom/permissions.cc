@@ -6,6 +6,7 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_context.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_conversions.h"
@@ -16,7 +17,9 @@
 #include "mitto/dom/permission_status.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
+#include "net/base/url_util.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
@@ -459,18 +462,35 @@ std::string_view FeatureOf(Kind kind) {
   }
 }
 
+// Whether the document's permissions policy withholds a kind of permission.
+bool IsWithheld(Kind kind, Document& document) {
+  const std::string_view feature = FeatureOf(kind);
+  if (feature.empty()) {
+    return false;
+  }
+  // LocalNetworkAccessCompatPermissionContext: either of the two that it names.
+  return !document.IsFeatureEnabled(feature) ||
+         (kind == Kind::kLocalNetworkAccess &&
+          !document.IsFeatureEnabled("local-network") &&
+          !document.IsFeatureEnabled("loopback-network"));
+}
+
+// network::IsOriginPotentiallyTrustworthy().
+bool IsTrustworthy(const url::Origin& origin) {
+  return !origin.opaque() && (GURL::SchemeIsCryptographic(origin.scheme()) ||
+                              net::IsLocalhost(origin.GetURL()));
+}
+
 // Whether a kind of permission is asked of secure origins, as
 // PermissionContextBase::IsPermissionAvailableToOrigins() has it of the
 // origins that PermissionUtil::GetCanonicalOrigin() gives it: the top-level
 // page's, but for the permissions that are not delegated to its frames, which
-// take the document's own too.
+// take the document's own too, whatever its ancestors.
 bool IsOfSecureOrigins(Kind kind, Window& window) {
   const bool own = kind == Kind::kNotifications ||
                    kind == Kind::kStorageAccessGrant ||
                    kind == Kind::kTopLevelStorageAccess;
-  if (own && window.IsInFrame() &&
-      (window.GetSecurityOrigin().opaque() ||
-       !window.IsSecureContextForBindings())) {
+  if (own && window.IsInFrame() && !IsTrustworthy(window.GetSecurityOrigin())) {
     return false;
   }
   Window* const top =
@@ -487,17 +507,12 @@ bool IsOfSecureOrigins(Kind kind, Window& window) {
 std::u16string_view StateOf(Kind kind, ExecutionContext& context) {
   Window* const window =
       context.IsWindow() ? static_cast<Window*>(&context) : nullptr;
-  if (window) {
-    const std::string_view feature = FeatureOf(kind);
-    if (!feature.empty() && !window->GetDocument().IsFeatureEnabled(feature)) {
-      return u"denied";
-    }
+  if (window && IsWithheld(kind, window->GetDocument())) {
+    return u"denied";
   }
-  // A worker asks as its own origin, which an opaque one of a data: URL is not
-  // trustworthy for.
+  // A worker asks as its own origin, whatever its creator's context.
   const bool secure = window ? IsOfSecureOrigins(kind, *window)
-                             : context.IsSecureContextForBindings() &&
-                                   !context.GetSecurityOrigin().opaque();
+                             : IsTrustworthy(context.GetSecurityOrigin());
   if (!secure) {
     return kind == Kind::kStorageAccessGrant ? u"prompt" : u"denied";
   }
@@ -551,6 +566,9 @@ v8::Local<v8::Promise> Permissions::Query(
   if (!descriptor) {
     return v8::Local<v8::Promise>();
   }
+  // The receiver's document or worker asks, whose promise it is.
+  const v8::Context::Scope receiver_scope(
+      bindings::ReceiverRealmScope::CreationContext(isolate));
   v8::Local<v8::Promise::Resolver> resolver;
   if (!v8::Promise::Resolver::New(isolate->GetCurrentContext())
            .ToLocal(&resolver)) {
@@ -559,7 +577,7 @@ v8::Local<v8::Promise> Permissions::Query(
   const auto [entry, inserted] = names_.try_emplace(
       static_cast<int>(descriptor->kind), std::u16string(descriptor->name));
   const std::u16string_view state =
-      StateOf(descriptor->kind, ExecutionContext::OfReceiver());
+      StateOf(descriptor->kind, ExecutionContext::Current());
   // A new PermissionStatus each time, once the browser has answered.
   ResolveFromTask(isolate, resolver,
                   PermissionStatus::Create(entry->second, std::u16string(state))

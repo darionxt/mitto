@@ -50,11 +50,13 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
  public:
   GeoNotifier(v8::Isolate* isolate,
               Geolocation* geolocation,
+              Window& window,
               v8::Local<v8::Function> success_callback,
               v8::Local<v8::Function> error_callback,
               uint32_t timeout_ms,
               int32_t watch_id)
       : geolocation_(geolocation),
+        window_(window),
         success_callback_(isolate, success_callback),
         timeout_ms_(timeout_ms),
         watch_id_(watch_id) {
@@ -65,6 +67,7 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
 
   void Trace(cppgc::Visitor* visitor) const {
     visitor->Trace(geolocation_);
+    visitor->Trace(window_);
     visitor->Trace(success_callback_);
     visitor->Trace(error_callback_);
     visitor->Trace(next_);
@@ -89,6 +92,7 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
   uint16_t fatal_code() const { return fatal_code_; }
   const std::u16string& fatal_message() const { return fatal_message_; }
   int32_t watch_id() const { return watch_id_; }
+  Window& window() const { return *window_; }
   v8::Local<v8::Function> success_callback(v8::Isolate* isolate) const {
     return success_callback_.Get(isolate);
   }
@@ -107,6 +111,8 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
   }
 
   cppgc::Member<Geolocation> geolocation_;
+  // The geolocation's, with whose context the request goes.
+  const cppgc::Member<Window> window_;
   v8::TracedReference<v8::Function> success_callback_;
   v8::TracedReference<v8::Function> error_callback_;
   const uint32_t timeout_ms_;
@@ -140,8 +146,12 @@ void Geolocation::GetCurrentPositionForBindings(
     v8::Local<v8::Function> error_callback,
     const bindings::PositionOptions& options) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  Window& window = Window::OfReceiver();
+  if (!window.HasContext()) {
+    return;
+  }
   StartRequest(bindings::MakeGarbageCollected<GeoNotifier>(
-      isolate, this, success_callback, error_callback, options.timeout,
+      isolate, this, window, success_callback, error_callback, options.timeout,
       /*watch_id=*/0));
 }
 
@@ -150,10 +160,14 @@ int32_t Geolocation::WatchPositionForBindings(
     v8::Local<v8::Function> error_callback,
     const bindings::PositionOptions& options) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  Window& window = Window::OfReceiver();
+  if (!window.HasContext()) {
+    return 0;
+  }
   // ExecutionContext::CircularSequentialID(): from 1, never 0.
   last_watch_id_ = last_watch_id_ == INT32_MAX ? 1 : last_watch_id_ + 1;
   StartRequest(bindings::MakeGarbageCollected<GeoNotifier>(
-      isolate, this, success_callback, error_callback, options.timeout,
+      isolate, this, window, success_callback, error_callback, options.timeout,
       last_watch_id_));
   return last_watch_id_;
 }
@@ -182,7 +196,7 @@ size_t Geolocation::TimerCount() const {
 void Geolocation::StartRequest(GeoNotifier* notifier) {
   notifier->set_next(first_.Get());
   first_ = notifier;
-  Window& window = Window::OfReceiver();
+  Window& window = notifier->window();
   if (!window.IsSecureContextForBindings()) {
     notifier->SetFatalError(GeolocationPositionError::kPermissionDenied,
                             kInsecureOrigin);
@@ -230,6 +244,11 @@ void Geolocation::Fire(GeoNotifier* notifier) {
       fatal ? notifier->fatal_message() : std::u16string(kTimeoutExpired);
   const v8::Local<v8::Function> error_callback =
       notifier->error_callback(isolate);
+  // Geolocation::ContextDestroyed().
+  if (!notifier->window().HasContext()) {
+    Remove(notifier);
+    return;
+  }
   v8::Local<v8::Context> context;
   if (!notifier->success_callback(isolate)->GetCreationContext(isolate).ToLocal(
           &context)) {

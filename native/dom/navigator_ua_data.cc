@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator_ua_data.h"
@@ -77,6 +78,9 @@ std::u16string NavigatorUAData::Platform() const {
 v8::Local<v8::Promise> NavigatorUAData::GetHighEntropyValues(
     const std::vector<std::u16string>& hints) const {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  // The receiver's document or worker asks, whose promise it is.
+  const v8::Context::Scope receiver_scope(
+      bindings::ReceiverRealmScope::CreationContext(isolate));
   v8::Local<v8::Promise::Resolver> resolver;
   if (!v8::Promise::Resolver::New(isolate->GetCurrentContext())
            .ToLocal(&resolver)) {
@@ -85,7 +89,7 @@ v8::Local<v8::Promise> NavigatorUAData::GetHighEntropyValues(
   // The low-entropy values always, then each hint asked for, if the context's
   // permissions policy allows them. A UADataValues writes its members in their
   // sorted order.
-  const bool allowed = ExecutionContext::OfReceiver().AllowsHighEntropyValues();
+  const bool allowed = ExecutionContext::Current().AllowsHighEntropyValues();
   auto asked = [&hints, allowed](std::u16string_view hint) {
     return allowed && std::ranges::find(hints, hint) != hints.end();
   };

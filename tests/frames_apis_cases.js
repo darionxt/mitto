@@ -1,16 +1,17 @@
 // What the calls that a permissions policy, or a document's ancestors, decide give in the frames of a page of a secure context, whose
 // /child runs tests/frames_apis_child.js, as /nest does, which holds the frame that its query names, /without, whose header takes
-// each feature from it, and /self, whose header keeps high-entropy hints to its own origin. The value is a promise for a record by the frame, which tests/data/frames_apis_cases.json holds as Chrome gave it.
+// each feature from it, /self, whose header keeps high-entropy hints to its own origin, and
+// /neither and /one, whose headers take both of the local networks and one. The value is a promise for a record by the frame, which tests/data/frames_apis_cases.json holds as Chrome gave it.
 (async () => {
   const OTHER = `http://localhost:${location.port}`;
   const names = document.featurePolicy.features();
   const all = names.join(';'), every = names.map((name) => `${name} *`).join(';'), none = names.map((name) => `${name} 'none'`).join(';');
   const CHILD = `<script src="${location.origin}/child.js"><` + '/script>';
   const kinds = {
-    'same': {src: '/child'}, 'same, none': {src: '/child', allow: none}, 'same, without': {src: '/without'}, 'same, self': {src: '/self'}, 'same, sandbox': {src: '/child', sandbox: 'allow-scripts'}, 'same, sandbox, all': {src: '/child', sandbox: 'allow-scripts', allow: all},
+    'same': {src: '/child'}, 'same, none': {src: '/child', allow: none}, 'same, without': {src: '/without'}, 'same, self': {src: '/self'}, 'same, neither network': {src: '/neither'}, 'same, one network': {src: '/one'}, 'same, sandbox': {src: '/child', sandbox: 'allow-scripts'}, 'same, sandbox, all': {src: '/child', sandbox: 'allow-scripts', allow: all},
     'same, sandbox with its origin': {src: '/child', sandbox: 'allow-scripts allow-same-origin'}, 'other': {src: `${OTHER}/child`}, 'other, all': {src: `${OTHER}/child`, allow: all}, 'other, every': {src: `${OTHER}/child`, allow: every}, 'other, sandbox, every': {src: `${OTHER}/child`, sandbox: 'allow-scripts', allow: every},
     'other, without': {src: `${OTHER}/without`, allow: all}, 'srcdoc': {srcdoc: CHILD}, 'srcdoc, none': {srcdoc: CHILD, allow: none}, 'data': {src: `data:text/html,${encodeURIComponent(CHILD)}`}, 'data, every': {src: `data:text/html,${encodeURIComponent(CHILD)}`, allow: every},
-    'same in other': {src: `${OTHER}/nest?${location.origin}/child`}, 'same in other, all': {src: `${OTHER}/nest?${location.origin}/child`, allow: all}, 'other in same': {src: `/nest?${OTHER}/child`}, 'other in same, all': {src: `/nest?${OTHER}/child`, allow: all}, 'third in other, all': {src: `${OTHER}/nest?${OTHER.replace('localhost', 'a.localhost')}/child`, allow: every}, 'same in same': {src: '/nest?/child'},
+    'same in other': {src: `${OTHER}/nest?${location.origin}/child`}, 'same in other, all': {src: `${OTHER}/nest?${location.origin}/child`, allow: all}, 'other in same': {src: `/nest?${OTHER}/child`}, 'other in same, all': {src: `/nest?${OTHER}/child`, allow: all}, 'third in other, all': {src: `${OTHER}/nest?${OTHER.replace('localhost', 'a.localhost')}/child`, allow: every}, 'same in same': {src: '/nest?/child'}, 'same in data': {src: `data:text/html,${encodeURIComponent(`<script>NEST = '${location.origin}/child';<` + `/script>${CHILD}`)}`},
   };
   const frames = {};
   for (const kind in kinds) {
@@ -48,6 +49,8 @@
   for (const kind in frames) record[kind].calls = differing(await ask(frames[kind], 'calls'), page.calls);
   // Each call goes by its receiver's document, whichever realm its function is of.
   const told = ({name, message}) => `${name}: ${message}`;
+  // Whose an object is.
+  const of = (object) => (object instanceof window.Object ? 'the page' : object instanceof frames['same, none'].contentWindow.Object ? 'the frame' : 'neither');
   const borrow = async ({Permissions, Geolocation, Keyboard, NavigatorUAData, Navigator, CredentialsContainer}, {navigator}) => {
     const calls = {
       query: () => Permissions.prototype.query.call(navigator.permissions, {name: 'camera'}).then(({state}) => state),
@@ -62,20 +65,29 @@
     };
     const given = {};
     for (const name in calls) {
+      let promise;
       try {
-        given[name] = await calls[name]();
+        promise = calls[name]();
+        given[name] = await promise;
       } catch (error) {
-        given[name] = told(error);
+        given[name] = [told(error), of(error)];
       }
+      if (promise && promise.then) given[`${name}'s promise`] = of(promise);
     }
     return given;
   };
   const inner = frames['same, none'].contentWindow;
   record['the page on a frame'] = await borrow(window, inner);
   record['a frame on the page'] = await borrow(inner, window);
-  // A navigator whose frame has gone asks no policy of its gamepads.
-  const {navigator: gone} = inner;
+  // A navigator whose frame has gone asks no policy of its gamepads, and its geolocation calls nothing back, even what it was to.
+  const {navigator: gone} = inner, {geolocation} = gone;
+  const heard = [];
+  const locate = (name) => geolocation.getCurrentPosition(() => heard.push(name), () => heard.push(name), {timeout: 1});
+  locate('before');
   frames['same, none'].remove();
-  record['gone'] = gone.getGamepads().length;
+  locate('after');
+  const watch = geolocation.watchPosition(() => heard.push('watch'), () => heard.push('watch'), {timeout: 1});
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  record.gone = {gamepads: gone.getGamepads().length, heard, watch};
   return record;
 })()

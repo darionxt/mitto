@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_keyboard.h"
 #include "mitto/dom/document.h"
@@ -35,6 +36,9 @@ void Keyboard::Trace(cppgc::Visitor* visitor) const {
 v8::Local<v8::Promise> Keyboard::GetLayoutMap(
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = exception_state.GetIsolate();
+  // The keyboard's own document asks, whose promise it is.
+  const v8::Context::Scope receiver_scope(
+      bindings::ReceiverRealmScope::CreationContext(isolate));
   if (!pending_.IsEmpty()) {
     return pending_.Get(isolate);
   }
@@ -46,7 +50,7 @@ v8::Local<v8::Promise> Keyboard::GetLayoutMap(
   // KeyboardLayout::GotKeyboardLayoutMap(): the browser's map, or that a
   // frame's permissions policy withholds it, after which the next call asks
   // again.
-  Window& window = Window::OfReceiver();
+  Window& window = Window::Current();
   const bool denied = window.IsInFrame() &&
                       !window.GetDocument().IsFeatureEnabled("keyboard-map");
   auto answer = base::BindOnce(

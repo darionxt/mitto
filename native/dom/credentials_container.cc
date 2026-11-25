@@ -25,6 +25,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
@@ -183,7 +184,7 @@ const char* CheckSecurityRequirements(
 }
 
 url::Origin DocumentOrigin() {
-  return Window::OfReceiver().GetSecurityOrigin();
+  return Window::Current().GetSecurityOrigin();
 }
 
 // The bytes of a BufferSource, as AsSpan<SharedBufferPolicy::kDisallow>()
@@ -486,7 +487,10 @@ v8::Local<v8::Promise> CredentialsContainer::Get(
     const bindings::CredentialRequestOptions& options,
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  // The resolver's ScriptState is the receiver's, whose document asks.
+  const v8::Local<v8::Context> context =
+      bindings::ReceiverRealmScope::CreationContext(isolate);
+  const v8::Context::Scope receiver_scope(context);
   v8::Local<v8::Promise::Resolver> resolver;
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return {};
@@ -510,7 +514,7 @@ v8::Local<v8::Promise> CredentialsContainer::Get(
     return promise;
   }
   if (const char* const message =
-          CheckSecurityRequirements(Window::OfReceiver(), options)) {
+          CheckSecurityRequirements(Window::Current(), options)) {
     RejectNow(isolate, resolver, "NotAllowedError", message);
     return promise;
   }
@@ -566,7 +570,7 @@ void CredentialsContainer::GetDigital(
               "The credential operation is not allowed in an opaque origin.");
     return;
   }
-  if (!Window::OfReceiver().GetDocument().IsFeatureEnabled(
+  if (!Window::Current().GetDocument().IsFeatureEnabled(
           "digital-credentials-get")) {
     RejectNow(isolate, resolver, "NotAllowedError",
               "The 'digital-credentials-get' feature is not enabled in this "
@@ -711,7 +715,7 @@ void CredentialsContainer::GetPublicKey(
       return;
     }
     if (extensions->remote_client_data_js_on &&
-        !Window::OfReceiver().GetDocument().IsFeatureEnabled(
+        !Window::Current().GetDocument().IsFeatureEnabled(
             "publickey-credentials-remote-client-data-json")) {
       RejectNow(isolate, resolver, "NotAllowedError",
                 "The 'publickey-credentials-remote-client-data-json' feature "
@@ -902,7 +906,7 @@ void CredentialsContainer::GetFromPasswordStore(
     v8::Isolate* isolate,
     v8::Local<v8::Promise::Resolver> resolver) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  if (Window::OfReceiver().IsInFrame()) {
+  if (Window::Current().IsInFrame()) {
     // ContentCredentialManager::BindRequest() connects the top-level frame
     // alone.
     RejectWithDOMExceptionFromTask(

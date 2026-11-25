@@ -64,7 +64,8 @@
   };
   globalThis.apis = (step) => STEPS[step]();
   if (parent === window) return;
-  const inner = location.pathname === '/nest' ? document.createElement('iframe') : null;
+  const nested = location.pathname === '/nest' ? location.search.slice(1) : globalThis.NEST;
+  const inner = nested ? document.createElement('iframe') : null;
   addEventListener('message', async ({source, data}) => {
     if (source === parent && data.step) {
       if (inner) postMessage.call(inner.contentWindow, data, '*');
@@ -75,7 +76,7 @@
   });
   if (inner) {
     inner.allow = document.featurePolicy.features().join(';');
-    inner.src = new URL(location.search.slice(1), location).href;
+    inner.src = location.protocol === 'data:' ? nested : new URL(nested, location).href;
     document.documentElement.append(inner);
   } else {
     postMessage.call(parent, {ready: true}, '*');
