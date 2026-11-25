@@ -48,6 +48,7 @@ class SessionIndexedDb final : public IndexedDbHost {
   void ListenToConnection(uint64_t connection, Answer listener) override;
   void StopListening(uint64_t connection) override;
   void DocumentCommitted(uint64_t document) override;
+  bool UsedByDocument() const override;
 
   // From a task of its own: what the Session sent the document or worker
   // that `host` stands for, which goes unheard once another has its place.
@@ -66,6 +67,8 @@ class SessionIndexedDb final : public IndexedDbHost {
   // The document or worker, which every call names, and the sender's number
   // of its host.
   uint64_t document_ = kNoDocument;
+  // Whether the document has asked anything here.
+  bool used_ = false;
   uint64_t host_ = 0;
   // A number the Page took when the document committed: what names the
   // connections, transactions and cursors of the documents before, whose

@@ -7,6 +7,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_location.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
 #include "url/gurl.h"
@@ -132,8 +133,13 @@ void Location::SetLocation(const std::u16string& url,
   if (!window_ || !window_->HasContext()) {
     return;
   }
-  // The entered window's document, which is the window's own in a Page.
-  Document& document = window_->GetDocument();
+  // Blink's Location::SetLocation(): the URL is completed against the
+  // entered window's document, and the incumbent window, whose script set it,
+  // starts the navigation, as a parent does its frame's.
+  Window* const entered = Window::Entered();
+  Document& document = entered && entered->HasDocument()
+                           ? entered->GetDocument()
+                           : window_->GetDocument();
   const GURL completed = document.CompleteUrl(url);
   if (!completed.is_valid()) {
     // The string that KURL keeps of a URL that does not parse, which is what
@@ -149,6 +155,15 @@ void Location::SetLocation(const std::u16string& url,
   FrameLoadRequest request;
   request.url = completed;
   request.reason = ClientNavigationReason::kFrameNavigation;
+  // A frame's navigation is the caller's: an about:blank that it commits
+  // takes the caller's origin and URL, and one through the Session names the
+  // caller's document as its Initiator. A top-level one stays its own
+  // document's.
+  Window* const incumbent = Window::Incumbent();
+  const Frame* const frame = window_->GetFrame();
+  if (incumbent && incumbent->HasDocument() && frame && frame->Parent()) {
+    request.origin_window = incumbent;
+  }
   Navigate(*window_, request, type);
 }
 

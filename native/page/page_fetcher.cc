@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "base/functional/function_ref.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "mitto/page_messages.h"
@@ -18,6 +19,9 @@ constexpr int kFailed = -2;
 // flight at once. One more fails before it goes.
 // Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
 constexpr size_t kKeepaliveInflightBytesQuota = 64 * 1024;
+
+// net::ERR_ABORTED.
+constexpr int kNetErrorAborted = -3;
 
 PageRequestMode ToPageRequestMode(FetchMode mode) {
   switch (mode) {
@@ -123,20 +127,23 @@ class PageFetcher::Request final : public PageRequests::Client,
     head.opaque = response.opaque;
     head.headers = response.headers;
     head.padding = response.padding;
-    client_->OnResponseStarted(head);
+    CallClient([&] { client_->OnResponseStarted(head); });
   }
   void OnResponseBody(std::string bytes) override {
-    client_->OnResponseBody(std::move(bytes));
+    CallClient([&] { client_->OnResponseBody(std::move(bytes)); });
   }
   void OnResponseEnded(int net_error) override {
     if (net_error == 0 && response_url_) {
       fetcher_->finished_responses_.insert(*response_url_);
     }
+    calling_client_ = true;
     client_->OnResponseEnded(net_error);
     // Destroys this.
     fetcher_->Finished(number_);
   }
-  void OnRequestBodyCredit() override { client_->OnBodyRoom(); }
+  void OnRequestBodyCredit() override {
+    CallClient([&] { client_->OnBodyRoom(); });
+  }
 
   // FetchController:
   void TookBody(size_t bytes) override {
@@ -149,6 +156,17 @@ class PageFetcher::Request final : public PageRequests::Client,
       return;
     }
     fetcher_->requests_->Cancel(number_);
+    // A cancel under a call to the client, as when page code that resolving
+    // the fetch's promise runs aborts it: the client goes once the call has
+    // returned, not under it.
+    if (calling_client_) {
+      stopped_ = true;
+      cancel_pending_ = true;
+      // Its bytes are not in flight any more.
+      fetcher_->keepalive_bytes_ -= keepalive_bytes_;
+      keepalive_bytes_ = 0;
+      return;
+    }
     // Destroys this.
     fetcher_->Finished(number_);
   }
@@ -167,12 +185,26 @@ class PageFetcher::Request final : public PageRequests::Client,
   }
 
  private:
+  // Runs a call to the client. Nothing may touch this afterwards.
+  void CallClient(base::FunctionRef<void()> call) {
+    calling_client_ = true;
+    call();
+    calling_client_ = false;
+    if (cancel_pending_) {
+      fetcher_->Finished(number_);
+    }
+  }
+
   const raw_ref<PageFetcher> fetcher_;
   const std::unique_ptr<FetchClient> client_;
   const bool keepalive_;
   size_t keepalive_bytes_ = 0;
   uint64_t number_ = 0;
   bool stopped_ = false;
+  // Whether a call to the client runs, under which it may be cancelled, and
+  // whether it was.
+  bool calling_client_ = false;
+  bool cancel_pending_ = false;
   // The response's URL, once it has started.
   std::optional<std::string> response_url_;
 };
@@ -243,6 +275,19 @@ void PageFetcher::Stop() {
   }
   open_.clear();
   keepalive_bytes_ = 0;
+}
+
+void PageFetcher::Abort() {
+  std::vector<FetchClient*> clients;
+  for (auto& [number, request] : open_) {
+    clients.push_back(&request->client());
+  }
+  // The stopped requests keep their clients, and a keepalive one goes on in
+  // the Session.
+  Stop();
+  for (FetchClient* const client : clients) {
+    client->OnResponseEnded(kNetErrorAborted);
+  }
 }
 
 void PageFetcher::Fetch(FetchRequestData data,

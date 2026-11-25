@@ -94,10 +94,32 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   uint64_t SendContext(uint64_t parent,
                        base::FunctionRef<std::string(uint64_t id)> encode);
 
+  // Takes the ID of the next context, a frame's document under `parent` that
+  // takes the place of the frame's document `replaced`, sends the frame that
+  // `encode` makes of it, and returns it. The Session forgets `replaced` and
+  // the contexts under it, and so does this. One under a context that the
+  // Session has forgotten goes unannounced, and is forgotten too. Any
+  // thread.
+  uint64_t SendFrameDocument(
+      uint64_t parent,
+      uint64_t replaced,
+      base::FunctionRef<std::string(uint64_t id)> encode);
+
   // Says that `context` has gone, unless the Session has forgotten it, and
   // forgets it and the contexts under it, which the Session forgets with it.
   // Any thread.
   void SendContextGone(uint64_t context);
+
+  // The back/forward cache keeps the top-level document `document`, which
+  // the Session hears of and keeps apart, though the next top-level document
+  // takes its place. Nothing that it sends reaches the Session while it is
+  // stored, and a request of its goes nowhere. The main thread.
+  void SendDocumentStored(uint64_t document);
+  // The stored document `document` is the top-level one again, in place of
+  // every context that the Session knows, which it forgets.
+  void SendDocumentRestored(uint64_t document);
+  // The stored document `document` goes, and the Session forgets it.
+  void SendDocumentEvicted(uint64_t document);
 
   // Hands `frame`, a frame of a response or credit for a request body, to the
   // route of its request, and forgets the route once the request ends.
@@ -193,6 +215,8 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // The contexts that the Session has forgotten, and the requests of theirs
   // that went nowhere.
   std::set<uint64_t> forgotten_ GUARDED_BY(lock_);
+  // The top-level documents that the back/forward cache keeps.
+  std::set<uint64_t> stored_ GUARDED_BY(lock_);
   std::set<uint64_t> unsent_requests_ GUARDED_BY(lock_);
   // A host of a context's, whose answers go to `route`.
   template <typename Route>

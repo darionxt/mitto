@@ -27,6 +27,15 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
                                       const ContextInit& init,
                                       std::u16string_view markup,
                                       DidCreateScriptContext did_create) {
+  return NewPageContext(isolate, init, markup, v8::Local<v8::Object>(),
+                        did_create);
+}
+
+v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
+                                      const ContextInit& init,
+                                      std::u16string_view markup,
+                                      v8::Local<v8::Object> global_proxy,
+                                      DidCreateScriptContext did_create) {
   bindings::PerIsolateData* const data =
       bindings::PerIsolateData::From(isolate);
   data->SetDOMExceptionHooks(DOMException::BindingsHooks());
@@ -38,8 +47,10 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
   const v8::Local<v8::ObjectTemplate> global_template =
       data->InterfaceTemplate(isolate, &bindings::V8Window::kWrapperTypeInfo)
           ->InstanceTemplate();
-  const v8::Local<v8::Context> context =
-      v8::Context::New(isolate, nullptr, global_template);
+  const v8::Local<v8::Context> context = v8::Context::New(
+      isolate, nullptr, global_template,
+      global_proxy.IsEmpty() ? v8::MaybeLocal<v8::Value>()
+                             : v8::MaybeLocal<v8::Value>(global_proxy));
   const v8::Context::Scope context_scope(context);
   Window* const window = Window::Create();
   window->AssociateWithContext(isolate, context);

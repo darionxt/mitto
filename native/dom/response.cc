@@ -93,28 +93,30 @@ Response* Initialize(BodyStreamBuffer* body,
 class ReadAllClient final : public cppgc::GarbageCollected<ReadAllClient>,
                             public FetchDataLoader::Client {
  public:
-  explicit ReadAllClient(
-      base::OnceCallback<void(std::optional<std::string>, bool)> done)
+  explicit ReadAllClient(Response::ReadAllCallback done)
       : done_(std::move(done)) {}
 
   void DidFetchDataLoadedArrayBuffer(std::string bytes) override {
-    Done(std::move(bytes), /*aborted=*/false);
+    Done(std::move(bytes));
   }
   void DidFetchDataLoadFailed() override {
-    Done(std::nullopt, /*aborted=*/false);
+    Done(base::unexpected(Response::ReadAllError::kFailed));
   }
   void Abort(v8::Local<v8::Value> reason) override {
-    Done(std::nullopt, /*aborted=*/true);
+    Done(base::unexpected(Response::ReadAllError::kAborted));
+  }
+  void DidStopLoading() override {
+    Done(base::unexpected(Response::ReadAllError::kStopped));
   }
 
  private:
-  void Done(std::optional<std::string> body, bool aborted) {
+  void Done(base::expected<std::string, Response::ReadAllError> body) {
     if (done_) {
-      std::move(done_).Run(std::move(body), aborted);
+      std::move(done_).Run(std::move(body));
     }
   }
 
-  base::OnceCallback<void(std::optional<std::string>, bool)> done_;
+  Response::ReadAllCallback done_;
 };
 
 }  // namespace
@@ -310,24 +312,18 @@ std::u16string Response::Type() const {
   }
 }
 
-void Response::ReadAll(base::OnceCallback<void(std::optional<std::string> body,
-                                               bool aborted)> done) {
+void Response::ReadAll(ReadAllCallback done,
+                       bindings::ExceptionState& exception_state) {
   CHECK(!IsBodyLocked() && !IsBodyUsed());
   BodyStreamBuffer* const body_buffer = InternalBodyBuffer();
   if (!body_buffer) {
-    std::move(done).Run(std::string(), /*aborted=*/false);
+    std::move(done).Run(std::string());
     return;
   }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  auto* const client =
-      bindings::MakeGarbageCollected<ReadAllClient>(std::move(done));
-  bindings::ExceptionState exception_state(isolate);
-  const v8::TryCatch try_catch(isolate);
-  body_buffer->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(),
-                            client, exception_state);
-  if (exception_state.HadException()) {
-    client->DidFetchDataLoadFailed();
-  }
+  body_buffer->StartLoading(
+      FetchDataLoader::CreateLoaderAsArrayBuffer(),
+      bindings::MakeGarbageCollected<ReadAllClient>(std::move(done)),
+      exception_state);
 }
 
 }  // namespace mitto

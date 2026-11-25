@@ -50,6 +50,9 @@ class StorageBucket final : public bindings::ScriptWrappable {
   // The number that the Session gave the bucket, which its IndexedDB and Cache
   // API name.
   uint64_t bucket() const { return bucket_; }
+  // Whether the bucket still reaches the Session: its window's context
+  // remains, and the bucket is its current document's.
+  bool IsReachable() const { return Host() != nullptr; }
 
   // The members of the interface.
   std::u16string Name() const { return name_; }

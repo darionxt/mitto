@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 30;
+inline constexpr uint32_t kPageProtocolVersion = 36;
 
 // What the padding of an opaque response is below, as Chrome's kPaddingRange
 // (response_padding.h).
@@ -230,6 +230,21 @@ enum class PageMessage : uint32_t {
   // navigation within it gave it, such as one to a fragment, which is of the
   // document's origin.
   kSameDocumentNavigation = 71,
+  // To the Session: the ID of a frame's document, the ID of the document that
+  // has started a navigation of the frame to about:blank or to a data: URL,
+  // which commits without the network from a later task, and a byte for which
+  // (PageLocalNavigationKind). The about:blank takes the origin, embedder
+  // policy and cookie URL that its initiator has now, and the data: URL's
+  // document the embedder policy, as the browser's NavigationRequest holds
+  // them from its start, whether or not the initiator is still there when it
+  // commits. Kind 2, with no initiator, says that the one that waited ended
+  // with no document.
+  kAboutBlankNavigation = 72,
+  // To the Session: the ID of a document, and the ID of the document of
+  // another window, of its origin, that has opened it with document.open(),
+  // whose URL, without its fragment, and cookie URL it takes, as the browser
+  // takes the URL with DidOpenDocumentInputStream().
+  kDocumentOpened = 73,
   // To the Session: a dedicated worker that a context of the Page has
   // started, as PageWorkerStarted says. Its ID is one of the documents', in
   // the same order.
@@ -257,6 +272,26 @@ enum class PageMessage : uint32_t {
   // To the Page: how much more of the body of a request whose body streams
   // the Session takes, as PageCredit says, once //net has taken as much.
   kRequestBodyCredit = 162,
+  // To the Session: the ID of the frame's document that a traversal of the
+  // session history leaves, and the navigation that repeats the navigation of
+  // a document that the entry holds, as PageTraversalRequest says.
+  kTraversalRequest = 280,
+  // To the Session: the IDs of documents whose navigations no entry of the
+  // session history holds any more, each a 64-bit number, one at least.
+  kRecordsReleased = 281,
+  // To the Session: the ID of the top-level document that the back/forward
+  // cache keeps, a 64-bit number, as the next document takes its place.
+  kDocumentStored = 282,
+  // To the Page: the number of a traversal request to the entry of a
+  // document that the back/forward cache keeps, a 64-bit number, which the
+  // Session answers by restoring that document in place of a response.
+  kRestore = 283,
+  // To the Session: the ID of the document that the back/forward cache kept
+  // and that is the top-level document again, a 64-bit number.
+  kDocumentRestored = 284,
+  // To the Session: the ID of a document that the back/forward cache kept
+  // and that goes, a 64-bit number.
+  kDocumentEvicted = 285,
   // To the Page: whether the document that a navigation's response makes is
   // cross-origin isolated, as PageIsolation says, just before the response
   // starts, as Chrome's browser gives the renderer the document's agent
@@ -715,24 +750,84 @@ enum class PageCrossOriginIsolation : uint8_t {
 
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
-// opened the Page.
+// opened the Page: a top-level document's agent cluster's, and a frame's
+// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
 };
 
+// A traversal of the session history to an entry of another document, which
+// repeats the navigation that made document `record`, as Chrome's browser
+// repeats an entry's own navigation, whose Initiator and Referer the Session
+// keeps. Its payload is the number, as a request's, the record and the stored
+// document, each a 64-bit number, a byte of flags, 1 for an entry that a
+// navigation within that document made, a byte of the referrer policy, as a
+// request's, and then the URL in UTF-8, which is the rest: the record's URL for
+// an entry of its navigation, or one that a navigation within it gave it.
+struct PageTraversalRequest {
+  uint64_t number = 0;
+  uint64_t record = kNoDocument;
+  bool same_document_entry = false;
+  // The policy that the record's Referer goes with: kDocument for the policy
+  // of the navigation's own request, and for an entry that a navigation
+  // within the document made, the document's policy when it made it, as
+  // Chrome's FrameNavigationEntry keeps the referrer of each commit.
+  PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument;
+  // The document that was at the entry when the back/forward cache took it,
+  // which the Session may answer with a restore, and which is not always the
+  // record's: kNoDocument for none.
+  uint64_t stored_document = kNoDocument;
+  std::string url;
+};
+
 // What a document that the Page has made is made of.
 enum class PageDocumentSource : uint8_t {
-  // The Page's first document, about:blank, whose origin is opaque.
+  // A frame's first document, about:blank: the Page's, whose origin is
+  // opaque, or a child frame's, of its parent's origin.
   kInitialEmpty = 0,
   // The response of a navigation, whose URL after its redirects is the
   // document's.
   kNavigationResponse = 1,
+  // An about:blank that a navigation of a frame commits, of the origin of the
+  // document that started it, its initiator.
+  kAboutBlank = 2,
+  // A frame's srcdoc document, about:srcdoc, of its parent's origin, whose
+  // requests' referrer is its parent's.
+  kSrcdoc = 3,
+  // Chrome's error page, chrome-error://chromewebdata/, of an opaque origin,
+  // which a frame commits once its navigation fails without a response.
+  kErrorPage = 4,
+  // A frame's document of a data: URL, of an opaque origin, which the Page
+  // answers itself, as Chrome's browser does with no request on the wire.
+  kDataUrl = 5,
+  // A document of a blob: URL, which the Page answers itself from its Blob, of
+  // the origin of the URL, which the document that started its navigation
+  // has.
+  kBlob = 6,
 };
 
+// What a navigation of type 72 is.
+enum class PageLocalNavigationKind : uint8_t {
+  // An about:blank, which commits as a document of source 2.
+  kAboutBlank = 0,
+  // A frame's data: URL, which commits as a document of source 5.
+  kDataUrl = 1,
+  // The frame's about:blank or data: URL that waited ended with no document:
+  // a download, or one that a newer navigation or document.open() canceled.
+  kEnded = 2,
+};
+
+// The URL of Chrome's error page, kUnreachableWebDataURL.
+inline constexpr char kErrorPageUrl[] = "chrome-error://chromewebdata/";
+
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
-// source, a byte, the parent, a 64-bit number, and for a navigation's response
-// the navigation's number, a 64-bit number.
+// source, a byte, the parent, a 64-bit number, then for a navigation's response
+// the navigation's number, for an about:blank the initiator and the document
+// that it replaces, and for a srcdoc document or an error page the document
+// that it replaces, each a 64-bit number, and for a data: or blob: URL's
+// document the initiator and the document that it replaces, then the URL, the
+// rest of the payload.
 struct PageDocumentCommitted {
   uint64_t document = kNoDocument;
   PageDocumentSource source = PageDocumentSource::kInitialEmpty;
@@ -741,6 +836,14 @@ struct PageDocumentCommitted {
   uint64_t parent = kNoDocument;
   // For kNavigationResponse.
   uint64_t navigation = kNavigationRequest;
+  // For kAboutBlank, kDataUrl and kBlob: the document that started its
+  // navigation.
+  uint64_t initiator = kNoDocument;
+  // For kAboutBlank, kSrcdoc, kErrorPage, kDataUrl and kBlob: the frame's
+  // document that it takes the place of.
+  uint64_t replaces = kNoDocument;
+  // For kDataUrl and kBlob: the URL.
+  std::string url;
 };
 
 // Where a dedicated worker's script comes from.
@@ -1141,6 +1244,12 @@ struct FrameFromPage {
   PageRequestBodyEnded request_body_ended;
   // kSameDocumentNavigation: the document's new URL.
   std::string same_document_url;
+  // kAboutBlankNavigation: the document that started it, and what it is.
+  uint64_t about_blank_initiator = kNoDocument;
+  PageLocalNavigationKind local_navigation_kind =
+      PageLocalNavigationKind::kAboutBlank;
+  // kDocumentOpened: the document that opened it.
+  uint64_t opener = kNoDocument;
   // kStorageBind.
   PageStorageBind storage_bind;
   // kStorageGetAll.
@@ -1151,6 +1260,12 @@ struct FrameFromPage {
   uint64_t storage_unbind = 0;
   // kNetworkHint.
   PageNetworkHint network_hint;
+  // kTraversalRequest.
+  PageTraversalRequest traversal;
+  // kRecordsReleased.
+  std::vector<uint64_t> released_records;
+  // kDocumentStored, kDocumentRestored and kDocumentEvicted.
+  uint64_t cached_document = kNoDocument;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -1200,6 +1315,8 @@ struct FrameFromSession {
   PageCredit request_body_credit;
   // kIsolation.
   PageIsolation isolation;
+  // kRestore: the number of the traversal request.
+  uint64_t restore = 0;
   // kStorageEntries.
   PageStorageEntries storage_entries;
   // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
@@ -1288,6 +1405,19 @@ std::string EncodeContextGone(uint64_t context);
 // `url` is at most kMaxPayloadSize - 8 bytes.
 std::string EncodeSameDocumentNavigation(uint64_t document,
                                          std::string_view url);
+// `traversal.url` is at most kMaxPayloadSize - 26 bytes.
+std::string EncodeTraversalRequest(uint64_t document,
+                                   const PageTraversalRequest& traversal);
+// `records` holds one at least, and at most kMaxPayloadSize / 8.
+std::string EncodeRecordsReleased(const std::vector<uint64_t>& records);
+std::string EncodeDocumentStored(uint64_t document);
+std::string EncodeRestore(uint64_t number);
+std::string EncodeDocumentRestored(uint64_t document);
+std::string EncodeDocumentEvicted(uint64_t document);
+std::string EncodeAboutBlankNavigation(uint64_t document,
+                                       uint64_t initiator,
+                                       PageLocalNavigationKind kind);
+std::string EncodeDocumentOpened(uint64_t document, uint64_t opener);
 std::string EncodeStorageBind(uint64_t document, const PageStorageBind& bind);
 std::string EncodeStorageGetAll(const PageStorageGetAll& get_all);
 // Whether a mutation fits in a frame.

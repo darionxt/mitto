@@ -222,6 +222,11 @@ DocumentKind DocumentKindOf(std::string_view mime_type) {
   return DocumentKind::kHtml;
 }
 
+bool MustDownloadMimeType(std::string_view mime_type) {
+  return base::EqualsCaseInsensitiveASCII(mime_type, "multipart/related") ||
+         base::EqualsCaseInsensitiveASCII(mime_type, "message/rfc822");
+}
+
 bool IsSupportedMimeType(std::string_view mime_type) {
   const std::string lower = base::ToLowerASCII(mime_type);
   return IsSupportedImageMimeType(lower) ||

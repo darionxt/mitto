@@ -1,6 +1,7 @@
 #include "mitto/dom/quota_exceeded_error.h"
 
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_quota_exceeded_error.h"
@@ -38,7 +39,8 @@ void QuotaExceededError::Throw(bindings::ExceptionState& exception_state,
     return;
   }
   // Blink's V8ThrowDOMException::AttachStackProperty(), as for a
-  // DOMException that the bindings throw.
+  // DOMException that the bindings throw, which is of the current realm.
+  const bindings::ReceiverRealmScope current_realm(isolate);
   const v8::Local<v8::Object> wrapper =
       Create(base::UTF8ToUTF16(message), quota, requested)->ToV8(isolate);
   if (!isolate->IsExecutionTerminating()) {

@@ -26,10 +26,19 @@ enum class BlockedByResourcePolicy {
   kCorpNotSameSite,
 };
 
-// CrossOriginResourcePolicy::IsBlockedByHeaderValue() for a request of mode
-// no-cors: whether the response at `request_url`, whose
-// Cross-Origin-Resource-Policy is `corp_header_value`, nullopt for none, is
-// blocked for a request from `request_initiator`, which sent credentials if
+// The modes of request that Cross-Origin-Resource-Policy holds a response of.
+enum class ResourcePolicyMode {
+  // Mode no-cors, as URLLoader checks each response of one.
+  kNoCors,
+  // A frame's navigation, as NavigationRequest::EnforceCOEP() checks it with
+  // IsNavigationBlocked(), under its parent's embedder policy.
+  kNavigate,
+};
+
+// CrossOriginResourcePolicy::IsBlockedByHeaderValue(): whether the response at
+// `request_url`, whose Cross-Origin-Resource-Policy is `corp_header_value`,
+// nullopt for none, is blocked for a request of `mode` from
+// `request_initiator`, which sent credentials if
 // `request_include_credentials`, of a client of embedder policy
 // `embedder_policy`, and why. A request with no initiator, such as one that
 // the browser starts, is never blocked. Reports, report-only ones included, go
@@ -38,6 +47,7 @@ std::optional<BlockedByResourcePolicy> IsBlockedByResourcePolicy(
     const GURL& request_url,
     const std::optional<url::Origin>& request_initiator,
     const std::optional<std::string>& corp_header_value,
+    ResourcePolicyMode mode,
     bool request_include_credentials,
     const CrossOriginEmbedderPolicy& embedder_policy);
 

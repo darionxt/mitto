@@ -174,6 +174,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
               frame->same_document_url));
           CHECK_EQ(frame->same_document_url.size() + 8, payload.size());
           break;
+        case mitto::PageMessage::kAboutBlankNavigation:
+          CHECK_EQ(frame->about_blank_initiator == mitto::kNoDocument,
+                   frame->local_navigation_kind ==
+                       mitto::PageLocalNavigationKind::kEnded);
+          CHECK_EQ(payload.size(), 17u);
+          break;
+        case mitto::PageMessage::kDocumentOpened:
+          CHECK_NE(frame->opener, mitto::kNoDocument);
+          CHECK_EQ(payload.size(), 16u);
+          break;
         case mitto::PageMessage::kIndexedDb:
           CHECK_EQ(mitto::EncodeIndexedDbCall(frame->indexed_db_call),
                    std::string_view(payload).substr(8));
@@ -186,11 +196,29 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           const mitto::PageDocumentCommitted& committed = frame->committed;
           CHECK_NE(committed.document, mitto::kNoDocument);
           CHECK_NE(committed.document, committed.parent);
-          CHECK_EQ(
-              payload.size(),
-              committed.source == mitto::PageDocumentSource::kNavigationResponse
-                  ? 25u
-                  : 17u);
+          // A navigation's response, a srcdoc and an error page name one more
+          // ID, the number of the navigation or the document that it
+          // replaces, and an about:blank, a data: or a blob: URL's document
+          // two, its initiator and what it replaces.
+          switch (committed.source) {
+            case mitto::PageDocumentSource::kInitialEmpty:
+              CHECK_EQ(payload.size(), 17u);
+              break;
+            case mitto::PageDocumentSource::kNavigationResponse:
+            case mitto::PageDocumentSource::kSrcdoc:
+            case mitto::PageDocumentSource::kErrorPage:
+              CHECK_EQ(payload.size(), 25u);
+              break;
+            case mitto::PageDocumentSource::kAboutBlank:
+              CHECK_EQ(payload.size(), 33u);
+              break;
+            // A data: or blob: URL's document names its URL after them.
+            case mitto::PageDocumentSource::kDataUrl:
+            case mitto::PageDocumentSource::kBlob:
+              CHECK_GT(payload.size(), 33u);
+              CHECK_EQ(committed.url.size(), payload.size() - 33u);
+              break;
+          }
           break;
         }
         case mitto::PageMessage::kWorkerStarted: {
@@ -208,6 +236,26 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_EQ(started.url.size() + 26, payload.size());
           break;
         }
+        case mitto::PageMessage::kTraversalRequest:
+          CHECK_NE(frame->traversal.record, mitto::kNoDocument);
+          CHECK(base::IsStringUTF8AllowingNoncharacters(frame->traversal.url));
+          CHECK_EQ(
+              mitto::EncodeTraversalRequest(frame->document, frame->traversal)
+                  .substr(mitto::kFrameHeaderSize),
+              payload);
+          break;
+        case mitto::PageMessage::kRecordsReleased:
+          CHECK(!frame->released_records.empty());
+          CHECK_EQ(mitto::EncodeRecordsReleased(frame->released_records)
+                       .substr(mitto::kFrameHeaderSize),
+                   payload);
+          break;
+        case mitto::PageMessage::kDocumentStored:
+        case mitto::PageMessage::kDocumentRestored:
+        case mitto::PageMessage::kDocumentEvicted:
+          CHECK_NE(frame->cached_document, mitto::kNoDocument);
+          CHECK_EQ(payload.size(), 8u);
+          break;
         case mitto::PageMessage::kContextGone:
           CHECK_NE(frame->gone_context, mitto::kNoDocument);
           CHECK_EQ(payload.size(), 8u);
@@ -276,6 +324,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kStorageBucketsAnswer:
         case mitto::PageMessage::kRequestBodyCredit:
         case mitto::PageMessage::kIsolation:
+        case mitto::PageMessage::kRestore:
           // Only a Session sends these.
           NOTREACHED();
       }

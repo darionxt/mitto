@@ -1,0 +1,877 @@
+{
+ "chrome": "157.0.8103.79",
+ "how": "headless Chrome for Testing on macOS, on the server of tests/test_page_frame_messages.py",
+ "record": {
+  "from a frame": {
+   "same": [
+    [
+     "message",
+     {
+      "hello": [
+       "child"
+      ]
+     },
+     "ORIGIN",
+     "frame",
+     true,
+     0,
+     "",
+     false,
+     false
+    ]
+   ],
+   "same data": [
+    true
+   ],
+   "other": [
+    [
+     "message",
+     {
+      "hello": [
+       "child"
+      ]
+     },
+     "OTHER",
+     "frame",
+     true,
+     0,
+     "",
+     false,
+     false
+    ]
+   ],
+   "other data": [
+    true
+   ],
+   "opaque": [
+    [
+     "message",
+     "data:",
+     "null",
+     "frame",
+     true,
+     0,
+     "",
+     false,
+     false
+    ]
+   ]
+  },
+  "to a frame": {
+   "same": {
+    "any": [
+     {
+      "type": "message",
+      "data": {
+       "target": "any"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "own": [
+     {
+      "type": "message",
+      "data": {
+       "target": "own"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "page": [
+     {
+      "type": "message",
+      "data": {
+       "target": "page"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "frame": [
+     {
+      "type": "message",
+      "data": {
+       "target": "frame"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "path": [
+     {
+      "type": "message",
+      "data": {
+       "target": "path"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "elsewhere": [],
+    "options": [
+     {
+      "type": "message",
+      "data": "o",
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "none": [
+     {
+      "type": "message",
+      "data": "n",
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ]
+   },
+   "other": {
+    "any": [
+     {
+      "type": "message",
+      "data": {
+       "target": "any"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "own": [],
+    "page": [],
+    "frame": [
+     {
+      "type": "message",
+      "data": {
+       "target": "frame"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "path": [
+     {
+      "type": "message",
+      "data": {
+       "target": "path"
+      },
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "elsewhere": [],
+    "options": [
+     {
+      "type": "message",
+      "data": "o",
+      "origin": "ORIGIN",
+      "parent": true,
+      "ports": 0,
+      "trusted": true
+     }
+    ],
+    "none": []
+   },
+   "thrown": [
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'nowhere' in a call to 'postMessage'.",
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'about:blank' in a call to 'postMessage'.",
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'data:text/html,x' in a call to 'postMessage'.",
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin '' in a call to 'postMessage'."
+   ]
+  },
+  "incumbent": {
+   "the frame calls its parent": [
+    [
+     "a",
+     "frame"
+    ]
+   ],
+   "the frame applies": [
+    [
+     "b",
+     "frame"
+    ]
+   ],
+   "the frame applies its parent's": [
+    [
+     "c",
+     "frame"
+    ]
+   ],
+   "the frame calls the page's function": [
+    [
+     "d",
+     "page"
+    ]
+   ],
+   "the page calls the frame's method": [
+    [
+     "e",
+     "page"
+    ]
+   ],
+   "the page calls the frame's function": [
+    [
+     "f",
+     "frame"
+    ]
+   ],
+   "a bound method in the frame's timer": [
+    [
+     "g",
+     "frame"
+    ]
+   ],
+   "a bound method in the frame's microtask": [
+    [
+     "h",
+     "page"
+    ]
+   ],
+   "itself": [
+    [
+     "j",
+     "page"
+    ]
+   ],
+   "to the frame": [
+    "k",
+    true,
+    false
+   ],
+   "the frame to itself": [
+    "l",
+    false,
+    true
+   ],
+   "the frame calls the page's function to it": [
+    "m",
+    true,
+    false
+   ]
+  },
+  "a sender that goes": {
+   "removed": [
+    1,
+    false,
+    true,
+    "ORIGIN"
+   ],
+   "navigated": [
+    1,
+    true,
+    false,
+    "ORIGIN"
+   ],
+   "removed later": [
+    1,
+    false,
+    true,
+    "ORIGIN"
+   ],
+   "to a frame that goes": [],
+   "to a document that goes": [
+    "to a document that goes"
+   ]
+  },
+  "carried": {
+   "port": [
+    "through the port",
+    null,
+    ""
+   ],
+   "seen": [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    8,
+    1,
+    true,
+    true,
+    true
+   ],
+   "detached": 0,
+   "module same": [
+    [
+     "message",
+     true,
+     "ORIGIN",
+     true
+    ]
+   ],
+   "module other": [
+    [
+     "messageerror",
+     null,
+     "ORIGIN",
+     true,
+     0
+    ]
+   ],
+   "uncloneable": [
+    "DataCloneError",
+    false
+   ]
+  },
+  "order": [
+   "task",
+   "microtask",
+   "1",
+   "2",
+   "3"
+  ],
+  "a source whose frame goes": {
+   "same origin": {
+    "its own origin": "frame null",
+    "the page's origin": "frame null",
+    "the page's origin and back": "frame null null",
+    "the page's site": "frame null",
+    "another site": "frame null",
+    "a third site and back": "frame null null",
+    "a data: URL": "frame null",
+    "about:blank": "frame null",
+    "removed": "frame frame",
+    "a third site, removed": "frame null null"
+   },
+   "same site": {
+    "its own origin": "frame null",
+    "the page's origin": "frame null",
+    "the page's origin and back": "frame null null",
+    "the page's site": "frame null",
+    "another site": "frame null",
+    "a third site and back": "frame null null",
+    "a data: URL": "frame null",
+    "about:blank": "frame null",
+    "removed": "frame frame",
+    "a third site, removed": "frame null null"
+   },
+   "another site": {
+    "its own origin": "frame frame",
+    "the page's origin": "frame null",
+    "the page's origin and back": "frame null null",
+    "the page's site": "frame null",
+    "another site": "frame frame",
+    "a third site and back": "frame frame frame",
+    "a data: URL": "frame null",
+    "about:blank": "frame null",
+    "removed": "frame frame",
+    "a third site, removed": "frame frame frame"
+   },
+   "data:": {
+    "its own origin": "frame null",
+    "the page's origin": "frame null",
+    "the page's origin and back": "frame null null",
+    "the page's site": "frame null",
+    "another site": "frame null",
+    "a third site and back": "frame null null",
+    "a data: URL": "frame null",
+    "about:blank": "frame null",
+    "removed": "frame frame",
+    "a third site, removed": "frame null null"
+   }
+  },
+  "a frame that goes while its messages wait": {
+   "same origin": {
+    "removed": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by the page": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by itself": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ]
+   },
+   "same site": {
+    "removed": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by the page": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by itself": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ]
+   },
+   "another site": {
+    "removed": [
+     "number 1 frame",
+     "number 2 null",
+     "number 3 null"
+    ],
+    "navigated by the page": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ],
+    "navigated by itself": [
+     "number 1 frame",
+     "number 2 frame",
+     "number 3 frame"
+    ]
+   }
+  },
+  "a message as its document goes": {
+   "same origin": {
+    "as it comes": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
+    ],
+    "later": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
+    ]
+   },
+   "same site": {
+    "as it comes": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
+    ],
+    "later": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
+    ]
+   },
+   "another site": {
+    "as it comes": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
+    ],
+    "later": [
+     [
+      "pagehide",
+      "null"
+     ],
+     [
+      "hidden",
+      "null"
+     ]
+    ]
+   }
+  },
+  "a sender that removed its own frame": {
+   "same origin": [
+    "before its own",
+    "after its own",
+    "microtask its own"
+   ],
+   "same site": [
+    "before its own",
+    "after its own",
+    "microtask its own"
+   ],
+   "another site": [
+    "before null",
+    "after null",
+    "microtask null"
+   ]
+  },
+  "an event that a page makes": {
+   "same origin": [
+    "frame frame",
+    "null null",
+    "null null",
+    "null null"
+   ],
+   "same site": [
+    "frame frame",
+    "null null",
+    "null null",
+    "null null"
+   ],
+   "another site": [
+    "frame frame",
+    "frame frame",
+    "null null",
+    "null null"
+   ]
+  },
+  "through a port": {
+   "same origin": {
+    "there": [
+     [
+      "message",
+      "module",
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "before",
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "with a module",
+      "",
+      null,
+      1
+     ],
+     [
+      "message",
+      "module",
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "after",
+      "",
+      null,
+      0
+     ]
+    ],
+    "back": [
+     [
+      "message",
+      "module",
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "back",
+      "",
+      null,
+      0
+     ]
+    ]
+   },
+   "same site": {
+    "there": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "before",
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "after",
+      "",
+      null,
+      0
+     ]
+    ],
+    "back": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "back",
+      "",
+      null,
+      0
+     ]
+    ]
+   },
+   "another site": {
+    "there": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "before",
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "after",
+      "",
+      null,
+      0
+     ]
+    ],
+    "back": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "back",
+      "",
+      null,
+      0
+     ]
+    ]
+   },
+   "data:": {
+    "there": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "before",
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "after",
+      "",
+      null,
+      0
+     ]
+    ],
+    "back": [
+     [
+      "messageerror",
+      null,
+      "",
+      null,
+      0
+     ],
+     [
+      "message",
+      "back",
+      "",
+      null,
+      0
+     ]
+    ]
+   },
+   "blob: worker": [
+    "message module",
+    "port back message",
+    "port message module",
+    "worker message module"
+   ],
+   "data: worker": [
+    "message module",
+    "port back messageerror",
+    "port messageerror",
+    "worker message module"
+   ]
+  },
+  "realms": {
+   "same origin": {
+    "clone": "DataCloneError of page",
+    "target": "SyntaxError of page",
+    "twice": "DataCloneError of page",
+    "not transferable": "DataCloneError of page",
+    "delegate": "NotSupportedError of page",
+    "arguments": "TypeError of page"
+   },
+   "same site": {
+    "clone": "DataCloneError of page",
+    "target": "SyntaxError of page",
+    "twice": "DataCloneError of page",
+    "not transferable": "DataCloneError of page",
+    "delegate": "NotSupportedError of page",
+    "arguments": "TypeError of page"
+   },
+   "another site": {
+    "clone": "DataCloneError of page",
+    "target": "SyntaxError of page",
+    "twice": "DataCloneError of page",
+    "not transferable": "DataCloneError of page",
+    "delegate": "NotSupportedError of page",
+    "arguments": "TypeError of page"
+   },
+   "within": {
+    "message": [
+     "signal of page",
+     "timeout of page",
+     "response of page",
+     "rect of page",
+     "controller of page",
+     "blob of page",
+     "event of page",
+     "element of page",
+     "named of page",
+     "exception of page",
+     "clone of page",
+     "activation of page",
+     "channel of page"
+    ],
+    "option": [
+     "signal of page",
+     "timeout of page",
+     "response of page",
+     "rect of page",
+     "controller of page",
+     "blob of page",
+     "event of page",
+     "element of page",
+     "named of page",
+     "exception of page",
+     "clone of page",
+     "activation of page",
+     "channel of page"
+    ],
+    "transfer": [
+     "signal of page",
+     "timeout of page",
+     "response of page",
+     "rect of page",
+     "controller of page",
+     "blob of page",
+     "event of page",
+     "element of page",
+     "named of page",
+     "exception of page",
+     "clone of page",
+     "activation of page",
+     "channel of page"
+    ]
+   },
+   "borrowed": {
+    "atob": "InvalidCharacterError of page",
+    "querySelector": "SyntaxError of page",
+    "appendChild": "HierarchyRequestError of page",
+    "clone": "DataCloneError of another",
+    "the frame's querySelector": "SyntaxError of another",
+    "the frame's postMessage": "DataCloneError of another",
+    "the frame's own": "SyntaxError of another",
+    "what the clone is": "another",
+    "what the frame's clone is": "page",
+    "what a method returns": "another",
+    "on a removed window": "DataCloneError of page",
+    "a removed window's": "DataCloneError of another"
+   }
+  }
+ }
+}

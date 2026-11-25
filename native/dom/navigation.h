@@ -78,9 +78,11 @@ class Navigation final : public EventTarget {
     bool history_api = false;
     scoped_refptr<const SharedSerializedScriptValue> state_object;
     FrameLoadType load_type = FrameLoadType::kStandard;
-    // The entry that a traversal goes to.
+    // The entry that a traversal goes to, and whether it is of another
+    // document, which a page can neither cancel nor intercept.
     // On the stack only.
     RAW_PTR_EXCLUSION const HistoryItem* destination_item = nullptr;
+    bool cross_document = false;
     // On the stack only, as the garbage collector scans it.
     RAW_PTR_EXCLUSION Element* source_element = nullptr;
   };
@@ -157,10 +159,16 @@ class Navigation final : public EventTarget {
   //
   // NavigationApi::InitializeForNewWindow(): where the document's entries
   // come from, which the Page gives a document that a navigation loaded,
-  // before anything reads them. Its own entry is the window's current one.
-  void InitializeForNewWindow(EntryArrays arrays) {
-    arrays_ = std::move(arrays);
-  }
+  // before anything reads them. Its own entry is the window's current one. A
+  // frame's window that its initial about:blank leaves to a document of its
+  // origin makes the new document's entries again.
+  void InitializeForNewWindow(EntryArrays arrays);
+  // NavigationApi::SetEntriesForRestore(), for a document that the
+  // back/forward cache restores: its entries become those of `arrays` around
+  // its own, an entry of the same key and ID staying the same object, its
+  // activation is a traversal from `arrays.previous`, and those it no longer
+  // has get dispose events from a later task.
+  void SetEntriesForRestore(const EntryArrays& arrays);
   // DisposeEntriesForSessionHistoryRemoval(): the session history dropped the
   // entries of `keys`, which go, but the current one, with their dispose
   // events.
@@ -227,6 +235,9 @@ class Navigation final : public EventTarget {
   int64_t IndexOfKey(const std::u16string& key) const;
   // NavigationApi::MakeEntryFromItem().
   NavigationHistoryEntry* MakeEntryFromItem(const HistoryItem& item);
+  // NavigationApi::GetEntryForRestore(): the entry of `entry`'s key, if it has
+  // its ID too, or a new one.
+  NavigationHistoryEntry* GetEntryForRestore(const ApiEntry& entry);
   // What traverseTo() gives for the current entry: both promises fulfilled
   // with it, as Blink's EarlySuccessResult().
   v8::Local<v8::Object> EarlySuccessResult(NavigationHistoryEntry* entry);

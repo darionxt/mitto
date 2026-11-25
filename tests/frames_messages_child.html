@@ -1,0 +1,57 @@
+<!doctype html>
+<title>child</title>
+<script>
+// The frame's document of tests/frames_messages_cases.js, which does what its query says. It calls its own postMessage() on
+// its parent's window, which a frame of another origin may.
+const told = (data) => postMessage.call(parent, data, '*');
+const plain = (text) => text.replaceAll('http://localhost:' + location.port, 'OTHER')
+  .replaceAll('http://127.0.0.1:' + location.port, 'ORIGIN');
+const tell = (event) => told({
+  type: event.type, data: event.data, origin: plain(event.origin), parent: event.source === parent, ports: event.ports.length,
+  trusted: event.isTrusted,
+});
+if (location.search === '?elsewhere') postMessage.call(parent, 'elsewhere', 'https://example.com');
+if (location.search === '?hello') told('hello');
+if (location.search.startsWith('?three')) for (const number of [1, 2, 3]) told(`number ${number}`);
+if (location.search === '?threeAndGo') location.href = '/child?gone';
+if (location.search === '?hide') {
+  addEventListener('pagehide', () => told('pagehide'));
+  document.addEventListener('visibilitychange', () => told(document.visibilityState));
+}
+if (location.search === '?outer') {
+  addEventListener('DOMContentLoaded', () => {
+    const element = document.createElement('iframe');
+    element.src = '/child?inner';
+    document.body.appendChild(element);
+  });
+}
+if (location.search === '?inner') {
+  const page = top, post = postMessage;
+  post.call(page, 'before', '*');
+  parent.document.querySelector('iframe').remove();
+  post.call(page, 'after', '*');
+  Promise.resolve().then(() => post.call(page, 'microtask', '*'));
+}
+if (location.search === '?port') {
+  const module = () => new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+  let port;
+  onmessage = (event) => {
+    if (event.data === 'send back') {
+      port.postMessage(module());
+      port.postMessage('back');
+      return;
+    }
+    port = event.ports[0];
+    port.onmessage = port.onmessageerror = ({type, data, origin, source, ports}) => {
+      told([type, data instanceof WebAssembly.Module ? 'module' : data && data.module ? 'with a module' : data, origin, source, ports.length]);
+    };
+  };
+}
+if (location.search === '?send') told({hello: ['child']});
+if (location.search === '?answer') onmessage = tell;
+if (location.search === '?collect') onmessage = (event) => { top.got.push(`collected ${event.data}`); };
+if (location.search === '?modules') {
+  onmessage = (event) => told([event.type, event.data instanceof WebAssembly.Module, plain(event.origin), event.source === parent]);
+  onmessageerror = (event) => told([event.type, event.data, plain(event.origin), event.source === parent, event.ports.length]);
+}
+</script>

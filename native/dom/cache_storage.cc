@@ -62,6 +62,11 @@ CacheStorageHost* CacheStorage::Host() const {
   if (!context || !context->HasContext()) {
     return nullptr;
   }
+  // A bucket's caches go with the bucket, which a document before may have
+  // been given.
+  if (bucket_ && !bucket_->IsReachable()) {
+    return nullptr;
+  }
   return context->GetCacheStorageHost();
 }
 

@@ -1,6 +1,7 @@
 #include "mitto/page/document_loader.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -12,6 +13,7 @@
 #include "base/time/time.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/http_refresh_scheduler.h"
 #include "mitto/dom/page_reveal_event.h"
 #include "mitto/dom/window.h"
@@ -27,18 +29,12 @@
 namespace mitto {
 
 DocumentLoader::DocumentLoader(PageRequests& requests,
-                               SendFrame send,
                                PageFrame& frame,
                                uint64_t number)
-    : requests_(requests),
-      send_(std::move(send)),
-      frame_(frame),
-      number_(number) {}
+    : requests_(requests), frame_(frame), number_(number) {}
 
-DocumentLoader::DocumentLoader(PageRequests& requests,
-                               SendFrame send,
-                               PageFrame& frame)
-    : DocumentLoader(requests, std::move(send), frame, 0) {}
+DocumentLoader::DocumentLoader(PageRequests& requests, PageFrame& frame)
+    : DocumentLoader(requests, frame, 0) {}
 
 DocumentLoader::~DocumentLoader() {
   // The parser holds this as its client, so it stops for good first.
@@ -57,7 +53,15 @@ void DocumentLoader::StopLoading() {
   }
   if (response_started_ && !body_ended_) {
     body_ended_ = true;
-    requests_->Cancel(number_);
+    if (!answered_by_page_) {
+      requests_->Cancel(number_);
+    }
+  }
+}
+
+void DocumentLoader::TookBody(size_t size) {
+  if (!answered_by_page_) {
+    requests_->TookBody(number_, size);
   }
 }
 
@@ -65,9 +69,21 @@ void DocumentLoader::OnIsolation(PageCrossOriginIsolation isolation) {
   cross_origin_isolated_ = isolation != PageCrossOriginIsolation::kNone;
 }
 
+void DocumentLoader::OnRestore() {
+  frame_->RestoreDocument(*this);
+}
+
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   const v8::Context::Scope context_scope(frame_->context());
   response_started_ = true;
+  // A restart for a critical client hint counts as one, as Chrome's
+  // NavigationRequest takes it.
+  redirected_ = response.redirected || response.restarted_for_critical_ch;
+  status_ = response.status;
+  // DocumentLoader::CommitNavigation() registers the sticky
+  // kMainResourceHasCacheControlNoStore for such a response.
+  no_store_ = CacheControlContainsNoStore(
+      HeaderField(response.headers, "cache-control"));
   // The document of the response takes the place of the frame's, in a
   // context of its own, once the old one has unloaded, as Blink makes a new
   // window for a tab's first navigation, whose about:blank has an opaque
@@ -78,9 +94,10 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   std::string mime_type =
       content_type.mime_type.empty() ? "text/html" : content_type.mime_type;
   // URLLoader::StartReading(): Chrome's network service gives a feed's
-  // response as text/plain.
-  if (mime_type == "application/rss+xml" ||
-      mime_type == "application/atom+xml") {
+  // response as text/plain, which a data: URL's, which the browser answers
+  // itself, does not go through.
+  if (!answered_by_page_ && (mime_type == "application/rss+xml" ||
+                             mime_type == "application/atom+xml")) {
     mime_type = "text/plain";
   }
   const DocumentKind document_kind = DocumentKindOf(mime_type);
@@ -90,12 +107,18 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
                    document_kind == DocumentKind::kSvg ||
                    document_kind == DocumentKind::kXml;
   // The Session's base::TimeTicks, which the Page's clock shares.
-  document_ = &frame_->CommitNavigation(
+  Document* const document = frame_->CommitNavigation(
       *this, url_,
       base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection, cross_origin_isolated_,
       xml ? std::optional<std::u16string>(base::ASCIIToUTF16(mime_type))
           : std::nullopt);
+  // The frame went as its old document unloaded, and this goes from a later
+  // task.
+  if (!document) {
+    return;
+  }
+  document_ = document;
   document_id_ = document_->DefaultView()->DocumentId();
   // The Referer that the navigation's last hop sent, as //net kept it through
   // its redirects.
@@ -118,16 +141,17 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   timing.critical_ch_restart = TicksOf(response.critical_ch_restart);
   // CreateNavigationTimingInstance(): no start time, the document's URL, and
   // a response that always passes the TAO check, whose cache state the bytes
-  // that had come with its headers decide.
+  // that had come with its headers decide, but for one that the Page answered
+  // itself, which is from no cache.
   PageResponseStarted navigation_response = response;
   navigation_response.timing_allow_passed = true;
   timing.navigation = CreateResourceTimingInfo(
       base::TimeTicks(), base::UTF8ToUTF16(response.url), &navigation_response,
       base::TimeTicks::Now());
-  timing.navigation.cache_state = response.validated ? CacheState::kValidated
-                                  : response.received_bytes == 0
-                                      ? CacheState::kLocal
-                                      : CacheState::kNone;
+  timing.navigation.cache_state =
+      response.validated ? CacheState::kValidated
+      : response.received_bytes == 0 && !answered_by_page_ ? CacheState::kLocal
+                                                           : CacheState::kNone;
   timing.connection_info = response.connection_info;
   timing.alpn_negotiated_protocol = response.alpn_negotiated_protocol;
   timing.was_fetched_via_spdy = response.was_fetched_via_spdy;
@@ -146,9 +170,24 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // document of a browser in the Persona's locale. A response with no MIME
   // type is HTML here, as the parser reads it, where Chrome's network service
   // sniffs one.
-  decoder_ = BuildTextResourceDecoder(url_, mime_type, content_type.charset,
-                                      document_->DefaultView()->Start().locale,
-                                      /*parent=*/nullptr);
+  // A frame's takes its parent's encoding as its default where the parent's
+  // origin can reach its own, and as the detector's hint where the parent's
+  // detector found it, as Blink's BuildTextResourceDecoder() does.
+  std::optional<ParentFrameEncoding> parent_encoding;
+  if (const Frame* const parent = frame_->Parent()) {
+    const Window* const parent_window = parent->DomWindow();
+    if (parent_window && parent_window->HasDocument() &&
+        parent_window->GetSecurityOrigin().IsSameOriginWith(url_)) {
+      const Document& parent_document = parent_window->GetDocument();
+      parent_encoding = ParentFrameEncoding{
+          base::UTF16ToUTF8(parent_document.CharacterSet()),
+          parent_document.EncodingWasDetectedHeuristically()};
+    }
+  }
+  decoder_ =
+      BuildTextResourceDecoder(url_, mime_type, content_type.charset,
+                               document_->DefaultView()->Start().locale,
+                               parent_encoding ? &*parent_encoding : nullptr);
   document_->SetDidDispatchLoadEvent(base::BindRepeating(
       &DocumentLoader::DidDispatchLoadEvent, weak_factory_.GetWeakPtr()));
   // DocumentInit::CreateDocument(): the kind of document of the MIME type,
@@ -203,6 +242,9 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // Whether the response delivered a Content Security Policy: a policy for
   // each part of either header between commas that is not empty, as the
   // network service parses them, which hides nonces.
+  if (inherited_header_csp_) {
+    document_->SetHasHeaderDeliveredContentSecurityPolicy(true);
+  }
   for (const char* const name :
        {"content-security-policy", "content-security-policy-report-only"}) {
     const std::string policies = HeaderField(response.headers, name);
@@ -213,7 +255,11 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
     }
   }
   // The response's Referrer-Policy, which the browser's policy container
-  // gives the document as it commits.
+  // gives the document as it commits, or else the initiator's for a local
+  // URL's document.
+  if (inherited_referrer_policy_ != FetchReferrerPolicy::kDefault) {
+    document_->SetReferrerPolicy(inherited_referrer_policy_);
+  }
   const std::string referrer_policy =
       HeaderField(response.headers, "referrer-policy");
   if (!referrer_policy.empty()) {
@@ -255,7 +301,7 @@ void DocumentLoader::OnResponseBody(std::string bytes) {
   body_bytes_ += bytes.size();
   if (!parser_) {
     // What comes once the parser has stopped for good goes unread.
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
     return;
   }
   waiting_body_.push_back(std::move(bytes));
@@ -281,8 +327,8 @@ void DocumentLoader::OnResponseEnded(int net_error) {
   const v8::Context::Scope context_scope(frame_->context());
   if (!response_started_) {
     // No document: a 204, a download, a failure, or another navigation that
-    // took its place. The frame keeps its document and lets this go.
-    frame_->NavigationEndedWithoutDocument(*this);
+    // took its place. The frame lets this go.
+    frame_->NavigationEndedWithoutDocument(*this, net_error);
     return;
   }
   // After a response, a body that stops short still makes a document of what
@@ -300,7 +346,7 @@ bool DocumentLoader::FeedParser() {
     waiting_body_.pop_front();
     // The Session hears that the piece is taken before anything the parser,
     // or its preload scanner, asks for from it.
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
     if (!bytes.empty()) {
       parser_->AppendBytes(bytes);
     }
@@ -323,16 +369,18 @@ void DocumentLoader::ParserDetached() {
   parser_ = nullptr;
   // What waits of the body goes unread.
   for (const std::string& bytes : waiting_body_) {
-    requests_->TookBody(number_, bytes.size());
+    TookBody(bytes.size());
   }
   waiting_body_.clear();
 }
 
 void DocumentLoader::DidDispatchLoadEvent() {
-  send_.Run(EncodeLoaded(document_id_));
+  // A frame whose element a load listener removed has had its document
+  // forgotten, and the Session hears no more of it.
+  requests_->SendLoaded(document_id_);
   // The browser's favicon driver fetches the icon once the top-level
-  // document's load event is done.
-  if (!favicon_fetched_ && document_) {
+  // document's load event is done, and a frame's document has none.
+  if (!favicon_fetched_ && document_ && !frame_->Parent()) {
     favicon_fetched_ = true;
     FetchFavicon(*document_);
   }

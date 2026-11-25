@@ -200,6 +200,9 @@ class Document : public Node {
   // of Blink's documents has one SecurityOrigin.
   url::Origin GetOrigin() const;
   void SetOrigin(const url::Origin& origin) { origin_ = origin; }
+  // Whether it keeps the origin that an earlier URL of its said, which its URL
+  // does not (SetUrlKeepingOrigin()).
+  bool KeepsOriginOfEarlierUrl() const { return keeps_origin_of_earlier_url_; }
   std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
   bool InDesignMode() const { return design_mode_; }
   void SetDesignMode(const std::u16string& value);
@@ -207,10 +210,12 @@ class Document : public Node {
   Element* ActiveElement() const;
   // What a page of a tab in front reads, which a document of no window is
   // not, as Blink's documents without a page say, nor one that a navigation
-  // unloads, from its visibilitychange on, as Blink's IsPageVisible() says.
+  // unloads, from its visibilitychange on, nor one that the back/forward
+  // cache keeps, as Blink's IsPageVisible() says.
   bool Hidden() const {
-    return !window_ || load_event_progress_ >=
-                           LoadEventProgress::kUnloadVisibilityChangeInProgress;
+    return !window_ || page_hidden_ ||
+           load_event_progress_ >=
+               LoadEventProgress::kUnloadVisibilityChangeInProgress;
   }
   std::u16string VisibilityState() const {
     return Hidden() ? u"hidden" : u"visible";
@@ -237,6 +242,9 @@ class Document : public Node {
   HTMLCollection* Anchors();
   HTMLCollection* Applets();
   HTMLAllCollection* All();
+  // A document that is not its window's current one, as one that a frame's
+  // next document replaced or whose frame went, has no browsing context, so
+  // its cookie reads empty and sets nothing, as in Chrome.
   std::u16string Cookie(bindings::ExceptionState& exception_state) const;
   void SetCookie(const std::u16string& value,
                  bindings::ExceptionState& exception_state);
@@ -394,6 +402,10 @@ class Document : public Node {
   void SetWindow(Window* window) { window_ = window; }
   // The URL of the document, serialized, which URL and documentURI give.
   void SetUrl(std::u16string url);
+  // The same for a URL that document.open() or a navigation within it gives
+  // the document, which keeps its origin, as Blink's window keeps its security
+  // origin, though about:blank does not say it.
+  void SetUrlKeepingOrigin(std::u16string url);
   // The canonical name of the encoding that the document's body decodes with,
   // as text_encoding_registry.h has it: UTF-8 for a document that no body
   // has decoded into yet, as Blink's DocumentEncodingData starts.
@@ -479,13 +491,13 @@ class Document : public Node {
   // The text that Blink's KURL keeps of a `url` that does not resolve, empty
   // for one that does.
   std::string UnresolvedUrlSpec(std::u16string_view url) const;
-  // The HTML Standard's fallback base URL: the about base URL of a document
-  // whose URL matches about:blank and that has one, else the document's URL.
-  // A Page has no srcdoc document yet.
+  // The HTML Standard's fallback base URL: the about base URL of a srcdoc
+  // document, or of one whose URL matches about:blank, that has one, else the
+  // document's URL.
   GURL FallbackBaseUrl() const;
   // The HTML Standard's about base URL, which a frame's about:blank document
-  // takes from its creator or from the navigation's initiator, as Blink's
-  // fallback base URL is.
+  // takes from its creator or from the navigation's initiator, and a srcdoc
+  // document from its parent, as Blink's fallback base URL is.
   void SetAboutBaseUrl(GURL url);
   // Blink's Document::CookieURL(): the URL whose cookies the document's
   // CookieStore reads and writes, the document's own unless it took another,
@@ -521,6 +533,13 @@ class Document : public Node {
   // Chrome's console error for one that names none.
   void ParseAndSetReferrerPolicy(std::u16string_view policy,
                                  ReferrerPolicySource source);
+  // The policy that a frame's about:blank or srcdoc document takes with the
+  // policy container of its creator, its parent or its navigation's
+  // initiator, as Chrome's browser hands it over.
+  void SetReferrerPolicy(FetchReferrerPolicy policy) {
+    referrer_policy_ = policy;
+    policy_container_referrer_policy_ = policy;
+  }
   // Whether a new entry of the document in the session history keeps its URL
   // from other documents' Navigation API entries, as Chrome's browser takes
   // it from the policy container: for a policy of no-referrer or origin that
@@ -660,6 +679,9 @@ class Document : public Node {
   // the event: Chrome asks the user to stay only on a page that the user has
   // activated, which a page in a Page never is, and says so in the console.
   bool DispatchBeforeUnloadEvent();
+  // Document::BeforeUnloadDoneWillUnload(): once no document has kept the
+  // navigation from going on, it will unload, so its load event never fires.
+  void BeforeUnloadDoneWillUnload();
   // Document::Abort(): CancelParsing(), so that nothing more of the body is
   // parsed, and the document is complete, with readystatechange, whose load
   // event then never fires, as a navigation that starts while it loads has
@@ -670,6 +692,31 @@ class Document : public Node {
   // is visible, and unload at the window, once a navigation's document is
   // about to take its place.
   void DispatchUnloadEvents();
+  // What the back/forward cache does to the document of the window that it
+  // keeps, as Blink's WebViewImpl::SetPageLifecycleStateInternal() has it:
+  //
+  // DispatchPagehide() with persisted true at the window, then the page goes
+  // hidden, with visibilitychange at the document if it was visible.
+  void HideForBackForwardCache();
+  // Document::DispatchFreezeEvent(): freeze at the document.
+  void DispatchFreezeEvent();
+  // FrameFetchContext::CanRequest(): whether the document's freeze event runs,
+  // in which no request but a keepalive one starts, as the console then says
+  // of the one for `url`.
+  bool RefusesRequestWhileFreezing(const GURL& url);
+  // LocalFrame::DidResume()'s resume at the document, once the page thaws.
+  void DispatchResumeEvent();
+  // The page shows again, with visibilitychange at the document, as Page's
+  // visibility goes back to visible.
+  void ShowFromBackForwardCache();
+  // DispatchPersistedPageshowEvent(): pageshow with persisted true at the
+  // window, whose timeStamp is `navigation_start`, the restore's.
+  void DispatchPersistedPageshowEvent(base::TimeTicks navigation_start);
+  // Whether CancelParsing() stopped a parser that was parsing, as Blink's
+  // sticky kParserAborted says, which keeps the page out of the back/forward
+  // cache.
+  bool ParserAborted() const { return parser_aborted_; }
+
   // When its unload event started and ended, null until it has.
   base::TimeTicks UnloadEventStart() const { return unload_event_start_; }
   base::TimeTicks UnloadEventEnd() const { return unload_event_end_; }
@@ -767,6 +814,7 @@ class Document : public Node {
   friend class IgnoreOpensDuringUnloadCountIncrementer;
   friend class ThrowOnDynamicMarkupInsertionCountIncrementer;
 
+  bool IsCurrentDocumentOfItsWindow() const;
   void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
   // The document-open steps, from an `entered_window` that may be null, and
   // what they do once the checks have passed, as Blink splits them.
@@ -781,6 +829,12 @@ class Document : public Node {
       DocumentParser::Client* client,
       DocumentParser::Kind kind = DocumentParser::Kind::kHtml);
   void DetachParser();
+  // visibilitychange and webkitvisibilitychange at the document, as the
+  // page's visibility changes.
+  void DispatchVisibilityChange();
+  // The page went hidden or shows again: its entry in the window's Performance
+  // Timeline, and visibilitychange.
+  void DidChangePageVisibility();
   // Document::BeginLifecycleUpdatesIfRenderingReady(): the window begins
   // rendering once no script blocks it.
   void BeginLifecycleUpdatesIfRenderingReady();
@@ -802,6 +856,7 @@ class Document : public Node {
   const bool is_html_;
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
+  bool keeps_origin_of_earlier_url_ = false;
   // The first opaque origin that its URL gave, which it keeps.
   mutable std::optional<url::Origin> opaque_origin_;
   std::u16string content_type_;
@@ -892,6 +947,11 @@ class Document : public Node {
   bool write_recursion_is_too_deep_ = false;
   // The HTML Standard's active parser was aborted.
   bool ignore_opens_and_writes_for_abort_ = false;
+  bool parser_aborted_ = false;
+  // Whether the back/forward cache keeps the page, which is hidden then.
+  bool page_hidden_ = false;
+  // Whether its freeze event runs.
+  bool freezing_in_progress_ = false;
   HeapVector<HTMLElement> popover_auto_stack_;
   HeapVector<HTMLElement> popover_hint_stack_;
   cppgc::Member<HTMLElement> popover_hint_stack_parent_;

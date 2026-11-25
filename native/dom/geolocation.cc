@@ -14,6 +14,7 @@
 #include "mitto/dom/geolocation_position_error.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/garbage-collected.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -77,6 +78,9 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
     return timer_.IsRunning() &&
            (fatal_code_ != 0 || timeout_ms_ != kNoTimeout);
   }
+
+  // Whether its timer had a delay, which a fatal error has not.
+  bool is_delayed() const { return fatal_code_ == 0 && timeout_ms_ > 0; }
 
   uint16_t fatal_code() const { return fatal_code_; }
   const std::u16string& fatal_message() const { return fatal_message_; }
@@ -185,6 +189,16 @@ void Geolocation::StartRequest(GeoNotifier* notifier) {
   notifier->StartTimer();
 }
 
+bool Geolocation::Has(const GeoNotifier& notifier) const {
+  for (const GeoNotifier* current = first_.Get(); current;
+       current = current->next()) {
+    if (current == &notifier) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void Geolocation::Remove(GeoNotifier* notifier) {
   notifier->Stop();
   GeoNotifier* previous = nullptr;
@@ -221,9 +235,25 @@ void Geolocation::Fire(GeoNotifier* notifier) {
     Remove(notifier);
     return;
   }
+  Window* const window = Window::From(isolate, context);
+  // A window that the back/forward cache keeps hears of it once it comes
+  // back, as a task of its frozen queues does.
+  if (window && window->IsInBackForwardCache()) {
+    window->HoldTask(TaskType::kMiscPlatformAPI,
+                     base::BindOnce(
+                         [](cppgc::Persistent<Geolocation> geolocation,
+                            cppgc::Persistent<GeoNotifier> notifier) {
+                           // Not for a watch that a script has cleared since.
+                           if (geolocation->Has(*notifier)) {
+                             geolocation->Fire(notifier.Get());
+                           }
+                         },
+                         cppgc::Persistent<Geolocation>(this),
+                         cppgc::Persistent<GeoNotifier>(notifier)),
+                     /*delayed=*/notifier->is_delayed());
+    return;
+  }
   const v8::Context::Scope context_scope(context);
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
   if (!window || !window->HasContext()) {
     Remove(notifier);
     return;

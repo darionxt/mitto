@@ -100,7 +100,7 @@ def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of
     assert set(waiting.values()) <= {280, 283, 285, 291}
 
 
-def test_a_page_replays_its_own_navigations_its_workers_requests_and_what_a_documents_markup_asks_for() -> None:
+def test_a_page_replays_its_own_navigations_its_traversal_its_workers_requests_and_what_its_markup_asks_for() -> None:
     through = {name for name, replay in REPLAYS.items() if replay.through_page}
     # The favicon is the browser's, after the document's load event, and the prefetches come from links that the
     # document's script adds then.
@@ -116,6 +116,7 @@ def test_a_page_replays_its_own_navigations_its_workers_requests_and_what_a_docu
         "navigation_meta_refresh",
         "redirect_location_1",
         "redirect_location_2",
+        "navigation_history_back",
         "worker_import_scripts",
         "worker_fetch",
         "worker_blob_fetch",
@@ -124,6 +125,8 @@ def test_a_page_replays_its_own_navigations_its_workers_requests_and_what_a_docu
     assert all(REPLAYS[name].page is not None and REPLAYS[name].made_by_a_page is None for name in through)
     # The document's page navigates nowhere, so its Page stays until its script has asked for all it does.
     assert {name for name in through if REPLAYS[name].until is not None} == markup
+    # Only the traversal clicks a page's links, where the person recording did.
+    assert {name for name in through if REPLAYS[name].clicks} == {"navigation_history_back"}
 
 
 def test_a_check_skips_a_case_that_only_a_page_makes() -> None:

@@ -84,6 +84,23 @@ class Window final : public WindowProperties, public ExecutionContext {
   static Window* Create();
   // The Window of the isolate's current context.
   static Window& Current();
+  // The window of `context`, as ExecutionContext::From() finds it, or null
+  // for a context of none or of a worker.
+  static Window* From(v8::Isolate* isolate, v8::Local<v8::Context> context);
+  // The windows of the entered and the incumbent contexts, as Blink's
+  // EnteredDOMWindow() and IncumbentDOMWindow() give them: the window whose
+  // script the task entered, and the one whose script made the call. Null
+  // outside a context.
+  static Window* Entered();
+  static Window* Incumbent();
+  // Whether `accessing_context` may access the window that `accessed_object`,
+  // a global proxy, gives, as bind_gen's AccessCheckCallback() of Window asks
+  // BindingSecurity::ShouldAllowAccessTo(): for a window of the same origin.
+  // V8 asks for contexts of different security tokens, such as that of a
+  // window that its frame navigated away from, which loses its token.
+  static bool AccessCheckCallback(v8::Local<v8::Context> accessing_context,
+                                  v8::Local<v8::Object> accessed_object,
+                                  v8::Local<v8::Value> data);
 
   Window();
   ~Window() override;
@@ -108,6 +125,8 @@ class Window final : public WindowProperties, public ExecutionContext {
                                v8::Local<v8::Object> success_callback,
                                v8::Local<v8::Object> error_callback);
   mitto::Navigator* Navigator();
+  // Whether the browser holds a WebAuthn request of the window's document.
+  bool HasPublicKeyRequest() const;
   mitto::Navigator* ClientInformation() { return Navigator(); }
   mitto::Screen* Screen();
   int32_t InnerWidth() const { return Start().viewport_width; }
@@ -185,6 +204,10 @@ class Window final : public WindowProperties, public ExecutionContext {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // The window's CookieStore, if a script has asked for it.
+  mitto::CookieStore* GetCookieStoreIfExists() const {
+    return cookie_store_.Get();
+  }
   // GlobalCacheStorage::caches(): the window's CacheStorage, made the first
   // time, or null after throwing a SecurityError for a document whose origin
   // may not reach caches.
@@ -228,6 +251,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   std::u16string Url() const override;
   EventTarget* ErrorEventTarget() override;
   url::Origin GetSecurityOrigin() const override;
+  url::Origin AgentClusterOrigin() const override;
   GURL CompleteUrl(std::u16string_view url) const override;
   GURL BaseUrl() const override;
   // The timers of geolocation's requests count too.
@@ -245,6 +269,10 @@ class Window final : public WindowProperties, public ExecutionContext {
   // LocalWindowProxy::SetupWindowPrototypeChain() does.
   void AssociateWithContext(v8::Isolate* isolate,
                             v8::Local<v8::Context> context);
+  // The context of the global proxy that is the window's wrapper, or empty
+  // once the frame's next window has it, so that nothing takes that window's
+  // context for this one's. A removed frame's window keeps it.
+  v8::MaybeLocal<v8::Context> ContextOfGlobalProxy(v8::Isolate* isolate);
   // The entry of the session history that the window's document is at, as
   // Blink's DocumentLoader holds its HistoryItem: what history.state and
   // scrollRestoration read. None for a window that no Page program loaded,
@@ -261,6 +289,18 @@ class Window final : public WindowProperties, public ExecutionContext {
   // and clears once another window takes its place.
   void SetFrame(mitto::Frame* frame) { frame_ = frame; }
   mitto::Frame* GetFrame() const { return frame_; }
+  // What drops the window's document from the back/forward cache that keeps
+  // it, which the Page sets while the cache does: once a script tries to run
+  // in its context, as Blink's LocalFrame::EvictFromBackForwardCache() does
+  // then.
+  void SetBackForwardCacheEviction(base::RepeatingClosure evict) {
+    back_forward_cache_eviction_ = std::move(evict);
+  }
+  void EvictFromBackForwardCache() {
+    if (back_forward_cache_eviction_) {
+      back_forward_cache_eviction_.Run();
+    }
+  }
   // What a navigation of the window's frame to another document asks the
   // Session through. Without one, as in the Page program given a script or
   // once the context is gone, such a navigation does not start.
@@ -353,6 +393,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   raw_ptr<NavigationClient> navigation_client_ = nullptr;
   std::unique_ptr<HistoryItem> current_history_item_;
   raw_ptr<mitto::Frame> frame_ = nullptr;
+  base::RepeatingClosure back_forward_cache_eviction_;
   // The name of the Page program's own window, which has no frame to keep it.
   std::u16string frameless_name_;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;

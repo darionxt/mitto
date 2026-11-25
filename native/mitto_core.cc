@@ -669,6 +669,12 @@ class RequestJob final : public net::URLRequest::Delegate,
     if (options_.validate_cache) {
       request->SetLoadFlags(request->load_flags() | net::LOAD_VALIDATE_CACHE);
     }
+    // A history traversal takes what the cache holds, stale or not, as
+    // UpdateLoadFlagsWithCacheFlags() has it for HISTORY_DIFFERENT_DOCUMENT.
+    if (options_.skip_cache_validation) {
+      request->SetLoadFlags(request->load_flags() |
+                            net::LOAD_SKIP_CACHE_VALIDATION);
+    }
     return request;
   }
 
@@ -2291,6 +2297,7 @@ int32_t mitto_page_next_event(MittoPage* page,
   if (next.type == MITTO_PAGE_EVENT_NAVIGATED) {
     event->status = next.status;
     event->net_error = next.net_error;
+    event->restored = next.restored ? 1 : 0;
   }
   if (next.type == MITTO_PAGE_EVENT_NAVIGATED ||
       next.type == MITTO_PAGE_EVENT_NAVIGATION_STARTED ||

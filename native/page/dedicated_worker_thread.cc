@@ -324,6 +324,7 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetModule(params_.module);
   scope_->SetOutsideReferrerPolicy(params_.referrer_policy);
   scope_->SetOutsideOrigin(params_.outside_origin);
+  scope_->SetAgentClusterOrigin(params_.agent_cluster_origin);
   scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.

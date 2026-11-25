@@ -13,6 +13,8 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/types/expected.h"
+#include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_response.h"
 #include "mitto/dom/headers.h"
@@ -50,11 +52,16 @@ void AbortWithTypeError(v8::Isolate* isolate,
 // FetchDataLoaderForWasmStreaming, once the whole body has come: V8 gets it
 // and compiles, or the compilation is aborted as when the body fails.
 void OnBody(std::shared_ptr<v8::WasmStreaming> streaming,
-            std::optional<std::string> body,
-            bool aborted) {
+            base::expected<std::string, Response::ReadAllError> body) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
-  if (!body) {
+  if (!body.has_value() && body.error() == Response::ReadAllError::kStopped) {
+    // The body's context went: V8 lets go of the compilation, whose promise
+    // stays pending.
+    streaming->Abort({});
+    return;
+  }
+  if (!body.has_value()) {
     // AbortCompilation(), with the empty message of the data pipe's error.
     streaming->Abort(v8::Exception::TypeError(
         Message(isolate, "WebAssembly compilation aborted: Network error: ")));
@@ -108,7 +115,14 @@ void StreamFromResponse(const v8::FunctionCallbackInfo<v8::Value>& info) {
   }
   const std::string url = base::UTF16ToUTF8(response->Url());
   streaming->SetUrl(url.data(), url.size());
-  response->ReadAll(base::BindOnce(&OnBody, std::move(streaming)));
+  // What reading throws, as for a body whose frame has gone, reaches nothing,
+  // and the compilation's promise stays pending, as in Chrome.
+  bindings::ExceptionState exception_state(isolate);
+  const v8::TryCatch try_catch(isolate);
+  response->ReadAll(base::BindOnce(&OnBody, streaming), exception_state);
+  if (exception_state.HadException()) {
+    streaming->Abort({});
+  }
 }
 
 }  // namespace

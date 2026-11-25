@@ -13,6 +13,7 @@
 
 #include "base/base64.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_window.h"
@@ -21,6 +22,7 @@
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
@@ -30,10 +32,13 @@
 #include "mitto/dom/request.h"
 #include "mitto/dom/resource.h"
 #include "mitto/dom/resource_fetcher.h"
+#include "mitto/dom/script_forbidden_scope.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "mitto/dom/worker_global_scope.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
+#include "v8/include/v8-external.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
@@ -44,6 +49,12 @@
 namespace mitto {
 
 namespace {
+
+// The context's embedder data that holds the execution context bound to it.
+// Index 0 is Chrome's debugger's, 1 the objects of its constructs, 2 whether
+// it is a secure context and 3 whether it is cross-origin isolated
+// (per_context_data.cc).
+constexpr int kBoundExecutionContextIndex = 4;
 
 // The string's code units as bytes, or nullopt if one is beyond Latin-1.
 std::optional<std::string> ToLatin1(const std::u16string& text) {
@@ -71,11 +82,54 @@ ExecutionContext& ExecutionContext::Current() {
 // static
 ExecutionContext* ExecutionContext::From(v8::Isolate* isolate,
                                          v8::Local<v8::Context> context) {
+  if (context->GetNumberOfEmbedderDataFields() >
+      static_cast<uint32_t>(kBoundExecutionContextIndex)) {
+    const v8::Local<v8::Data> data =
+        context->GetEmbedderDataV2(kBoundExecutionContextIndex);
+    if (data->IsValue() && data.As<v8::Value>()->IsExternal()) {
+      return static_cast<ExecutionContext*>(
+          data.As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault));
+    }
+  }
   if (Window* const window =
           bindings::V8Window::ToWrappable(isolate, context->Global())) {
     return window;
   }
   return bindings::V8WorkerGlobalScope::ToWrappable(isolate, context->Global());
+}
+
+void ExecutionContext::BindToContext(v8::Isolate* isolate,
+                                     v8::Local<v8::Context> context) {
+  context->SetEmbedderDataV2(
+      kBoundExecutionContextIndex,
+      v8::External::New(isolate, this, v8::kExternalPointerTypeTagDefault));
+}
+
+ExecutionContext::HeldTask::HeldTask() = default;
+ExecutionContext::HeldTask::HeldTask(HeldTask&&) = default;
+ExecutionContext::HeldTask& ExecutionContext::HeldTask::operator=(HeldTask&&) =
+    default;
+ExecutionContext::HeldTask::~HeldTask() = default;
+
+void ExecutionContext::HoldTask(TaskType type,
+                                base::OnceClosure task,
+                                bool delayed) {
+  HeldTask held;
+  held.type = type;
+  held.task = std::move(task);
+  held.delayed = delayed;
+  held_tasks_.push_back(std::move(held));
+}
+
+void ExecutionContext::HoldTaskOf(
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
+    base::OnceClosure task,
+    bool delayed) {
+  HeldTask held;
+  held.runner = std::move(runner);
+  held.task = std::move(task);
+  held.delayed = delayed;
+  held_tasks_.push_back(std::move(held));
 }
 
 ExecutionContext::ExecutionContext() = default;
@@ -166,7 +220,9 @@ void ExecutionContext::SetTimers(DOMTimerCoordinator* timers) {
     return;
   }
   // The context goes, and with it the signals' timers and what else goes
-  // with it.
+  // with it, which run no script, as what Blink's NotifyContextDestroyed()
+  // tells runs none.
+  const ScriptForbiddenScope forbid_script;
   std::map<uint64_t, base::OnceClosure> signal_timers;
   signal_timers.swap(signal_timers_);
   for (auto& [id, cancel] : signal_timers) {
@@ -280,9 +336,29 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     std::ignore = resolver->Reject(context, signal->Reason());
     return resolver->GetPromise();
   }
+  const GURL& url = request->url();
+  // A request that the document refuses as it freezes fails from a task, which
+  // waits for the document to come back.
+  if (IsWindow() && !request->keepalive() &&
+      static_cast<Window*>(this)->GetDocument().RefusesRequestWhileFreezing(
+          url)) {
+    PostTaskInContext(
+        this, TaskType::kNetworking,
+        base::BindOnce(
+            [](v8::Isolate* isolate,
+               v8::Global<v8::Promise::Resolver> resolver) {
+              const v8::HandleScope handle_scope(isolate);
+              std::ignore = resolver.Get(isolate)->Reject(
+                  isolate->GetCurrentContext(),
+                  v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                      isolate, "Failed to fetch")));
+            },
+            base::Unretained(isolate),
+            v8::Global<v8::Promise::Resolver>(isolate, resolver)));
+    return resolver->GetPromise();
+  }
   // A data: or a blob: URL, which Chrome answers without its network service,
   // as Blink's FetchManager::Loader::PerformSchemeFetch() fetches it.
-  const GURL& url = request->url();
   if (url.SchemeIs(url::kDataScheme) || url.SchemeIs(url::kBlobScheme)) {
     const bool readable = url.SchemeIs(url::kDataScheme) ||
                           request->blob_url_origin()

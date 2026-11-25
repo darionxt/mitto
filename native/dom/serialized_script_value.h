@@ -18,6 +18,7 @@
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/v8_script_value_serializer.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/v8_script_value_deserializer.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/serialization/trailer_writer.cc
+// Upstream: third_party/blink/renderer/bindings/modules/v8/serialization/v8_script_value_serializer_for_modules.cc
 
 #ifndef MITTO_DOM_SERIALIZED_SCRIPT_VALUE_H_
 #define MITTO_DOM_SERIALIZED_SCRIPT_VALUE_H_
@@ -132,6 +133,9 @@ class SerializedScriptValue {
   bool IsLockedToAgentCluster() const {
     return !!wasm_modules_ || !shared_array_buffers_.empty();
   }
+  // Whether only a context of its own origin may read it, as Chrome has it of
+  // a WebAssembly module: SerializedScriptValue::IsOriginCheckRequired().
+  bool IsOriginCheckRequired() const { return !!wasm_modules_; }
 
  private:
   SerializedScriptValue();

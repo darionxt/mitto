@@ -4,6 +4,7 @@
 #include <tuple>
 #include <utility>
 
+#include "base/functional/bind.h"
 #include "base/functional/function_ref.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
@@ -28,6 +29,7 @@
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_tasks.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
 #include "url/url_util.h"
@@ -246,9 +248,16 @@ bool Navigation::HasEntriesAndEventsDisabled() const {
   if (!window_ || !window_->HasContext()) {
     return true;
   }
+  // Blink reads the window's security origin, which document.open() leaves as
+  // it was when it gives the document another's URL. A frame's document that
+  // inherits its origin, about:blank or srcdoc, has none, a Known Gap until
+  // frames have entries of their own.
   const Document& document = window_->GetDocument();
-  return document.IsInitialEmptyDocument() ||
-         url::Origin::Create(GURL(document.UrlForBinding())).opaque();
+  const url::Origin origin =
+      document.KeepsOriginOfEarlierUrl()
+          ? document.GetOrigin()
+          : url::Origin::Create(GURL(document.UrlForBinding()));
+  return document.IsInitialEmptyDocument() || origin.opaque();
 }
 
 int64_t Navigation::DocumentSequence() const {
@@ -298,6 +307,14 @@ void Navigation::MakeEntries() {
   activation_ = NavigationActivation::Create(
       entries_[static_cast<size_t>(current_index_)].Get(),
       NavigationTypeOf(arrays.type), from);
+}
+
+void Navigation::InitializeForNewWindow(EntryArrays arrays) {
+  arrays_ = std::move(arrays);
+  made_ = false;
+  entries_.clear();
+  current_index_ = -1;
+  activation_ = nullptr;
 }
 
 NavigationHistoryEntry* Navigation::MakeEntryFromItem(const HistoryItem& item) {
@@ -631,6 +648,95 @@ void Navigation::UpdateCurrentEntry(
   DispatchEvent(NavigationCurrentEntryChangeEvent::CreateTrusted(u"", current));
 }
 
+NavigationHistoryEntry* Navigation::GetEntryForRestore(const ApiEntry& entry) {
+  if (const int64_t index = IndexOfKey(entry.key); index >= 0) {
+    NavigationHistoryEntry* const existing =
+        entries_[static_cast<size_t>(index)].Get();
+    if (existing->id() == entry.id) {
+      return existing;
+    }
+  }
+  return NavigationHistoryEntry::Create(window_, entry.key, entry.id, entry.url,
+                                        entry.document_sequence, entry.state);
+}
+
+void Navigation::SetEntriesForRestore(const EntryArrays& arrays) {
+  if (HasEntriesAndEventsDisabled()) {
+    return;
+  }
+  MakeEntries();
+  // The navigation that left the document, which went to another one, does
+  // not stay ongoing; one that was intercepted finishes as it would have.
+  if (!ongoing_navigate_event_ ||
+      !ongoing_navigate_event_->HasNavigationActions()) {
+    ongoing_navigate_event_ = nullptr;
+    ongoing_tracker_ = nullptr;
+  }
+  // Nor does a traversal that it asked for as it left wait for it, whose
+  // promises never settle, so that it can ask for the same one again.
+  upcoming_traverse_trackers_.clear();
+  NavigationHistoryEntry* const current = CurrentEntry();
+  // Rooted until they are among the entries, as a collection that the next
+  // one's allocation makes may come first.
+  std::vector<cppgc::Persistent<NavigationHistoryEntry>> entries;
+  entries.reserve(arrays.back.size() + arrays.forward.size() + 1);
+  for (const ApiEntry& entry : arrays.back) {
+    entries.emplace_back(GetEntryForRestore(entry));
+  }
+  entries.emplace_back(current);
+  for (const ApiEntry& entry : arrays.forward) {
+    entries.emplace_back(GetEntryForRestore(entry));
+  }
+  // The old entries, held until those that are not among the new ones have
+  // had their dispose events.
+  std::vector<cppgc::Persistent<NavigationHistoryEntry>> old_entries;
+  old_entries.reserve(entries_.size());
+  for (const cppgc::Member<NavigationHistoryEntry>& entry : entries_) {
+    old_entries.emplace_back(entry.Get());
+  }
+  entries_.clear();
+  for (const cppgc::Persistent<NavigationHistoryEntry>& entry : entries) {
+    entries_.emplace_back(entry.Get());
+  }
+  current_index_ = static_cast<int64_t>(arrays.back.size());
+  // The entry it came from is one of the new ones, if it is among them, so
+  // it is looked up once they are in place.
+  const cppgc::Persistent<NavigationHistoryEntry> from(
+      arrays.previous ? GetEntryForRestore(*arrays.previous) : nullptr);
+  if (activation_) {
+    activation_->Update(current, from.Get(), u"traverse");
+  } else {
+    activation_ =
+        NavigationActivation::Create(current, u"traverse", from.Get());
+  }
+  std::vector<cppgc::Persistent<NavigationHistoryEntry>> disposed;
+  for (const cppgc::Persistent<NavigationHistoryEntry>& entry : old_entries) {
+    const int64_t index = IndexOfKey(entry->key());
+    if (index < 0 ||
+        entries_[static_cast<size_t>(index)].Get() != entry.Get()) {
+      disposed.emplace_back(entry.Get());
+    }
+  }
+  if (disposed.empty() || !window_->GetTasks()) {
+    return;
+  }
+  // Their dispose events come from a task, which waits while the window is
+  // frozen.
+  window_->GetTasks()->PostTask(
+      TaskType::kInternalDefault,
+      base::BindOnce(
+          [](std::vector<cppgc::Persistent<NavigationHistoryEntry>> disposed) {
+            for (const cppgc::Persistent<NavigationHistoryEntry>& entry :
+                 disposed) {
+              bindings::EventInit init;
+              Event* const dispose = Event::Create(u"dispose", init);
+              dispose->SetTrusted(true);
+              entry->DispatchEvent(dispose);
+            }
+          },
+          std::move(disposed)));
+}
+
 void Navigation::DisposeEntriesForSessionHistoryRemoval(
     const std::vector<std::u16string>& keys) {
   if (HasEntriesAndEventsDisabled()) {
@@ -694,18 +800,21 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
     return DispatchResult::kAbort;
   }
   const bool traverse = params.load_type == FrameLoadType::kBackForward;
-  // A traversal goes to one of the entries, or nowhere.
+  // A traversal within the document goes to one of the entries, or nowhere.
+  // One to another document may go to an entry that the entries leave out,
+  // past one of another origin, whose destination then has none.
   NavigationHistoryEntry* destination_entry = nullptr;
+  const std::u16string key = traverse && params.destination_item
+                                 ? params.destination_item->navigation_api_key
+                                 : std::u16string();
   if (traverse) {
-    const std::u16string key = params.destination_item
-                                   ? params.destination_item->navigation_api_key
-                                   : std::u16string();
     const int64_t index = IndexOfKey(key);
-    if (index == -1) {
+    if (index != -1) {
+      destination_entry = entries_[static_cast<size_t>(index)].Get();
+    } else if (!params.cross_document) {
       TraverseCancelled(key, TraverseCancelledReason::kAbortedBeforeCommit);
       return DispatchResult::kAbort;
     }
-    destination_entry = entries_[static_cast<size_t>(index)].Get();
   }
   // PromoteUpcomingNavigationToOngoing(): a traversal's own tracker, by its
   // key, or the navigate() or reload() that waits.
@@ -713,7 +822,7 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
     ongoing_tracker_ = nullptr;
     for (auto it = upcoming_traverse_trackers_.begin();
          it != upcoming_traverse_trackers_.end(); ++it) {
-      if (it->first == destination_entry->key()) {
+      if (it->first == key) {
         ongoing_tracker_ = it->second;
         upcoming_traverse_trackers_.erase(it);
         break;
@@ -736,12 +845,17 @@ Navigation::DispatchResult Navigation::DispatchNavigateEvent(
   }
   NavigateEvent::Fields fields;
   fields.navigation_type = navigation_type;
-  fields.destination =
-      NavigationDestination::Create(base::UTF8ToUTF16(params.url.spec()),
-                                    params.fragment || params.history_api,
-                                    destination_state, destination_entry);
-  fields.can_intercept = CanChangeToUrlForHistoryApi(
-      params.url, window_->GetDocument().GetOrigin(), document_url);
+  fields.destination = NavigationDestination::Create(
+      base::UTF8ToUTF16(params.url.spec()),
+      !params.cross_document && (params.fragment || params.history_api),
+      destination_state, destination_entry);
+  // A traversal to another document can neither be canceled nor
+  // intercepted.
+  fields.can_intercept =
+      !(traverse && params.cross_document) &&
+      CanChangeToUrlForHistoryApi(
+          params.url, window_->GetDocument().GetOrigin(), document_url);
+  fields.cancelable = !(traverse && params.cross_document);
   fields.hash_change = params.fragment && params.url != document_url &&
                        EqualIgnoringFragment(params.url, document_url);
   fields.source_element = params.source_element;

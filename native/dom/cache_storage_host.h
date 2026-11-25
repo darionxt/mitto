@@ -57,11 +57,18 @@ class CacheStorageHost {
 
   // The Page no longer uses a cache that the Session opened for it.
   virtual void ReleaseCache(uint64_t cache) = 0;
+  // Whether the Session opened `cache` for the host's current document, and
+  // not for one before it.
+  virtual bool HasCache(uint64_t cache) const = 0;
 
   // The Page has made document `document`, which takes the place of the one
   // before it: what that one asked, held or opened goes, as its Mojo pipes go
   // with its context, and nothing of it reaches the Session from here on.
   virtual void DocumentCommitted(uint64_t document) = 0;
+  // Whether the document that committed last has asked, held or opened anything
+  // of the Session here, which the back/forward cache cannot keep yet: its
+  // document unloads (a Known Gap).
+  virtual bool UsedByDocument() const = 0;
 
  protected:
   virtual ~CacheStorageHost() = default;
