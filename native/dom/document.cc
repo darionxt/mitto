@@ -489,13 +489,26 @@ bool Document::IsFeatureEnabled(std::string_view feature) {
          GetPermissionsPolicyState().IsEnabled(PolicyFeatureNamed(feature));
 }
 
-bool Document::IsFeatureEnabledOrReport(std::string_view feature) {
+bool Document::IsFeatureEnabledInWorker(std::string_view feature,
+                                        const url::Origin& origin) {
+  return PermissionsPolicyState(&GetPermissionsPolicyState(),
+                                /*container_policy=*/{}, origin,
+                                /*unload_deprecated=*/false,
+                                /*is_headerless=*/false, /*declared=*/{})
+      .IsEnabled(PolicyFeatureNamed(feature));
+}
+
+bool Document::IsFeatureEnabledOrReport(std::string_view feature,
+                                        std::string_view message) {
   const bool enabled = IsFeatureEnabled(feature);
   if (!enabled && window_) {
     window_->AddConsoleMessage(
         ConsoleLevel::kError,
-        base::StrCat({"Permissions policy violation: ", feature,
-                      " is not allowed in this document."}));
+        base::StrCat(
+            {"Permissions policy violation: ",
+             message.empty()
+                 ? base::StrCat({feature, " is not allowed in this document."})
+                 : std::string(message)}));
   }
   return enabled;
 }

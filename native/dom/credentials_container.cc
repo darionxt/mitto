@@ -33,6 +33,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
@@ -139,8 +140,50 @@ bool IsEnabled(v8::Isolate* isolate, bindings::RuntimeFeature feature) {
   return bindings::PerIsolateData::From(isolate)->features().IsEnabled(feature);
 }
 
+// CheckSecurityRequirementsBeforeRequest() for what get()'s `options` need: the
+// message of its NotAllowedError, or null if it passes.
+const char* CheckSecurityRequirements(
+    Window& window,
+    const bindings::CredentialRequestOptions& options) {
+  Document& document = window.GetDocument();
+  if (options.public_key) {
+    return document.IsFeatureEnabled("publickey-credentials-get")
+               ? nullptr
+               : "The 'publickey-credentials-get' feature is not enabled in "
+                 "this document. Permissions Policy may be used to delegate "
+                 "Web Authentication capabilities to cross-origin child "
+                 "frames.";
+  }
+  if (options.otp &&
+      IsEnabled(v8::Isolate::GetCurrent(),
+                bindings::RuntimeFeature::kWebOTPAssertionFeaturePolicy)) {
+    if (!document.IsFeatureEnabled("otp-credentials")) {
+      return "The 'otp-credentials' feature is not enabled in this document.";
+    }
+    // IsAncestorChainValidForWebOTP().
+    return window.OriginChangesToTop() < 2
+               ? nullptr
+               : "More than two unique origins are detected in the origin "
+                 "chain.";
+  }
+  if (options.identity && options.identity->providers &&
+      options.identity->providers->size() == 1) {
+    return document.IsFeatureEnabled("identity-credentials-get")
+               ? nullptr
+               : "The 'identity-credentials-get' feature is not enabled in "
+                 "this document.";
+  }
+  // IsSameSecurityOriginWithAncestors().
+  return window.OriginChangesToTop() == 0
+             ? nullptr
+             : "The following credential operations can only occur in a "
+               "document which is same-origin with all of its ancestors: "
+               "storage/retrieval of 'PasswordCredential' and "
+               "'FederatedCredential', storage of 'PublicKeyCredential'.";
+}
+
 url::Origin DocumentOrigin() {
-  return Window::Current().GetSecurityOrigin();
+  return Window::OfReceiver().GetSecurityOrigin();
 }
 
 // The bytes of a BufferSource, as AsSpan<SharedBufferPolicy::kDisallow>()
@@ -466,10 +509,11 @@ v8::Local<v8::Promise> CredentialsContainer::Get(
     GetDigital(isolate, resolver, *options.digital);
     return promise;
   }
-  // CheckSecurityRequirementsBeforeRequest() passes: the document is a
-  // top-level one, same-origin with all of its ancestors, and its permissions
-  // policy, which no Permissions-Policy header narrows, allows each feature
-  // that the request needs to its own origin.
+  if (const char* const message =
+          CheckSecurityRequirements(Window::OfReceiver(), options)) {
+    RejectNow(isolate, resolver, "NotAllowedError", message);
+    return promise;
+  }
   if (options.public_key) {
     GetPublicKey(isolate, resolver, options);
     return promise;
@@ -516,11 +560,18 @@ void CredentialsContainer::GetDigital(
     v8::Isolate* isolate,
     v8::Local<v8::Promise::Resolver> resolver,
     const bindings::DigitalCredentialRequestOptions& digital) {
-  // DiscoverDigitalIdentityCredentialFromExternalSource(). The
-  // 'digital-credentials-get' policy allows the document's own origin.
+  // DiscoverDigitalIdentityCredentialFromExternalSource().
   if (DocumentOrigin().opaque()) {
     RejectNow(isolate, resolver, "NotAllowedError",
               "The credential operation is not allowed in an opaque origin.");
+    return;
+  }
+  if (!Window::OfReceiver().GetDocument().IsFeatureEnabled(
+          "digital-credentials-get")) {
+    RejectNow(isolate, resolver, "NotAllowedError",
+              "The 'digital-credentials-get' feature is not enabled in this "
+              "document. Permissions Policy may be used to delegate digital "
+              "credential API capabilities to cross-origin child frames.");
     return;
   }
   // FilterSupportedRequests(): every protocol, unless the Page has
@@ -841,6 +892,14 @@ void CredentialsContainer::GetFromPasswordStore(
     v8::Isolate* isolate,
     v8::Local<v8::Promise::Resolver> resolver) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  if (Window::OfReceiver().IsInFrame()) {
+    // ContentCredentialManager::BindRequest() connects the top-level frame
+    // alone.
+    RejectWithDOMExceptionFromTask(
+        isolate, resolver, "NotSupportedError",
+        "Error connecting to Credential Management service.");
+    return;
+  }
   if (password_request_pending_) {
     // CredentialManagerImpl::Get() answers PENDING_REQUEST at once.
     PostAnswer(isolate, context,

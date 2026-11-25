@@ -147,6 +147,10 @@ std::u16string WorkerGlobalScope::Origin() const {
   return base::UTF8ToUTF16(origin_.Serialize());
 }
 
+bool WorkerGlobalScope::AllowsHighEntropyValues() {
+  return allows_high_entropy_values_;
+}
+
 bool WorkerGlobalScope::IsSecureContextForBindings() const {
   // A worker is a secure context if its creator is, which the Page decides
   // for its context when it starts the worker.

@@ -173,20 +173,26 @@ void ResolveFromTaskWith(
   SettleFromTask(isolate, resolver, std::move(make_value), /*reject=*/false);
 }
 
+void RejectFromTaskWith(
+    v8::Isolate* isolate,
+    v8::Local<v8::Promise::Resolver> resolver,
+    base::OnceCallback<v8::Local<v8::Value>(v8::Isolate*)> make_reason) {
+  SettleFromTask(isolate, resolver, std::move(make_reason), /*reject=*/true);
+}
+
 void RejectWithDOMExceptionFromTask(v8::Isolate* isolate,
                                     v8::Local<v8::Promise::Resolver> resolver,
                                     std::string name,
                                     std::string message) {
-  SettleFromTask(isolate, resolver,
-                 base::BindOnce(
-                     [](const std::string& name, const std::string& message,
-                        v8::Isolate* isolate) {
-                       return bindings::PerIsolateData::From(isolate)
-                           ->dom_exception_hooks()
-                           .create(isolate, name, message);
-                     },
-                     std::move(name), std::move(message)),
-                 /*reject=*/true);
+  RejectFromTaskWith(isolate, resolver,
+                     base::BindOnce(
+                         [](const std::string& name, const std::string& message,
+                            v8::Isolate* isolate) {
+                           return bindings::PerIsolateData::From(isolate)
+                               ->dom_exception_hooks()
+                               .create(isolate, name, message);
+                         },
+                         std::move(name), std::move(message)));
 }
 
 void CallCallbackInterfaceFromTask(

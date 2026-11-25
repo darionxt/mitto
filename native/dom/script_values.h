@@ -55,6 +55,12 @@ void ResolveFromTaskWith(
     v8::Local<v8::Promise::Resolver> resolver,
     base::OnceCallback<v8::Local<v8::Value>(v8::Isolate*)> make_value);
 
+// Rejects `resolver` in the same way, with what `make_reason` gives.
+void RejectFromTaskWith(
+    v8::Isolate* isolate,
+    v8::Local<v8::Promise::Resolver> resolver,
+    base::OnceCallback<v8::Local<v8::Value>(v8::Isolate*)> make_reason);
+
 // Rejects `resolver` from a task of its own, as ResolveFromTask() resolves,
 // with a DOMException of `name` and `message` that the task makes, so that its
 // stack holds no script, as Blink's does.

@@ -8,6 +8,7 @@
 #include "mitto/bindings/v8_navigator.h"
 #include "mitto/dom/battery_manager.h"
 #include "mitto/dom/credentials_container.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/geolocation.h"
 #include "mitto/dom/keyboard.h"
 #include "mitto/dom/lock_manager.h"
@@ -319,8 +320,14 @@ uint16_t Navigator::CpuPerformance() const {
 
 std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(
     bindings::ExceptionState& exception_state) const {
-  // device::Gamepads::kItemsLengthCap. The "gamepad" policy allows any page
-  // that a Session opens, so nothing throws.
+  // NavigatorGamepad::getGamepads().
+  if (!Window::OfReceiver().GetDocument().IsFeatureEnabled("gamepad")) {
+    exception_state.ThrowDOMException("SecurityError",
+                                      "Access to the feature \"gamepad\" is "
+                                      "disallowed by permissions policy.");
+    return {};
+  }
+  // device::Gamepads::kItemsLengthCap.
   constexpr size_t kItemsLengthCap = 8;
   return std::vector<bindings::ScriptWrappable*>(kItemsLengthCap, nullptr);
 }

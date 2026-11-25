@@ -1,6 +1,5 @@
 #include "mitto/dom/event.h"
 
-#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
@@ -121,11 +120,7 @@ double Event::TimeStamp() const {
   // through that realm's performance timeline's clamp, so that it falls
   // between two calls of performance.now() around its making. A frame's event
   // read with another frame's getter counts from its own frame's time origin.
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  ExecutionContext* const relevant = ExecutionContext::From(
-      isolate, bindings::ReceiverRealmScope::CreationContext(isolate));
-  const ExecutionContext& context =
-      relevant ? *relevant : ExecutionContext::Current();
+  const ExecutionContext& context = ExecutionContext::OfReceiver();
   return Performance::MonotonicTimeToDOMHighResTimeStamp(
       context.TimeOrigin(), created_, context.CrossOriginIsolatedCapability());
 }

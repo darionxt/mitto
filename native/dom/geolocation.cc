@@ -11,6 +11,7 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_geolocation.h"
 #include "mitto/bindings/v8_window.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/geolocation_position_error.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/garbage-collected.h"
@@ -30,6 +31,13 @@ namespace {
 constexpr char16_t kInsecureOrigin[] =
     u"Only secure origins are allowed (see: https://goo.gl/Y0ZkNV).";
 constexpr char16_t kTimeoutExpired[] = u"Timeout expired";
+// What a document whose permissions policy withholds it is told.
+constexpr char16_t kPolicyError[] =
+    u"Geolocation has been disabled in this document by permissions policy.";
+constexpr char kPolicyConsoleWarning[] =
+    "Geolocation access has been blocked because of a permissions policy "
+    "applied to the current document. See https://crbug.com/414348233 for more "
+    "details.";
 // PositionOptions' default timeout, 0xFFFFFFFF: none.
 constexpr uint32_t kNoTimeout = UINT32_MAX;
 
@@ -174,12 +182,19 @@ size_t Geolocation::TimerCount() const {
 void Geolocation::StartRequest(GeoNotifier* notifier) {
   notifier->set_next(first_.Get());
   first_ = notifier;
-  if (!Window::Current().IsSecureContextForBindings()) {
+  Window& window = Window::OfReceiver();
+  if (!window.IsSecureContextForBindings()) {
     notifier->SetFatalError(GeolocationPositionError::kPermissionDenied,
                             kInsecureOrigin);
     return;
   }
-  // A top-level page of a tab that a Session opened is visible, and has no
+  if (!window.GetDocument().IsFeatureEnabledOrReport("geolocation",
+                                                     kPolicyConsoleWarning)) {
+    notifier->SetFatalError(GeolocationPositionError::kPermissionDenied,
+                            kPolicyError);
+    return;
+  }
+  // A page of a tab that a Session opened is visible, and has no
   // position cached. The browser shows its prompt, which nobody answers, so
   // only the timeout can end the request.
   notifier->StartTimer();

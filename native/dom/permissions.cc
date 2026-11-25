@@ -10,7 +10,9 @@
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_permissions.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/permission_status.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
@@ -396,31 +398,125 @@ std::optional<Descriptor> Parse(v8::Isolate* isolate,
   return Descriptor{Kind::kLoopbackNetwork, u"loopback-network"};
 }
 
-// What Chrome's browser answers for a kind of permission in a profile that
-// has granted and denied nothing: a permission context's own answer, or else
-// its content setting's default. Every context is restricted to secure
-// origins, so a page that is not a secure context gets "denied", but for the
-// storage access grant, whose context turns that into "ask".
-std::u16string_view StateOf(Kind kind, bool secure, bool window) {
-  // Background fetch and the storage access API answer for a frame: a worker,
-  // which has none, gets the default, ask.
-  if (!window &&
-      (kind == Kind::kBackgroundFetch || kind == Kind::kStorageAccessGrant)) {
-    return secure ? u"prompt" : StateOf(kind, secure, /*window=*/true);
+// The feature of the permissions policy that a kind of permission needs, as
+// PermissionTypeToPermissionsPolicyFeature() has it, or none.
+std::string_view FeatureOf(Kind kind) {
+  switch (kind) {
+    case Kind::kGeolocation:
+    case Kind::kGeolocationApproximate:
+      return "geolocation";
+    case Kind::kMidi:
+    case Kind::kMidiSysex:
+      return "midi";
+    case Kind::kVideoCapture:
+      return "camera";
+    case Kind::kAudioCapture:
+      return "microphone";
+    case Kind::kWakeLockScreen:
+      return "screen-wake-lock";
+    case Kind::kDisplayCapture:
+      return "display-capture";
+    case Kind::kClipboardReadWrite:
+      return "clipboard-read";
+    case Kind::kClipboardSanitizedWrite:
+      return "clipboard-write";
+    case Kind::kIdleDetection:
+      return "idle-detection";
+    case Kind::kStorageAccessGrant:
+    case Kind::kTopLevelStorageAccess:
+      return "storage-access";
+    case Kind::kWindowManagement:
+      return "window-management";
+    case Kind::kLocalFonts:
+      return "local-fonts";
+    case Kind::kCapturedSurfaceControl:
+      return "captured-surface-control";
+    case Kind::kSpeakerSelection:
+      return "speaker-selection";
+    case Kind::kAutomaticFullscreen:
+      return "fullscreen";
+    case Kind::kWebAppInstallation:
+      return "web-app-installation";
+    case Kind::kLocalNetworkAccess:
+      return "local-network-access";
+    case Kind::kLocalNetwork:
+      return "local-network";
+    case Kind::kLoopbackNetwork:
+      return "loopback-network";
+    case Kind::kNotifications:
+    case Kind::kCameraPanTiltZoom:
+    case Kind::kBackgroundFetch:
+    case Kind::kBackgroundSync:
+    case Kind::kDurableStorage:
+    case Kind::kSensors:
+    case Kind::kWakeLockSystem:
+    case Kind::kNfc:
+    case Kind::kPaymentHandler:
+    case Kind::kPeriodicBackgroundSync:
+    case Kind::kKeyboardLock:
+    case Kind::kPointerLock:
+      return {};
   }
+}
+
+// Whether a kind of permission is asked of secure origins, as
+// PermissionContextBase::IsPermissionAvailableToOrigins() has it of the
+// origins that PermissionUtil::GetCanonicalOrigin() gives it: the top-level
+// page's, but for the permissions that are not delegated to its frames, which
+// take the document's own too.
+bool IsOfSecureOrigins(Kind kind, Window& window) {
+  const bool own = kind == Kind::kNotifications ||
+                   kind == Kind::kStorageAccessGrant ||
+                   kind == Kind::kTopLevelStorageAccess;
+  if (own && window.IsInFrame() &&
+      (window.GetSecurityOrigin().opaque() ||
+       !window.IsSecureContextForBindings())) {
+    return false;
+  }
+  Window* const top =
+      window.GetFrame() ? window.GetFrame()->Top().DomWindow() : &window;
+  return top->IsSecureContextForBindings();
+}
+
+// What Chrome's browser answers for a kind of permission in a profile that
+// has granted and denied nothing: that the document's permissions policy
+// withholds it, a permission context's own answer, or else its content
+// setting's default. Every context is restricted to secure origins, so a page
+// that is not a secure context gets "denied", but for the storage access
+// grant, whose context turns that into "ask".
+std::u16string_view StateOf(Kind kind, ExecutionContext& context) {
+  Window* const window =
+      context.IsWindow() ? static_cast<Window*>(&context) : nullptr;
+  if (window) {
+    const std::string_view feature = FeatureOf(kind);
+    if (!feature.empty() && !window->GetDocument().IsFeatureEnabled(feature)) {
+      return u"denied";
+    }
+  }
+  // A worker asks as its own origin, which an opaque one of a data: URL is not
+  // trustworthy for.
+  const bool secure = window ? IsOfSecureOrigins(kind, *window)
+                             : context.IsSecureContextForBindings() &&
+                                   !context.GetSecurityOrigin().opaque();
   if (!secure) {
     return kind == Kind::kStorageAccessGrant ? u"prompt" : u"denied";
   }
   switch (kind) {
-    case Kind::kSensors:
     case Kind::kBackgroundFetch:
+    case Kind::kStorageAccessGrant:
+      // They answer for the top-level frame: another, as a worker, which has
+      // none, gets the default, ask.
+      return window && !window->IsInFrame() ? u"granted" : u"prompt";
+    case Kind::kNotifications:
+      // Notifications are asked for by the top-level page's origin alone.
+      return window && window->IsCrossOriginToTop() ? u"denied" : u"prompt";
+    case Kind::kSensors:
     case Kind::kBackgroundSync:
     case Kind::kClipboardSanitizedWrite:
     case Kind::kKeyboardLock:
     case Kind::kPaymentHandler:
     case Kind::kPointerLock:
     case Kind::kWakeLockScreen:
-    case Kind::kStorageAccessGrant:
       return u"granted";
     case Kind::kPeriodicBackgroundSync:
     case Kind::kAutomaticFullscreen:
@@ -463,9 +559,7 @@ v8::Local<v8::Promise> Permissions::Query(
   const auto [entry, inserted] = names_.try_emplace(
       static_cast<int>(descriptor->kind), std::u16string(descriptor->name));
   const std::u16string_view state =
-      StateOf(descriptor->kind,
-              ExecutionContext::Current().IsSecureContextForBindings(),
-              ExecutionContext::Current().IsWindow());
+      StateOf(descriptor->kind, ExecutionContext::OfReceiver());
   // A new PermissionStatus each time, once the browser has answered.
   ResolveFromTask(isolate, resolver,
                   PermissionStatus::Create(entry->second, std::u16string(state))

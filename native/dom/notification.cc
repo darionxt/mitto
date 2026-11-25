@@ -15,6 +15,7 @@
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/serialized_script_value.h"
+#include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
@@ -25,6 +26,19 @@
 #include "v8/include/v8-primitive.h"
 
 namespace mitto {
+
+namespace {
+
+// Whether the browser asks about notifications of the current context, where
+// NotificationPermissionContext denies them to one that is not secure, and to a
+// frame of another origin than the top-level one's, as an opaque one is.
+bool MayAsk() {
+  const ExecutionContext& context = ExecutionContext::Current();
+  return context.IsSecureContextForBindings() &&
+         !(context.IsWindow() && Window::Current().IsCrossOriginToTop());
+}
+
+}  // namespace
 
 // static
 Notification* Notification::Create() {
@@ -129,10 +143,10 @@ const bindings::WrapperTypeInfo* Notification::GetWrapperTypeInfo() const {
 std::u16string Notification::Permission() {
   // Blink answers "denied" in a context that is not secure without asking the
   // browser, whose answer elsewhere is the content setting's default, ask,
-  // which a context with no frame, as a worker's, also reads as "denied".
-  ExecutionContext& context = ExecutionContext::Current();
-  return context.IsSecureContextForBindings() && context.IsWindow() ? u"default"
-                                                                    : u"denied";
+  // which a context with no frame, as a worker's, also reads as "denied", as a
+  // frame of another origin than the top-level one's does.
+  return MayAsk() && ExecutionContext::Current().IsWindow() ? u"default"
+                                                            : u"denied";
 }
 
 // static
@@ -144,12 +158,12 @@ v8::Local<v8::Promise> Notification::RequestPermission(
            .ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
-  if (ExecutionContext::Current().IsSecureContextForBindings()) {
+  if (MayAsk()) {
     return resolver->GetPromise();
   }
-  // A context that is not secure: the browser's permission context denies the
-  // request before any prompt, and NotificationManager calls the deprecated
-  // callback with the answer before it resolves.
+  // The browser's permission context denies the request before any prompt, and
+  // NotificationManager calls the deprecated callback with the answer before it
+  // resolves.
   v8::Global<v8::Function> callback;
   if (deprecated_callback && !deprecated_callback->IsEmpty()) {
     callback.Reset(isolate, *deprecated_callback);

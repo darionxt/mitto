@@ -1,9 +1,14 @@
 #include "mitto/dom/keyboard.h"
 
+#include <utility>
+
 #include "base/functional/bind.h"
+#include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_keyboard.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/keyboard_layout_map.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/window.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
@@ -38,18 +43,33 @@ v8::Local<v8::Promise> Keyboard::GetLayoutMap(
            .ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
-  // KeyboardLayout::GotKeyboardLayoutMap(): the browser's map, after which
-  // the next call asks again.
-  ResolveFromTaskWith(isolate, resolver,
-                      base::BindOnce(
-                          [](cppgc::WeakPersistent<Keyboard> keyboard,
-                             v8::Isolate* isolate) -> v8::Local<v8::Value> {
-                            if (keyboard) {
-                              keyboard->pending_.Reset();
-                            }
-                            return KeyboardLayoutMap::Create()->ToV8(isolate);
-                          },
-                          cppgc::WeakPersistent<Keyboard>(this)));
+  // KeyboardLayout::GotKeyboardLayoutMap(): the browser's map, or that a
+  // frame's permissions policy withholds it, after which the next call asks
+  // again.
+  Window& window = Window::OfReceiver();
+  const bool denied = window.IsInFrame() &&
+                      !window.GetDocument().IsFeatureEnabled("keyboard-map");
+  auto answer = base::BindOnce(
+      [](cppgc::WeakPersistent<Keyboard> keyboard, bool denied,
+         v8::Isolate* isolate) -> v8::Local<v8::Value> {
+        if (keyboard) {
+          keyboard->pending_.Reset();
+        }
+        if (denied) {
+          return bindings::PerIsolateData::From(isolate)
+              ->dom_exception_hooks()
+              .create(isolate, "SecurityError",
+                      "getLayoutMap() must be called from a top-level browsing "
+                      "context or allowed by the permission policy.");
+        }
+        return KeyboardLayoutMap::Create()->ToV8(isolate);
+      },
+      cppgc::WeakPersistent<Keyboard>(this), denied);
+  if (denied) {
+    RejectFromTaskWith(isolate, resolver, std::move(answer));
+  } else {
+    ResolveFromTaskWith(isolate, resolver, std::move(answer));
+  }
   pending_.Reset(isolate, resolver->GetPromise());
   return resolver->GetPromise();
 }

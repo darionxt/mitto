@@ -2,7 +2,7 @@
 // profile that has granted and denied nothing. The renderer reads the
 // descriptor as Blink's ParsePermissionDescriptor() does, with its checks and
 // messages; the state is the one that Chrome's browser gives each kind of
-// permission then, on a secure page and elsewhere.
+// permission then, on a secure page and elsewhere, and in a page's frames.
 //
 // Upstream: third_party/blink/renderer/modules/permissions/permissions.cc
 // Upstream: third_party/blink/renderer/modules/permissions/permission_utils.cc
@@ -11,6 +11,8 @@
 // Upstream: third_party/blink/common/permissions/permission_utils.cc
 // Upstream: components/permissions/permission_context_base.cc
 // Upstream: components/permissions/permission_manager.cc
+// Upstream: components/permissions/permission_util.cc
+// Upstream: content/browser/permissions/permission_controller_impl.cc
 // Upstream: components/content_settings/core/browser/content_settings_registry.cc
 // Upstream: components/permissions/contexts/clipboard_sanitized_write_permission_context.cc
 // Upstream: components/permissions/contexts/keyboard_lock_permission_context.cc
@@ -18,7 +20,9 @@
 // Upstream: components/permissions/contexts/wake_lock_permission_context.cc
 // Upstream: chrome/browser/background_fetch/background_fetch_permission_context.cc
 // Upstream: chrome/browser/background_sync/periodic_background_sync_permission_context.cc
+// Upstream: chrome/browser/notifications/notification_permission_context.cc
 // Upstream: chrome/browser/storage_access_api/storage_access_grant_permission_context.cc
+// Upstream: chrome/browser/top_level_storage_access_api/top_level_storage_access_permission_context.cc
 
 #ifndef MITTO_DOM_PERMISSIONS_H_
 #define MITTO_DOM_PERMISSIONS_H_
