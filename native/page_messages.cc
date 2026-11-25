@@ -1446,7 +1446,8 @@ bool ReadPolicyNode(MessageReader& reader, PolicyNode& node) {
   }
   for (uint32_t i = 0; i < count; ++i) {
     PolicyMessage message;
-    if (!reader.Bool(message.is_error) || !reader.Sized(message.text)) {
+    if (!reader.Bool(message.is_error) || !reader.Sized(message.text) ||
+        !IsText(message.text)) {
       return false;
     }
     node.messages.push_back(std::move(message));
@@ -1457,12 +1458,13 @@ bool ReadPolicyNode(MessageReader& reader, PolicyNode& node) {
   for (uint32_t i = 0; i < count; ++i) {
     PolicyEntry entry;
     uint32_t tokens = 0;
-    if (!reader.Sized(entry.feature) || !reader.U32(tokens)) {
+    if (!reader.Sized(entry.feature) || !IsText(entry.feature) ||
+        !reader.U32(tokens)) {
       return false;
     }
     for (uint32_t j = 0; j < tokens; ++j) {
       std::string token;
-      if (!reader.Sized(token)) {
+      if (!reader.Sized(token) || !IsText(token)) {
         return false;
       }
       entry.tokens.push_back(std::move(token));

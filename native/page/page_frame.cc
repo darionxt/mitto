@@ -220,7 +220,7 @@ void PageFrame::Start(const PageConnection& connection) {
     document.SetSandboxFlags(sandbox);
     document.SetInSandboxedProcess(
         parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
-    ApplyPermissionsPolicy(document, PendingContainerPolicy());
+    ApplyPermissionsPolicy(document, GURL(), PendingContainerPolicy());
     // Its about base URL is its creator's base URL, as Blink's
     // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
     // creator's too.
@@ -435,7 +435,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(navigation.sandbox);
   document->SetInSandboxedProcess(navigation.sandboxed_process);
-  ApplyPermissionsPolicy(*document, navigation.container_policy);
+  ApplyPermissionsPolicy(*document, url, navigation.container_policy);
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
   document->SetReferrer(navigation.referrer);
@@ -589,7 +589,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(old_document.GetSandboxFlags());
   document->SetInSandboxedProcess(old_document.IsInSandboxedProcess());
-  ApplyPermissionsPolicy(*document, PendingContainerPolicy());
+  ApplyPermissionsPolicy(*document, url, PendingContainerPolicy());
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
@@ -1571,7 +1571,7 @@ Document& PageFrame::CommitDocument(
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
   std::vector<PolicyMessage> policy_messages;
   ApplyPermissionsPolicy(
-      *document, provisional_container_policy_,
+      *document, url, provisional_container_policy_,
       ParsePolicyHeaders(policy_headers, origin,
                          bindings::PerIsolateData::From(isolate)->features(),
                          policy_messages));
@@ -1608,12 +1608,12 @@ ParsedPolicy PageFrame::PendingContainerPolicy() const {
 }
 
 void PageFrame::ApplyPermissionsPolicy(Document& document,
+                                       const GURL& url,
                                        ParsedPolicy container_policy,
                                        ParsedPolicy declared) {
   if (!parent_ && declared.empty()) {
     return;
   }
-  const GURL url(document.UrlForBinding());
   // SecurityContextInit::ApplyPermissionsPolicy(): a sandboxed frame has it
   // only if its element says so.
   if (document.IsSandboxed(SandboxFlags::kNavigation) &&

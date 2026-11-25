@@ -1578,6 +1578,24 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
             id="permissions-policy-too-long",
         ),
         pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIBI", 5, 1, 0, 1) + b"\xff" + struct.pack("<III", 0, 0, 0),
+            "a permissions policy that is not valid",
+            id="permissions-policy-of-a-message-not-utf-8",
+        ),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIII", 5, 0, 1, 1) + b"\xff" + struct.pack("<III", 0, 0, 0),
+            "a permissions policy that is not valid",
+            id="permissions-policy-of-a-feature-not-utf-8",
+        ),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIII", 5, 0, 1, 1) + b"a" + struct.pack("<II", 1, 1) + b"\xff" + struct.pack("<II", 0, 0),
+            "a permissions policy that is not valid",
+            id="permissions-policy-of-a-token-not-utf-8",
+        ),
+        pytest.param(
             _ISOLATION,
             struct.pack("<QB", 5, 1),
             "a cross-origin isolation of request 5, which is not in progress",

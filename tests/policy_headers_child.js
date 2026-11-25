@@ -40,10 +40,11 @@
         if (allow !== null) element.allow = allow;
         for (const name in attributes) element.setAttribute(name, attributes[name]);
         const done = new Promise((resolve) => { element.onload = resolve; });
+        const now = () => element.contentDocument && [element.contentDocument.featurePolicy.allowsFeature('unload'), listens(element.contentWindow), element.contentDocument.featurePolicy.getAllowlistForFeature('unload')];
         document.documentElement.append(element);
+        const initial = now();
         await done;
-        const inner = element.contentDocument;
-        unload.push([allow, kind, element.featurePolicy.allowsFeature('unload'), inner && [inner.featurePolicy.allowsFeature('unload'), listens(element.contentWindow), inner.featurePolicy.getAllowlistForFeature('unload')]]);
+        unload.push([allow, kind, element.featurePolicy.allowsFeature('unload'), initial, now()]);
         element.remove();
       }
     }

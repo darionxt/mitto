@@ -251,9 +251,11 @@ class PageFrame final : public NavigationClient, public Frame {
   v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
   // What the frame's element lets a document that it navigates to now inherit
   // of its parent's permissions policy, and gives `document` that, with what
-  // its response's headers declare.
+  // its response's headers declare: one that a navigation to `url` makes, or a
+  // frame's initial about:blank, which has no URL here, as in Blink.
   ParsedPolicy PendingContainerPolicy() const;
   void ApplyPermissionsPolicy(Document& document,
+                              const GURL& url,
                               ParsedPolicy container_policy,
                               ParsedPolicy declared = {});
   // Warns of a sandbox that its frame's document can take away.
