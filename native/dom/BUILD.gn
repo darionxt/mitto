@@ -578,6 +578,8 @@ source_set("dom") {
     "readable_stream_generic_reader.h",
     "referrer_script_info.cc",
     "referrer_script_info.h",
+    "remote_window.cc",
+    "remote_window.h",
     "request.cc",
     "request.h",
     "resolved_url.cc",

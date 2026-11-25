@@ -465,6 +465,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     document->LockCompatibilityMode();
   }
   document->SetOrigin(origin);
+  DidShowDocument(*window_);
   document->SetReferrer(navigation.referrer);
   document->SetReferrerPolicy(navigation.referrer_policy);
   document->SetAboutBaseUrl(navigation.about_base_url);
@@ -1582,6 +1583,7 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   const v8::Context::Scope context_scope(context);
   Window& window = *window_;
   window.SetFrame(this);
+  DidShowDocument(window);
   window.SetNavigationClient(this);
   window.SetBackForwardCacheEviction(base::RepeatingClosure());
   runner_->sender()->SendDocumentRestored(window.DocumentId());
@@ -2022,7 +2024,12 @@ Document& PageFrame::CommitDocument(
   if (parent_) {
     committed.replaces = window_->DocumentId();
   }
-  const url::Origin origin = url::Origin::Create(url);
+  // A data: URL's origin is opaque, made for its initiator's, in whose process
+  // Chrome has it.
+  const url::Origin origin =
+      committed.source == PageDocumentSource::kDataUrl
+          ? url::Origin::Resolve(url, provisional_request_.initiator_origin)
+          : url::Origin::Create(url);
   // A frame's document is isolated where the Session says and its parent's
   // window is, so that none is more so than its parent, whose own sandbox the
   // Session cannot see yet.
@@ -2111,6 +2118,7 @@ Document& PageFrame::CommitDocument(
     GiveStorage(*document);
   }
   Window::Current().SetDocument(document);
+  DidShowDocument(*window_);
   // The reused window's CookieStore listens as its new document.
   if (cookie_store) {
     cookie_store->DocumentChanged();

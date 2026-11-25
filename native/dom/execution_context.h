@@ -84,6 +84,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // The context's origin, as Blink's GetSecurityOrigin(): the document's, or
   // the worker's, its creator's.
   virtual url::Origin GetSecurityOrigin() const = 0;
+  // The origin that keys the context's agent cluster, as Chrome keys each by
+  // an origin: a window's own, and for a worker its creator's, whose cluster
+  // it is in whatever its own origin.
+  virtual url::Origin AgentClusterOrigin() const = 0;
   // `url` resolved against the context's base URL, as Blink's CompleteURL():
   // the document's, with its query in the document's encoding, or the
   // worker's URL, in UTF-8.
