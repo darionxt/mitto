@@ -6,6 +6,7 @@
 
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
+#include "mitto/header_rules.h"
 
 namespace mitto {
 
@@ -144,6 +145,10 @@ MimeTypeAndCharset GetMimeTypeAndCharset(std::string_view content_type) {
     ParseContentType(value, result.mime_type, result.charset, had_charset);
   }
   return result;
+}
+
+std::string HttpContentType(std::string_view headers) {
+  return GetMimeTypeAndCharset(HeaderField(headers, "content-type")).mime_type;
 }
 
 }  // namespace mitto

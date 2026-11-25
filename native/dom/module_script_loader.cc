@@ -20,6 +20,7 @@
 #include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/worker_global_scope.h"
+#include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
