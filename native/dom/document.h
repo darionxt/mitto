@@ -289,7 +289,7 @@ class Document : public Node {
   // ExecutionContext::IsFeatureEnabled().
   bool IsFeatureEnabled(std::string_view feature);
   // The same, and the console reports the violation if not, with `message`
-  // unless it is empty.
+  // unless it is empty, while the document's window remains.
   bool IsFeatureEnabledOrReport(std::string_view feature,
                                 std::string_view message = {});
   // The document's own, the same object on every read.

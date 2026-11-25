@@ -50,7 +50,8 @@
   // Each call goes by its receiver's document, whichever realm its function is of.
   const told = ({name, message}) => `${name}: ${message}`;
   // Whose an object is.
-  const of = (object) => (object instanceof window.Object ? 'the page' : object instanceof frames['same, none'].contentWindow.Object ? 'the frame' : 'neither');
+  const FrameObject = frames['same, none'].contentWindow.Object;
+  const of = (object) => (object instanceof Object ? 'the page' : object instanceof FrameObject ? 'the frame' : 'neither');
   const borrow = async ({Permissions, Geolocation, Keyboard, NavigatorUAData, Navigator, CredentialsContainer}, {navigator}) => {
     const calls = {
       query: () => Permissions.prototype.query.call(navigator.permissions, {name: 'camera'}).then(({state}) => state),
@@ -80,7 +81,8 @@
   record['the page on a frame'] = await borrow(window, inner);
   record['a frame on the page'] = await borrow(inner, window);
   // A navigator whose frame has gone asks no policy of its gamepads, and its geolocation calls nothing back, even what it was to.
-  const {navigator: gone} = inner, {geolocation} = gone;
+  const {navigator: gone, Permissions, Keyboard, NavigatorUAData, CredentialsContainer} = inner, {geolocation} = gone;
+  const kept = {permissions: gone.permissions, keyboard: gone.keyboard, userAgentData: gone.userAgentData, credentials: gone.credentials}, realm = {Permissions, Keyboard, NavigatorUAData, CredentialsContainer};
   const heard = [];
   const locate = (name) => geolocation.getCurrentPosition(() => heard.push(name), () => heard.push(name), {timeout: 1});
   locate('before');
@@ -89,5 +91,20 @@
   const watch = geolocation.watchPosition(() => heard.push('watch'), () => heard.push('watch'), {timeout: 1});
   await new Promise((resolve) => setTimeout(resolve, 300));
   record.gone = {gamepads: gone.getGamepads().length, heard, watch};
+  // Its promises reject at once, but for what waits for a task of its own, and an error is of the function's realm.
+  for (const [name, {Permissions, Keyboard, NavigatorUAData, CredentialsContainer}] of [['the page on the gone', window], ['the gone', realm]]) {
+    record[name] = {};
+    const calls = {
+      query: () => Permissions.prototype.query.call(kept.permissions, {name: 'camera'}),
+      unknown: () => Permissions.prototype.query.call(kept.permissions, {name: 'unknown'}),
+      keyboard: () => Keyboard.prototype.getLayoutMap.call(kept.keyboard),
+      hints: () => NavigatorUAData.prototype.getHighEntropyValues.call(kept.userAgentData, ['model']),
+      password: () => CredentialsContainer.prototype.get.call(kept.credentials, {password: true}),
+      nothing: () => CredentialsContainer.prototype.get.call(kept.credentials, {}),
+    };
+    for (const call in calls) {
+      record[name][call] = await Promise.race([calls[call]().then(() => 'resolved', (error) => [told(error), of(error)]), new Promise((resolve) => setTimeout(resolve, 300, 'pending'))]);
+    }
+  }
   return record;
 })()

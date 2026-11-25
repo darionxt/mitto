@@ -561,6 +561,11 @@ v8::Local<v8::Promise> Permissions::Query(
     v8::Local<v8::Object> permission,
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = exception_state.GetIsolate();
+  if (!ExecutionContext::OfReceiver().HasContext()) {
+    exception_state.ThrowDOMException("InvalidStateError",
+                                      "The document is not active");
+    return v8::Local<v8::Promise>();
+  }
   const std::optional<Descriptor> descriptor =
       Parse(isolate, permission, exception_state);
   if (!descriptor) {

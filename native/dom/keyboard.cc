@@ -7,6 +7,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_keyboard.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/keyboard_layout_map.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
@@ -36,6 +37,11 @@ void Keyboard::Trace(cppgc::Visitor* visitor) const {
 v8::Local<v8::Promise> Keyboard::GetLayoutMap(
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = exception_state.GetIsolate();
+  if (!ExecutionContext::OfReceiver().HasContext()) {
+    exception_state.ThrowDOMException("InvalidStateError",
+                                      "Current frame is detached.");
+    return v8::Local<v8::Promise>();
+  }
   // The keyboard's own document asks, whose promise it is.
   const v8::Context::Scope receiver_scope(
       bindings::ReceiverRealmScope::CreationContext(isolate));

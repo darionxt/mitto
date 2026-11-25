@@ -487,6 +487,11 @@ v8::Local<v8::Promise> CredentialsContainer::Get(
     const bindings::CredentialRequestOptions& options,
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!Window::OfReceiver().HasContext()) {
+    exception_state.ThrowDOMException("InvalidStateError",
+                                      "Context is detached");
+    return {};
+  }
   // The resolver's ScriptState is the receiver's, whose document asks.
   const v8::Local<v8::Context> context =
       bindings::ReceiverRealmScope::CreationContext(isolate);

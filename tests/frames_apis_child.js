@@ -27,8 +27,13 @@
       })()`;
       const work = (url) => within(new Promise((resolve) => {
         const worker = new Worker(url);
-        worker.onmessage = ({data}) => resolve(data);
-        worker.onerror = () => resolve('error');
+        const end = (value) => {
+          worker.terminate();
+          resolve(value);
+        };
+        worker.onmessage = ({data}) => end(data);
+        worker.onerror = () => end('error');
+        setTimeout(end, 1500, 'pending');
       }));
       const worker = origin === 'null' ? 'opaque' : await work(URL.createObjectURL(new Blob([`${ASK}.then((said) => postMessage(said))`])));
       const opaque = await work(`data:text/javascript,${encodeURIComponent(`${ASK}.then((said) => postMessage(said))`)}`);
