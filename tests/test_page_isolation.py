@@ -966,19 +966,15 @@ def test_an_about_blank_takes_the_embedder_policy_of_who_starts_it(
 def test_a_data_url_takes_the_embedder_policy_of_who_starts_it(
     session: mitto.Session, server: RecordingServer, starter: str, runs: bool
 ) -> None:
-    # As an about:blank does (Chrome for Testing 157). Its document, which the page cannot read either, says that it
-    # runs in a request, before its load.
-    server.route("/seen/data", b"", "text/plain", [("Cross-Origin-Resource-Policy", "cross-origin")])
-    url = f"data:text/html,<script>fetch('{server.url('/seen/data')}', {{mode: 'no-cors'}})</script>"
+    # As an about:blank does (Chrome for Testing 157). Its document, which the page cannot read either, asks for a script
+    # that its load waits for.
+    server.route("/seen/data", b"", _JS, [("Cross-Origin-Resource-Policy", "cross-origin")])
+    url = f"data:text/html,<script src={server.url('/seen/data')}></script>"
     script = _start_local(server, "require-corp", "unsafe-none", starter, url)
 
     with _open_page(session, server.page("/", _BLANK)) as page:
         assert page.evaluate(script, timeout=TIMEOUT_SECONDS) is None
-        page.evaluate("fetch('/seen/after').then(() => null)", timeout=TIMEOUT_SECONDS)
-        if runs:
-            assert server.wait_for_path("/seen/data")
-        else:
-            assert "/seen/data" not in server.paths()
+        assert ("/seen/data" in server.paths()) is runs
 
 
 def test_a_data_url_that_would_download_keeps_the_frame_under_an_embedder_policy(
