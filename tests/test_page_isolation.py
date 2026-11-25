@@ -899,3 +899,90 @@ def test_a_redirect_s_resource_policy_comes_before_its_recursion(
     with _open_page(session, server.page("/", _BLANK, _ISOLATING)) as page:
         assert page.evaluate(script, timeout=TIMEOUT_SECONDS) == "error page"
         assert server.wait_for_path("/redir")
+
+
+# A frame with an embedder policy, under a page with none, holds a frame at /inner, whose next document `starter` starts:
+# the page, the frame that holds it, or a frame beside that one.
+_LOCAL_SCRIPT = """(async ({starter, url}) => {
+    const add = async (src, target = document) => {
+        const frame = target.createElement('iframe');
+        frame.src = src;
+        const loaded = new Promise((resolve) => frame.onload = resolve);
+        target.documentElement.appendChild(frame);
+        await loaded;
+        return frame;
+    };
+    const middle = await add('/middle');
+    const sibling = await add('/sibling');
+    const inner = await add('/inner', middle.contentDocument);
+    const [from, target] = {
+        page: [window, 'frames[0].frames[0]'],
+        middle: [middle.contentWindow, 'frames[0]'],
+        sibling: [sibling.contentWindow, 'top.frames[0].frames[0]'],
+    }[starter];
+    const loaded = new Promise((resolve) => inner.onload = () => resolve('load'));
+    from.eval(target + '.location = ' + JSON.stringify(url));
+    // A download ends its frame's navigation with no load, before the load of a frame made after it.
+    await Promise.race([loaded, add('/sibling')]);
+    return inner.contentDocument === null ? null : inner.contentWindow.location.href;
+})"""
+
+
+def _start_local(server: RecordingServer, middle: str, sibling: str, starter: str, url: str) -> str:
+    """Serve the frames of _LOCAL_SCRIPT, the middle one and its sibling with an embedder policy each, and return the
+    script that gives the inner frame's URL, or null where the page cannot read its document."""
+    for path, policy in {"/middle": middle, "/sibling": sibling, "/inner": "require-corp"}.items():
+        server.route(path, b"<!doctype html><title>f</title>", "text/html", [("Cross-Origin-Embedder-Policy", policy)])
+    return f"{_LOCAL_SCRIPT}({json.dumps({'starter': starter, 'url': url})})"
+
+
+@pytest.mark.parametrize(
+    ("middle", "starter", "sibling", "outcome"),
+    [
+        pytest.param("require-corp", "page", "unsafe-none", None, id="page"),
+        pytest.param("credentialless", "page", "unsafe-none", None, id="page-credentialless"),
+        pytest.param("require-corp", "middle", "unsafe-none", "about:blank?a", id="middle"),
+        pytest.param("require-corp", "sibling", "unsafe-none", None, id="sibling"),
+        pytest.param("require-corp", "sibling", "credentialless", "about:blank?a", id="sibling-with-a-policy"),
+        pytest.param("unsafe-none", "page", "unsafe-none", "about:blank?a", id="parent-without-a-policy"),
+    ],
+)
+def test_an_about_blank_takes_the_embedder_policy_of_who_starts_it(
+    session: mitto.Session, server: RecordingServer, middle: str, starter: str, sibling: str, outcome: str | None
+) -> None:
+    # NavigationRequest::CheckResponseAdherenceToCoep() holds an about:blank, which has the policy of the document that
+    # starts it, to its parent's, and a frame that it blocks commits the error page, which the page cannot read (Chrome
+    # for Testing 157).
+    script = _start_local(server, middle, sibling, starter, "about:blank?a")
+
+    assert _evaluate(session, server.page("/", _BLANK), script) == outcome
+
+
+@pytest.mark.parametrize(
+    ("starter", "runs"), [pytest.param("page", False, id="page"), pytest.param("middle", True, id="middle")]
+)
+def test_a_data_url_takes_the_embedder_policy_of_who_starts_it(
+    session: mitto.Session, server: RecordingServer, starter: str, runs: bool
+) -> None:
+    # As an about:blank does (Chrome for Testing 157). Its document, which the page cannot read either, says that it
+    # runs in a request, before its load.
+    server.route("/seen/data", b"", "text/plain", [("Cross-Origin-Resource-Policy", "cross-origin")])
+    url = f"data:text/html,<script>fetch('{server.url('/seen/data')}', {{mode: 'no-cors'}})</script>"
+    script = _start_local(server, "require-corp", "unsafe-none", starter, url)
+
+    with _open_page(session, server.page("/", _BLANK)) as page:
+        assert page.evaluate(script, timeout=TIMEOUT_SECONDS) is None
+        page.evaluate("fetch('/seen/after').then(() => null)", timeout=TIMEOUT_SECONDS)
+        if runs:
+            assert server.wait_for_path("/seen/data")
+        else:
+            assert "/seen/data" not in server.paths()
+
+
+def test_a_data_url_that_would_download_keeps_the_frame_under_an_embedder_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # The parent's policy blocks what makes a document, and a download makes none (Chrome for Testing 157).
+    script = _start_local(server, "require-corp", "unsafe-none", "page", "data:application/octet-stream,x")
+
+    assert _evaluate(session, server.page("/", _BLANK), script) == server.url("/inner")

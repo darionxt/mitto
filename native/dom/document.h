@@ -538,6 +538,13 @@ class Document : public Node {
     referrer_policy_ = policy;
     policy_container_referrer_policy_ = policy;
   }
+  // Whether the document's Cross-Origin-Embedder-Policy is compatible with
+  // cross-origin isolation, network::CompatibleWithCrossOriginIsolated(): the
+  // response's, or that of the policy container that it took.
+  bool EmbedderPolicyIsolates() const { return embedder_policy_isolates_; }
+  void SetEmbedderPolicyIsolates(bool isolates) {
+    embedder_policy_isolates_ = isolates;
+  }
   // Whether a new entry of the document in the session history keeps its URL
   // from other documents' Navigation API entries, as Chrome's browser takes
   // it from the policy container: for a policy of no-referrer or origin that
@@ -890,6 +897,7 @@ class Document : public Node {
   // The response's policy, which the browser's policy container keeps.
   FetchReferrerPolicy policy_container_referrer_policy_ =
       FetchReferrerPolicy::kDefault;
+  bool embedder_policy_isolates_ = false;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;

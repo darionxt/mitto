@@ -52,8 +52,9 @@ class PageRequests {
     // more of it.
     virtual void OnRequestBodyCredit() {}
     // For a navigation: whether the document of its response is cross-origin
-    // isolated, which the Session says just before the response starts.
-    virtual void OnIsolation(PageCrossOriginIsolation isolation) {}
+    // isolated, and its embedder policy, which the Session says just before
+    // the response starts.
+    virtual void OnIsolation(const PageIsolation& isolation) {}
 
    protected:
     virtual ~Client() = default;

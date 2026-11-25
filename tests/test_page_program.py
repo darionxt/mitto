@@ -156,7 +156,7 @@ _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
-_PROTOCOL_VERSION = 34
+_PROTOCOL_VERSION = 35
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -1628,14 +1628,25 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
         pytest.param(_REQUEST, struct.pack("<QB", 1, 1) + b"x", "message type 8 only goes to a Session", id="request"),
         pytest.param(
             _ISOLATION,
-            struct.pack("<QB", 5, 1),
+            struct.pack("<QBB", 5, 1, 2),
             "a cross-origin isolation of request 5, which is not in progress",
             id="isolation-of-no-request",
         ),
         pytest.param(
-            _ISOLATION, struct.pack("<QB", 5, 2), "an isolation of the unknown kind 2", id="isolation-of-unknown-kind"
+            _ISOLATION,
+            struct.pack("<QBB", 5, 2, 0),
+            "an isolation of the unknown kind 2",
+            id="isolation-of-unknown-kind",
         ),
-        pytest.param(_ISOLATION, struct.pack("<Q", 5), "a cross-origin isolation of 8 bytes", id="isolation-too-short"),
+        pytest.param(
+            _ISOLATION,
+            struct.pack("<QBB", 5, 0, 3),
+            "an embedder policy of the unknown kind 3",
+            id="embedder-policy-of-unknown-kind",
+        ),
+        pytest.param(
+            _ISOLATION, struct.pack("<QB", 5, 1), "a cross-origin isolation of 9 bytes", id="isolation-too-short"
+        ),
         pytest.param(_RESPONSE_ENDED, _ended(0, 1), "the end of a response with the net error 1", id="positive-error"),
         pytest.param(
             _RESPONSE_ENDED, struct.pack("<Qi", 0, 0), "an end of a response of 12 bytes", id="end-without-totals"

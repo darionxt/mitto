@@ -31,7 +31,7 @@ pytestmark = [
 _TIMEOUT_SECONDS = 60
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 34
+_PROTOCOL_VERSION = 35
 
 _FAKE_PAGE = textwrap.dedent(
     """\
@@ -144,6 +144,27 @@ _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """
 )
 
+# A frame with an embedder policy, under a top-level document with none, and a frame under it whose document, of `source`,
+# the top-level document starts, with no policy to take.
+_FAKE_PAGE_OF_A_BLOCKED_DOCUMENT = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    send(1, struct.pack("<I", {version}))
+    send(70, struct.pack("<QBQ", 1, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    send(70, struct.pack("<QBQ", 3, 0, 2))
+    send(8, request(2, 1, 11, "{frame}", target=3))
+    wait_for_end(1)
+    send(70, struct.pack("<QBQQ", 4, 1, 2, 1))
+    send(70, struct.pack("<QBQ", 5, 0, 4))
+    send(72, struct.pack("<QQB", 5, {initiator}, {kind}))
+    send(70, struct.pack("<QBQQQ", 6, {source}, 4, {initiator}, 5) + b"{url}")
+    while channel.recv(65536):
+        pass
+    """
+)
+
 # Opens a Page at the URL in argv[1] and prints why it ended.
 _SESSION_OF_AN_ENDED_PAGE = textwrap.dedent(
     """\
@@ -195,6 +216,8 @@ class _Server:
                 self.send_header("Content-Type", "text/html" if self.path.endswith("page") else "text/javascript")
                 if self.path == "/set":
                     self.send_header("Set-Cookie", "f=1")
+                if self.path == "/coep-page":
+                    self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -335,3 +358,27 @@ def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: 
     printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
 
     assert printed == "the library refused a message from the Page: a same-document navigation to another origin"
+
+
+@pytest.mark.parametrize(
+    ("kind", "source", "url"),
+    [pytest.param(0, 2, "", id="about-blank"), pytest.param(1, 5, "data:,a", id="data-url")],
+)
+def test_a_frames_local_document_with_no_embedder_policy_is_refused_under_a_parent_that_has_one(
+    tmp_path: Path, top: _Server, kind: int, source: int, url: str
+) -> None:
+    # The Page commits Chrome's error page in place of a document that NavigationRequest::CheckResponseAdherenceToCoep()
+    # blocks, so a Page that commits it all the same is refused.
+    program = _FAKE_PAGE_OF_A_BLOCKED_DOCUMENT.format(
+        python=sys.executable,
+        version=_PROTOCOL_VERSION,
+        frame=top.url("/coep-page"),
+        initiator=2,
+        kind=kind,
+        source=source,
+        url=url,
+    )
+
+    printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
+
+    assert printed == "the library refused a message from the Page: a document that its parent's embedder policy blocks"

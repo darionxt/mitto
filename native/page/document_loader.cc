@@ -65,8 +65,11 @@ void DocumentLoader::TookBody(size_t size) {
   }
 }
 
-void DocumentLoader::OnIsolation(PageCrossOriginIsolation isolation) {
-  cross_origin_isolated_ = isolation != PageCrossOriginIsolation::kNone;
+void DocumentLoader::OnIsolation(const PageIsolation& isolation) {
+  cross_origin_isolated_ =
+      isolation.isolation != PageCrossOriginIsolation::kNone;
+  embedder_policy_isolates_ =
+      isolation.embedder_policy != PageEmbedderPolicy::kNone;
 }
 
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
@@ -111,6 +114,7 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   }
   document_ = document;
   document_id_ = document_->DefaultView()->DocumentId();
+  document_->SetEmbedderPolicyIsolates(embedder_policy_isolates_);
   // The Referer that the navigation's last hop sent, as //net kept it through
   // its redirects.
   document_->SetReferrer(base::UTF8ToUTF16(response.referrer));
