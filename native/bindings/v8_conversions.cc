@@ -697,7 +697,7 @@ bool IterateRecord(
     v8::Local<v8::Value> value,
     ExceptionState& exception_state,
     std::string_view type_name,
-    base::FunctionRef<bool(v8::Local<v8::Value>, v8::Local<v8::Value>)> each) {
+    base::FunctionRef<bool(v8::Local<v8::Value>, RecordValueGetter)> each) {
   if (!value->IsObject()) {
     exception_state.ThrowTypeError(
         "Only objects can be converted to record<K,V> types");
@@ -737,8 +737,10 @@ bool IterateRecord(
     if (!enumerable->BooleanValue(isolate)) {
       continue;
     }
-    v8::Local<v8::Value> item;
-    if (!object->Get(context, key).ToLocal(&item) || !each(key, item)) {
+    const auto get = [&](v8::Local<v8::Value>* item) {
+      return object->Get(context, key).ToLocal(item);
+    };
+    if (!each(key, get)) {
       return false;
     }
   }

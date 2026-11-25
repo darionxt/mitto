@@ -248,6 +248,7 @@ class Window final : public WindowProperties, public ExecutionContext {
 
   // ExecutionContext:
   bool IsWindow() const override;
+  FetchReferrerPolicy GetReferrerPolicy() const override;
   std::u16string Url() const override;
   EventTarget* ErrorEventTarget() override;
   url::Origin GetSecurityOrigin() const override;

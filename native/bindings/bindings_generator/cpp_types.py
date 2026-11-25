@@ -747,14 +747,19 @@ class TypeMapper:
             key_value = self._name("key_value")
             item = self._name("item")
             item_value = self._name("item_value")
+            get_item = self._name("get_item")
             item_site = Site(fail="return false;", element=True)
             converted_key = self.from_v8(idl_type.members[0], key_value, key, item_site, where)
             converted_item = self.from_v8(idl_type.members[1], item_value, item, item_site, where)
             return [
                 f"{cpp_type} {target};",
                 f"if (!IterateRecord(isolate, {value}, exception_state, {_quote(idl_type.syntax)},",
-                f"                   [&](v8::Local<v8::Value> {key_value}, v8::Local<v8::Value> {item_value}) {{",
+                f"                   [&](v8::Local<v8::Value> {key_value}, RecordValueGetter {get_item}) {{",
                 *["      " + line for line in converted_key],
+                f"      v8::Local<v8::Value> {item_value};",
+                f"      if (!{get_item}(&{item_value})) {{",
+                "        return false;",
+                "      }",
                 *["      " + line for line in converted_item],
                 f"      {target}.emplace_back(std::move({key}), std::move({item}));",
                 "      return true;",

@@ -52,6 +52,7 @@ class EventTarget;
 class Fetcher;
 class WindowTasks;
 class WorkerStarter;
+enum class FetchReferrerPolicy;
 
 class ExecutionContext : public cppgc::GarbageCollectedMixin {
  public:
@@ -75,6 +76,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
 
   // Whether it is a window, as Blink's IsWindow().
   virtual bool IsWindow() const;
+  // The policy of a request whose own is the empty string, as Blink's
+  // GetReferrerPolicy(): the document's, or that of the response of the
+  // worker's script.
+  virtual FetchReferrerPolicy GetReferrerPolicy() const = 0;
   // The context's URL as a page reads it: the document's, or the worker's
   // script's final URL.
   virtual std::u16string Url() const = 0;

@@ -512,6 +512,10 @@ bool Window::IsWindow() const {
   return true;
 }
 
+FetchReferrerPolicy Window::GetReferrerPolicy() const {
+  return GetDocument().GetReferrerPolicy();
+}
+
 std::u16string Window::Url() const {
   return GetDocument().UrlForBinding();
 }

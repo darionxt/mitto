@@ -352,16 +352,20 @@ bool GetIteratorMethod(v8::Isolate* isolate,
                        v8::Local<v8::Object> object,
                        v8::Local<v8::Function>* method);
 
-// Web IDL's conversion of `value` to a record: calls `each` with the key and
-// the value of each own enumerable property, in the order of
-// [[OwnPropertyKeys]], until `each` returns false. Throws a TypeError naming
-// `type_name` if `value` is not an object, and returns false if anything threw.
+// Gets the value of a record's key, which may throw, and then returns false.
+using RecordValueGetter = base::FunctionRef<bool(v8::Local<v8::Value>*)>;
+
+// Web IDL's conversion of `value` to a record: calls `each` with the key of
+// each own enumerable property, in the order of [[OwnPropertyKeys]], and what
+// gets its value, once `each` has converted the key, until `each` returns
+// false. Throws a TypeError naming `type_name` if `value` is not an object, and
+// returns false if anything threw.
 bool IterateRecord(
     v8::Isolate* isolate,
     v8::Local<v8::Value> value,
     ExceptionState& exception_state,
     std::string_view type_name,
-    base::FunctionRef<bool(v8::Local<v8::Value>, v8::Local<v8::Value>)> each);
+    base::FunctionRef<bool(v8::Local<v8::Value>, RecordValueGetter)> each);
 
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
                                  std::u16string_view text);
