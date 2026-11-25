@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 
+#include <initializer_list>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -35,10 +36,12 @@ std::string FromLatin1(std::string_view bytes) {
 PolicyNode ParsePermissionsPolicy(std::string_view policy) {
   PolicyNode node;
   size_t messages_length = 0;
-  const auto warn = [&](std::string text) {
-    messages_length += text.size();
+  const auto warn = [&](std::initializer_list<std::string_view> pieces) {
+    for (const std::string_view piece : pieces) {
+      messages_length += piece.size();
+    }
     if (messages_length <= kMaxMessagesLength) {
-      node.messages.push_back({.text = std::move(text)});
+      node.messages.push_back({.text = base::StrCat(pieces)});
     }
   };
   if (policy.size() > kMaxLength) {
@@ -65,19 +68,17 @@ PolicyNode ParsePermissionsPolicy(std::string_view policy) {
       if (const std::string* const value = item.GetIfToken()) {
         // The special keywords are tokens.
         if (*value != "*" && *value != "self") {
-          warn(base::StrCat(
-              {"Invalid allowlist item(", *value, ") for feature ",
-               entry.feature,
-               ". Allowlist item must be *, self or quoted url."}));
+          warn({"Invalid allowlist item(", *value, ") for feature ",
+                entry.feature,
+                ". Allowlist item must be *, self or quoted url."});
           return;
         }
         token = *value == "*" ? *value : base::StrCat({"'", *value, "'"});
       } else if (const std::string* const text = item.GetIfString()) {
         token = *text;
       } else {
-        warn(
-            base::StrCat({"Invalid allowlist item for feature ", entry.feature,
-                          ". Allowlist item must be *, self, or quoted url."}));
+        warn({"Invalid allowlist item for feature ", entry.feature,
+              ". Allowlist item must be *, self, or quoted url."});
         return;
       }
       if (!token.empty()) {
@@ -91,8 +92,7 @@ PolicyNode ParsePermissionsPolicy(std::string_view policy) {
                    member.GetIfInnerList()) {
       for (const auto& one : list->items) {
         if (!one.params.empty()) {
-          warn(base::StrCat(
-              {"Feature ", entry.feature, "'s parameters are ignored."}));
+          warn({"Feature ", entry.feature, "'s parameters are ignored."});
         }
         process_item(one.item);
       }

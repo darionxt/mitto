@@ -100,6 +100,8 @@ struct PermissionsPolicyHeaders {
   std::optional<bool> Allows(std::string_view feature,
                              const url::Origin& self,
                              const url::Origin& origin) const;
+  // Once the console is told.
+  void DropMessages();
 
   PolicyNode feature_policy;
   PolicyNode permissions_policy;

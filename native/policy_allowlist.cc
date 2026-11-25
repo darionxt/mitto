@@ -222,6 +222,11 @@ std::optional<bool> PermissionsPolicyHeaders::Allows(
   return std::nullopt;
 }
 
+void PermissionsPolicyHeaders::DropMessages() {
+  feature_policy.messages = std::vector<PolicyMessage>();
+  permissions_policy.messages = std::vector<PolicyMessage>();
+}
+
 PolicyNode ParseFeaturePolicy(std::string_view policy,
                               size_t length,
                               bool is_header) {

@@ -624,7 +624,7 @@ std::optional<std::string> HeaderValue(std::string_view lines,
       continue;
     }
     const std::string_view item =
-        base::TrimWhitespaceASCII(line.substr(colon + 1), base::TRIM_ALL);
+        net::HttpUtil::TrimLWS(line.substr(colon + 1));
     if (value) {
       base::StrAppend(&*value, {", ", item});
     } else {
@@ -1914,6 +1914,7 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
     if (channel_ && !policy.headers.empty()) {
       channel_->Send(EncodePermissionsPolicy(policy));
     }
+    policy.headers.DropMessages();
     if (const auto found = navigation_responses_.find(request.number());
         found != navigation_responses_.end()) {
       found->second.policy_headers = std::move(policy.headers);
