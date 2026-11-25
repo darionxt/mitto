@@ -3687,12 +3687,20 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
 void PageHost::LetKeepaliveRequestsGo(const std::set<uint64_t>* ids) {
   for (auto it = requests_.begin(); it != requests_.end();) {
     Request& request = *it->second;
-    if (!request.checks().keepalive ||
+    const auto context = contexts_.find(request.context());
+    // Only a document's goes on in Chrome, in the browser's
+    // KeepAliveURLLoaderService. The network service ends a worker's once its
+    // thread has ended.
+    const bool of_worker =
+        context != contexts_.end() && context->second.is_worker;
+    if ((!request.checks().keepalive && !of_worker) ||
         (ids && !ids->contains(request.context()))) {
       ++it;
       continue;
     }
-    request.DetachJob();
+    if (!of_worker) {
+      request.DetachJob();
+    }
     PageResponseEnded ended;
     ended.number = it->first;
     ended.net_error = net::ERR_ABORTED;

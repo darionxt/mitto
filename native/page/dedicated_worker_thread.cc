@@ -288,7 +288,8 @@ void DedicatedWorkerThread::Scope::Start() {
           },
           scheduler_->TaskRunner(TaskType::kNetworking),
           base::Unretained(this)));
-  fetcher_ = std::make_unique<PageFetcher>(*requests_);
+  fetcher_ =
+      std::make_unique<PageFetcher>(*requests_, PageFetcher::Kind::kWorker);
   scope_->SetFetcher(fetcher_.get());
   // The worker's own Cache API, IndexedDB and Storage Buckets, as its
   // creator's frame's storage key reaches them, unless its origin is opaque
@@ -407,9 +408,6 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetStorageBucketHost(nullptr);
     scope_->SetAnimationFrames(nullptr);
   }
-  // The fetcher lets its keepalive requests go before the rest are cancelled,
-  // so that they go on without the worker, as a window's do without their
-  // document.
   fetcher_.reset();
   if (requests_) {
     requests_->CancelAll();

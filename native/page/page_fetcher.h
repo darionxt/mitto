@@ -28,7 +28,10 @@ PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy);
 
 class PageFetcher final : public Fetcher {
  public:
-  explicit PageFetcher(PageRequests& requests);
+  // The fetcher of a document, or of a worker.
+  enum class Kind { kDocument, kWorker };
+
+  PageFetcher(PageRequests& requests, Kind kind);
 
   PageFetcher(const PageFetcher&) = delete;
   PageFetcher& operator=(const PageFetcher&) = delete;
@@ -36,10 +39,12 @@ class PageFetcher final : public Fetcher {
   // Stops the requests that are open, as Stop() does.
   ~PageFetcher() override;
 
-  // The document's context has gone: each open request is cancelled, or, if
-  // it is a keepalive request, let go, and its client hears nothing more. The
-  // clients go with the fetcher, since one of them may be what ended the
-  // context, and still run.
+  // The context has gone: each open request is cancelled, or, if it is a
+  // keepalive request or a worker's, let go, and its client hears nothing more.
+  // The Session ends a worker's once it hears that the worker has gone, as the
+  // network service does once the worker's thread has ended, so what a worker
+  // asks for just before it closes is still sent. The clients go with the
+  // fetcher, since one of them may be what ended the context, and still run.
   void Stop();
   // As Stop(), for the old document of a window that a document of its
   // origin keeps, whose context goes on: each client then hears that its
@@ -64,6 +69,7 @@ class PageFetcher final : public Fetcher {
   std::map<uint64_t, std::unique_ptr<Request>> open_;
   // The requests that Stop() stopped.
   std::vector<std::unique_ptr<Request>> stopped_;
+  const Kind kind_;
   // The bytes of the bodies of the open keepalive requests.
   size_t keepalive_bytes_ = 0;
   // The final URLs of the responses that have come whole, as the Session

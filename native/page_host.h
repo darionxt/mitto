@@ -465,7 +465,8 @@ class PageHost final : public PageChannel::Delegate {
   // keepalive requests go on without them.
   void ForgetContexts(const std::set<uint64_t>& ids);
   // Lets each keepalive request of `ids`, or of every context for null, go on
-  // without the Page, which hears that it ended.
+  // without the Page, which hears that it ended, but a worker's, whose requests
+  // all end.
   void LetKeepaliveRequestsGo(const std::set<uint64_t>* ids);
   // What a request of context `id` goes as, beside its Kind's: its
   // Initiator, its referrer's source, and its frame's place in the frame

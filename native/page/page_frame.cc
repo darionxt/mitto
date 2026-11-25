@@ -2272,7 +2272,8 @@ void PageFrame::AttachWindow(const PageConnection& connection,
   idle_tasks_ = std::make_unique<IdleTaskController>(isolate, context);
   animation_frames_ =
       std::make_unique<AnimationFrameController>(isolate, context);
-  fetcher_ = std::make_unique<PageFetcher>(runner_->requests());
+  fetcher_ = std::make_unique<PageFetcher>(runner_->requests(),
+                                           PageFetcher::Kind::kDocument);
   window_tasks_ = std::make_unique<WindowTasks>(isolate, context);
   // The window's dedicated workers, whose errors that nothing canceled end
   // up at the Session, as the window's own do.
@@ -2325,7 +2326,8 @@ void PageFrame::EndOldDocumentInWindow() {
   fetcher_->Abort();
   base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
       FROM_HERE, std::move(fetcher_));
-  fetcher_ = std::make_unique<PageFetcher>(runner_->requests());
+  fetcher_ = std::make_unique<PageFetcher>(runner_->requests(),
+                                           PageFetcher::Kind::kDocument);
   window_->SetFetcher(fetcher_.get());
   worker_starter_->TerminateWorkers();
 }
