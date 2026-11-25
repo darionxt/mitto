@@ -69,6 +69,13 @@ ReceiverRealmScope::ReceiverRealmScope(v8::Isolate* isolate,
   PerIsolateData::From(isolate)->set_receiver_realm_scope(this);
 }
 
+ReceiverRealmScope::ReceiverRealmScope(v8::Isolate* isolate)
+    : isolate_(isolate),
+      outer_(PerIsolateData::From(isolate)->receiver_realm_scope()),
+      current_(isolate->GetCurrentContext()) {
+  PerIsolateData::From(isolate)->set_receiver_realm_scope(this);
+}
+
 ReceiverRealmScope::~ReceiverRealmScope() {
   PerIsolateData::From(isolate_)->set_receiver_realm_scope(outer_);
 }

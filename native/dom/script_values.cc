@@ -9,7 +9,9 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
@@ -31,6 +33,14 @@ void Settle(v8::Isolate* isolate,
             bool reject) {
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = context_handle.Get(isolate);
+  if (ExecutionContext* const frozen = FrozenContext(isolate, context)) {
+    frozen->HoldTask(
+        TaskType::kMiscPlatformAPI,
+        base::BindOnce(&Settle, base::Unretained(isolate),
+                       std::move(context_handle), std::move(resolver_handle),
+                       std::move(make_value), reject));
+    return;
+  }
   const v8::Context::Scope context_scope(context);
   // A resolver of a context that has gone settles nothing, as Blink's does
   // once its execution context is destroyed: a window's or a worker's.
@@ -70,6 +80,14 @@ void CallCallbackInterface(v8::Isolate* isolate,
   const v8::Local<v8::Object> callback = callback_handle.Get(isolate);
   v8::Local<v8::Context> context;
   if (!callback->GetCreationContext(isolate).ToLocal(&context)) {
+    return;
+  }
+  if (ExecutionContext* const frozen = FrozenContext(isolate, context)) {
+    frozen->HoldTask(
+        TaskType::kMiscPlatformAPI,
+        base::BindOnce(&CallCallbackInterface, base::Unretained(isolate),
+                       std::move(callback_handle), interface_name,
+                       std::move(make_argument)));
     return;
   }
   const v8::Context::Scope context_scope(context);

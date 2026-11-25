@@ -133,6 +133,9 @@ class SerializedScriptValue {
   bool IsLockedToAgentCluster() const {
     return !!wasm_modules_ || !shared_array_buffers_.empty();
   }
+  // Whether only a context of its own origin may read it, as Chrome has it of
+  // a WebAssembly module: SerializedScriptValue::IsOriginCheckRequired().
+  bool IsOriginCheckRequired() const { return !!wasm_modules_; }
 
  private:
   SerializedScriptValue();

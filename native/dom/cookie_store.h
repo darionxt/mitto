@@ -75,6 +75,9 @@ class CookieStore final : public EventTarget {
   // the new document's.
   void DocumentWillChange();
   void DocumentChanged();
+  // Whether a script listens to its changes, which the back/forward cache
+  // cannot keep yet: its document unloads (a Known Gap).
+  bool IsObserving() const { return observing_; }
 
  protected:
   void ListenersChanged(std::u16string_view type) override;

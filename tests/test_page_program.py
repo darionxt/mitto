@@ -156,7 +156,8 @@ _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
-_PROTOCOL_VERSION = 33
+_DOCUMENT_STORED = 282
+_PROTOCOL_VERSION = 35
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -2133,6 +2134,8 @@ def test_a_document_starts_a_navigation_that_its_session_makes_and_whose_respons
     document = b"<title>Next</title>"
     _respond(session, 1, "http://www.example.test/next", "text/html")
     _body(session, 1, document)
+    # The back/forward cache keeps the document that the next one takes the place of.
+    assert session.receive() == (_DOCUMENT_STORED, _DOCUMENT)
     assert session.receive() == (_CREDIT, struct.pack("<QI", 1, len(document)))
     assert session.documents[-1] == struct.pack("<QBQQ", 3, 1, 0, 1)
     _end(session, 1)

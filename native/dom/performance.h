@@ -28,6 +28,8 @@
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/heap_vector.h"
 #include "v8/include/cppgc/member.h"
+#include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-persistent-handle.h"
 
 namespace mitto {
 
@@ -109,6 +111,10 @@ class Performance final : public EventTarget {
   static double ClampTimeResolution(base::TimeDelta time,
                                     bool cross_origin_isolated_capability);
 
+  // WindowPerformance::AddVisibilityStateEntry(): the page went visible or
+  // hidden now.
+  void AddVisibilityStateEntry(bool visible);
+
   // Blink's MonotonicTimeToDOMHighResTimeStamp(): `time` in milliseconds since
   // `time_origin`, each coarsened before the difference, and 0 for a time
   // before it.
@@ -147,6 +153,11 @@ class Performance final : public EventTarget {
   // The HTML Standard's steps that fire resourcetimingbufferfull, from a
   // task of their own, while entries wait in the secondary buffer.
   void FireResourceTimingBufferFull();
+  // That task, which waits while the back/forward cache keeps the window.
+  static void RunResourceTimingBufferFull(
+      v8::Isolate* isolate,
+      v8::Global<v8::Context> context_handle,
+      cppgc::Persistent<Performance> performance);
 
   const base::TimeTicks time_origin_;
   const bool cross_origin_isolated_capability_;

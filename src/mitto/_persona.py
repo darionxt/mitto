@@ -87,6 +87,10 @@ class RequestKind(StrEnum):
     PREFETCH = "prefetch"
 
 
+# The kinds whose headers a page's script sets some of, which Blink then sends in the order of its HTTPHeaderMap.
+_SCRIPTED = frozenset({RequestKind.FETCH, RequestKind.XHR})
+
+
 class RequestDefaults(TypedDict):
     """What Chrome sends by default for one request, as keyword arguments of the native Session's start() and request().
 
@@ -195,6 +199,7 @@ class Persona:
                 destination=values[_SEC_FETCH_DEST],
                 credentials_mode=data["credentials_mode"],
                 has_user_activation=_SEC_FETCH_USER in values,
+                header_order=kind.value if kind in _SCRIPTED else None,
             ),
         )
 

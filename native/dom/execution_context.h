@@ -19,6 +19,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "base/functional/callback.h"
@@ -26,6 +27,7 @@
 #include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -82,6 +84,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // The context's origin, as Blink's GetSecurityOrigin(): the document's, or
   // the worker's, its creator's.
   virtual url::Origin GetSecurityOrigin() const = 0;
+  // The origin that keys the context's agent cluster, as Chrome keys each by
+  // an origin: a window's own, and for a worker its creator's, whose cluster
+  // it is in whatever its own origin.
+  virtual url::Origin AgentClusterOrigin() const = 0;
   // `url` resolved against the context's base URL, as Blink's CompleteURL():
   // the document's, with its query in the document's encoding, or the
   // worker's URL, in UTF-8.
@@ -175,6 +181,56 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // Whether the Page still runs the context: it gives the context its timers
   // until the context goes.
   bool HasContext() const { return timers_ != nullptr; }
+  // Whether the back/forward cache keeps the context's window frozen, as
+  // Blink's LocalDOMWindow::IsInBackForwardCache() says: what the Session
+  // sends of its requests waits until it thaws.
+  bool IsInBackForwardCache() const { return in_back_forward_cache_; }
+  void SetIsInBackForwardCache(bool in) { in_back_forward_cache_ = in; }
+  // Whether the context used a feature that keeps its document out of the
+  // back/forward cache for good, as Blink's schedulers and the browser's
+  // services register WebOTP and the password store.
+  bool UsedBackForwardCacheBlocker() const {
+    return used_back_forward_cache_blocker_;
+  }
+  void DidUseBackForwardCacheBlocker() {
+    used_back_forward_cache_blocker_ = true;
+  }
+  // A task posted to the context waits while the back/forward cache keeps its
+  // window frozen, as a task queue of Blink's frozen frame does, and is held
+  // here. TakeHeldTasks() empties it for the window that comes back, which
+  // posts them again in the order they were held, the delayed ones after what
+  // its resume and pageshow listeners post, as Blink's queues take the delayed
+  // tasks that came due only once they run again.
+  struct HeldTask {
+    HeldTask();
+    HeldTask(HeldTask&&);
+    HeldTask& operator=(HeldTask&&);
+    ~HeldTask();
+
+    TaskType type = TaskType::kInternalDefault;
+    // The queue it goes back to as it is, or null for the one of `type`, where
+    // it runs in the context.
+    scoped_refptr<base::SingleThreadTaskRunner> runner;
+    base::OnceClosure task;
+    bool delayed = false;
+  };
+  void HoldTask(TaskType type, base::OnceClosure task, bool delayed = false);
+  void HoldTaskOf(scoped_refptr<base::SingleThreadTaskRunner> runner,
+                  base::OnceClosure task,
+                  bool delayed);
+  std::vector<HeldTask> TakeHeldTasks() {
+    return std::exchange(held_tasks_, {});
+  }
+  // Whether a script's request of the context, by fetch(), XMLHttpRequest or
+  // the favicon fetch of its document, got a response with Cache-Control:
+  // no-store, as Blink's sticky
+  // kJsNetworkRequestReceivedCacheControlNoStoreResource says.
+  bool ReceivedNoStoreForScriptRequest() const {
+    return received_no_store_for_script_request_;
+  }
+  void DidReceiveNoStoreForScriptRequest() {
+    received_no_store_for_script_request_ = true;
+  }
   // The timer of an AbortSignal.timeout(), which counts among the context's
   // timers until RemoveSignalTimer() takes it back with the ID that this
   // returns. Its `cancel` runs once the Page lets the context go, as Blink's
@@ -282,6 +338,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // command line makes, as a file: page is.
   bool secure_context_ = true;
   bool cross_origin_isolated_capability_ = false;
+  bool in_back_forward_cache_ = false;
+  bool received_no_store_for_script_request_ = false;
+  std::vector<HeldTask> held_tasks_;
+  bool used_back_forward_cache_blocker_ = false;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
   raw_ptr<WindowTasks> tasks_ = nullptr;
