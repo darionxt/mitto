@@ -33,7 +33,10 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
 #include "url/gurl.h"
@@ -82,6 +85,13 @@ void RunAnswer(v8::Isolate* isolate,
                Answer answer) {
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = context_handle.Get(isolate);
+  if (ExecutionContext* const frozen = FrozenContext(isolate, context)) {
+    frozen->HoldTask(
+        TaskType::kMiscPlatformAPI,
+        base::BindOnce(&RunAnswer, base::Unretained(isolate),
+                       std::move(context_handle), std::move(answer)));
+    return;
+  }
   const v8::Context::Scope context_scope(context);
   // A window that has gone gets no answer, as Blink's resolvers settle nothing
   // once their execution context is destroyed.
@@ -685,6 +695,8 @@ void CredentialsContainer::GetPublicKey(
 void CredentialsContainer::GetOtp(v8::Isolate* isolate,
                                   v8::Local<v8::Promise::Resolver> resolver,
                                   AbortSignal* signal) {
+  // CredentialManagerProxy::WebOTPService() registers kWebOTPService, sticky.
+  ExecutionContext::Current().DidUseBackForwardCacheBlocker();
   // WebOTPService::Receive() cancels the request it held.
   if (Request* const previous = otp_request_.Get()) {
     otp_request_.Clear();
@@ -842,6 +854,9 @@ void CredentialsContainer::GetFromPasswordStore(
     v8::Isolate* isolate,
     v8::Local<v8::Promise::Resolver> resolver) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  // ChromePasswordManagerClient::BindCredentialManager() keeps the page out of
+  // the back/forward cache.
+  ExecutionContext::Current().DidUseBackForwardCacheBlocker();
   if (password_request_pending_) {
     // CredentialManagerImpl::Get() answers PENDING_REQUEST at once.
     PostAnswer(isolate, context,

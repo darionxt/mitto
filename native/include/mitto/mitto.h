@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 12
+#define MITTO_ABI_VERSION 13
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -244,6 +244,10 @@ typedef struct MittoPageEvent {
   // NUL byte.
   char* url;
   size_t url_size;
+  // NAVIGATED with no net error: 1 if the Page's back/forward cache restored
+  // the document that the navigation goes to, a traversal of the session
+  // history, with no request, and 0 otherwise.
+  int32_t restored;
 } MittoPageEvent;
 
 // Returns the ABI version of the loaded library. Callers compare it with the

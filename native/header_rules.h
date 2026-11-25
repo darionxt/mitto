@@ -69,6 +69,11 @@ std::string HeaderField(std::string_view headers, std::string_view name);
 // media type in Content-Type that has one, in lower case, without parameters.
 std::string HttpContentType(std::string_view headers);
 
+// Whether a response's Cache-Control value, `raw_value`, has the directive
+// no-store, as Blink's ParseCacheControlDirectives() finds it.
+// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
+bool CacheControlContainsNoStore(std::string_view raw_value);
+
 }  // namespace mitto
 
 #endif  // MITTO_HEADER_RULES_H_

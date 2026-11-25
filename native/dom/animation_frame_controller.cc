@@ -129,8 +129,13 @@ void AnimationFrameController::BeginLifecycleUpdates() {
   ScheduleAnimationIfNeeded();
 }
 
+void AnimationFrameController::Resume() {
+  frozen_ = false;
+  ScheduleAnimationIfNeeded();
+}
+
 void AnimationFrameController::ScheduleAnimationIfNeeded() {
-  if (frame_requested_ || lifecycle_updates_deferred_ ||
+  if (frame_requested_ || lifecycle_updates_deferred_ || frozen_ ||
       (callbacks_.empty() && events_.empty() &&
        post_lifecycle_steps_.empty())) {
     return;
@@ -148,6 +153,10 @@ void AnimationFrameController::ScheduleAnimationIfNeeded() {
 void AnimationFrameController::ServiceScriptedAnimations(
     base::TimeTicks frame_time) {
   frame_requested_ = false;
+  // A frame asked for before the page froze.
+  if (frozen_) {
+    return;
+  }
   if (worker_time_origin_) {
     // WorkerAnimationFrameProvider::BeginFrame(): a microtask runs the
     // callbacks, with the frame's time as performance.now() would give it.

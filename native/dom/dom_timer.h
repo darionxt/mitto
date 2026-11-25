@@ -85,6 +85,16 @@ class DOMTimerCoordinator {
   // with the coordinator.
   void Stop();
 
+  // FrameScheduler's frozen queues, as the back/forward cache freezes a
+  // window: a timer whose time comes while frozen does not run, and runs once
+  // the queues thaw, in the order the times came, as the task that waited in a
+  // frozen queue does: one of no delay as Resume() thaws them, and one that
+  // had a delay after what the page's resume and pageshow listeners post, as
+  // ResumeDelayed() says they have.
+  void Freeze() { frozen_ = true; }
+  void Resume();
+  void ResumeDelayed();
+
   // How many timers are set.
   size_t size() const { return timers_.size(); }
 
@@ -102,6 +112,8 @@ class DOMTimerCoordinator {
   // Takes the timer with ID `id` out of the list, if there is one.
   std::unique_ptr<DOMTimer> Take(int32_t id);
   void Execute(const Action& action);
+  // Runs each of the timers with `ids` that is still set as soon as it can.
+  void RunSoon(const std::vector<int32_t>& ids);
 
   const raw_ptr<v8::Isolate> isolate_;
   const std::unique_ptr<v8::Global<v8::Context>> context_;
@@ -112,6 +124,11 @@ class DOMTimerCoordinator {
   // The timers cleared while a timer runs, which go once it returns, since the
   // one that runs may be among them.
   std::vector<std::unique_ptr<DOMTimer>> clearing_;
+  bool frozen_ = false;
+  // The IDs of the timers whose times came while frozen, and those of them
+  // that had a delay.
+  std::vector<int32_t> held_;
+  std::vector<int32_t> held_delayed_;
 };
 
 }  // namespace mitto

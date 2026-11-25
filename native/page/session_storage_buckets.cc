@@ -28,6 +28,7 @@ void SessionStorageBuckets::SetSender(
 }
 
 void SessionStorageBuckets::Ask(PageStorageBucketCall call, Answer answer) {
+  used_ = true;
   const uint64_t question =
       sender_->SendStorageBucketQuestion(host_, [this, &call](uint64_t number) {
         call.question = number;
@@ -47,11 +48,16 @@ void SessionStorageBuckets::Release(uint64_t bucket) {
   sender_->SendFromContext(document_, EncodeStorageBuckets(document_, call));
 }
 
+bool SessionStorageBuckets::UsedByDocument() const {
+  return used_;
+}
+
 bool SessionStorageBuckets::HasBucket(uint64_t bucket) const {
   return buckets_.contains(bucket);
 }
 
 void SessionStorageBuckets::DocumentCommitted(uint64_t document) {
+  used_ = false;
   // What the document before asked goes unheard.
   if (host_ != 0) {
     sender_->RemoveStorageBucketHost(host_);

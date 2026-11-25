@@ -72,12 +72,21 @@ void DocumentLoader::OnIsolation(const PageIsolation& isolation) {
       isolation.embedder_policy != PageEmbedderPolicy::kNone;
 }
 
+void DocumentLoader::OnRestore() {
+  frame_->RestoreDocument(*this);
+}
+
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   const v8::Context::Scope context_scope(frame_->context());
   response_started_ = true;
   // A restart for a critical client hint counts as one, as Chrome's
   // NavigationRequest takes it.
   redirected_ = response.redirected || response.restarted_for_critical_ch;
+  status_ = response.status;
+  // DocumentLoader::CommitNavigation() registers the sticky
+  // kMainResourceHasCacheControlNoStore for such a response.
+  no_store_ = CacheControlContainsNoStore(
+      HeaderField(response.headers, "cache-control"));
   // The document of the response takes the place of the frame's, in a
   // context of its own, once the old one has unloaded, as Blink makes a new
   // window for a tab's first navigation, whose about:blank has an opaque
