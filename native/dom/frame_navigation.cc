@@ -183,6 +183,13 @@ bool CanNavigate(Frame& source, Frame& target, const GURL& url) {
 }
 
 bool CanDisplay(Window& window, const GURL& url) {
+  if (url.SchemeIs("google-chrome")) {
+    window.AddConsoleMessage(
+        ConsoleLevel::kError,
+        base::StrCat({"Not allowed to navigate to direct-launch scheme '",
+                      url.scheme(), "' from web contexts."}));
+    return false;
+  }
   // The local scheme, and those that Chrome's renderer isolates.
   static constexpr auto kSchemes = std::to_array<std::string_view>(
       {"chrome", "chrome-distiller", "chrome-error", "chrome-native",

@@ -23,9 +23,10 @@ class Window;
 // activation, so nothing that takes one may.
 bool CanNavigate(Frame& source, Frame& target, const GURL& url);
 
-// SecurityOrigin::CanDisplay(): whether the document of `window` may show
-// `url`, and if not, its console says why: no file: URL, no blob: or
-// filesystem: URL of another origin, and none of Chrome's own schemes.
+// SecurityOrigin::CanDisplay() and SchemeRegistry::IsDirectLaunchScheme():
+// whether the document of `window` may show `url`, and if not, its console says
+// why: no file: URL, no blob: or filesystem: URL of another origin, none of
+// Chrome's own schemes, and none that starts Chrome.
 bool CanDisplay(Window& window, const GURL& url);
 
 // FrameTree::FindOrCreateFrameForNavigation(): the frame that `name` names for

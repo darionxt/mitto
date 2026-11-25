@@ -436,17 +436,20 @@ void StartNavigation(Window& window,
                   url)) {
     return;
   }
-  // A top-level frame shows no data: URL that a page navigates it to, but one
-  // that would be a download, as Chrome's browser blocks it for the main
-  // frame only. A frame's goes on.
+  // A top-level frame shows no filesystem: URL and no data: URL that a page
+  // navigates it to, but one that would be a download, as Chrome's browser
+  // blocks it for the main frame only. A frame's goes on, and so does a
+  // filesystem: URL that a document of another process starts, to the browser.
   const Frame* const frame = window.GetFrame();
-  if (url.SchemeIs(url::kDataScheme) && (!frame || !frame->Parent()) &&
+  if ((!frame || !frame->Parent()) &&
       request.reason != ClientNavigationReason::kReload &&
-      IsDataUrlMimeTypeSupported(url)) {
+      ((url.SchemeIsFileSystem() &&
+        !IsOfAnotherProcess(request.origin_window, window)) ||
+       (url.SchemeIs(url::kDataScheme) && IsDataUrlMimeTypeSupported(url)))) {
     window.AddConsoleMessage(
         ConsoleLevel::kError,
-        base::StrCat(
-            {"Not allowed to navigate top frame to data URL: ", Elided(url)}));
+        base::StrCat({"Not allowed to navigate top frame to ", url.scheme(),
+                      " URL: ", Elided(url)}));
     return;
   }
   // FrameNavigationDisabler and the page dismissal events: a navigation that
@@ -469,6 +472,15 @@ void StartNavigation(Window& window,
       FrameLoadRequest kept = request;
       kept.source_element = nullptr;
       kept.origin_window = nullptr;
+      // The policy that the initiator has now, or Blink's default.
+      if (kept.referrer_policy == FetchReferrerPolicy::kDefault) {
+        kept.referrer_policy =
+            request.origin_window->GetDocument().GetReferrerPolicy();
+      }
+      if (kept.referrer_policy == FetchReferrerPolicy::kDefault) {
+        kept.referrer_policy =
+            FetchReferrerPolicy::kStrictOriginWhenCrossOrigin;
+      }
       window.GetTasks()->PostTask(
           TaskType::kInternalLoading,
           base::BindOnce(&CommitFragmentFromBrowser,

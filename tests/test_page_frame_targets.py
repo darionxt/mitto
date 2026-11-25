@@ -175,11 +175,12 @@ def test_what_a_frame_navigates_is_chrome_s(server: _Server, actor: str) -> None
 
 
 class _Pages(QuietServer):
-    """Serves `pages` by path, with their own origins for A and B, and keeps the paths asked for."""
+    """Serves `pages` by path, with their own origins for A and B, and keeps the paths asked for and their Referer lines."""
 
     def __init__(self, pages: dict[str, str]) -> None:
         super().__init__(("127.0.0.1", 0), _PagesHandler)
         self.paths: list[str] = []
+        self.referrers: list[str | None] = []
         origins = {"A": f"http://127.0.0.1:{self.server_port}", "B": f"http://localhost:{self.server_port}"}
         self.url = origins["A"]
         self.pages = {
@@ -194,6 +195,7 @@ class _PagesHandler(http.server.BaseHTTPRequestHandler):
         assert isinstance(self.server, _Pages)
         if self.path != "/favicon.ico":
             self.server.paths.append(self.path)
+            self.server.referrers.append(self.headers["Referer"])
         body = ("<!doctype html>" + self.server.pages.get(self.path.partition("?")[0], "")).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
@@ -251,12 +253,20 @@ def test_a_fragment_of_another_process_starts_again_where_the_url_has_changed() 
               port2.postMessage('push');
             };
         </script><iframe src='B/frame'></iframe>""",
-        "/frame": "<body><script>onmessage = () => open('A/race#x', '_top'); postMessage.call(parent, 'ready', '*');</script>",
+        "/frame": """<body><script>
+            onmessage = () => {
+              open('A/race#x', '_top');
+              document.head.insertAdjacentHTML('beforeend', '<meta name=referrer content=no-referrer>');
+            };
+            postMessage.call(parent, 'ready', '*');
+        </script>""",
     }
     with _page_of(pages, "/race") as (page, server):
         _until(page, "location.hash === '#x' && document.readyState === 'complete'")
         assert page.evaluate("location.pathname", timeout=_TIMEOUT_SECONDS) == "/race"
         assert server.paths == ["/race", "/frame", "/race", "/frame"]
+        # The policy is the initiator's as it started the navigation.
+        assert server.referrers[2] == server.url.replace("127.0.0.1", "localhost") + "/"
 
 
 @pytest.mark.usefixtures("page_program")
@@ -292,3 +302,16 @@ def test_a_page_keeps_itself_as_its_opener_until_a_navigation_adds_an_entry() ->
             page.evaluate(f"window.before = true; {navigation}", timeout=_TIMEOUT_SECONDS)
             _until(page, "!window.before && document.readyState === 'complete'")
             assert page.evaluate("opener === window", timeout=_TIMEOUT_SECONDS) is kept
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_goes_to_no_url_that_starts_chrome() -> None:
+    with _page_of({}, "/own") as (page, _):
+        page.evaluate(
+            "navigation.onnavigate = () => { navigated = true; }; location = 'google-chrome:x'; open('google-chrome:x', '_blank')",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert page.evaluate("'navigated' in window", timeout=_TIMEOUT_SECONDS) is False
+        said = [message.text for message in page.console_messages]
+    # Chrome's own message, as a build with Google Chrome's branding says it for its scheme.
+    assert said == ["Not allowed to navigate to direct-launch scheme 'google-chrome' from web contexts."] * 2

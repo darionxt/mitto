@@ -631,6 +631,17 @@ void PageFrame::ExpectOpeningNavigation() {
 }
 
 void PageFrame::BeginNavigation(const NavigationRequest& request) {
+  if (request.url.SchemeIsFileSystem()) {
+    // BlockedSchemeNavigationThrottle: the browser cancels it, and the
+    // top-level document's console says so.
+    Top().DomWindow()->AddConsoleMessage(
+        ConsoleLevel::kError,
+        base::StrCat({"Not allowed to navigate to filesystem URL: ",
+                      request.url.spec()}));
+    CancelProvisionalNavigation();
+    LetParentCheckCompleted();
+    return;
+  }
   if (parent_) {
     // The newest navigation of a frame takes the place of a srcdoc or an
     // about:blank that waits, whatever its URL. A frame's navigation to a
