@@ -936,6 +936,8 @@ class FetchParams:
             subresource as coming from the page at the root of the origin of its URL.
         fixed_headers: The names of the headers that are the caller's, in any case, which keep what they say on each hop.
             A name that the headers do not hold stays out of them.
+        header_order: "fetch" or "xhr", for the order in which Blink sends the headers of a page's fetch() or XMLHttpRequest
+            once `fixed_headers` names some of them, or None for the order they are in.
     """
 
     mode: str
@@ -944,6 +946,7 @@ class FetchParams:
     has_user_activation: bool = False
     initiator: str | None = None
     fixed_headers: tuple[str, ...] = ()
+    header_order: str | None = None
 
     def to_option(self) -> dict[str, object]:
         """Return the "fetch" option of mitto_request_start().
@@ -961,6 +964,8 @@ class FetchParams:
         if self.initiator is not None:
             encode_url(self.initiator, "initiator")
             option["initiator"] = self.initiator
+        if self.header_order is not None:
+            option["header_order"] = self.header_order
         return option
 
 

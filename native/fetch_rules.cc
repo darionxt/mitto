@@ -11,6 +11,7 @@
 #include "base/containers/span.h"
 #include "base/strings/string_util.h"
 #include "mitto/cors_preflight.h"
+#include "mitto/header_rules.h"
 #include "mitto/http_header_map.h"
 #include "mitto/sec_header_helpers.h"
 #include "net/base/is_potentially_trustworthy.h"
@@ -349,10 +350,44 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
   // With no hint added and no line of a page's script, the Persona's order is
   // what the map gives, and leaving it alone keeps a caller's lines where they
   // are.
-  if (added_a_hint_that_is_not_sent_by_default ||
-      !params_.script_headers.empty()) {
-    SortAsHTTPHeaderMap(request, OriginIsBlinksLine(), params_.script_headers);
+  const std::vector<std::string> script_headers = ScriptHeadersInMap(request);
+  if (added_a_hint_that_is_not_sent_by_default || !script_headers.empty()) {
+    SortAsHTTPHeaderMap(request, OriginIsBlinksLine(), script_headers);
   }
+}
+
+std::vector<std::string> FetchRules::ScriptHeadersInMap(
+    const net::URLRequest& request) const {
+  std::vector<std::string> names;
+  if (params_.header_order == HeaderOrder::kGiven) {
+    return names;
+  }
+  // A script sets none of the forbidden ones, which a caller may.
+  const net::HttpRequestHeaders& headers = request.extra_request_headers();
+  for (const std::string& name : params_.script_headers) {
+    const std::optional<std::string> value = headers.GetHeader(name);
+    if (value && !IsForbiddenRequestHeader(name, *value)) {
+      names.push_back(name);
+    }
+  }
+  if (names.empty()) {
+    return names;
+  }
+  // Blink adds a body's type to them.
+  if (headers.HasHeader(net::HttpRequestHeaders::kContentType) &&
+      !std::ranges::contains(names, "content-type")) {
+    names.emplace_back("content-type");
+  }
+  if (params_.header_order == HeaderOrder::kFetch) {
+    // FetchManager::Loader::PerformHTTPFetch() goes through a FetchHeaderList,
+    // which holds them by their names.
+    std::ranges::sort(names);
+    return names;
+  }
+  // XMLHttpRequest::CreateRequest() goes through a map of its own, which they
+  // went into as they were set.
+  return HTTPHeaderMapOrder(
+      std::vector<std::string_view>(names.begin(), names.end()));
 }
 
 bool FetchRules::ShouldAddClientHint(

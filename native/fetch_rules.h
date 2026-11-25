@@ -210,6 +210,12 @@ class FetchRules {
   bool MaybeRestartWithHints(const GURL& url,
                              const ParsedClientHintsHeaders& parsed);
 
+  // The headers of `request` that a page's script set, or a caller in its
+  // place, in lower case and in the order that they go into Blink's
+  // HTTPHeaderMap, ahead of what Blink adds.
+  std::vector<std::string> ScriptHeadersInMap(
+      const net::URLRequest& request) const;
+
   bool IsFixed(std::string_view name) const;
 
   const FetchParams params_;

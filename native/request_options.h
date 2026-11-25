@@ -33,6 +33,16 @@ enum class CredentialsMode {
   kInclude,
 };
 
+// Whose order a request's headers go in, once a page's script, or a caller in
+// its place, has set some.
+enum class HeaderOrder {
+  // The order they are given in.
+  kGiven,
+  // That of Blink's HTTPHeaderMap for a fetch() or an XMLHttpRequest.
+  kFetch,
+  kXhr,
+};
+
 // What a page's request says of itself, in the terms of Chrome's
 // network::ResourceRequest. See mitto_request_start().
 struct FetchParams {
@@ -106,10 +116,10 @@ struct FetchParams {
   // The names of the headers that are the caller's, in lower case.
   std::set<std::string> fixed_headers;
 
-  // The names of those that a page's script set, in lower case and in the order
-  // that they go into Blink's HTTPHeaderMap, ahead of what Blink adds. The
-  // request's headers then go in the order that the map gives them.
+  // The same names, each once, in the order that the script or the caller set
+  // them.
   std::vector<std::string> script_headers;
+  HeaderOrder header_order = HeaderOrder::kGiven;
 };
 
 // What a request is started with, besides its URL and headers.

@@ -691,6 +691,13 @@ MITTO_EXPORT void mitto_session_end_waits(MittoSession* session);
 //   `headers` says, or stays absent, on each hop, whatever the rules would make of
 //   it. //net still changes an Origin on a redirect as it does in Chrome. "referer"
 //   here with no "referrer" sends none.
+// - "header_order" is "fetch" or "xhr", for a request in the place of a page's
+//   fetch() or XMLHttpRequest. If `headers` has a line that "fixed_headers" names
+//   and that a page's script may set, the lines that Blink holds in its
+//   HTTPHeaderMap, which are those, Content-Type, the client hints and User-Agent,
+//   go in the order that the map gives their names, ahead of the rest, as Chrome
+//   sends them. A line of a forbidden request-header name counts as one of the
+//   rest. Without it, each line goes where `headers` has it.
 //
 // An unknown key or an invalid value is refused, so a mistake cannot go
 // unnoticed.
