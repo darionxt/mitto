@@ -117,6 +117,7 @@ def test_a_line_that_no_script_sets_keeps_its_place(server: CaptureServer, kind:
         mixed = _ask(session, server, run, "mixed", kind, headers={"DNT": "1", "X-Alpha": "1"})
         # A client hint is in Blink's map, whoever gives it.
         hint = _ask(session, server, run, "hint", kind, headers={"Sec-CH-Width": "100", "X-Alpha": "1"})
+        lone_hint = _ask(session, server, run, "lone-hint", kind, headers={"Sec-CH-Width": "100"})
 
     assert removed == [name for name in plain if name not in {"Accept", "sec-ch-ua"}]
     net = next(index for index, name in enumerate(plain) if name.lower() in _NET_LINES)
@@ -127,6 +128,8 @@ def test_a_line_that_no_script_sets_keeps_its_place(server: CaptureServer, kind:
     assert mixed == [*one[:at], "DNT", *one[at:]]
     assert [name for name in hint if name != "Sec-CH-Width"] == one
     assert hint.index("Sec-CH-Width") < hint.index("Accept")
+    assert [name for name in lone_hint if name != "Sec-CH-Width"] == plain
+    assert lone_hint.index("Sec-CH-Width") < lone_hint.index("Accept")
 
 
 def test_a_no_cors_fetch_orders_only_the_lines_that_a_script_may_set(server: CaptureServer) -> None:
@@ -136,7 +139,7 @@ def test_a_no_cors_fetch_orders_only_the_lines_that_a_script_may_set(server: Cap
     with _session(server, run) as session:
         plain = _ask(session, server, run, "plain", RequestKind.FETCH, mode="no-cors")
         refused = _ask(session, server, run, "refused", RequestKind.FETCH, mode="no-cors", headers={"X-Alpha": "1"})
-        safe = {"Accept": "a/b", "Content-Language": "de", "Accept-Language": "de"}
+        safe = {"Accept": "a/b", "Content-Language": "de", "Accept-Language": "\tde "}
         safelisted = _ask(session, server, run, "safelisted", RequestKind.FETCH, mode="no-cors", headers=safe)
 
     net = next(index for index, name in enumerate(plain) if name.lower() in _NET_LINES)

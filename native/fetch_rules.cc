@@ -313,10 +313,15 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
   // A Persona's lines are all there, to hold their places, so this removes
   // those that this request should not have.
   bool added_a_hint_that_is_not_sent_by_default = false;
+  bool has_a_hint_of_the_caller = false;
   const net::HttpRequestHeaders::HeaderVector headers =
       request.extra_request_headers().GetHeaderVector();
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header : headers) {
-    if (!IsClientHintHeader(header.key) || IsFixed(header.key)) {
+    if (!IsClientHintHeader(header.key)) {
+      continue;
+    }
+    if (IsFixed(header.key)) {
+      has_a_hint_of_the_caller = true;
       continue;
     }
     if (params_.mode == RequestMode::kNavigate) {
@@ -349,9 +354,11 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
 
   // With no hint added and no line of a page's script, the Persona's order is
   // what the map gives, and leaving it alone keeps a caller's lines where they
-  // are.
+  // are, but for a hint, which is in the map of a fetch or an xhr.
   const std::vector<std::string> script_headers = ScriptHeadersInMap(request);
-  if (added_a_hint_that_is_not_sent_by_default || !script_headers.empty()) {
+  if (added_a_hint_that_is_not_sent_by_default || !script_headers.empty() ||
+      (has_a_hint_of_the_caller &&
+       params_.header_order != HeaderOrder::kGiven)) {
     SortAsHTTPHeaderMap(request, OriginIsBlinksLine(), script_headers);
   }
 }
@@ -366,10 +373,11 @@ std::vector<std::string> FetchRules::ScriptHeadersInMap(
   // that need no preflight. A caller may set any.
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   for (const std::string& name : params_.script_headers) {
-    const std::optional<std::string> value = headers.GetHeader(name);
-    if (value && !IsForbiddenRequestHeader(name, *value) &&
+    const std::optional<std::string> line = headers.GetHeader(name);
+    const std::string_view value = NormalizeHeaderValue(line.value_or(""));
+    if (line && !IsForbiddenRequestHeader(name, value) &&
         (params_.mode != RequestMode::kNoCors ||
-         IsNoCorsSafelistedHeader(name, *value))) {
+         IsNoCorsSafelistedHeader(name, value))) {
       names.push_back(name);
     }
   }
