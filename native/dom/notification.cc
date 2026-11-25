@@ -185,6 +185,10 @@ v8::Local<v8::Promise> Notification::RequestPermission(
               if (!owner || !owner->HasContext()) {
                 return denied;
               }
+              // The window that asked stays the incumbent one, as Blink's
+              // CallbackInvokeHelper keeps it.
+              const v8::Context::BackupIncumbentScope incumbent_scope(
+                  isolate->GetCurrentContext());
               const v8::Context::Scope context_scope(context);
               // As Blink's V8ScriptRunner::CallFunction(): what the callback
               // queued runs once it returns.

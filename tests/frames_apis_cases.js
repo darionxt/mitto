@@ -1,6 +1,6 @@
 // What the calls that a permissions policy, or a document's ancestors, decide give in the frames of a page of a secure context, whose
 // /child runs tests/frames_apis_child.js, as /nest does, which holds the frame that its query names, /without, whose header takes
-// each feature from it, /late, the same after a while, /self, whose header keeps high-entropy hints to its own origin, and
+// each feature from it, /late, the same once /release is asked for, /self, whose header keeps high-entropy hints to its own origin, and
 // /neither and /one, whose headers take both of the local networks and one. The value is a promise for a record by the frame, which tests/data/frames_apis_cases.json holds as Chrome gave it.
 (async () => {
   const OTHER = `http://localhost:${location.port}`;
@@ -87,11 +87,13 @@
   const loaded = new Promise((resolve) => { reused.onload = resolve; });
   document.body.append(reused);
   const {navigator: {permissions: early}} = reused.contentWindow;
-  const soon = (promise) => Promise.race([promise, new Promise((resolve) => setTimeout(resolve, 1000, {state: 'never'}))]);
-  const first = await soon(early.query({name: 'camera'})), states = [first.state];
+  const first = await early.query({name: 'camera'}), states = [first.state];
+  await fetch('/release');
   await loaded;
+  // Chrome now and then never answers a query that the window makes while its document changes over in the browser.
+  await new Promise((resolve) => setTimeout(resolve, 300));
   states.push(reused.contentWindow.navigator.permissions === early, first.state);
-  const second = await soon(early.query({name: 'camera'}));
+  const second = await early.query({name: 'camera'});
   record['a reused window'] = [...states, second.state, first.state, first === second];
   // An error goes to its own callback's realm, whichever the other callback is of.
   const doomed = document.createElement('iframe');

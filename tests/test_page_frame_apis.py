@@ -10,7 +10,6 @@ import collections
 import http.server
 import json
 import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -75,6 +74,13 @@ def page_program(native_library: Any) -> None:
         pytest.skip("no Page program beside the library")
 
 
+class _Server(QuietServer):
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), _Handler)
+        # Set once the script of the cases wants /late answered.
+        self.release = threading.Event()
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -88,9 +94,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body.encode())))
+        assert isinstance(self.server, _Server)
         if path == "/late":
-            # Long enough for what a script asks of the frame's initial document.
-            time.sleep(0.5)
+            self.server.release.wait(_TIMEOUT_SECONDS)
+        elif path == "/release":
+            self.server.release.set()
         if path in ("/without", "/late", "/app/without"):
             self.send_header("Permissions-Policy", ", ".join(f"{feature}=()" for feature in _WITHHELD))
         elif path in _HEADERS:
@@ -104,7 +112,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 @pytest.fixture
 def port() -> Iterator[int]:
-    server = QuietServer(("127.0.0.1", 0), _Handler)
+    server = _Server()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield server.server_port
     server.shutdown()
