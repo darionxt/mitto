@@ -142,16 +142,23 @@ def test_a_no_cors_fetch_orders_only_the_lines_that_a_script_may_set(server: Cap
         safe = {"Accept": "a/b", "Content-Language": "de", "Accept-Language": "\tde "}
         safelisted = _ask(session, server, run, "safelisted", RequestKind.FETCH, mode="no-cors", headers=safe)
 
-        # A type that a script could not give, which the safelisted lines do not take along.
+        # A type is in Blink's map, also one that Chrome would not send.
         typed = _ask(
-            session, server, run, "typed", RequestKind.FETCH, mode="no-cors", headers={**safe, "Content-Type": "a/json"}
+            session,
+            server,
+            run,
+            "typed",
+            RequestKind.FETCH,
+            method="POST",
+            mode="no-cors",
+            data=b"{}",
+            headers={"Accept": "a/b", "Content-Type": "application/json"},
         )
 
     net = next(index for index, name in enumerate(plain) if name.lower() in _NET_LINES)
     assert refused == [*plain[:net], "X-Alpha", *plain[net:]]
     assert safelisted == chrome
-    assert typed.index("Content-Type") > typed.index("Sec-Fetch-Dest")
-    assert [name for name in typed if name != "Content-Type"] == safelisted
+    assert typed.index("Content-Type") < typed.index("sec-ch-ua-mobile") < typed.index("Sec-Fetch-Site")
 
 
 @pytest.mark.parametrize("kind", _OTHER_KINDS)
