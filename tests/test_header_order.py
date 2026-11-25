@@ -115,6 +115,8 @@ def test_a_line_that_no_script_sets_keeps_its_place(server: CaptureServer, kind:
             session, server, run, "forbidden", kind, headers={"Accept-Encoding": "br", "User-Agent": "mine", "DNT": "1"}
         )
         mixed = _ask(session, server, run, "mixed", kind, headers={"DNT": "1", "X-Alpha": "1"})
+        # A client hint is in Blink's map, whoever gives it.
+        hint = _ask(session, server, run, "hint", kind, headers={"Sec-CH-Width": "100", "X-Alpha": "1"})
 
     assert removed == [name for name in plain if name not in {"Accept", "sec-ch-ua"}]
     net = next(index for index, name in enumerate(plain) if name.lower() in _NET_LINES)
@@ -123,6 +125,23 @@ def test_a_line_that_no_script_sets_keeps_its_place(server: CaptureServer, kind:
     one = AS_CHROME[HTTP1][f"window-{kind.value}-get-one"]
     at = next(index for index, name in enumerate(one) if name.lower() in _NET_LINES)
     assert mixed == [*one[:at], "DNT", *one[at:]]
+    assert [name for name in hint if name != "Sec-CH-Width"] == one
+    assert hint.index("Sec-CH-Width") < hint.index("Accept")
+
+
+def test_a_no_cors_fetch_orders_only_the_lines_that_a_script_may_set(server: CaptureServer) -> None:
+    run = _run(HTTP1)
+    chrome = AS_CHROME[HTTP1]["window-fetch-no-cors"]
+
+    with _session(server, run) as session:
+        plain = _ask(session, server, run, "plain", RequestKind.FETCH, mode="no-cors")
+        refused = _ask(session, server, run, "refused", RequestKind.FETCH, mode="no-cors", headers={"X-Alpha": "1"})
+        safe = {"Accept": "a/b", "Content-Language": "de", "Accept-Language": "de"}
+        safelisted = _ask(session, server, run, "safelisted", RequestKind.FETCH, mode="no-cors", headers=safe)
+
+    net = next(index for index, name in enumerate(plain) if name.lower() in _NET_LINES)
+    assert refused == [*plain[:net], "X-Alpha", *plain[net:]]
+    assert safelisted == chrome
 
 
 @pytest.mark.parametrize("kind", _OTHER_KINDS)

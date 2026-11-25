@@ -362,11 +362,14 @@ std::vector<std::string> FetchRules::ScriptHeadersInMap(
   if (params_.header_order == HeaderOrder::kGiven) {
     return names;
   }
-  // A script sets none of the forbidden ones, which a caller may.
+  // A script sets none of the forbidden ones, and in mode no-cors only those
+  // that need no preflight. A caller may set any.
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   for (const std::string& name : params_.script_headers) {
     const std::optional<std::string> value = headers.GetHeader(name);
-    if (value && !IsForbiddenRequestHeader(name, *value)) {
+    if (value && !IsForbiddenRequestHeader(name, *value) &&
+        (params_.mode != RequestMode::kNoCors ||
+         IsNoCorsSafelistedHeader(name, *value))) {
       names.push_back(name);
     }
   }
