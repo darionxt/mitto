@@ -1721,8 +1721,9 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     return;
   }
   // The script's lines take the places of the Persona's lines of their names,
-  // and the rest follow, as a caller's headers do. A Content-Type that the
-  // script does not give goes, as a caller's body without one does.
+  // and the rest follow, until FetchRules puts a fetch()'s in the order of
+  // Blink's HTTPHeaderMap. A Content-Type that the script does not give goes,
+  // as a caller's body without one does.
   net::HttpRequestHeaders headers = request_template->headers;
   RequestOptions options = request_template->options;
   options.method = asked.method;
@@ -1750,8 +1751,13 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     headers.RemoveHeader(net::HttpRequestHeaders::kContentType);
   }
   for (const auto& [name, value] : lines) {
+    // A line that Blink's map holds goes by the name that the script wrote.
+    if (options.fetch->header_order != HeaderOrder::kGiven) {
+      headers.RemoveHeader(name);
+    }
     headers.SetHeader(name, value);
     options.fetch->fixed_headers.insert(base::ToLowerASCII(name));
+    options.fetch->script_headers.push_back(base::ToLowerASCII(name));
   }
   // One keepalive request too many, or too large, fails as in Chrome.
   if (asked.keepalive) {
