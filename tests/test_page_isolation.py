@@ -903,7 +903,7 @@ def test_a_redirect_s_resource_policy_comes_before_its_recursion(
 
 # A frame with an embedder policy, under a page with none, holds a frame at /inner, whose next document `starter` starts:
 # the page, the frame that holds it, or a frame beside that one.
-_LOCAL_SCRIPT = """(async ({starter, url}) => {
+_LOCAL_SCRIPT = """(async ({starter, url, download}) => {
     const add = async (src, target = document) => {
         const frame = target.createElement('iframe');
         frame.src = src;
@@ -920,20 +920,22 @@ _LOCAL_SCRIPT = """(async ({starter, url}) => {
         middle: [middle.contentWindow, 'frames[0]'],
         sibling: [sibling.contentWindow, 'top.frames[0].frames[0]'],
     }[starter];
-    const loaded = new Promise((resolve) => inner.onload = () => resolve('load'));
+    const loaded = new Promise((resolve) => inner.onload = resolve);
     from.eval(target + '.location = ' + JSON.stringify(url));
     // A download ends its frame's navigation with no load, before the load of a frame made after it.
-    await Promise.race([loaded, add('/sibling')]);
+    await (download ? add('/sibling') : loaded);
     return inner.contentDocument === null ? null : inner.contentWindow.location.href;
 })"""
 
 
-def _start_local(server: RecordingServer, middle: str, sibling: str, starter: str, url: str) -> str:
+def _start_local(
+    server: RecordingServer, middle: str, sibling: str, starter: str, url: str, *, download: bool = False
+) -> str:
     """Serve the frames of _LOCAL_SCRIPT, the middle one and its sibling with an embedder policy each, and return the
     script that gives the inner frame's URL, or null where the page cannot read its document."""
     for path, policy in {"/middle": middle, "/sibling": sibling, "/inner": "require-corp"}.items():
         server.route(path, b"<!doctype html><title>f</title>", "text/html", [("Cross-Origin-Embedder-Policy", policy)])
-    return f"{_LOCAL_SCRIPT}({json.dumps({'starter': starter, 'url': url})})"
+    return f"{_LOCAL_SCRIPT}({json.dumps({'starter': starter, 'url': url, 'download': download})})"
 
 
 @pytest.mark.parametrize(
@@ -983,6 +985,7 @@ def test_a_data_url_that_would_download_keeps_the_frame_under_an_embedder_policy
     session: mitto.Session, server: RecordingServer
 ) -> None:
     # The parent's policy blocks what makes a document, and a download makes none (Chrome for Testing 157).
-    script = _start_local(server, "require-corp", "unsafe-none", "page", "data:application/octet-stream,x")
+    url = "data:application/octet-stream,x"
+    script = _start_local(server, "require-corp", "unsafe-none", "page", url, download=True)
 
     assert _evaluate(session, server.page("/", _BLANK), script) == server.url("/inner")
