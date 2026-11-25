@@ -11,7 +11,7 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import pytest
 
@@ -23,8 +23,9 @@ _TIMEOUT_SECONDS = 120
 _TESTS = Path(__file__).parent
 _WORKER = (_TESTS / "worker_referrer_cases.js").read_text(encoding="utf-8")
 
-POLICIES = ("", "no-referrer", "origin", "unsafe-url")
-"""The policies that a document's response and a worker's have, in each combination."""
+POLICIES = ("", "no-referrer", "origin", "unsafe-url", "no-referrer, unknown", "no-referrer, v2")
+"""The policies that a document's response and a worker's have, in each combination. A token that names no policy is left
+out, and one that is not letters and hyphens takes the whole header with it."""
 
 _PAGE = """<!doctype html><title>r</title><body><script>
 const cases = (async () => {
@@ -32,7 +33,8 @@ const cases = (async () => {
     for (const policy of %s) {
       const id = encodeURIComponent(`${document.title}/${type}/${policy}`);
       const worker = new Worker(
-        `/ask?case=${id}&what=script&script=1&worker=1&policy=${policy}&static=${type === 'module' ? 1 : ''}`, {type});
+        `/ask?case=${id}&what=script&script=1&worker=1&policy=${encodeURIComponent(policy)}`
+          + `&static=${type === 'module' ? 1 : ''}`, {type});
       await new Promise((resolve) => { worker.onmessage = resolve; worker.onerror = resolve; });
     }
   }
@@ -83,7 +85,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if "worker" in query:
             body = _WORKER.encode()
             if "static" in query:
-                asked = f"/ask?case={query['case'].replace('/', '%2F')}&what=static%20import&script=1"
+                asked = f"/ask?case={quote(query['case'], safe='')}&what=static%20import&script=1"
                 body = f"import '{asked}';\n".encode() + body
             self._answer(body, "text/javascript; charset=utf-8", policy)
             return
@@ -129,7 +131,7 @@ def test_what_a_worker_asks_for_is_referred_as_chrome_refers_it(server: Referrer
 
     with (
         mitto.Session() as session,
-        session._open_page(f"{server.origin}/?policy={policy}", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+        session._open_page(f"{server.origin}/?policy={quote(policy)}", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
     ):
         assert page.evaluate("cases", timeout=_TIMEOUT_SECONDS) == "done"
 

@@ -2239,10 +2239,10 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
 }
 
 void PageHost::AbandonRequests() {
-  // A keepalive request goes on without its Page, and the Session finishes
-  // it. Each other Request abandons its job as it goes.
+  // A document's keepalive request goes on without its Page, and the Session
+  // finishes it. Each other Request abandons its job as it goes.
   for (auto& [number, request] : requests_) {
-    if (request->checks().keepalive) {
+    if (request->checks().keepalive && !IsOfWorker(*request)) {
       request->DetachJob();
     }
   }
@@ -3684,15 +3684,15 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
   });
 }
 
+bool PageHost::IsOfWorker(const Request& request) const {
+  const auto context = contexts_.find(request.context());
+  return context != contexts_.end() && context->second.is_worker;
+}
+
 void PageHost::LetKeepaliveRequestsGo(const std::set<uint64_t>* ids) {
   for (auto it = requests_.begin(); it != requests_.end();) {
     Request& request = *it->second;
-    const auto context = contexts_.find(request.context());
-    // Only a document's goes on in Chrome, in the browser's
-    // KeepAliveURLLoaderService. The network service ends a worker's once its
-    // thread has ended.
-    const bool of_worker =
-        context != contexts_.end() && context->second.is_worker;
+    const bool of_worker = IsOfWorker(request);
     if ((!request.checks().keepalive && !of_worker) ||
         (ids && !ids->contains(request.context()))) {
       ++it;

@@ -295,7 +295,7 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"fetch('/beacon', { method: 'POST', body: 'kept' }); close();",
     ),
     # A keepalive fetch that redirects once the worker that started it has ended.
-    "/keepalive.js": ("text/javascript", b"fetch('/held', { keepalive: true }); postMessage('started');"),
+    "/keepalive.js": ("text/javascript", b"fetch('/held', { keepalive: true });"),
     # A module that a worker of a data: URL imports, with what it imports in turn, one of them behind a redirect, none
     # of them with a CORS header.
     "/graph-a.js": (
@@ -889,25 +889,28 @@ def test_a_fetch_that_a_worker_starts_as_it_closes_is_sent(server: str) -> None:
     assert _POSTED == [("/beacon", b"kept")]
 
 
+@pytest.mark.parametrize("ending", ["terminate", "close"])
 @pytest.mark.usefixtures("page_program")
-def test_a_workers_keepalive_fetch_ends_with_the_worker(server: str) -> None:
+def test_a_workers_keepalive_fetch_ends_with_the_worker(server: str, ending: str) -> None:
     # Only a document's goes on, so Chrome 157 does not follow the redirect of a worker's.
     _RELEASED.clear()
     _HELD.clear()
     _REFERERS.pop("/after", None)
-    script = """new Promise((resolve) => {
-        const worker = new Worker('/keepalive.js');
-        worker.onmessage = () => {
-            worker.terminate();
-            setTimeout(() => resolve('terminated'), 500);
-        };
-    })"""
-
-    with mitto.Session() as session, session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "terminated"
-        assert _HELD.is_set()
-        _RELEASED.set()
-        time.sleep(0.5)
+    with mitto.Session() as session:
+        with session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+            page.evaluate("self.worker = new Worker('/keepalive.js'); 0", timeout=_TIMEOUT_SECONDS)
+            assert _HELD.wait(_TIMEOUT_SECONDS)
+            if ending == "terminate":
+                page.evaluate(
+                    "new Promise((resolve) => { worker.terminate(); setTimeout(resolve, 500); })",
+                    timeout=_TIMEOUT_SECONDS,
+                )
+                _RELEASED.set()
+                time.sleep(0.5)
+        if ending == "close":
+            # The Page has closed, and its Session goes on.
+            _RELEASED.set()
+            time.sleep(0.5)
 
     assert "/after" not in _REFERERS
 

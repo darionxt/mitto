@@ -112,7 +112,7 @@ bool IsContentTypeOptionsNosniff(std::string_view headers);
 
 // The referrer policy that a Referrer-Policy header names: the last of its
 // comma-separated tokens that names one, without white space around it, and
-// kDefault where none does.
+// kDefault where none does, or where one is not letters and hyphens.
 // Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
 FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value);
 

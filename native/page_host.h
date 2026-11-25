@@ -464,6 +464,10 @@ class PageHost final : public PageChannel::Delegate {
   // Forgets `ids`, which go, with what waits for them, and lets their
   // keepalive requests go on without them.
   void ForgetContexts(const std::set<uint64_t>& ids);
+  // Only a document's keepalive request goes on without it in Chrome, in the
+  // browser's KeepAliveURLLoaderService. The network service ends a worker's
+  // once its thread has ended.
+  bool IsOfWorker(const Request& request) const;
   // Lets each keepalive request of `ids`, or of every context for null, go on
   // without the Page, which hears that it ended, but a worker's, whose requests
   // all end.
