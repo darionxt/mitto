@@ -1,37 +1,111 @@
-// The window's open(), as Blink's LocalDOMWindow::open() runs it. A Page has
-// one frame, its top-level one, and no user ever activates it, so a target
-// that names it navigates it, and any other asks for a new window, which
-// Chrome's pop-up blocker refuses: no window opens, open() gives null, and the
-// console says nothing, as in Chrome.
+// The window's open(), as Blink's LocalDOMWindow::open() runs it. A target that
+// names a frame navigates it, and any other asks for a new window, which
+// Chrome's pop-up blocker refuses, since no user ever activates a Page: no
+// window opens, open() gives null, and the console says nothing, as in Chrome.
 //
 // Upstream: third_party/blink/renderer/core/frame/local_dom_window.cc
 // Upstream: third_party/blink/renderer/core/page/create_window.cc
-// Upstream: third_party/blink/renderer/core/page/frame_tree.cc
+
+#include <stddef.h>
 
 #include <string>
+#include <string_view>
 
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/frame_loader.h"
+#include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
 #include "url/gurl.h"
 
 namespace mitto {
 
+namespace {
+
+// What a frame that is there takes of GetWindowFeaturesFromString(), whose
+// other features only change a new window.
+struct WindowFeatures {
+  bool noopener = false;
+  bool noreferrer = false;
+};
+
+WindowFeatures ParseWindowFeatures(const std::u16string& features) {
+  WindowFeatures result;
+  const std::string buffer = base::ToLowerASCII(base::UTF16ToUTF8(features));
+  constexpr std::string_view kSeparators = " \t\n\r=,\f";
+  const auto is_separator = [&](size_t i) {
+    return kSeparators.find(buffer[i]) != std::string_view::npos;
+  };
+  const size_t length = buffer.size();
+  for (size_t i = 0; i < length;) {
+    while (i < length && is_separator(i)) {
+      ++i;
+    }
+    const size_t key_begin = i;
+    while (i < length && !is_separator(i)) {
+      ++i;
+    }
+    const std::string_view key =
+        std::string_view(buffer).substr(key_begin, i - key_begin);
+    // The separators past the key, but for '='.
+    while (i < length && buffer[i] != '=' && buffer[i] != ',' &&
+           is_separator(i)) {
+      ++i;
+    }
+    std::string_view value;
+    if (i < length && is_separator(i)) {
+      while (i < length && is_separator(i) && buffer[i] != ',') {
+        ++i;
+      }
+      const size_t value_begin = i;
+      while (i < length && !is_separator(i)) {
+        ++i;
+      }
+      value = std::string_view(buffer).substr(value_begin, i - value_begin);
+    }
+    int number = 0;
+    // StringToInt() reads what it can of a number's start.
+    base::StringToInt(value, &number);
+    const bool set =
+        value.empty() || value == "yes" || value == "true" || number != 0;
+    if (key == "noopener") {
+      result.noopener = set;
+    } else if (key == "noreferrer") {
+      result.noreferrer = set;
+    }
+  }
+  result.noopener = result.noopener || result.noreferrer;
+  return result;
+}
+
+// Whether `target` names a frame by where it is, which open() gives back
+// whatever the features.
+bool IsKeyword(const std::u16string& target) {
+  return base::EqualsCaseInsensitiveASCII(target, u"_top") ||
+         base::EqualsCaseInsensitiveASCII(target, u"_parent") ||
+         base::EqualsCaseInsensitiveASCII(target, u"_self");
+}
+
+}  // namespace
+
 Window* Window::Open(const std::u16string& url,
                      const std::u16string& target,
                      const std::u16string& features,
                      bindings::ExceptionState& exception_state) {
-  // A window that its frame no longer shows opens nothing.
-  if (!HasContext()) {
+  // A window that its frame no longer shows opens nothing, nor does a script
+  // of one, the entered window's.
+  Window* const entered = Entered();
+  if (!HasContext() || !entered || !entered->HasContext() ||
+      !entered->HasDocument()) {
     return nullptr;
   }
-  // The entered window's document, which is this window's in a Page.
-  mitto::Document& document = GetDocument();
+  mitto::Document& document = entered->GetDocument();
   GURL completed;
   if (!url.empty()) {
     completed = document.CompleteUrl(url);
@@ -45,28 +119,42 @@ Window* Window::Open(const std::u16string& url,
       return nullptr;
     }
   }
-  // FrameTree::FindFrameForNavigationInternal(), for a Page's one frame,
-  // whose name is empty: an empty target is _blank. The features only change
-  // a new window, and what open() gives for one.
-  const bool names_this_frame =
-      !target.empty() && (base::EqualsCaseInsensitiveASCII(target, u"_self") ||
-                          base::EqualsCaseInsensitiveASCII(target, u"_top") ||
-                          base::EqualsCaseInsensitiveASCII(target, u"_parent"));
-  if (!names_this_frame) {
-    // CreateNewWindow(), whose ChromeContentBrowserClient::CanCreateWindow()
-    // blocks a pop-up that no user gesture asked for.
+  const WindowFeatures window_features = ParseWindowFeatures(features);
+  // An empty target is _blank. The Page program's own window has no frame, and
+  // names itself alone.
+  mitto::Frame* frame = nullptr;
+  Window* opened = nullptr;
+  if (frame_) {
+    frame = FindFrameForNavigation(
+        *frame_, target.empty() ? std::u16string_view(u"_blank") : target,
+        completed);
+    opened = frame ? frame->DomWindow() : nullptr;
+  } else if (IsKeyword(target)) {
+    opened = this;
+  }
+  if (!opened) {
     return nullptr;
   }
   // A frame that is there is navigated, but not to an empty URL, with no
-  // reason, so that a document that loads does not replace its entry for it,
-  // and it is given back even for noopener.
+  // reason, so that a document that loads does not replace its entry for it.
   if (!url.empty()) {
     FrameLoadRequest request;
     request.url = completed;
     request.reason = ClientNavigationReason::kNone;
-    Navigate(*this, request, FrameLoadType::kStandard);
+    request.origin_window = entered;
+    if (window_features.noreferrer) {
+      request.referrer_policy = FetchReferrerPolicy::kNoReferrer;
+    }
+    Navigate(*opened, request, FrameLoadType::kStandard);
   }
-  return this;
+  if (IsKeyword(target) || !frame) {
+    return frame ? frame->DomWindow() : opened;
+  }
+  if (window_features.noopener) {
+    return nullptr;
+  }
+  frame->SetOpener(frame_);
+  return frame->DomWindow();
 }
 
 }  // namespace mitto

@@ -308,15 +308,20 @@ void Window::SetName(const std::u16string& name) {
 }
 
 v8::Local<v8::Value> Window::OpenerForBindings() const {
-  return v8::Null(v8::Isolate::GetCurrent());
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  mitto::Frame* const opener = frame_ ? frame_->Opener() : nullptr;
+  return opener ? opener->DomWindow()->ToV8(isolate)
+                : v8::Local<v8::Value>(v8::Null(isolate));
 }
 
-// DOMWindow::setOpenerForBindings(): null disowns the opener, which a window
-// that a Session opened has not, and any other value shadows the attribute
-// with a data property of the window.
+// DOMWindow::setOpenerForBindings(): null disowns the opener, and any other
+// value shadows the attribute with a data property of the window.
 void Window::SetOpenerForBindings(v8::Local<v8::Value> opener,
                                   bindings::ExceptionState& exception_state) {
   if (opener->IsNull()) {
+    if (frame_) {
+      frame_->SetOpener(nullptr);
+    }
     return;
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
