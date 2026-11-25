@@ -153,6 +153,7 @@ class PageFrame final : public NavigationClient, public Frame {
       base::TimeTicks navigation_start,
       const PageConnection& connection,
       bool cross_origin_isolated,
+      const PermissionsPolicyHeaders& policy_headers,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
   // `loader`'s navigation ended with no response, with `net_error`: the frame
   // keeps its document, or a child frame commits Chrome's error page for a
@@ -216,7 +217,8 @@ class PageFrame final : public NavigationClient, public Frame {
   // idle callbacks, animation frames, fetches, tasks and workers stop with
   // its context. The new window's performance.timeOrigin is
   // `navigation_start`, and its navigator.connection gives `connection`, and
-  // its agent is cross-origin isolated if `cross_origin_isolated`. With
+  // its agent is cross-origin isolated if `cross_origin_isolated`, and its
+  // response's headers say `policy_headers` of its permissions policy. With
   // `xml_content_type`, the document is an XMLDocument of that MIME type, as
   // Blink's DocumentInit makes one for an XML response, and otherwise an
   // HTMLDocument.
@@ -226,6 +228,7 @@ class PageFrame final : public NavigationClient, public Frame {
       base::TimeTicks navigation_start,
       const PageConnection& connection,
       bool cross_origin_isolated,
+      const PermissionsPolicyHeaders& policy_headers,
       const std::optional<std::u16string>& xml_content_type);
   // Makes a window's context, with what Chrome's renderer adds to it, whose
   // time origin is `time_origin` and whose document's origin is `origin`,
@@ -247,10 +250,12 @@ class PageFrame final : public NavigationClient, public Frame {
   // `origin`, an opaque one, or an empty handle if no frame's document has it.
   v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
   // What the frame's element lets a document that it navigates to now inherit
-  // of its parent's permissions policy, and gives `document` that.
-  ContainerPolicy PendingContainerPolicy() const;
-  void InheritPermissionsPolicy(Document& document,
-                                ContainerPolicy container_policy);
+  // of its parent's permissions policy, and gives `document` that, with what
+  // its response's headers declare.
+  ParsedPolicy PendingContainerPolicy() const;
+  void ApplyPermissionsPolicy(Document& document,
+                              ParsedPolicy container_policy,
+                              ParsedPolicy declared = {});
   // Warns of a sandbox that its frame's document can take away.
   void WarnIfSandboxIneffective();
   // Gives the current context's window its timers, what its fetch() goes
@@ -349,7 +354,7 @@ class PageFrame final : public NavigationClient, public Frame {
     SandboxFlags sandbox = SandboxFlags::kNone;
     bool trustworthy = false;
     bool sandboxed_process = false;
-    ContainerPolicy container_policy;
+    ParsedPolicy container_policy;
     std::u16string referrer;
     // Its document's about base URL, the parent document's base URL for a
     // srcdoc and the initiator's for an about:blank, and its cookie URL, the
@@ -449,7 +454,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // What the sandbox withheld, and the element's container policy, as the
   // navigation started.
   SandboxFlags provisional_sandbox_ = SandboxFlags::kNone;
-  ContainerPolicy provisional_container_policy_;
+  ParsedPolicy provisional_container_policy_;
   base::TimeTicks provisional_start_;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,

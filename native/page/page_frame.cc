@@ -220,7 +220,7 @@ void PageFrame::Start(const PageConnection& connection) {
     document.SetSandboxFlags(sandbox);
     document.SetInSandboxedProcess(
         parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
-    InheritPermissionsPolicy(document, PendingContainerPolicy());
+    ApplyPermissionsPolicy(document, PendingContainerPolicy());
     // Its about base URL is its creator's base URL, as Blink's
     // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
     // creator's too.
@@ -435,7 +435,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(navigation.sandbox);
   document->SetInSandboxedProcess(navigation.sandboxed_process);
-  InheritPermissionsPolicy(*document, navigation.container_policy);
+  ApplyPermissionsPolicy(*document, navigation.container_policy);
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
   document->SetReferrer(navigation.referrer);
@@ -589,7 +589,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(old_document.GetSandboxFlags());
   document->SetInSandboxedProcess(old_document.IsInSandboxedProcess());
-  InheritPermissionsPolicy(*document, PendingContainerPolicy());
+  ApplyPermissionsPolicy(*document, PendingContainerPolicy());
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
@@ -1287,6 +1287,7 @@ Document* PageFrame::CommitNavigation(
     base::TimeTicks navigation_start,
     const PageConnection& connection,
     bool cross_origin_isolated,
+    const PermissionsPolicyHeaders& policy_headers,
     const std::optional<std::u16string>& xml_content_type) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
   Document& old_document = Window::Current().GetDocument();
@@ -1362,7 +1363,7 @@ Document* PageFrame::CommitNavigation(
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
   Document& document =
       CommitDocument(current_->number(), url, navigation_start, connection,
-                     cross_origin_isolated, xml_content_type);
+                     cross_origin_isolated, policy_headers, xml_content_type);
   // The old document's unload times go to a new one of its origin, as
   // Blink's UnloadEventTimingInfo carries them.
   DocumentLoadTiming& timing = document_load_timing();
@@ -1472,6 +1473,7 @@ Document& PageFrame::CommitDocument(
     base::TimeTicks navigation_start,
     const PageConnection& connection,
     bool cross_origin_isolated,
+    const PermissionsPolicyHeaders& policy_headers,
     const std::optional<std::u16string>& xml_content_type) {
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);
@@ -1567,7 +1569,12 @@ Document& PageFrame::CommitDocument(
   document->SetOrigin(origin);
   document->SetSandboxFlags(sandbox);
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
-  InheritPermissionsPolicy(*document, provisional_container_policy_);
+  std::vector<PolicyMessage> policy_messages;
+  ApplyPermissionsPolicy(
+      *document, provisional_container_policy_,
+      ParsePolicyHeaders(policy_headers, origin,
+                         bindings::PerIsolateData::From(isolate)->features(),
+                         policy_messages));
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);
@@ -1581,6 +1588,11 @@ Document& PageFrame::CommitDocument(
   if (!parent_) {
     ClearPolicyMessages();
   }
+  for (PolicyMessage& message : policy_messages) {
+    window_->AddConsoleMessage(
+        message.is_error ? ConsoleLevel::kError : ConsoleLevel::kWarning,
+        std::move(message.text));
+  }
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
   // The reused window's CookieStore listens as its new document.
@@ -1590,14 +1602,15 @@ Document& PageFrame::CommitDocument(
   return *document;
 }
 
-ContainerPolicy PageFrame::PendingContainerPolicy() const {
+ParsedPolicy PageFrame::PendingContainerPolicy() const {
   const HTMLFrameOwnerElement* const owner = owner_.Get();
-  return owner ? owner->GetContainerPolicy() : ContainerPolicy();
+  return owner ? owner->GetContainerPolicy() : ParsedPolicy();
 }
 
-void PageFrame::InheritPermissionsPolicy(Document& document,
-                                         ContainerPolicy container_policy) {
-  if (!parent_) {
+void PageFrame::ApplyPermissionsPolicy(Document& document,
+                                       ParsedPolicy container_policy,
+                                       ParsedPolicy declared) {
+  if (!parent_ && declared.empty()) {
     return;
   }
   // SecurityContextInit::ApplyPermissionsPolicy(): a sandboxed frame has it
@@ -1609,9 +1622,9 @@ void PageFrame::InheritPermissionsPolicy(Document& document,
               bindings::RuntimeFeature::kBlockingFocusWithoutUserActivation)) {
     DisallowIfNotPresent("focus-without-user-activation", container_policy);
   }
-  document.InheritPermissionsPolicy(
-      parent_->window_->GetDocument(), container_policy,
-      runner_->start().features.deprecated_unload);
+  document.ApplyPermissionsPolicy(
+      parent_ ? &parent_->window_->GetDocument() : nullptr, container_policy,
+      runner_->start().features.deprecated_unload, std::move(declared));
 }
 
 // DocumentLoader::WarnIfSandboxIneffective().

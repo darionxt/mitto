@@ -69,6 +69,10 @@ void DocumentLoader::OnIsolation(PageCrossOriginIsolation isolation) {
   cross_origin_isolated_ = isolation != PageCrossOriginIsolation::kNone;
 }
 
+void DocumentLoader::OnPermissionsPolicy(PermissionsPolicyHeaders headers) {
+  policy_headers_ = std::move(headers);
+}
+
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   const v8::Context::Scope context_scope(frame_->context());
   response_started_ = true;
@@ -101,7 +105,7 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   Document* const document = frame_->CommitNavigation(
       *this, url_,
       base::TimeTicks() + base::Microseconds(response.navigation_start),
-      response.connection, cross_origin_isolated_,
+      response.connection, cross_origin_isolated_, policy_headers_,
       xml ? std::optional<std::u16string>(base::ASCIIToUTF16(mime_type))
           : std::nullopt);
   // The frame went as its old document unloaded, and this goes from a later

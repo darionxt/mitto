@@ -31,6 +31,7 @@
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
 #include "mitto/page_storage_buckets.h"
+#include "mitto/policy_allowlist.h"
 #include "mitto/request_client.h"
 #include "mitto/request_options.h"
 #include "mitto/storage/storage_key.h"
@@ -363,6 +364,9 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
+    // What the headers of a document's response say of its permissions policy,
+    // which PermissionsPolicyHeaders::Allows() answers.
+    PermissionsPolicyHeaders policy_headers;
     // The URL whose cookies a document's cookie calls read and write, as
     // Blink's Document::CookieURL(): for a frame's about:blank or srcdoc its
     // creator's or its initiator's, and empty for a document's own URL, as
@@ -661,6 +665,7 @@ class PageHost final : public PageChannel::Delegate {
     GURL url;
     uint64_t parent = kNoDocument;
     uint64_t target = kNoDocument;
+    PermissionsPolicyHeaders policy_headers;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
   // The navigations of frames to about:blank that have started and not
@@ -697,6 +702,7 @@ class PageHost final : public PageChannel::Delegate {
     // traversal to its document repeats.
     FetchParams fetch;
     std::string referrer;
+    PermissionsPolicyHeaders policy_headers;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
   // What the library kept of the navigation that made each document that an

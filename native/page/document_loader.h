@@ -79,6 +79,7 @@ class DocumentLoader final : public PageRequests::Client,
 
   // PageRequests::Client, for the navigation:
   void OnIsolation(PageCrossOriginIsolation isolation) override;
+  void OnPermissionsPolicy(PermissionsPolicyHeaders headers) override;
   void OnResponseStarted(const PageResponseStarted& response) override;
   void OnResponseBody(std::string bytes) override;
   void OnResponseTotals(const PageResponseEnded& ended) override;
@@ -113,6 +114,7 @@ class DocumentLoader final : public PageRequests::Client,
   // its window's agent is, as Blink's agent cluster key from the browser
   // says.
   bool cross_origin_isolated_ = false;
+  PermissionsPolicyHeaders policy_headers_;
 
   GURL url_;
   cppgc::Persistent<Document> document_;

@@ -1,14 +1,10 @@
 #include "mitto/dom/permissions_policy_state.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/check.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/string_split.h"
-#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "url/gurl.h"
-#include "url/url_util.h"
 
 namespace mitto {
 
@@ -20,107 +16,71 @@ size_t IndexOf(const PolicyFeature& feature) {
   return static_cast<size_t>(&feature - PolicyFeatures().data());
 }
 
-// ParseScheme().
-bool IsScheme(std::string_view text) {
-  return !text.empty() && base::IsAsciiAlpha(text[0]) &&
-         std::ranges::all_of(text, [](char c) {
-           return base::IsAsciiAlphaNumeric(c) || c == '+' || c == '-' ||
-                  c == '.';
-         });
-}
-
-// ParseHost(), where only a trailing dot leaves an empty label.
-bool IsHost(std::string_view text) {
-  const std::vector<std::string_view> labels = base::SplitStringPiece(
-      text, ".", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
-  for (size_t i = 0; i < labels.size(); ++i) {
-    if ((labels[i].empty() && i + 1 < labels.size()) ||
-        !std::ranges::all_of(labels[i], [](char c) {
-          return base::IsAsciiAlphaNumeric(c) || c == '-';
-        })) {
-      return false;
+// CreateAllowlistsAndReportingEndpoints(): local-network-access says what it
+// says of the two that it names too, but of one that is declared before it.
+ParsedPolicy WithLocalNetworks(ParsedPolicy policy) {
+  ParsedPolicy result;
+  const auto add = [&](const PolicyFeature& feature,
+                       const PolicyAllowlist& allowlist) {
+    if (!FindDeclared(result, feature)) {
+      result.emplace_back(feature, allowlist);
+    }
+  };
+  for (const PolicyDeclaration& declaration : policy) {
+    add(*declaration.feature, declaration.allowlist);
+    if (declaration.feature->name == "local-network-access") {
+      add(PolicyFeatureNamed("local-network"), declaration.allowlist);
+      add(PolicyFeatureNamed("loopback-network"), declaration.allowlist);
     }
   }
-  return !text.empty();
+  return result;
 }
 
 }  // namespace
 
-// static
-std::optional<PolicyOrigin> PolicyOrigin::Parse(std::string_view text) {
-  const size_t scheme_end = text.find_first_of(":/");
-  if (scheme_end == std::string_view::npos ||
-      !text.substr(scheme_end).starts_with("://") ||
-      !IsScheme(text.substr(0, scheme_end))) {
-    return std::nullopt;
-  }
-  PolicyOrigin origin;
-  origin.scheme = base::ToLowerASCII(text.substr(0, scheme_end));
-  text = text.substr(scheme_end + 3);
-  const size_t host_end = text.find_first_of(":/");
-  if (!IsHost(text.substr(0, host_end))) {
-    return std::nullopt;
-  }
-  origin.host = base::ToLowerASCII(text.substr(0, host_end));
-  // The path that may follow the port says nothing of the origin.
-  if (host_end != std::string_view::npos && text[host_end] == ':') {
-    const std::string_view after = text.substr(host_end + 1);
-    const std::string_view port = after.substr(0, after.find('/'));
-    if (port.empty() || !std::ranges::all_of(port, &base::IsAsciiDigit<char>) ||
-        !base::StringToInt(port, &origin.port)) {
-      return std::nullopt;
-    }
-  }
-  return origin;
-}
+PolicyDeclaration::PolicyDeclaration(const PolicyFeature& feature,
+                                     PolicyAllowlist allowlist)
+    : feature(feature), allowlist(std::move(allowlist)) {}
+PolicyDeclaration::PolicyDeclaration(const PolicyDeclaration&) = default;
+PolicyDeclaration::PolicyDeclaration(PolicyDeclaration&&) = default;
+PolicyDeclaration& PolicyDeclaration::operator=(const PolicyDeclaration&) =
+    default;
+PolicyDeclaration& PolicyDeclaration::operator=(PolicyDeclaration&&) = default;
+PolicyDeclaration::~PolicyDeclaration() = default;
 
-bool PolicyOrigin::Matches(const url::Origin& origin) const {
-  const GURL url = origin.GetURL();
-  if (scheme != url.GetScheme() ||
-      host != (url.IsStandard() ? url.GetHost() : std::string())) {
-    return false;
-  }
-  // SourceAllowPort().
-  const int default_port = url::DefaultPortForScheme(scheme);
-  const int url_port = url.EffectiveIntPort();
-  return port == url_port ||
-         (port == url::PORT_UNSPECIFIED && default_port == url_port) ||
-         (url_port == url::PORT_UNSPECIFIED && port == default_port);
-}
-
-bool PolicyDeclaration::Contains(const url::Origin& origin) const {
-  if (all_origins || origin == self || (opaque_source && origin.opaque())) {
-    return true;
-  }
-  return !origin.opaque() &&
-         std::ranges::any_of(origins, [&](const PolicyOrigin& allowed) {
-           return allowed.Matches(origin);
-         });
+const PolicyAllowlist* FindDeclared(const ParsedPolicy& policy,
+                                    const PolicyFeature& feature) {
+  const auto found =
+      std::ranges::find_if(policy, [&](const PolicyDeclaration& declaration) {
+        return &*declaration.feature == &feature;
+      });
+  return found == policy.end() ? nullptr : &found->allowlist;
 }
 
 PermissionsPolicyState::PermissionsPolicyState(
     const PermissionsPolicyState* parent,
-    const ContainerPolicy& container_policy,
+    const ParsedPolicy& container_policy,
     const url::Origin& origin,
-    bool unload_deprecated)
-    : origin_(origin), unload_deprecated_(unload_deprecated) {
+    bool unload_deprecated,
+    ParsedPolicy declared)
+    : origin_(origin),
+      unload_deprecated_(unload_deprecated),
+      declared_(WithLocalNetworks(std::move(declared))) {
   const base::span<const PolicyFeature> features = PolicyFeatures();
   CHECK_LE(features.size(), kMaxFeatures);
   for (const PolicyFeature& feature : features) {
-    // InheritedValueForFeature(), where a policy that declares nothing gives
-    // each origin what it inherits, but what is for none.
-    bool inherited =
-        !parent || (parent->Inherits(feature) && !IsForNone(feature));
-    if (parent && inherited) {
-      const auto declared = std::ranges::find_if(
-          container_policy, [&](const PolicyDeclaration& declaration) {
-            return &*declaration.feature == &feature;
-          });
-      inherited = declared != container_policy.end()
-                      ? declared->Contains(origin)
-                      : feature.default_allowlist ==
-                                PolicyFeature::Default::kEnableForAll ||
-                            origin.IsSameOriginWith(parent->origin_);
+    // InheritedValueForFeature().
+    bool inherited = true;
+    if (parent) {
+      const PolicyAllowlist* const container =
+          FindDeclared(container_policy, feature);
+      inherited =
+          parent->HasValueFor(feature, parent->origin_, IsForNone(feature)) &&
+          parent->HasValueFor(feature, origin, IsForNone(feature)) &&
+          (container ? container->Contains(origin)
+                     : feature.default_allowlist ==
+                               PolicyFeature::Default::kEnableForAll ||
+                           origin.IsSameOriginWith(parent->origin_));
     }
     if (inherited) {
       inherited_.set(IndexOf(feature));
@@ -133,16 +93,52 @@ PermissionsPolicyState::PermissionsPolicyState(
   }
 }
 
+PermissionsPolicyState::~PermissionsPolicyState() = default;
+
 bool PermissionsPolicyState::IsEnabledFor(const PolicyFeature& feature,
                                           const url::Origin& origin) const {
-  return Inherits(feature) && !IsForNone(feature) &&
+  if (!Inherits(feature)) {
+    return false;
+  }
+  if (const PolicyAllowlist* const declared =
+          FindDeclared(declared_, feature)) {
+    return declared->Contains(origin);
+  }
+  return !IsForNone(feature) &&
          (feature.default_allowlist == PolicyFeature::Default::kEnableForAll ||
           origin_.IsSameOriginWith(origin));
 }
 
+bool PermissionsPolicyState::HasValueFor(const PolicyFeature& feature,
+                                         const url::Origin& origin,
+                                         bool is_for_none) const {
+  if (!Inherits(feature)) {
+    return false;
+  }
+  const PolicyAllowlist* const declared = FindDeclared(declared_, feature);
+  return declared ? declared->Contains(origin) : !is_for_none;
+}
+
 std::vector<std::u16string> PermissionsPolicyState::AllowlistFor(
     const PolicyFeature& feature) const {
-  if (!Inherits(feature) || IsForNone(feature)) {
+  if (!Inherits(feature)) {
+    return {};
+  }
+  if (const PolicyAllowlist* const declared =
+          FindDeclared(declared_, feature)) {
+    if (declared->all_origins && declared->origins.empty()) {
+      return {u"*"};
+    }
+    std::vector<std::u16string> origins;
+    if (declared->self) {
+      origins.push_back(base::UTF8ToUTF16(declared->self->Serialize()));
+    }
+    for (const PolicyOrigin& origin : declared->origins) {
+      origins.push_back(base::UTF8ToUTF16(origin.Serialize()));
+    }
+    return origins;
+  }
+  if (IsForNone(feature)) {
     return {};
   }
   if (feature.default_allowlist == PolicyFeature::Default::kEnableForAll) {
@@ -150,11 +146,12 @@ std::vector<std::u16string> PermissionsPolicyState::AllowlistFor(
   }
   // OriginWithPossibleWildcards::FromOrigin() has none of an opaque origin, or
   // of one that a source cannot say, as of an IPv6 address.
-  const std::string origin = origin_.Serialize();
-  if (origin_.opaque() || !PolicyOrigin::Parse(origin)) {
+  const std::optional<PolicyOrigin> origin =
+      PolicyOrigin::Parse(origin_.Serialize(), /*with_wildcards=*/true);
+  if (!origin) {
     return {};
   }
-  return {base::UTF8ToUTF16(origin)};
+  return {base::UTF8ToUTF16(origin->Serialize())};
 }
 
 bool PermissionsPolicyState::IsForNone(const PolicyFeature& feature) const {

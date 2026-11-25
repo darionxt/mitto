@@ -452,6 +452,24 @@ void PageRequests::OnIsolation(const PageIsolation& isolation) {
   }
 }
 
+void PageRequests::OnPermissionsPolicy(PagePermissionsPolicy policy) {
+  Open* const open = Find(policy.navigation, "a permissions policy");
+  if (!open) {
+    return;
+  }
+  if (!open->navigation || open->started || open->policy_said) {
+    refuse_.Run(base::StrCat(
+        {"a permissions policy of request ",
+         base::NumberToString(policy.navigation),
+         ", which is not a navigation whose response has yet to start"}));
+    return;
+  }
+  open->policy_said = true;
+  if (open->client) {
+    open->client->OnPermissionsPolicy(std::move(policy.headers));
+  }
+}
+
 void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
   Open* const open = Find(response.number, "a response");
   if (!open) {

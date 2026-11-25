@@ -49,9 +49,7 @@ class HTMLFrameOwnerElement : public HTMLElement {
   SandboxFlags GetSandboxFlags() const { return sandbox_flags_; }
   // What it lets a document that its frame navigates to inherit of its own
   // document's permissions policy, which an iframe's allow says.
-  const ContainerPolicy& GetContainerPolicy() const {
-    return container_policy_;
-  }
+  const ParsedPolicy& GetContainerPolicy() const { return container_policy_; }
   // iframe.featurePolicy.
   PermissionsPolicy* FeaturePolicy();
   // The frame goes, as its documents have unloaded: the element holds none.
@@ -108,7 +106,7 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // The name the frame gets when the element makes it: its name, or its ID.
   std::u16string frame_name_;
   SandboxFlags sandbox_flags_ = SandboxFlags::kNone;
-  ContainerPolicy container_policy_;
+  ParsedPolicy container_policy_;
   // An iframe's featurePolicy.
   cppgc::Member<PermissionsPolicy> feature_policy_;
 };

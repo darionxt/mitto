@@ -22,6 +22,7 @@
 #include "base/types/expected.h"
 #include "mitto/cache_storage_messages.h"
 #include "mitto/indexed_db_messages.h"
+#include "mitto/policy_allowlist.h"
 #include "mitto/storage_bucket_messages.h"
 
 namespace base {
@@ -33,7 +34,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 35;
+inline constexpr uint32_t kPageProtocolVersion = 36;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -268,6 +269,10 @@ enum class PageMessage : uint32_t {
   // To the Page: how much more of the body of a request whose body streams
   // the Session takes, as PageCredit says, once //net has taken as much.
   kRequestBodyCredit = 162,
+  // To the Page: what the Permissions-Policy and Feature-Policy headers of a
+  // navigation's response say, as PagePermissionsPolicy says, just before the
+  // response starts, for a response that has any.
+  kPermissionsPolicy = 251,
   // To the Session: the ID of the frame's document that a traversal of the
   // session history leaves, and the navigation that repeats the navigation of
   // a document that the entry holds, as PageTraversalRequest says.
@@ -737,6 +742,17 @@ enum class PageCrossOriginIsolation : uint8_t {
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
+};
+
+// What the headers of the response of navigation `navigation` say of its
+// document's permissions policy, kNavigationRequest for the navigation that
+// opened the Page. Its payload is the number, and Feature-Policy's node and
+// Permissions-Policy's: the messages, each a byte that is 1 for an error and
+// its text, and the entries, each its feature and its tokens, with how many
+// there are before each list, a 32-bit number, as a text's size is.
+struct PagePermissionsPolicy {
+  uint64_t navigation = kNavigationRequest;
+  PermissionsPolicyHeaders headers;
 };
 
 // A traversal of the session history to an entry of another document, which
@@ -1291,6 +1307,8 @@ struct FrameFromSession {
   PageCredit request_body_credit;
   // kIsolation.
   PageIsolation isolation;
+  // kPermissionsPolicy.
+  PagePermissionsPolicy permissions_policy;
   // kStorageEntries.
   PageStorageEntries storage_entries;
   // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
@@ -1333,6 +1351,7 @@ std::string EncodeRequestBodyPart(const PageRequestBodyPart& part);
 std::string EncodeRequestBodyEnded(const PageRequestBodyEnded& ended);
 std::string EncodeRequestBodyCredit(const PageCredit& credit);
 std::string EncodeIsolation(const PageIsolation& isolation);
+std::string EncodePermissionsPolicy(const PagePermissionsPolicy& policy);
 std::string EncodeGetCookies(uint64_t document, uint64_t question);
 // `line` is at most kMaxCookieLineSize bytes.
 std::string EncodeSetCookie(uint64_t document, std::string_view line);

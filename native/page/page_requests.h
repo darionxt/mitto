@@ -54,6 +54,10 @@ class PageRequests {
     // For a navigation: whether the document of its response is cross-origin
     // isolated, which the Session says just before the response starts.
     virtual void OnIsolation(PageCrossOriginIsolation isolation) {}
+    // For a navigation: what its response's headers say of its document's
+    // permissions policy, which the Session says just before the response
+    // starts.
+    virtual void OnPermissionsPolicy(PermissionsPolicyHeaders headers) {}
 
    protected:
     virtual ~Client() = default;
@@ -156,6 +160,7 @@ class PageRequests {
   void OnResponseEnded(const PageResponseEnded& ended);
   void OnRequestBodyCredit(const PageCredit& credit);
   void OnIsolation(const PageIsolation& isolation);
+  void OnPermissionsPolicy(PagePermissionsPolicy policy);
 
  private:
   // What the entry of a request of the Page's is made of: ResourceFetcher's
@@ -209,6 +214,7 @@ class PageRequests {
     // has said whether its document is cross-origin isolated.
     bool navigation = false;
     bool isolation_said = false;
+    bool policy_said = false;
   };
 
   // Returns the request that the Session names, or null after refusing what

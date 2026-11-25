@@ -28,6 +28,7 @@
 #include "mitto/mitto.h"
 #include "mitto/page_cache_storage.h"
 #include "mitto/page_indexed_db.h"
+#include "mitto/permissions_policy_header.h"
 #include "mitto/preconnect_manager.h"
 #include "mitto/ready_requests.h"
 #include "mitto/sec_header_helpers.h"
@@ -1899,6 +1900,25 @@ void PageHost::StartResponse(Request& request, const RequestEvent& event) {
     script->second.url = GURL(event.url);
     script->second.coep = EmbedderPolicyOf(PolicyHeadersOf(event.headers));
   }
+  if (request.is_navigation()) {
+    // What its document's headers declare, which its context keeps too.
+    PagePermissionsPolicy policy;
+    policy.navigation = request.number();
+    policy.headers = ParsePermissionsPolicyHeaders(
+        HeaderValue(event.headers, "Feature-Policy"),
+        HeaderValue(event.headers, "Permissions-Policy"));
+    if (channel_ && !policy.headers.empty()) {
+      channel_->Send(EncodePermissionsPolicy(policy));
+    }
+    if (const auto found = navigation_responses_.find(request.number());
+        found != navigation_responses_.end()) {
+      found->second.policy_headers = std::move(policy.headers);
+    } else if (const auto frame =
+                   frame_navigation_responses_.find(request.number());
+               frame != frame_navigation_responses_.end()) {
+      frame->second.policy_headers = std::move(policy.headers);
+    }
+  }
   if (channel_ && policies) {
     // The document's agent cluster, which Chrome's browser commits it with.
     PageIsolation isolation;
@@ -2893,6 +2913,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         record->referrer = std::move(found->second.referrer);
         context.url = std::move(found->second.url);
         context.coep = found->second.coep;
+        context.policy_headers = std::move(found->second.policy_headers);
         navigated_status = found->second.status;
         coop_ignored = found->second.coop_ignored;
         navigation_responses_.erase(found);
@@ -2911,6 +2932,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           return;
         }
         context.url = std::move(found->second.url);
+        context.policy_headers = std::move(found->second.policy_headers);
         replaced = found->second.target;
         frame_navigation_responses_.erase(found);
       }
@@ -3772,6 +3794,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kIndexedDbCallback:
     case PageMessage::kStorageBucketsAnswer:
     case PageMessage::kRequestBodyCredit:
+    case PageMessage::kPermissionsPolicy:
     case PageMessage::kIsolation:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
