@@ -368,8 +368,11 @@ def test_large_scripts_and_results_that_wait_in_the_channel_come_whole(page: Pag
     # Each is many times what the system takes of the channel at once, so it goes in parts, behind those before it.
     texts = [f"{letter}{letter.upper() * (6 << 20)}{letter}" for letter in "abcd"]
 
+    def echo(text: str) -> Any:
+        return page.evaluate(json.dumps(text))
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(texts)) as executor:
-        assert list(executor.map(lambda text: page.evaluate(json.dumps(text)), texts)) == texts
+        assert list(executor.map(echo, texts)) == texts
 
 
 def test_a_page_keeps_what_its_scripts_write_to_the_console(page: Page) -> None:
