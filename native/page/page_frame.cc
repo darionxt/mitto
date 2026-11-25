@@ -646,6 +646,14 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       return;
     }
   }
+  if (parent_ && request.url.IsAboutSrcdoc() && !MayShowSrcdoc(request)) {
+    // It fails with ERR_INVALID_URL.
+    StopAllLoaders();
+    provisional_sandbox_ = PendingSandboxFlags();
+    provisional_container_policy_ = PendingContainerPolicy();
+    CommitErrorPageSoon();
+    return;
+  }
   if (parent_ && (request.url.IsAboutSrcdoc() || request.url.IsAboutBlank())) {
     // A srcdoc or an about:blank goes through Chrome's browser and commits
     // from a later task, with the srcdoc that an iframe has now.
@@ -783,6 +791,14 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   // its number once the request has it.
   provisional_->SetNumber(runner_->requests().StartNavigation(
       request.initiator, std::move(page_request), *provisional_));
+}
+
+bool PageFrame::MayShowSrcdoc(const NavigationRequest& request) const {
+  const Document& document = window_->GetDocument();
+  return request.initiator_origin ==
+             parent_->window_->GetDocument().GetOrigin() ||
+         (GURL(document.UrlForBinding()).IsAboutSrcdoc() &&
+          request.initiator_origin.IsSameOriginWith(document.GetOrigin()));
 }
 
 bool PageFrame::IsSelfReferential(const GURL& url) const {

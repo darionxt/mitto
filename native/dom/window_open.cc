@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 
@@ -37,6 +38,13 @@ struct WindowFeatures {
   bool noopener = false;
   bool noreferrer = false;
 };
+
+// Blink's unicode::IsSpaceOrNewline().
+bool IsSpaceOrNewline(char16_t c) {
+  return (c >= 0x09 && c <= 0x0d) || c == 0x20 || c == 0x1680 ||
+         (c >= 0x2000 && c <= 0x200a) || c == 0x2028 || c == 0x205f ||
+         c == 0x3000;
+}
 
 WindowFeatures ParseWindowFeatures(const std::u16string& features) {
   WindowFeatures result;
@@ -72,15 +80,20 @@ WindowFeatures ParseWindowFeatures(const std::u16string& features) {
       }
       value = std::string_view(buffer).substr(value_begin, i - value_begin);
     }
-    // Blink's loose StringToInt(): the number that starts the value, or 0 for
-    // none or one too large.
+    // Blink's loose StringToInt(): the number that starts the value, past any
+    // white space, or 0 for none or one too large.
+    std::u16string digits = base::UTF8ToUTF16(value);
+    digits.erase(
+        0, std::ranges::find_if_not(digits, IsSpaceOrNewline) - digits.begin());
     size_t number_end =
-        value.starts_with('-') || value.starts_with('+') ? 1 : 0;
-    while (number_end < value.size() && base::IsAsciiDigit(value[number_end])) {
+        digits.starts_with(u'-') || digits.starts_with(u'+') ? 1 : 0;
+    while (number_end < digits.size() &&
+           base::IsAsciiDigit(digits[number_end])) {
       ++number_end;
     }
+    digits.resize(number_end);
     int number = 0;
-    if (!base::StringToInt(value.substr(0, number_end), &number)) {
+    if (!base::StringToInt(digits, &number)) {
       number = 0;
     }
     const bool set =

@@ -16,11 +16,16 @@
 namespace mitto {
 
 class Frame;
+class Window;
 
 // LocalFrame::CanNavigate(): whether the document of `source` may navigate
 // `target` to `url`, and if not, its console says why. A Page has no user
 // activation, so nothing that takes one may.
 bool CanNavigate(Frame& source, Frame& target, const GURL& url);
+
+// SecurityOrigin::CanDisplay(): whether the document of `window` may show
+// `url`, and if not, its console says why: no blob: URL of another origin.
+bool CanDisplay(Window& window, const GURL& url);
 
 // FrameTree::FindOrCreateFrameForNavigation(): the frame that `name` names for
 // a navigation of `source` to `url`, or null for one that it may not navigate,

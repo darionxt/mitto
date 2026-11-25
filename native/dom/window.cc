@@ -314,23 +314,29 @@ v8::Local<v8::Value> Window::OpenerForBindings() const {
                 : v8::Local<v8::Value>(v8::Null(isolate));
 }
 
-// DOMWindow::setOpenerForBindings(): null disowns the opener, and any other
-// value shadows the attribute with a data property of the window.
+// DOMWindow::setOpenerForBindings(): any value shadows the attribute with a
+// data property of the window, and null disowns the opener.
 void Window::SetOpenerForBindings(v8::Local<v8::Value> opener,
                                   bindings::ExceptionState& exception_state) {
-  if (opener->IsNull()) {
-    if (frame_) {
-      frame_->SetOpener(nullptr);
-    }
+  if (!frame_) {
     return;
+  }
+  if (opener->IsNull()) {
+    frame_->SetOpener(nullptr);
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   v8::PropertyDescriptor descriptor(opener, /*writable=*/true);
   descriptor.set_enumerable(true);
   descriptor.set_configurable(true);
-  std::ignore = ToV8(isolate)->DefineProperty(
-      isolate->GetCurrentContext(),
-      v8::String::NewFromUtf8Literal(isolate, "opener"), descriptor);
+  bool defined = false;
+  if (ToV8(isolate)
+          ->DefineProperty(isolate->GetCurrentContext(),
+                           v8::String::NewFromUtf8Literal(isolate, "opener"),
+                           descriptor)
+          .To(&defined) &&
+      !defined) {
+    exception_state.ThrowTypeError("Cannot redefine the property.");
+  }
 }
 
 // The serialized origin of the window's document, "null" for an opaque one, as

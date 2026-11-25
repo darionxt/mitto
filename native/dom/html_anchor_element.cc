@@ -160,18 +160,17 @@ void HTMLAnchorElementBase::NavigateToHyperlink(const GURL& url) {
   if (!window) {
     return;
   }
-  // GetEffectiveTarget(): the target attribute, else the document's base
-  // target, which FindFrameForNavigation() looks for, and a new window with a
-  // target that may hold markup left open. Any name of no frame, _blank among
-  // them, opens a new window, which Chrome's pop-up blocker refuses to a click
-  // that the user did not make, and then nothing navigates. The Page program's
-  // own window has no frame, and names itself alone.
+  // GetEffectiveTarget(): the target attribute, else, or for an empty one, the
+  // document's base target, which FindFrameForNavigation() looks for, and a new
+  // window with a target that may hold markup left open. Any name of no frame,
+  // _blank among them, opens a new window, which Chrome's pop-up blocker
+  // refuses to a click that the user did not make, and then nothing navigates.
+  // The Page program's own window has no frame, and names itself alone.
   const std::u16string* const attribute = FindAttribute(u"target");
+  const bool named = attribute && !attribute->empty();
   const std::u16string* const base =
-      attribute ? nullptr : BaseTarget(GetDocument());
-  std::u16string target = attribute ? *attribute
-                          : base    ? *base
-                                    : std::u16string();
+      named ? nullptr : BaseTarget(GetDocument());
+  std::u16string target = named ? *attribute : base ? *base : std::u16string();
   if (target.find_first_of(u"\n\r\t") != std::u16string::npos &&
       target.find(u'<') != std::u16string::npos) {
     target = u"_blank";

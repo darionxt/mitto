@@ -8,6 +8,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/pending_script.h"
@@ -178,6 +179,18 @@ bool CanNavigate(Frame& source, Frame& target, const GURL& url) {
       "gesture. See https://www.chromestatus.com/feature/5851021045661696.");
 }
 
+bool CanDisplay(Window& window, const GURL& url) {
+  if (!url.SchemeIsBlob() ||
+      BlobUrlRegistry::Get().OriginOf(url).IsSameOriginWith(
+          window.GetSecurityOrigin())) {
+    return true;
+  }
+  window.AddConsoleMessage(
+      ConsoleLevel::kError,
+      base::StrCat({"Not allowed to load local resource: ", ElidedUrl(url)}));
+  return false;
+}
+
 Frame* FindFrameForNavigation(Frame& source,
                               std::u16string_view name,
                               const GURL& url) {
@@ -186,8 +199,9 @@ Frame* FindFrameForNavigation(Frame& source,
   }
   // CreateNewWindow().
   Window& window = *source.DomWindow();
-  if (window.GetDocument().IsSandboxed(SandboxFlags::kPopups) &&
-      !window.GetDocument().PageDismissalEventBeingDispatched()) {
+  if (!window.GetDocument().PageDismissalEventBeingDispatched() &&
+      CanDisplay(window, url) &&
+      window.GetDocument().IsSandboxed(SandboxFlags::kPopups)) {
     window.AddConsoleMessage(
         ConsoleLevel::kError,
         base::StrCat({"Blocked opening '", ElidedUrl(url),

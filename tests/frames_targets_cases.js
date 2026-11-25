@@ -20,7 +20,7 @@ const ACTS = {
   'child.location': 'frames.child.location = T', 'child.location other': 'frames.child.location = O', 'own location': 'location = T',
   'open _top': 'open(T, "_top")', 'open _top other': 'open(O, "_top")', 'open _parent': 'open(T, "_parent")', 'open _self': 'open(T, "_self")', 'open sibling': 'open(T, "sibling")', 'open foreign': 'open(T, "foreign")', 'open child': 'open(T, "child")', 'open new': 'open(T, "unknown")', 'open _blank': 'open(T, "_blank")', 'open nothing sibling': 'open("", "sibling")', 'open sibling noopener': 'open(T, "sibling", "noopener")', 'open SIBLING': 'open(T, "SIBLING")', 'open _TOP': 'open(T, "_TOP")', 'open sibling noreferrer': 'open(T, "sibling", "popup=1, NOREFERRER")', 'open sibling noopener=0': 'open(T, "sibling", "noopener=0")', 'open _top noopener': 'open(T, "_top", "noopener")', 'open nothing _top': 'open("", "_top")',
   'open own name': 'open(T, name)', 'open empty': 'open(T, "")', 'open invalid': 'open("http://[", "sibling")', 'child.open _self': 'frames.child.open(T, "_self")', 'child.open _parent': 'frames.child.open(T, "_parent")', 'child.open sibling': 'frames.child.open(T, "sibling")', 'open sibling hash': 'open(A + "/plain#x", "sibling")', 'open sibling javascript': 'open("javascript:parent.postMessage(String(1), String.fromCharCode(42))", "sibling")', 'open foreign javascript': 'open("javascript:void(0)", "foreign")',
-  'link _top': 'link("_top", T)', 'link _parent': 'link("_parent", T)', 'link sibling': 'link("sibling", T)', 'link foreign': 'link("foreign", T)', 'link child': 'link("child", T)', 'link new': 'link("unknown", T)', 'link base': 'link(null, T)', 'link _self': 'link("_self", T)', 'open child blob': 'open(URL.createObjectURL(new Blob([""])), "child")', 'open sibling too large': 'open(T, "sibling", "noreferrer=2147483648")', 'open sibling loose': 'open(T, "sibling", "noopener=1x")', 'open renamed': '(frames.child.name = "renamed", open(T, "renamed"))', 'opener': 'open("", "child").opener', 'opener disowned': '(open("", "child").opener = null, frames.child.opener)', 'opener shadowed': '(frames.child.opener = 5, frames.child.opener)', 'opener none': 'frames.child.opener', 'open child blob opaque': 'open("blob:null/00000000-0000-4000-8000-000000000000", "child")', 'open child blob revoked': 'open(((url) => (URL.revokeObjectURL(url), url))(URL.createObjectURL(new Blob([""]))), "child")',
+  'link _top': 'link("_top", T)', 'link _parent': 'link("_parent", T)', 'link sibling': 'link("sibling", T)', 'link foreign': 'link("foreign", T)', 'link child': 'link("child", T)', 'link new': 'link("unknown", T)', 'link base': 'link(null, T)', 'link _self': 'link("_self", T)', 'link empty base': 'link("", T, "", "sibling")', 'open _blank blob': 'open("blob:null/00000000-0000-4000-8000-000000000000", "_blank")', 'open child blob': 'open(URL.createObjectURL(new Blob([""])), "child")', 'open sibling too large': 'open(T, "sibling", "noreferrer=2147483648")', 'open sibling loose': 'open(T, "sibling", "noopener=1x")', 'open sibling loose tab': 'open(T, "sibling", "noreferrer=\\u000b1")', 'open sibling loose space': 'open(T, "sibling", "noreferrer=\\u20031")', 'open sibling loose no space': 'open(T, "sibling", "noreferrer=\\u00a01")', 'open renamed': '(frames.child.name = "renamed", open(T, "renamed"))', 'opener': 'open("", "child").opener', 'opener disowned': '(open("", "child").opener = null, frames.child.opener)', 'opener shadowed': '(frames.child.opener = 5, frames.child.opener)', 'opener none': 'frames.child.opener', 'opener disowned descriptor': '(frames.child.opener = null, "value" in Object.getOwnPropertyDescriptor(frames.child, "opener") ? null : top)', 'opener reopened': '(open("", "child").opener = null, open("", "child").opener)', 'opener gone': '((gone) => (gone.frameElement.remove(), gone.opener = 5, gone.opener))(open("", "child"))', 'opener fixed': '((child) => { "use strict"; Object.defineProperty(child, "opener", {configurable: false, set(value) {}}); child.opener = 5; })(frames.child)', 'opener frozen': '((child) => { "use strict"; const set = Object.getOwnPropertyDescriptor(child, "opener").set; Object.defineProperty(child, "opener", {value: 1, configurable: false, writable: false}); set.call(child, 5); })(frames.child)', 'open child blob opaque': 'open("blob:null/00000000-0000-4000-8000-000000000000", "child")', 'open child blob revoked': 'open(((url) => (URL.revokeObjectURL(url), url))(URL.createObjectURL(new Blob([""]))), "child")',
   'top.location removed': 'top.location = T; frameElement.remove()', 'sibling.location removed': 'top.frames.sibling.location = T; frameElement.remove()', 'link _top removed': 'link("_top", T); frameElement.remove()',
   'async orientation': 'screen.orientation.lock("any").then(() => "locked", told)', 'presentation': 'new PresentationRequest("https://a.example/") && "made"',
   'link noreferrer': 'link("sibling", T, "noreferrer")', 'link noopener': 'link("sibling", T, "noopener")', 'link newline': 'link("sib\\n<ling", T)', 'link SIBLING': 'link("SIBLING", T)', 'link _self noreferrer': 'link("_self", T, "noreferrer")',
@@ -54,17 +54,16 @@ const make = (attributes, name) => {
   document.body.append(element);
   return loaded.then(() => element);
 };
-const link = (target, url, rel) => {
+const link = (target, url, rel, baseTarget = target === null ? 'sibling' : null) => {
   const anchor = document.createElement('a');
   anchor.href = url;
   if (rel) anchor.rel = rel;
-  if (target === null) {
+  if (baseTarget) {
     const base = document.createElement('base');
-    base.target = 'sibling';
+    base.target = baseTarget;
     document.head.append(base);
-  } else {
-    anchor.target = target;
   }
+  if (target !== null) anchor.target = target;
   document.body.append(anchor);
   anchor.click();
 };

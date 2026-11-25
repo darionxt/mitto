@@ -260,6 +260,25 @@ def test_a_fragment_of_another_process_starts_again_where_the_url_has_changed() 
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_srcdoc_of_a_document_of_another_origin_is_chrome_s_error_page() -> None:
+    pages = {
+        "/top": "<body><script>said = []; onmessage = ({data}) => said.push(data);</script><iframe src='B/mid'></iframe>",
+        "/mid": """<body><script>
+            window.tell = (data) => postMessage.call(parent, data, '*');
+        </script><iframe name='deep' srcdoc='<script>parent.tell(`ran`)</script>'
+            onload="tell(`load ${this.contentDocument?.URL}`)"></iframe>""",
+    }
+    # As in Chrome 157: a fragment is within the document, whoever starts it, and another srcdoc only its parent's origin's.
+    with _page_of(pages, "/top") as (page, _):
+        _until(page, "said.length === 2")
+        for count, url in enumerate(("about:srcdoc#x", "about:srcdoc"), 3):
+            page.evaluate(f"open('{url}', 'deep'); 0", timeout=_TIMEOUT_SECONDS)
+            _until(page, f"said.length === {count}")
+        said = page.evaluate("said", timeout=_TIMEOUT_SECONDS)
+    assert said == ["ran", "load about:srcdoc", "load about:srcdoc#x", "load undefined"]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_page_keeps_itself_as_its_opener_until_a_navigation_adds_an_entry() -> None:
     with _page_of({}, "/own") as (page, _):
         page.evaluate("name = 'roof'; open('', 'roof'); 0", timeout=_TIMEOUT_SECONDS)

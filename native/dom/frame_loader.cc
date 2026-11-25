@@ -22,11 +22,11 @@
 #include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/v8_conversions.h"
-#include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/frame.h"
+#include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/history.h"
 #include "mitto/dom/history_item.h"
@@ -343,7 +343,7 @@ void CommitSameDocumentNavigation(Window& window,
 // document of another process, `origin_window`'s, started: `document` goes
 // there, if it is still the current window's. One whose URL has changed
 // meanwhile, so it is no fragment's any more, starts again, as the browser has
-// it.
+// it, unless the frame that started it has gone.
 void CommitFragmentFromBrowser(cppgc::WeakPersistent<Document> document,
                                cppgc::Persistent<Window> origin_window,
                                FrameLoadRequest request,
@@ -432,15 +432,8 @@ void StartNavigation(Window& window,
   if (!url.is_valid()) {
     return;
   }
-  // SecurityOrigin::CanDisplay(): no document shows a blob: URL that another
-  // origin's made.
-  Window& initiator = request.origin_window ? *request.origin_window : window;
-  if (url.SchemeIsBlob() &&
-      !BlobUrlRegistry::Get().OriginOf(url).IsSameOriginWith(
-          initiator.GetSecurityOrigin())) {
-    initiator.AddConsoleMessage(
-        ConsoleLevel::kError,
-        base::StrCat({"Not allowed to load local resource: ", Elided(url)}));
+  if (!CanDisplay(request.origin_window ? *request.origin_window : window,
+                  url)) {
     return;
   }
   // A top-level frame shows no data: URL that a page navigates it to, but one

@@ -310,6 +310,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // The about:blank or data: URL of type 72 that waited ends with no
   // document: the Session forgets what it took of the initiator for it.
   void EndLocalNavigation();
+  // NavigationRequest::CheckAboutSrcDoc(): whether `request`, for about:srcdoc,
+  // is of a document of the parent's origin, whose srcdoc it is, or of the
+  // frame's srcdoc document itself.
+  bool MayShowSrcdoc(const NavigationRequest& request) const;
   // Whether two of the frame's ancestors' documents are at `url`, but for the
   // fragment.
   bool IsSelfReferential(const GURL& url) const;
