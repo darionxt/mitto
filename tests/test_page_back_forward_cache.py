@@ -323,11 +323,24 @@ addEventListener('pageshow', e => {
     second = server.page("/b", "<title>B</title>")
 
     with _open_page(session, first) as page:
+        # The page's own first pagereveal comes with its first frame, which may come after the page has opened.
+        page.evaluate(
+            "new Promise(resolve => {"
+            " if (log.includes('pagereveal')) { resolve(0); }"
+            " else { addEventListener('pagereveal', () => resolve(0), {once: true}); } })",
+            timeout=TIMEOUT_SECONDS,
+        )
         page.evaluate("log.length = 0; window.marker = 1; location.href = '/b'; 0")
         assert _next_document(page).url == second
         page.evaluate("history.back()")
         assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
-        _wait(page, 300)
+        # What the page's frame and its cache storage say of themselves, whenever they do.
+        page.evaluate(
+            "new Promise(resolve => { const look = () =>"
+            " log.includes('raf') && log.some(entry => entry.startsWith('caches:'))"
+            " ? resolve(0) : setTimeout(look, 10); look(); })",
+            timeout=TIMEOUT_SECONDS,
+        )
         # The page's cache storage is its own again, and pagereveal comes in its first frame, before the frame's
         # callbacks, as Chrome enqueues it once the page shows.
         assert page.evaluate("[window.marker, log.filter(entry => entry != 'caches:0'), log.includes('caches:0')]") == [

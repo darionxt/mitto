@@ -8,8 +8,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/strings/string_util.h"
 #include "mitto/cors_preflight.h"
+#include "mitto/header_rules.h"
 #include "mitto/http_header_map.h"
 #include "mitto/sec_header_helpers.h"
 #include "net/base/is_potentially_trustworthy.h"
@@ -91,12 +93,26 @@ bool IsInHTTPHeaderMap(std::string_view name, bool origin_in_map) {
 }
 
 // Puts what Blink holds in its HTTPHeaderMap in the order the map gives it,
-// ahead of everything else, which keeps its order.
-void SortAsHTTPHeaderMap(net::URLRequest& request, bool origin_in_map) {
+// ahead of everything else, which keeps its order: the headers of
+// `script_headers`, which come with the request, and what Blink adds.
+void SortAsHTTPHeaderMap(net::URLRequest& request,
+                         bool origin_in_map,
+                         base::span<const std::string> script_headers) {
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   std::vector<std::string_view> names;
+  const auto is_in_map = [&names](std::string_view name) {
+    return std::ranges::any_of(names, [name](std::string_view held) {
+      return base::EqualsCaseInsensitiveASCII(held, name);
+    });
+  };
+  for (const std::string& name : script_headers) {
+    if (headers.HasHeader(name)) {
+      names.push_back(name);
+    }
+  }
   for (std::string_view listed : kHTTPHeaderMapInsertionOrder) {
-    if (headers.HasHeader(listed) && IsInHTTPHeaderMap(listed, origin_in_map)) {
+    if (headers.HasHeader(listed) && IsInHTTPHeaderMap(listed, origin_in_map) &&
+        !is_in_map(listed)) {
       names.push_back(listed);
     }
   }
@@ -112,7 +128,7 @@ void SortAsHTTPHeaderMap(net::URLRequest& request, bool origin_in_map) {
   }
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
        headers.GetHeaderVector()) {
-    if (!IsInHTTPHeaderMap(header.key, origin_in_map)) {
+    if (!is_in_map(header.key)) {
       sorted.SetHeader(header.key, header.value);
     }
   }
@@ -297,10 +313,15 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
   // A Persona's lines are all there, to hold their places, so this removes
   // those that this request should not have.
   bool added_a_hint_that_is_not_sent_by_default = false;
+  bool has_a_hint_of_the_caller = false;
   const net::HttpRequestHeaders::HeaderVector headers =
       request.extra_request_headers().GetHeaderVector();
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header : headers) {
-    if (!IsClientHintHeader(header.key) || IsFixed(header.key)) {
+    if (!IsClientHintHeader(header.key)) {
+      continue;
+    }
+    if (IsFixed(header.key)) {
+      has_a_hint_of_the_caller = true;
       continue;
     }
     if (params_.mode == RequestMode::kNavigate) {
@@ -331,11 +352,56 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
     }
   }
 
-  // With no hint added, the Persona's order is what the map gives, and leaving
-  // it alone keeps a caller's lines where they are.
-  if (added_a_hint_that_is_not_sent_by_default) {
-    SortAsHTTPHeaderMap(request, OriginIsBlinksLine());
+  // With no hint added and no line of a page's script, the Persona's order is
+  // what the map gives, and leaving it alone keeps a caller's lines where they
+  // are, but for a hint, which is in the map of a fetch or an xhr.
+  const std::vector<std::string> script_headers = ScriptHeadersInMap(request);
+  if (added_a_hint_that_is_not_sent_by_default || !script_headers.empty() ||
+      (has_a_hint_of_the_caller &&
+       params_.header_order != HeaderOrder::kGiven)) {
+    SortAsHTTPHeaderMap(request, OriginIsBlinksLine(), script_headers);
   }
+}
+
+std::vector<std::string> FetchRules::ScriptHeadersInMap(
+    const net::URLRequest& request) const {
+  std::vector<std::string> names;
+  if (params_.header_order == HeaderOrder::kGiven) {
+    return names;
+  }
+  // A script sets none of the forbidden ones, and in mode no-cors only those
+  // that need no preflight. A caller may set any.
+  const net::HttpRequestHeaders& headers = request.extra_request_headers();
+  for (const std::string& name : params_.script_headers) {
+    const std::optional<std::string> line = headers.GetHeader(name);
+    if (!line) {
+      continue;
+    }
+    const std::string_view value = NormalizeHeaderValue(*line);
+    if (!IsForbiddenRequestHeader(name, value) &&
+        (params_.mode != RequestMode::kNoCors ||
+         IsNoCorsSafelistedHeader(name, value))) {
+      names.push_back(name);
+    }
+  }
+  if (names.empty()) {
+    return names;
+  }
+  // Blink adds a body's type to them.
+  if (headers.HasHeader(net::HttpRequestHeaders::kContentType) &&
+      !std::ranges::contains(names, "content-type")) {
+    names.emplace_back("content-type");
+  }
+  if (params_.header_order == HeaderOrder::kFetch) {
+    // FetchManager::Loader::PerformHTTPFetch() goes through a FetchHeaderList,
+    // which holds them by their names.
+    std::ranges::sort(names);
+    return names;
+  }
+  // XMLHttpRequest::CreateRequest() goes through a map of its own, which they
+  // went into as they were set.
+  return HTTPHeaderMapOrder(
+      std::vector<std::string_view>(names.begin(), names.end()));
 }
 
 bool FetchRules::ShouldAddClientHint(

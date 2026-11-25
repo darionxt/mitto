@@ -436,7 +436,7 @@ def test_params_reach_the_wire_as_url_search_params_writes_them(server: AnyMetho
 def test_a_callers_headers_reach_the_wire_where_the_persona_and_net_put_them(
     server: AnyMethodServer, persona: str
 ) -> None:
-    expected = on_the_wire(server, persona, RequestKind.FETCH)
+    expected = on_the_wire(server, persona, RequestKind.SCRIPT)
     accept = expected.index(("Accept", "*/*"))
     expected[accept] = ("Accept", "text/plain")
     expected.remove(("sec-ch-ua-mobile", "?0"))
@@ -447,7 +447,7 @@ def test_a_callers_headers_reach_the_wire_where_the_persona_and_net_put_them(
     with mitto.Session(persona=persona) as session:
         session.get(
             server.url,
-            kind="fetch",
+            kind="script",
             headers={
                 "X-Thing": "1",
                 "accept": "text/plain",

@@ -28,6 +28,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/idl_member_installer.h"
 #include "mitto/bindings/interfaces_without_class.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
@@ -162,6 +163,8 @@ void ThrowDOMException(v8::Isolate* isolate,
                        std::string_view message) {
   const bindings::PerIsolateData::DOMExceptionHooks& hooks =
       bindings::PerIsolateData::From(isolate)->dom_exception_hooks();
+  // Of the current realm, as ExceptionState throws them.
+  const bindings::ReceiverRealmScope current_realm(isolate);
   isolate->ThrowException(hooks.create(isolate, name, message));
 }
 

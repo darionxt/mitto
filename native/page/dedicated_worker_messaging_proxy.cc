@@ -153,6 +153,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   // GlobalScopeCreationParams: what the worker takes of its creator.
   params_.origin = context.GetSecurityOrigin();
   params_.outside_origin = context.GetSecurityOrigin();
+  params_.agent_cluster_origin = context.AgentClusterOrigin();
   params_.name = options.name;
   params_.script_url = url;
   params_.module = options.module;

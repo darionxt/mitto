@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/time/time.h"
 #include "net/base/request_priority.h"
@@ -30,6 +31,16 @@ enum class CredentialsMode {
   kOmit,
   kSameOrigin,
   kInclude,
+};
+
+// Whose order a request's headers go in, once a page's script, or a caller in
+// its place, has set some.
+enum class HeaderOrder {
+  // The order they are given in.
+  kGiven,
+  // That of Blink's HTTPHeaderMap for a fetch() or an XMLHttpRequest.
+  kFetch,
+  kXhr,
 };
 
 // What a page's request says of itself, in the terms of Chrome's
@@ -104,6 +115,11 @@ struct FetchParams {
 
   // The names of the headers that are the caller's, in lower case.
   std::set<std::string> fixed_headers;
+
+  // The same names, each once, in the order that the script or the caller set
+  // them.
+  std::vector<std::string> script_headers;
+  HeaderOrder header_order = HeaderOrder::kGiven;
 };
 
 // What a request is started with, besides its URL and headers.

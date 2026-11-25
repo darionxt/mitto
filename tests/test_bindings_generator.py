@@ -1684,8 +1684,7 @@ def test_a_call_with_a_receiver_makes_the_wrappers_it_returns_in_the_receivers_r
 
 def test_a_members_receiver_goes_unchecked_only_where_another_origin_may_reach_it() -> None:
     # bind_gen's cross_origin_check: [CrossOrigin] leaves an operation's receiver and an attribute's getter's unchecked,
-    # and a static member has no receiver to check. A window's location stays checked while a Location checks nothing,
-    # and its postMessage() while a message names its target as its source.
+    # and a static member has no receiver to check. A window's location stays checked while a Location checks nothing.
     both = ExtendedAttributes((("CrossOrigin", ("Getter", "Setter")),))
     setter = ExtendedAttributes((("CrossOrigin", ("Setter",)),))
     window = _interface(
@@ -1701,7 +1700,6 @@ def test_a_members_receiver_goes_unchecked_only_where_another_origin_may_reach_i
         ),
         operation_groups=(
             _operation("close", "CrossOrigin"),
-            _operation("postMessage", "CrossOrigin"),
             _operation("stop"),
         ),
         exposed_constructs=("Window",),
@@ -1718,10 +1716,22 @@ def test_a_members_receiver_goes_unchecked_only_where_another_origin_may_reach_i
         return install[install.index("CrossOriginCheck::") :].rstrip(")")
 
     unchecked = {name: check_of(name) for name in ("closed", "both", "first", "close")}
-    checked = {name: check_of(name) for name in ("href", "location", "name", "postMessage", "stop")}
+    checked = {name: check_of(name) for name in ("href", "location", "name", "stop")}
     assert set(unchecked.values()) == {"CrossOriginCheck::kDoNotCheck"}
     assert set(checked.values()) == {"CrossOriginCheck::kCheck"}
     assert "instance_template->SetAccessCheckCallback(&Window::AccessCheckCallback);" in source
+
+    # And a call that goes unchecked has no realm of its receiver's, which may be of another origin.
+    def realm_of(callback: str) -> str:
+        body = source[source.index(f"void {callback}") :]
+        body = body[: body.index("\n}")]
+        return next(line.strip() for line in body.splitlines() if "ReceiverRealmScope" in line)
+
+    current = "const ReceiverRealmScope current_realm(isolate);"
+    receiver = "const ReceiverRealmScope receiver_realm(isolate, info.This());"
+    assert realm_of("ClosedAttributeGetCallback") == realm_of("CloseOperationCallback") == current
+    assert realm_of("LocationAttributeGetCallback") == realm_of("NameAttributeGetCallback") == receiver
+    assert realm_of("StopOperationCallback") == receiver
 
 
 def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None:
