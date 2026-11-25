@@ -1,13 +1,13 @@
 // What the calls that a permissions policy, or a document's ancestors, decide give in the frames of a page of a secure context, whose
-// /child runs tests/frames_apis_child.js, as /nest does, which holds the frame that its query names, and /without, whose header takes
-// each feature from it. The value is a promise for a record by the frame, which tests/data/frames_apis_cases.json holds as Chrome gave it.
+// /child runs tests/frames_apis_child.js, as /nest does, which holds the frame that its query names, /without, whose header takes
+// each feature from it, and /self, whose header keeps high-entropy hints to its own origin. The value is a promise for a record by the frame, which tests/data/frames_apis_cases.json holds as Chrome gave it.
 (async () => {
   const OTHER = `http://localhost:${location.port}`;
   const names = document.featurePolicy.features();
   const all = names.join(';'), every = names.map((name) => `${name} *`).join(';'), none = names.map((name) => `${name} 'none'`).join(';');
   const CHILD = `<script src="${location.origin}/child.js"><` + '/script>';
   const kinds = {
-    'same': {src: '/child'}, 'same, none': {src: '/child', allow: none}, 'same, without': {src: '/without'}, 'same, sandbox': {src: '/child', sandbox: 'allow-scripts'}, 'same, sandbox, all': {src: '/child', sandbox: 'allow-scripts', allow: all},
+    'same': {src: '/child'}, 'same, none': {src: '/child', allow: none}, 'same, without': {src: '/without'}, 'same, self': {src: '/self'}, 'same, sandbox': {src: '/child', sandbox: 'allow-scripts'}, 'same, sandbox, all': {src: '/child', sandbox: 'allow-scripts', allow: all},
     'same, sandbox with its origin': {src: '/child', sandbox: 'allow-scripts allow-same-origin'}, 'other': {src: `${OTHER}/child`}, 'other, all': {src: `${OTHER}/child`, allow: all}, 'other, every': {src: `${OTHER}/child`, allow: every}, 'other, sandbox, every': {src: `${OTHER}/child`, sandbox: 'allow-scripts', allow: every},
     'other, without': {src: `${OTHER}/without`, allow: all}, 'srcdoc': {srcdoc: CHILD}, 'srcdoc, none': {srcdoc: CHILD, allow: none}, 'data': {src: `data:text/html,${encodeURIComponent(CHILD)}`}, 'data, every': {src: `data:text/html,${encodeURIComponent(CHILD)}`, allow: every},
     'same in other': {src: `${OTHER}/nest?${location.origin}/child`}, 'same in other, all': {src: `${OTHER}/nest?${location.origin}/child`, allow: all}, 'other in same': {src: `/nest?${OTHER}/child`}, 'other in same, all': {src: `/nest?${OTHER}/child`, allow: all}, 'third in other, all': {src: `${OTHER}/nest?${OTHER.replace('localhost', 'a.localhost')}/child`, allow: every}, 'same in same': {src: '/nest?/child'},
@@ -73,5 +73,9 @@
   const inner = frames['same, none'].contentWindow;
   record['the page on a frame'] = await borrow(window, inner);
   record['a frame on the page'] = await borrow(inner, window);
+  // A navigator whose frame has gone asks no policy of its gamepads.
+  const {navigator: gone} = inner;
+  frames['same, none'].remove();
+  record['gone'] = gone.getGamepads().length;
   return record;
 })()

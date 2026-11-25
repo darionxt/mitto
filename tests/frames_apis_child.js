@@ -41,18 +41,19 @@
       const bytes = new Uint8Array(16);
       const credentials = {};
       const container = navigator.credentials;
-      const allows = (feature) => document.featurePolicy.allowsFeature(feature);
+      // More than a request may name, which is found once its document may ask.
+      const MANY = Array(65).fill({type: 'public-key', id: bytes});
       const attempts = !container ? {} : {
         password: () => container.get({password: true}),
         silent: () => container.get({password: true, mediation: 'silent'}),
         federated: () => container.get({federated: {providers: ['https://a.example']}}),
         conditional: () => container.get({password: true, mediation: 'conditional'}),
-        publicKey: () => allows('publickey-credentials-get') ? 'asked' : container.get({publicKey: {challenge: bytes, rpId: 'a.example'}}),
-        both: () => allows('publickey-credentials-get') ? 'asked' : container.get({password: true, publicKey: {challenge: bytes, rpId: 'a.example'}, mediation: 'conditional'}),
+        publicKey: () => container.get({publicKey: {challenge: bytes, rpId: 'a.example', allowCredentials: MANY}}),
+        both: () => container.get({password: true, publicKey: {challenge: bytes, rpId: 'a.example', allowCredentials: MANY}, mediation: 'conditional'}),
         otp: () => container.get({otp: {transport: []}}),
         identity: () => container.get({identity: {providers: []}}),
-        identityOfOne: () => allows('identity-credentials-get') ? 'asked' : container.get({identity: {providers: [{configURL: 'https://a.example/', clientId: 'a'}]}}),
-        identityOfTwo: () => credentials.password === null || credentials.password.startsWith('NotSupportedError') ? 'asked' : container.get({identity: {providers: [{configURL: 'https://a.example/', clientId: 'a'}, {configURL: 'https://b.example/', clientId: 'b'}]}}),
+        identityOfOne: () => container.get({identity: {providers: [{configURL: 'https://a.example/', clientId: ''}]}}),
+        identityOfTwo: () => container.get({identity: {providers: [{configURL: 'https://a.example/', clientId: ''}, {configURL: 'https://b.example/', clientId: 'b'}]}}),
         digital: () => container.get({digital: {requests: []}}),
         nothing: () => container.get({}),
       };

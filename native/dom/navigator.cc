@@ -320,8 +320,10 @@ uint16_t Navigator::CpuPerformance() const {
 
 std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(
     bindings::ExceptionState& exception_state) const {
-  // NavigatorGamepad::getGamepads().
-  if (!Window::OfReceiver().GetDocument().IsFeatureEnabled("gamepad")) {
+  // NavigatorGamepad::getGamepads(), which asks no policy once its window's
+  // frame has gone.
+  Window& window = Window::OfReceiver();
+  if (window.GetFrame() && !window.GetDocument().IsFeatureEnabled("gamepad")) {
     exception_state.ThrowDOMException("SecurityError",
                                       "Access to the feature \"gamepad\" is "
                                       "disallowed by permissions policy.");

@@ -292,10 +292,6 @@ class Document : public Node {
   // unless it is empty.
   bool IsFeatureEnabledOrReport(std::string_view feature,
                                 std::string_view message = {});
-  // IsFeatureEnabled() of a worker of `origin` that its window starts, whose
-  // policy inherits of its own with nothing that an element or a header says.
-  bool IsFeatureEnabledInWorker(std::string_view feature,
-                                const url::Origin& origin);
   // The document's own, the same object on every read.
   DOMImplementation* Implementation();
   Attr* CreateAttribute(const std::u16string& local_name,

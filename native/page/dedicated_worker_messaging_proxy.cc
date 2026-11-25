@@ -170,15 +170,13 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   // data: URL never has.
   params_.cross_origin_isolated = context.CrossOriginIsolatedCapability() &&
                                   !url.SchemeIs(url::kDataScheme);
-  // Blink's GlobalScopeCreationParams::worker_permissions_policy.
+  // Blink's GlobalScopeCreationParams::worker_permissions_policy, which
+  // inherits for the creator's origin, even in a worker of an opaque one: a
+  // feature of default * as the creator has it.
   params_.allows_high_entropy_values =
       context.IsWindow()
-          ? static_cast<Window&>(context)
-                .GetDocument()
-                .IsFeatureEnabledInWorker("ch-ua-high-entropy-values",
-                                          url.SchemeIs(url::kDataScheme)
-                                              ? url::Origin()
-                                              : params_.origin)
+          ? static_cast<Window&>(context).GetDocument().IsFeatureEnabled(
+                "ch-ua-high-entropy-values")
           : context.AllowsHighEntropyValues();
   params_.begin_frames = context.IsWindow();
   params_.start = context.Start();

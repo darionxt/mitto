@@ -489,15 +489,6 @@ bool Document::IsFeatureEnabled(std::string_view feature) {
          GetPermissionsPolicyState().IsEnabled(PolicyFeatureNamed(feature));
 }
 
-bool Document::IsFeatureEnabledInWorker(std::string_view feature,
-                                        const url::Origin& origin) {
-  return PermissionsPolicyState(&GetPermissionsPolicyState(),
-                                /*container_policy=*/{}, origin,
-                                /*unload_deprecated=*/false,
-                                /*is_headerless=*/false, /*declared=*/{})
-      .IsEnabled(PolicyFeatureNamed(feature));
-}
-
 bool Document::IsFeatureEnabledOrReport(std::string_view feature,
                                         std::string_view message) {
   const bool enabled = IsFeatureEnabled(feature);

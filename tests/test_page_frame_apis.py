@@ -76,13 +76,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         kind, body = "text/html", "<!doctype html><body>"
         if path == "/child.js":
             kind, body = "text/javascript", _CHILD
-        elif path in ("/child", "/nest", "/without"):
+        elif path in ("/child", "/nest", "/without", "/self"):
             body = f"<!doctype html><script>{_CHILD}</script>"
         self.send_response(200)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body.encode())))
         if path in ("/without", "/app/without"):
             self.send_header("Permissions-Policy", ", ".join(f"{feature}=()" for feature in _WITHHELD))
+        elif path == "/self":
+            self.send_header("Permissions-Policy", "ch-ua-high-entropy-values=(self)")
         self.end_headers()
         self.wfile.write(body.encode())
 

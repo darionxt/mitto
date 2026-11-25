@@ -710,6 +710,16 @@ void CredentialsContainer::GetPublicKey(
                 "credential");
       return;
     }
+    if (extensions->remote_client_data_js_on &&
+        !Window::OfReceiver().GetDocument().IsFeatureEnabled(
+            "publickey-credentials-remote-client-data-json")) {
+      RejectNow(isolate, resolver, "NotAllowedError",
+                "The 'publickey-credentials-remote-client-data-json' feature "
+                "is not enabled in this document. Permissions Policy may be "
+                "used to delegate this capability to cross-origin child "
+                "frames.");
+      return;
+    }
   }
   Request* const request =
       Wait(isolate, resolver, options.signal ? *options.signal : nullptr,
