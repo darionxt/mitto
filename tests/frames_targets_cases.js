@@ -19,7 +19,7 @@ const ACTS = {
   'sibling.location': 'top.frames.sibling.location = T', 'sibling.location other': 'top.frames.sibling.location = O', 'sibling.location.replace': 'top.frames.sibling.location.replace(T)', 'sibling.location javascript': 'top.frames.sibling.location.replace("javascript:void(0)")',
   'child.location': 'frames.child.location = T', 'child.location other': 'frames.child.location = O', 'own location': 'location = T',
   'open _top': 'open(T, "_top")', 'open _top other': 'open(O, "_top")', 'open _parent': 'open(T, "_parent")', 'open _self': 'open(T, "_self")', 'open sibling': 'open(T, "sibling")', 'open foreign': 'open(T, "foreign")', 'open child': 'open(T, "child")', 'open new': 'open(T, "unknown")', 'open _blank': 'open(T, "_blank")', 'open nothing sibling': 'open("", "sibling")', 'open sibling noopener': 'open(T, "sibling", "noopener")', 'open SIBLING': 'open(T, "SIBLING")', 'open _TOP': 'open(T, "_TOP")', 'open sibling noreferrer': 'open(T, "sibling", "popup=1, NOREFERRER")', 'open sibling noopener=0': 'open(T, "sibling", "noopener=0")', 'open _top noopener': 'open(T, "_top", "noopener")', 'open nothing _top': 'open("", "_top")',
-  'open own name': 'open(T, name)', 'open empty': 'open(T, "")', 'open invalid': 'open("http://[", "sibling")', 'child.open _self': 'frames.child.open(T, "_self")', 'child.open _parent': 'frames.child.open(T, "_parent")', 'child.open sibling': 'frames.child.open(T, "sibling")', 'open sibling hash': 'open(A + "/plain#x", "sibling")', 'open sibling file': 'open("file:///x", "sibling")', 'link sibling chrome': 'link("sibling", "chrome://version/")', 'top.location view-source': 'top.location = "view-source:http://a.example/"', 'child.location filesystem': 'frames.child.location = "filesystem:http://a.example/temporary/x"', 'sibling.location devtools': 'top.frames.sibling.location = "devtools://devtools/x"', 'open _top filesystem': 'open(`filesystem:${location.origin}/temporary/x`, "_top")', 'open child filesystem': 'open(`filesystem:${location.origin}/temporary/x`, "child")', 'sibling.src file': 'top.document.querySelector("[name=sibling]").src = "file:///y"', 'open sibling javascript': 'open("javascript:parent.postMessage(String(1), String.fromCharCode(42))", "sibling")', 'open foreign javascript': 'open("javascript:void(0)", "foreign")',
+  'open own name': 'open(T, name)', 'open empty': 'open(T, "")', 'open invalid': 'open("http://[", "sibling")', 'child.open _self': 'frames.child.open(T, "_self")', 'child.open _parent': 'frames.child.open(T, "_parent")', 'child.open sibling': 'frames.child.open(T, "sibling")', 'open sibling hash': 'open(A + "/plain#x", "sibling")', 'open sibling file': 'open("file:///x", "sibling")', 'link sibling chrome': 'link("sibling", "chrome://version/")', 'top.location view-source': 'top.location = "view-source:http://a.example/"', 'child.location filesystem': 'frames.child.location = "filesystem:http://a.example/temporary/x"', 'sibling.location devtools': 'top.frames.sibling.location = "devtools://devtools/x"', 'open _top filesystem': 'open(`filesystem:${location.origin}/temporary/x`, "_top")', 'open child filesystem': 'open(`filesystem:${location.origin}/temporary/x`, "child")', 'open sibling moved': 'move(); open(T, "sibling")', 'sibling.location moved': 'move(); top.frames.sibling.location = T', 'link sibling moved': 'move(); link("sibling", T)', 'sibling.src file': 'top.document.querySelector("[name=sibling]").src = "file:///y"', 'open sibling javascript': 'open("javascript:parent.postMessage(String(1), String.fromCharCode(42))", "sibling")', 'open foreign javascript': 'open("javascript:void(0)", "foreign")',
   'link _top': 'link("_top", T)', 'link _parent': 'link("_parent", T)', 'link sibling': 'link("sibling", T)', 'link foreign': 'link("foreign", T)', 'link child': 'link("child", T)', 'link new': 'link("unknown", T)', 'link base': 'link(null, T)', 'link _self': 'link("_self", T)', 'link empty base': 'link("", T, "", "sibling")', 'open _blank blob': 'open("blob:null/00000000-0000-4000-8000-000000000000", "_blank")', 'open child blob': 'open(URL.createObjectURL(new Blob([""])), "child")', 'open sibling too large': 'open(T, "sibling", "noreferrer=2147483648")', 'open sibling loose': 'open(T, "sibling", "noopener=1x")', 'open sibling loose tab': 'open(T, "sibling", "noreferrer=\\u000b1")', 'open sibling loose space': 'open(T, "sibling", "noreferrer=\\u20031")', 'open sibling loose no space': 'open(T, "sibling", "noreferrer=\\u00a01")', 'open renamed': '(frames.child.name = "renamed", open(T, "renamed"))', 'opener': 'open("", "child").opener', 'opener disowned': '(open("", "child").opener = null, frames.child.opener)', 'opener shadowed': '(frames.child.opener = 5, frames.child.opener)', 'opener none': 'frames.child.opener', 'opener disowned descriptor': '(frames.child.opener = null, "value" in Object.getOwnPropertyDescriptor(frames.child, "opener") ? null : top)', 'opener reopened': '(open("", "child").opener = null, open("", "child").opener)', 'opener gone': '((gone) => (gone.frameElement.remove(), gone.opener = 5, gone.opener))(open("", "child"))', 'opener fixed': '((child) => { "use strict"; Object.defineProperty(child, "opener", {configurable: false, set(value) {}}); child.opener = 5; })(frames.child)', 'opener frozen': '((child) => { "use strict"; const set = Object.getOwnPropertyDescriptor(child, "opener").set; Object.defineProperty(child, "opener", {value: 1, configurable: false, writable: false}); set.call(child, 5); })(frames.child)', 'open child blob opaque': 'open("blob:null/00000000-0000-4000-8000-000000000000", "child")', 'open child blob revoked': 'open(((url) => (URL.revokeObjectURL(url), url))(URL.createObjectURL(new Blob([""]))), "child")',
   'top.location removed': 'top.location = T; frameElement.remove()', 'sibling.location removed': 'top.frames.sibling.location = T; frameElement.remove()', 'link _top removed': 'link("_top", T); frameElement.remove()',
   'async orientation': 'screen.orientation.lock("any").then(() => "locked", told)', 'presentation': 'new PresentationRequest("https://a.example/") && "made"',
@@ -27,10 +27,10 @@ const ACTS = {
 };
 // The actors that do everything, and what the rest do: the calls that reach no window of another origin.
 const FULL = ['same', 'sandbox origin', 'srcdoc', 'same in other'];
-const PAGE = Object.keys(ACTS).filter((name) => !/^(top|own|link _parent)|removed/.test(name));
-const SOME = Object.keys(ACTS).filter((name) => /^(open|link|async|presentation)/.test(name) && !/(noopener=0|nothing _top|own name|empty|invalid|(sibling|link _top|location) hash|SIBLING|newline|noreferrer|noopener|opener|renamed|removed|too large|loose)/.test(name));
+const PAGE = Object.keys(ACTS).filter((name) => !/^(top|own|link _parent)|moved/.test(name));
+const SOME = Object.keys(ACTS).filter((name) => /^(open|link|async|presentation)/.test(name) && !/(noopener=0|nothing _top|own name|empty|invalid|(sibling|link _top|location) hash|SIBLING|newline|noreferrer|noopener|opener|renamed|moved|too large|loose)/.test(name));
 const SAME = /^(same|page|srcdoc|sandbox origin)/;
-const actsOf = (actor) => actor === 'page' ? PAGE : FULL.includes(actor) ? Object.keys(ACTS) : actor === 'other' ? Object.keys(ACTS).filter((name) => /^(own|open|link|async|presentation)/.test(name) && !/^opener|renamed|removed/.test(name)) : SAME.test(actor) ? [...SOME, 'top.location', 'top.location other', 'sibling.location', 'child.location'] : SOME;
+const actsOf = (actor) => actor === 'page' ? PAGE : FULL.includes(actor) ? Object.keys(ACTS) : actor === 'other' ? Object.keys(ACTS).filter((name) => /^(own|open|link|async|presentation)/.test(name) && !/^opener|renamed|moved/.test(name)) : SAME.test(actor) ? [...SOME, 'top.location', 'top.location other', 'sibling.location', 'child.location'] : SOME;
 const query = new URLSearchParams(location.search);
 const actor = query.get('actor') ?? globalThis.ACTOR, at = Number(query.get('at'));
 const rest = (index) => `actor=${encodeURIComponent(actor)}&at=${index}`;
@@ -67,13 +67,24 @@ const link = (target, url, rel, baseTarget = target === null ? 'sibling' : null)
   document.body.append(anchor);
   anchor.click();
 };
+// Has the sibling's navigate event change this document's URL and referrer policy.
+const move = () => {
+  top.frames.sibling.navigation.onnavigate = () => {
+    try {
+      history.replaceState(null, '', '/nest');
+    } catch {
+      // A srcdoc's, which keeps its URL.
+    }
+    document.head.insertAdjacentHTML('beforeend', '<meta name="referrer" content="no-referrer">');
+  };
+};
 // Acts as the case named `name` at `index` on the page that has the URL `TOP`, and logs what it gave.
 const perform = async (name, index, TOP) => {
   const T = `${A}/moved?${rest(index)}`, O = `${B}/moved?${rest(index)}`;
   const which = (value) => value === null ? 'null' : value === undefined ? 'nothing' : typeof value !== 'object' ? 'value' : value === top ? 'top' : value === window ? 'self' : value === parent ? 'parent' : value === frames.child ? 'child' : SAME.test(actor) && value === top.frames.sibling ? 'sibling' : SAME.test(actor) && value === top.frames.foreign ? 'foreign' : 'a window';
   let result;
   try {
-    const given = (0, eval)(`(T, O, TOP, link, told) => { ${/^\S*location(\.href)? = |; /.test(ACTS[name]) ? '' : 'return '}${ACTS[name]}; }`)(T, O, TOP, link, told);
+    const given = (0, eval)(`(T, O, TOP, link, told, move) => { ${/^\S*location(\.href)? = |; /.test(ACTS[name]) ? '' : 'return '}${ACTS[name]}; }`)(T, O, TOP, link, told, move);
     result = name.startsWith('async') ? await given : which(given);
   } catch (error) {
     result = told(error);

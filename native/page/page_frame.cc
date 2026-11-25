@@ -631,16 +631,13 @@ void PageFrame::ExpectOpeningNavigation() {
 }
 
 void PageFrame::BeginNavigation(const NavigationRequest& request) {
-  if (request.url.SchemeIsFileSystem()) {
-    // BlockedSchemeNavigationThrottle: the browser cancels it, and the
-    // top-level document's console says so.
+  // BlockedSchemeNavigationThrottle: the browser cancels it, and the top-level
+  // document's console says so.
+  if (request.url.SchemeIsFileSystem() && !TraversalWaits()) {
     Top().DomWindow()->AddConsoleMessage(
         ConsoleLevel::kError,
         base::StrCat({"Not allowed to navigate to filesystem URL: ",
                       request.url.spec()}));
-    CancelProvisionalNavigation();
-    LetParentCheckCompleted();
-    return;
   }
   if (parent_) {
     // The newest navigation of a frame takes the place of a srcdoc or an
@@ -798,6 +795,9 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   page_request.user_activation = request.user_activation;
   page_request.reload = request.reload;
   page_request.referrer_policy = ToPageReferrerPolicy(request.referrer_policy);
+  if (request.names_referrer) {
+    page_request.referrer = request.initiator_referrer.spec();
+  }
   // A worker's thread may number a request in between, so the loader learns
   // its number once the request has it.
   provisional_->SetNumber(runner_->requests().StartNavigation(

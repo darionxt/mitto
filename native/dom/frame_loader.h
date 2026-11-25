@@ -74,6 +74,9 @@ struct FrameLoadRequest {
   // The referrer policy of the element that starts it, as an iframe's
   // referrerpolicy names it, or kDefault for the initiator's.
   FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+  // The initiator's outgoing referrer, taken with its policy as the navigation
+  // started, for one that starts again.
+  std::optional<GURL> referrer;
 };
 
 // LocalFrame::Navigate(): drops a navigation past the rate limit, makes a

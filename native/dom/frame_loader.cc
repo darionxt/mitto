@@ -452,6 +452,17 @@ void StartNavigation(Window& window,
                       " URL: ", Elided(url)}));
     return;
   }
+  // FrameLoadRequest's constructor: the referrer and the policy that the
+  // initiator has now, whatever the events below change.
+  const Window& origin_window =
+      request.origin_window ? *request.origin_window : window;
+  const GURL referrer =
+      request.referrer ? *request.referrer : OutgoingReferrer(origin_window);
+  const FetchReferrerPolicy referrer_policy =
+      request.referrer ||
+              request.referrer_policy != FetchReferrerPolicy::kDefault
+          ? request.referrer_policy
+          : origin_window.GetDocument().GetReferrerPolicy();
   // FrameNavigationDisabler and the page dismissal events: a navigation that
   // beforeunload, pagehide or unload starts does not start, nor one of a
   // frame whose document commits.
@@ -472,15 +483,8 @@ void StartNavigation(Window& window,
       FrameLoadRequest kept = request;
       kept.source_element = nullptr;
       kept.origin_window = nullptr;
-      // The policy that the initiator has now, or Blink's default.
-      if (kept.referrer_policy == FetchReferrerPolicy::kDefault) {
-        kept.referrer_policy =
-            request.origin_window->GetDocument().GetReferrerPolicy();
-      }
-      if (kept.referrer_policy == FetchReferrerPolicy::kDefault) {
-        kept.referrer_policy =
-            FetchReferrerPolicy::kStrictOriginWhenCrossOrigin;
-      }
+      kept.referrer = referrer;
+      kept.referrer_policy = referrer_policy;
       window.GetTasks()->PostTask(
           TaskType::kInternalLoading,
           base::BindOnce(&CommitFragmentFromBrowser,
@@ -550,8 +554,6 @@ void StartNavigation(Window& window,
     return;
   }
   NavigationClient* const client = window.GetNavigationClient();
-  const Window& origin_window =
-      request.origin_window ? *request.origin_window : window;
   if (!client || !window.HasContext() || !origin_window.HasContext()) {
     return;
   }
@@ -568,16 +570,22 @@ void StartNavigation(Window& window,
   navigation.replace = type == FrameLoadType::kReplaceCurrentItem;
   navigation.initiator_referrer_policy =
       origin_window.GetDocument().GetReferrerPolicy();
+  // No policy, which Blink resolves to its default, is not one set since.
   navigation.referrer_policy =
-      request.referrer_policy != FetchReferrerPolicy::kDefault
-          ? request.referrer_policy
-          : navigation.initiator_referrer_policy;
+      referrer_policy == FetchReferrerPolicy::kDefault &&
+              navigation.initiator_referrer_policy !=
+                  FetchReferrerPolicy::kDefault
+          ? FetchReferrerPolicy::kStrictOriginWhenCrossOrigin
+          : referrer_policy;
   navigation.initiator = origin_window.DocumentId();
   navigation.initiator_origin = origin_window.GetSecurityOrigin();
   navigation.initiator_url = GURL(origin_window.GetDocument().UrlForBinding());
   navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
   navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
-  navigation.initiator_referrer = OutgoingReferrer(origin_window);
+  navigation.initiator_referrer = referrer;
+  navigation.names_referrer =
+      referrer != OutgoingReferrer(origin_window) &&
+      navigation.initiator_origin.IsSameOriginWith(referrer);
   navigation.initiator_in_sandboxed_process =
       origin_window.GetDocument().IsInSandboxedProcess();
   navigation.initiator_has_header_csp =
