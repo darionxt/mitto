@@ -364,6 +364,14 @@ def test_several_threads_can_evaluate_on_one_page_at_once(page: Page) -> None:
     assert results == [[[number, each] for each in range(20)] for number in range(8)]
 
 
+def test_large_scripts_and_results_that_wait_in_the_channel_come_whole(page: Page) -> None:
+    # Each is many times what the system takes of the channel at once, so it goes in parts, behind those before it.
+    texts = [f"{letter}{letter.upper() * (6 << 20)}{letter}" for letter in "abcd"]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(texts)) as executor:
+        assert list(executor.map(lambda text: page.evaluate(json.dumps(text)), texts)) == texts
+
+
 def test_a_page_keeps_what_its_scripts_write_to_the_console(page: Page) -> None:
     page.evaluate("""
         console.log('a', 1, [2, 3], {b: 4}); console.debug('d'); console.info('i'); console.warn('w');
