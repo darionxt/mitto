@@ -520,11 +520,11 @@ def test_a_fetch_with_a_body_and_header_lines_sends_what_a_sessions_fetch_with_t
         assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "posted"
     session.post(server.url("/echo"), data="hi there", kind="fetch", initiator=url, headers={"X-Test": "1"})
 
-    # The method written in upper case, the forbidden Cookie line dropped, and the body's Content-Type where the
-    # Persona puts it.
+    # The method written in upper case and the forbidden Cookie line dropped. The script's lines go where Chrome sends
+    # them, which tests/test_page_header_order.py checks, and the caller's X-Test after the Persona's lines.
     posts = server.headers_of("/echo")
     assert len(posts) == 2
-    assert posts[0] == posts[1]
+    assert sorted(posts[0]) == sorted(posts[1])
     assert ("Content-Type", "text/plain;charset=UTF-8") in posts[0]
     assert not any(name == "Cookie" for name, _ in posts[0])
     assert server.bodies["/echo"] == [b"hi there", b"hi there"]
