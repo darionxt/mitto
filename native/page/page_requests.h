@@ -115,11 +115,13 @@ class PageRequests {
                         Client& client,
                         base::WaitableEvent& abort);
 
-  // Asks the Session for `request`, a navigation that the current window's
-  // document starts, whose number this sets, and returns it. Its response is
-  // a document's, which gets no entry in the Performance Timeline of the
-  // window that asked.
-  uint64_t StartNavigation(PageRequest request, Client& client);
+  // Asks the Session for `request`, a navigation that document `initiator`
+  // starts, whose number this sets, and returns it. Its response is a
+  // document's, which gets no entry in the Performance Timeline of the window
+  // that asked.
+  uint64_t StartNavigation(uint64_t initiator,
+                           PageRequest request,
+                           Client& client);
   // The same for a traversal of the session history to an entry of another
   // document, which the Session makes from what it kept of the navigation it
   // repeats.
@@ -139,6 +141,10 @@ class PageRequests {
 
   // Sends the Session a network hint of the current window's document.
   void Hint(const PageNetworkHint& hint);
+  // Tells the Session that document `document`'s window has dispatched its
+  // load event, unless the Session has forgotten that document, as a frame's
+  // whose element a load listener removed.
+  void SendLoaded(uint64_t document);
 
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);

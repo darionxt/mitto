@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 32;
+inline constexpr uint32_t kPageProtocolVersion = 35;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -226,12 +226,15 @@ enum class PageMessage : uint32_t {
   // navigation within it gave it, such as one to a fragment, which is of the
   // document's origin.
   kSameDocumentNavigation = 71,
-  // To the Session: the ID of a frame's document, and the ID of the document
-  // that has started a navigation of the frame to about:blank, which commits
-  // without the network from a later task. The about:blank takes the origin,
-  // embedder policy and cookie URL that its initiator has now, as the
-  // browser's NavigationRequest holds them from its start, whether or not the
-  // initiator is still there when it commits.
+  // To the Session: the ID of a frame's document, the ID of the document that
+  // has started a navigation of the frame to about:blank or to a data: URL,
+  // which commits without the network from a later task, and a byte for which
+  // (PageLocalNavigationKind). The about:blank takes the origin, embedder
+  // policy and cookie URL that its initiator has now, and the data: URL's
+  // document the embedder policy, as the browser's NavigationRequest holds
+  // them from its start, whether or not the initiator is still there when it
+  // commits. Kind 2, with no initiator, says that the one that waited ended
+  // with no document.
   kAboutBlankNavigation = 72,
   // To the Session: the ID of a document, and the ID of the document of
   // another window, of its origin, that has opened it with document.open(),
@@ -743,7 +746,8 @@ enum class PageCrossOriginIsolation : uint8_t {
 
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
-// opened the Page.
+// opened the Page: a top-level document's agent cluster's, and a frame's
+// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
@@ -787,13 +791,39 @@ enum class PageDocumentSource : uint8_t {
   // A frame's srcdoc document, about:srcdoc, of its parent's origin, whose
   // requests' referrer is its parent's.
   kSrcdoc = 3,
+  // Chrome's error page, chrome-error://chromewebdata/, of an opaque origin,
+  // which a frame commits once its navigation fails without a response.
+  kErrorPage = 4,
+  // A frame's document of a data: URL, of an opaque origin, which the Page
+  // answers itself, as Chrome's browser does with no request on the wire.
+  kDataUrl = 5,
+  // A document of a blob: URL, which the Page answers itself from its Blob, of
+  // the origin of the URL, which the document that started its navigation
+  // has.
+  kBlob = 6,
 };
+
+// What a navigation of type 72 is.
+enum class PageLocalNavigationKind : uint8_t {
+  // An about:blank, which commits as a document of source 2.
+  kAboutBlank = 0,
+  // A frame's data: URL, which commits as a document of source 5.
+  kDataUrl = 1,
+  // The frame's about:blank or data: URL that waited ended with no document:
+  // a download, or one that a newer navigation or document.open() canceled.
+  kEnded = 2,
+};
+
+// The URL of Chrome's error page, kUnreachableWebDataURL.
+inline constexpr char kErrorPageUrl[] = "chrome-error://chromewebdata/";
 
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
 // source, a byte, the parent, a 64-bit number, then for a navigation's response
 // the navigation's number, for an about:blank the initiator and the document
-// that it replaces, and for a srcdoc document the document that it replaces,
-// each a 64-bit number.
+// that it replaces, and for a srcdoc document or an error page the document
+// that it replaces, each a 64-bit number, and for a data: or blob: URL's
+// document the initiator and the document that it replaces, then the URL, the
+// rest of the payload.
 struct PageDocumentCommitted {
   uint64_t document = kNoDocument;
   PageDocumentSource source = PageDocumentSource::kInitialEmpty;
@@ -802,11 +832,14 @@ struct PageDocumentCommitted {
   uint64_t parent = kNoDocument;
   // For kNavigationResponse.
   uint64_t navigation = kNavigationRequest;
-  // For kAboutBlank: the document that started its navigation.
+  // For kAboutBlank, kDataUrl and kBlob: the document that started its
+  // navigation.
   uint64_t initiator = kNoDocument;
-  // For kAboutBlank and kSrcdoc: the frame's document that it takes the
-  // place of.
+  // For kAboutBlank, kSrcdoc, kErrorPage, kDataUrl and kBlob: the frame's
+  // document that it takes the place of.
   uint64_t replaces = kNoDocument;
+  // For kDataUrl and kBlob: the URL.
+  std::string url;
 };
 
 // Where a dedicated worker's script comes from.
@@ -1204,8 +1237,10 @@ struct FrameFromPage {
   PageRequestBodyEnded request_body_ended;
   // kSameDocumentNavigation: the document's new URL.
   std::string same_document_url;
-  // kAboutBlankNavigation: the document that started it.
+  // kAboutBlankNavigation: the document that started it, and what it is.
   uint64_t about_blank_initiator = kNoDocument;
+  PageLocalNavigationKind local_navigation_kind =
+      PageLocalNavigationKind::kAboutBlank;
   // kDocumentOpened: the document that opened it.
   uint64_t opener = kNoDocument;
   // kStorageBind.
@@ -1372,7 +1407,9 @@ std::string EncodeDocumentStored(uint64_t document);
 std::string EncodeRestore(uint64_t number);
 std::string EncodeDocumentRestored(uint64_t document);
 std::string EncodeDocumentEvicted(uint64_t document);
-std::string EncodeAboutBlankNavigation(uint64_t document, uint64_t initiator);
+std::string EncodeAboutBlankNavigation(uint64_t document,
+                                       uint64_t initiator,
+                                       PageLocalNavigationKind kind);
 std::string EncodeDocumentOpened(uint64_t document, uint64_t opener);
 std::string EncodeStorageBind(uint64_t document, const PageStorageBind& bind);
 std::string EncodeStorageGetAll(const PageStorageGetAll& get_all);

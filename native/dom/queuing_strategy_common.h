@@ -1,6 +1,7 @@
 // What ByteLengthQueuingStrategy and CountQueuingStrategy share: the size
-// function, which each global object makes once, as Blink caches it on the
-// global proxy.
+// function, which each global object makes once. Blink caches it on the global
+// proxy; here an object of the context's own keeps it, as a context that its
+// frame left shares the global proxy of one that may be of another origin.
 //
 // Upstream: third_party/blink/renderer/core/streams/queuing_strategy_common.h
 // Upstream: third_party/blink/renderer/core/streams/queuing_strategy_common.cc
@@ -20,8 +21,8 @@ namespace mitto {
 
 using SizeFunctionFactory = v8::Local<v8::Function> (*)(v8::Isolate* isolate);
 
-// The function that the current context's global proxy keeps under
-// `cache_name`, which `factory` makes the first time.
+// The function that the current context keeps under `cache_name`, which
+// `factory` makes the first time.
 v8::Local<v8::Value> GetCachedSizeFunction(v8::Isolate* isolate,
                                            const char* cache_name,
                                            SizeFunctionFactory factory);

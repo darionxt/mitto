@@ -143,17 +143,21 @@ class PageFrame final : public NavigationClient, public Frame {
   // stops loading and unloads, and a new context's document at `url` takes
   // its place, which this returns: an XMLDocument of `xml_content_type`
   // where one is given, in a cross-origin isolated agent if
-  // `cross_origin_isolated`. `loader` becomes the document's.
-  Document& CommitNavigation(
+  // `cross_origin_isolated`. `loader` becomes the document's. Null if a
+  // listener of the old document's unload events, or of its frames', took
+  // the frame away: the response goes, and so does `loader`, from a later
+  // task.
+  Document* CommitNavigation(
       DocumentLoader& loader,
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
       bool cross_origin_isolated,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
-  // `loader`'s navigation ended with no response, and the frame keeps its
-  // document. `loader` goes.
-  void NavigationEndedWithoutDocument(DocumentLoader& loader);
+  // `loader`'s navigation ended with no response, with `net_error`: the frame
+  // keeps its document, or a child frame commits Chrome's error page for a
+  // navigation that failed. `loader` goes.
+  void NavigationEndedWithoutDocument(DocumentLoader& loader, int net_error);
   // The Session restores the document that `loader`'s traversal goes to,
   // which the back/forward cache keeps, in place of a response: the frame's
   // document is stored or unloads, as at any commit, and the kept one takes
@@ -317,6 +321,21 @@ class PageFrame final : public NavigationClient, public Frame {
   // The security token of a context of the Page whose document has
   // `origin`, an opaque one, or an empty handle if no frame's document has it.
   v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
+  // Whether a document of `origin` that the frame makes is cross-origin
+  // isolated, as the library works it out: the parent's document is, and of
+  // the same origin, the default allowlist 'self' of the
+  // cross-origin-isolated feature, which the opaque origin of a data: URL's
+  // document or an error page never is. The top-level frame's initial
+  // about:blank is not.
+  // `origin_sandboxed` is whether the frame's sandbox, as its navigation
+  // started, gives the document an opaque origin in Chrome, which isolates
+  // nothing.
+  bool IsolatedLikeParent(const url::Origin& origin,
+                          bool origin_sandboxed) const;
+  // Whether the frame's element is an iframe whose sandbox attribute withholds
+  // allow-same-origin, as Chrome takes it when a navigation of the frame
+  // starts. A frame element's sandbox attribute means nothing.
+  bool OwnerSandboxesOrigin() const;
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells
@@ -347,14 +366,28 @@ class PageFrame final : public NavigationClient, public Frame {
   // The frame's children go, each as Detach() has it, when the frame goes or
   // its document goes and its elements with it.
   void DetachChildren();
-  // A frame that loaded held its parent's load event back, which checks
-  // again once the frame stops, as Blink's does: from a task, since the
-  // element's removal may still be under way, and not while the parent's own
-  // document goes.
+  // A frame that loaded held its parent's load event back, or an ancestor's,
+  // which checks again once the frame stops, as Blink's does: from a task,
+  // since the element's removal may still be under way, and not while the
+  // parent's own document goes.
   void CheckParentLoadSoon();
   // A srcdoc or an about:blank that waits commits nothing then, and the
   // parent, whose load event it held back, checks again.
   void CancelLocalNavigation();
+  // A navigation through the Session that waits for its response ends, as a
+  // newer one takes its place.
+  void CancelProvisionalNavigation();
+  // The window that a frame's initial about:blank leaves to a document of
+  // its origin keeps it, as Blink's does, but the Session forgets the old
+  // document: its fetches fail, as Chrome's do, and its dedicated workers,
+  // which Chrome keeps with the window, are terminated.
+  void EndOldDocumentInWindow();
+  // The about:blank or data: URL of type 72 that waited ends with no
+  // document: the Session forgets what it took of the initiator for it.
+  void EndLocalNavigation();
+  // Whether two of the frame's ancestors' documents are at `url`, but for the
+  // fragment.
+  bool IsSelfReferential(const GURL& url) const;
   // The Session records a document that the frame commits without the network
   // at the bare about:blank or about:srcdoc, since message 70 names no URL,
   // so it hears the URL that the document committed at, such as
@@ -372,6 +405,12 @@ class PageFrame final : public NavigationClient, public Frame {
   void CommitAboutBlankSynchronously(const GURL& url);
   // A navigation of the frame that commits without the network: to a srcdoc
   // or an about:blank.
+  // A child frame's navigation to a data: URL, which waits for a later task,
+  // which a newer navigation takes the place of.
+  struct DataUrlAnswer {
+    uint64_t number = 0;
+    base::TimeTicks start;
+  };
   struct LocalNavigation {
     LocalNavigation();
     LocalNavigation(LocalNavigation&&);
@@ -383,10 +422,12 @@ class PageFrame final : public NavigationClient, public Frame {
     uint64_t number = 0;
     base::TimeTicks start;
     GURL url;
-    // Its source, kSrcdoc or kAboutBlank, and an about:blank's initiator.
+    // Its source, kSrcdoc, kAboutBlank or kErrorPage, and an about:blank's
+    // initiator.
     PageDocumentCommitted committed;
     // Its document's origin and referrer policy, the parent document's for a
-    // srcdoc and the initiator's for an about:blank, and its referrer.
+    // srcdoc, the initiator's for an about:blank, and an opaque origin and
+    // the default for an error page, and its referrer, none for an error page.
     url::Origin origin;
     FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
     std::u16string referrer;
@@ -396,11 +437,26 @@ class PageFrame final : public NavigationClient, public Frame {
     // from the owner document.
     GURL about_base_url;
     GURL cookie_url;
+    // OwnerSandboxesOrigin() as it started, or of the document that started
+    // it, whose origin an about:blank takes.
+    bool origin_sandboxed = false;
     // A srcdoc's markup.
     std::u16string body;
     // Whether it reloads the frame's document, as location.reload() does.
     bool reload = false;
   };
+  // Commits `navigation` from a later task, as Chrome's browser commits it,
+  // unless a newer navigation of the frame takes its place first.
+  void CommitWithoutNetworkSoon(LocalNavigation navigation);
+  // A child frame's navigation to a data: URL, which the Page answers itself
+  // from a later task, through a DocumentLoader as a response.
+  void BeginDataUrlNavigation(const NavigationRequest& request);
+  // Gives the loader of the data: URL's navigation numbered `number`, if it
+  // still waits, its response.
+  void AnswerDataUrl(uint64_t number);
+  // Has the parent check whether all of its frames have loaded, once this
+  // frame no longer loads.
+  void LetParentCheckCompleted();
   // Commits `navigation`, unless another has taken its place: in the same
   // window for a document of the initial about:blank's origin, as Blink's
   // DocumentLoader::CommitNavigation() reuses it, and otherwise in a new
@@ -439,6 +495,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // takes the place of.
   uint64_t last_local_navigation_ = 0;
   std::unique_ptr<LocalNavigation> pending_local_navigation_;
+  // The number of the last data: URL that the frame answered itself, and the
+  // answer that waits, if any.
+  uint64_t last_data_url_answer_ = 0;
+  std::unique_ptr<DataUrlAnswer> pending_data_url_answer_;
   // What the current window runs in its context, which stops with it.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;
@@ -463,7 +523,15 @@ class PageFrame final : public NavigationClient, public Frame {
   // and what RenderFrameImpl compares a new one with to drop it as the same.
   std::unique_ptr<DocumentLoader> provisional_;
   NavigationRequest provisional_request_;
+  // Counts the requests that have waited, so that a data: URL's navigation
+  // lets its request go only while it is still the one that waits.
+  uint64_t provisional_request_serial_ = 0;
   base::TimeTicks provisional_start_;
+  // OwnerSandboxesOrigin() as the network navigation started.
+  bool provisional_origin_sandboxed_ = false;
+  // Whether a sandbox, its frame's or its response's, gives the document an
+  // opaque origin in Chrome, where the Page gives it its URL's yet.
+  bool origin_sandboxed_ = false;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,
   // as Chrome's pending entry, which the next go() counts from.

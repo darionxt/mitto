@@ -156,7 +156,7 @@ _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
-_PROTOCOL_VERSION = 32
+_PROTOCOL_VERSION = 35
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -1252,6 +1252,88 @@ def test_a_fetch_asks_the_session_for_what_its_script_gives_and_resolves_with_th
     assert session.close() == 0
 
 
+@pytest.mark.parametrize("when", ["response", "end"])
+def test_a_fetch_that_page_code_aborts_while_its_promise_resolves_outlives_the_call(
+    session: _Session, when: str
+) -> None:
+    # Resolving a promise reads the `then` of the Response, or of the last read's result, whose getter aborts the fetch
+    # under the call that the request makes. What it makes after that has the sizes of what the abort would have
+    # destroyed, so that a call that goes on in a request that is gone meets its bytes.
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1)
+        + b"""(async () => {
+            const controller = new AbortController(); const { signal } = controller; window.kept = [];
+            const aborts = (value) => %s;
+            Object.defineProperty(Object.prototype, 'then', { configurable: true, get() {
+                if (aborts(this) && !signal.aborted) {
+                    controller.abort();
+                    for (let i = 0; i < 4000; ++i) kept.push(new Blob(['a'.repeat(16 * (1 + i %% 60))]));
+                }
+                return undefined;
+            } });
+            const response = await fetch('/a', { signal });
+            let end = response.type;
+            if (!signal.aborted) {
+                const reader = response.body.getReader();
+                await reader.read();
+                window.reading = true;
+                end = (await reader.read()).done;
+            }
+            delete Object.prototype.then;
+            return [end, signal.aborted, kept.length];
+        })()"""
+        % (b"value instanceof Response" if when == "response" else b"value.done === true"),
+    )
+    assert session.receive()[0] == _REQUEST
+
+    _respond(session, 1, "http://www.example.test/a", "text/plain", headers="Cache-Control: no-store\n")
+    if when == "response":
+        assert session.receive() == (_CANCEL, struct.pack("<Q", 1))
+        assert session.evaluated() == (1, False, '["basic",true,4000]')
+        _end(session, 1, _ERR_ABORTED)
+    else:
+        _body(session, 1, b"body")
+        assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 4))
+        assert session.evaluate("window.reading", 2) == (False, "true")
+        _end(session, 1)
+        assert session.evaluated() == (1, False, "[true,true,4000]")
+    assert session.evaluate("1 + 1", 3) == (False, "2")
+    assert session.close() == 0
+
+
+def test_a_keepalive_fetch_that_page_code_aborts_frees_its_bytes_at_once(session: _Session) -> None:
+    # Two bodies of 40 KiB are past the quota of 64 KiB that the keepalive requests in flight share.
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1)
+        + b"""(() => {
+            const controller = new AbortController(); const { signal } = controller;
+            const init = { method: 'POST', body: 'a'.repeat(40 * 1024), keepalive: true };
+            Object.defineProperty(Response.prototype, 'then', { configurable: true, get() {
+                if (!signal.aborted) { controller.abort(); fetch('/b', init).catch(() => {}); }
+                return undefined;
+            } });
+            fetch('/a', { ...init, signal });
+        })()""",
+    )
+    assert session.receive()[0] == _REQUEST
+    assert session.evaluated() == (1, False, "")
+
+    _respond(session, 1, "http://www.example.test/a", "text/plain")
+
+    assert session.receive() == (_CANCEL, struct.pack("<Q", 1))
+    message_type, payload = session.receive()
+    assert message_type == _REQUEST
+    assert b"http://www.example.test/b" in payload
+    _end(session, 1, _ERR_ABORTED)
+    assert session.close() == 0
+
+
 def test_a_fetchs_request_init_reaches_the_session_in_its_request(session: _Session) -> None:
     # Mode no-cors takes only the no-CORS-safelisted lines, a referrer of the document's origin goes as a URL, and a
     # fetch's priority "low" is LOWEST, sent as one more than net::LOWEST. Keepalive is flag 8.
@@ -2083,3 +2165,9 @@ def test_a_navigation_that_ends_with_no_response_keeps_the_document(session: _Se
     assert session.evaluate("[window.marker, document.URL]", call=2) == (False, f'["kept","{_DOCUMENT_URL}"]')
     assert session.documents == [struct.pack("<QBQ", 1, 0, 0), struct.pack("<QBQQ", 2, 1, 0, 0)]
     assert session.close() == 0
+
+
+def test_a_script_s_window_of_an_opaque_origin_has_no_storage(program: Path) -> None:
+    # The window of the Page program given a script has no frame, but a context, so its about:blank, of an opaque
+    # origin, throws, as a Page's does.
+    assert _evaluate(program, "try { localStorage; 'none' } catch (error) { error.name }") == "SecurityError"

@@ -4,15 +4,19 @@ tests/frames_cases.js runs in a Page at an HTTP origin and gives what its iframe
 about:blank and the about:blank that a frame commits at once, the frame tree on the window, contentWindow and
 contentDocument, realms, writing into a frame's document, named and indexed access, and a frame that goes.
 tests/data/frames_cases.json holds what Chrome 157 gave for the same script on the same kind of page, headless Chrome for
-Testing on macOS (157.0.8103.79), with the page's origin as ORIGIN. The other tests check what a frame reports, what the
-Session hears of a frame's document, and what frames do as they go or move, where the expected values are what the same
-Chrome gave for the same scripts.
+Testing on macOS (157.0.8103.79), with the page's origin as ORIGIN. tests/frames_srcdoc_cases.js and
+tests/frames_navigation_cases.js do the same for srcdoc and later about:blank documents, and for frames that navigate
+through the Session. The other tests check what a frame reports, what the Session hears of a frame's document, and what
+frames do as they go or move, where the expected values are what the same Chrome gave for the same scripts.
 """
 
+import dataclasses
+import html
 import http.server
 import json
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +42,94 @@ _CASES = (_TESTS / "frames_cases.js").read_text()
 _AS_CHROME = json.loads((_TESTS / "data" / "frames_cases.json").read_text())
 _SRCDOC_CASES = (_TESTS / "frames_srcdoc_cases.js").read_text()
 _SRCDOC_AS_CHROME = json.loads((_TESTS / "data" / "frames_srcdoc_cases.json").read_text())
+_NAVIGATION_CASES = (_TESTS / "frames_navigation_cases.js").read_text()
+_NAVIGATION_AS_CHROME = json.loads((_TESTS / "data" / "frames_navigation_cases.json").read_text())
+# A frame's document whose script reads performance.timing while it parses.
+# Its script runs once the response has ended, after a script that comes late: a body's end is a message of its own, in
+# Chrome too, which a script that runs as soon as the body has come may precede.
+_TIMING_PAGE = b"""<!doctype html><script src=/hold.js></script><script>
+const t = performance.timing;
+parent.timingAtParse = {
+  domLoading: t.domLoading >= t.navigationStart && t.domLoading > 0,
+  domInteractive: t.domInteractive,
+  domContentLoadedEventStart: t.domContentLoadedEventStart,
+  domComplete: t.domComplete,
+  loadEventStart: t.loadEventStart,
+  loadEventEnd: t.loadEventEnd,
+  fetchStart: t.fetchStart >= t.navigationStart,
+  responseEnd: t.responseEnd >= t.fetchStart,
+  entries: performance.getEntriesByType('navigation').length,
+};
+</script>"""
+# Gives the document's URL, and how often a callback has reached it, 0 if none has after LIMIT milliseconds.
+_REACHED = """
+  new Promise((resolve) => {
+    const started = performance.now();
+    const check = () => {
+      if (document.reached || performance.now() - started > LIMIT) resolve([location.href, document.reached || 0]);
+      else setTimeout(check, 50);
+    };
+    check();
+  })
+"""
+# The request headers that /echo gives back, which a frame's navigation sends.
+_ECHOED = (
+    "accept",
+    "referer",
+    "sec-fetch-dest",
+    "sec-fetch-mode",
+    "sec-fetch-site",
+    "sec-fetch-user",
+    "upgrade-insecure-requests",
+)
+
+
+def answer(path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], bytes]:
+    """The status, headers and body with which the frames' server answers a GET of `path`.
+
+    /from-... gives the request's Referer, or "none"; /echo the headers in _ECHOED that came, in a script element of id h;
+    /204 nothing; /redirect a redirect to /child?redirected; /drop no response at all, as status 0; /timing a document
+    whose script puts what it reads of performance.timing into parent.timingAtParse, after /hold.js, an empty script
+    that comes after 300 ms; /framed a page whose markup holds an iframe of /framed-child; /opened a page whose script
+    opens a frame's document and removes the frame a second later; /slow, after 300 ms, and /child... and /dir/... a
+    document whose paragraph of id c holds its path; /nested a document with a frame of /slow?inner, whose load and its
+    own go into top.order; /xml an XML document with a document type; anything else the top-level page.
+    """
+    html_type = {"Content-Type": "text/html"}
+    if path.startswith("/from-"):
+        return 200, {"Content-Type": "text/plain"}, (headers.get("referer") or "none").encode()
+    if path.split("?")[0] == "/echo":
+        echoed = {name: headers[name] for name in _ECHOED if name in headers}
+        script = html.escape(json.dumps(echoed, sort_keys=True), quote=False)
+        return 200, html_type, f"<!doctype html><script type=application/json id=h>{script}</script>".encode()
+    if path == "/204":
+        return 204, {}, b""
+    if path == "/drop":
+        return 0, {}, b""
+    if path == "/framed":
+        return 200, html_type, _FRAMED_PAGE
+    if path == "/opened":
+        return 200, html_type, _OPENED_PAGE
+    if path == "/timing":
+        return 200, html_type, _TIMING_PAGE
+    if path == "/hold.js":
+        time.sleep(0.3)
+        return 200, {"Content-Type": "text/javascript"}, b""
+    if path == "/xml":
+        return 200, {"Content-Type": "text/xml"}, b"<!DOCTYPE root [ <!ELEMENT root (#PCDATA)> ]><root>x</root>"
+    if path == "/redirect":
+        return 302, {"Location": "/child?redirected"}, b""
+    if path == "/nested":
+        body = (
+            "<!doctype html><body onload=\"top.order.push('nested ' + document.readyState)\">"
+            "<iframe src=/slow?inner onload=\"top.order.push('inner ' + this.contentDocument.readyState)\"></iframe>"
+        )
+        return 200, html_type, body.encode()
+    if path.startswith(("/slow", "/child", "/dir/")):
+        if path.startswith("/slow"):
+            time.sleep(0.3)
+        return 200, html_type, f"<!doctype html><title>child</title><p id=c>{html.escape(path)}</p>".encode()
+    return 200, html_type, _PAGE
 
 
 @pytest.fixture
@@ -51,22 +143,20 @@ def page_program(native_library: Any) -> None:
 
 @pytest.fixture
 def page_url() -> Iterator[str]:
-    """The URL of a page with a paragraph on 127.0.0.1, which is a secure context, where /from-... answers with its
-    request's Referer, /framed is a page whose markup holds an iframe of another URL, and /opened one whose script opens
-    a frame's document and removes the frame a second later."""
+    """The URL of a page with a paragraph on 127.0.0.1, which is a secure context, on a server that answers as answer()
+    does."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
-            # A path that starts with /from- answers with the Referer that came, or "none".
-            if self.path.startswith("/from-"):
-                body, content_type = (self.headers.get("Referer") or "none").encode(), "text/plain"
-            else:
-                body = {"/framed": _FRAMED_PAGE, "/opened": _OPENED_PAGE}.get(self.path, _PAGE)
-                content_type = "text/html"
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
+            status, headers, body = answer(self.path, {name.lower(): value for name, value in self.headers.items()})
+            if not status:
+                self.close_connection = True
+                return
+            self.send_response(status)
+            for name, value in headers.items():
+                self.send_header(name, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -100,6 +190,20 @@ def test_srcdoc_and_about_blank_frames_are_chrome_s(page_url: str) -> None:
         record = page.evaluate(_SRCDOC_CASES)
     origin = page_url.rstrip("/")
     as_chrome = json.loads(json.dumps(_SRCDOC_AS_CHROME["record"]).replace("ORIGIN", origin))
+
+    assert set(record) == set(as_chrome)
+    for section, expected in as_chrome.items():
+        assert record[section] == expected, section
+
+
+@pytest.mark.usefixtures("page_program")
+def test_frames_that_navigate_through_the_session_are_chrome_s(page_url: str) -> None:
+    # tests/frames_navigation_cases.js against tests/data/frames_navigation_cases.json, as Chrome for Testing 157 gave
+    # it on a server that answers as answer() does.
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        record = page.evaluate(_NAVIGATION_CASES, timeout=_TIMEOUT_SECONDS)
+    origin = page_url.rstrip("/")
+    as_chrome = json.loads(json.dumps(_NAVIGATION_AS_CHROME["record"]).replace("ORIGIN", origin))
 
     assert set(record) == set(as_chrome)
     for section, expected in as_chrome.items():
@@ -446,6 +550,569 @@ def test_a_frame_s_cookie_store_and_its_parent_s_each_hear_of_changes(page_url: 
     """
     with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         assert page.evaluate(script) == ["frame from_frame", "frame from_top", "top from_frame", "top from_top"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_s_own_members_do_not_reach_a_frame_of_another_origin(page_url: str) -> None:
+    # A getter, a setter or a method of the page's window, called on the window of a frame of another origin, throws, as
+    # in Chrome 157 but for the members that another origin may reach. Chrome lets it have the Location, whose members
+    # it then refuses, and send a message: Known Gaps, where the Location would refuse nothing and the message would name
+    # its target as its source.
+    script = """
+      (async () => {
+        const threw = (f) => { try { f(); return false; } catch (e) { return true; } };
+        const element = document.createElement('iframe');
+        element.src = `http://localhost:${location.port}/child?other`;
+        document.body.appendChild(element);
+        await new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const w = element.contentWindow;
+        const get = (name) => Object.getOwnPropertyDescriptor(window, name).get.call(w);
+        const set = (name, value) => Object.getOwnPropertyDescriptor(window, name).set.call(w, value);
+        const refused = {
+          document: () => get('document'), reflect: () => Reflect.get(window, 'document', w), location: () => get('location'),
+          localStorage: () => get('localStorage'), name: () => get('name'), origin: () => get('origin'), navigator: () => get('navigator'),
+          frameElement: () => get('frameElement'), onload: () => get('onload'), setName: () => set('name', 'x'),
+          setOnload: () => set('onload', () => 1), setSelf: () => set('self', 1), setOpener: () => set('opener', 1),
+          fetch: () => fetch.call(w, '/'), setTimeout: () => setTimeout.call(w, () => 1), btoa: () => btoa.call(w, 'a'),
+          structuredClone: () => structuredClone.call(w, 1), stop: () => stop.call(w), open: () => open.call(w, 'about:blank', '_self'),
+          addEventListener: () => addEventListener.call(w, 'x', () => 1), dispatchEvent: () => dispatchEvent.call(w, new Event('x')),
+          getComputedStyle: () => getComputedStyle.call(w, document.body), property: () => w.document,
+          postMessage: () => postMessage.call(w, 1, '*'),
+        };
+        const reached = {
+          window: () => get('window') === w, self: () => get('self') === w, frames: () => get('frames') === w,
+          parent: () => get('parent') === window, top: () => get('top') === window, opener: () => get('opener') === null,
+          length: () => get('length') === 0, closed: () => get('closed') === false, blur: () => blur.call(w) === undefined,
+        };
+        const notRefused = Object.keys(refused).filter((name) => !threw(refused[name]));
+        const notReached = Object.keys(reached).filter((name) => threw(reached[name]) || !reached[name]());
+        return [element.contentDocument, notRefused, notReached];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == [None, [], []]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_window_that_its_frame_left_reaches_only_a_window_of_its_origin(page_url: str) -> None:
+    # A function of a window that its frame navigated away from takes the frame's current window for its bare members,
+    # which it may use in a window of its own origin, and not in another's, and has no named elements, as in Chrome 157.
+    script = """
+      (async () => {
+        const tried = (f) => { try { return f(); } catch (e) { return e.name === 'ReferenceError' ? e.message : 'refused'; } };
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const results = {};
+        for (const origin of ['', `http://localhost:${location.port}`]) {
+          const element = document.createElement('iframe');
+          element.name = 'n';
+          element.src = '/child?old';
+          document.body.appendChild(element);
+          await loaded(element);
+          const w = element.contentWindow;
+          w.eval("var mine = 'old'");
+          const f = w.eval(`[
+            () => c.localName, () => mine, () => window.document.URL, () => document.URL.includes('old') || document.URL,
+            () => name, () => origin, () => typeof setTimeout(() => 1), () => typeof localStorage, () => location.pathname,
+            () => 'document' in self, () => self === window, () => parent === top, () => length, () => closed,
+            () => { const f = btoa; return [f('a'), btoa.call(undefined, 'a'), Reflect.apply(btoa, self, ['a'])]; },
+            () => { const add = addEventListener; return [add('x', () => 1), addEventListener.call(null, 'x', () => 1)]; },
+            () => Object.getOwnPropertyDescriptor(window, 'document').get.call(self).URL,
+          ]`);
+          const before = f[0]();
+          element.src = origin + '/child?new';
+          await loaded(element);
+          results[origin ? 'other' : 'same'] = [before, ...f.map(tried)];
+          element.remove();
+        }
+        return results;
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        results = page.evaluate(script)
+    # What Chrome's `document` gives, the document that the window had, is a Known Gap: the frame's current document, if
+    # the window may access it, and otherwise it is refused.
+    new = f"{page_url}child?new"
+    assert results["same"] == [
+        *("p", "c is not defined", "old", new, new),
+        *("n", page_url.rstrip("/"), "number", "object", "/child", True, True, True, 0, False),
+        *(["YQ==", "YQ==", "YQ=="], [None, None], new),
+    ]
+    assert results["other"] == [
+        *("p", "c is not defined", "old", "refused", "refused"),
+        *("refused", "refused", "refused", "refused", "refused", "refused", True, True, 0, False),
+        *("refused", "refused", "refused"),
+    ]
+
+
+@pytest.fixture
+def exposed_gc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Have each Page that starts give its scripts V8's gc()."""
+    to_option = _native.PageFeatures.to_option
+
+    def with_gc(features: _native.PageFeatures) -> dict[str, object]:
+        return to_option(dataclasses.replace(features, v8_flags=(*features.v8_flags, "--expose-gc")))
+
+    monkeypatch.setattr(_native.PageFeatures, "to_option", with_gc)
+
+
+@pytest.mark.usefixtures("page_program", "exposed_gc")
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+@pytest.mark.parametrize(
+    ("where", "callback"),
+    [("frame", "Atomics.waitAsync"), ("frame", "FinalizationRegistry"), ("page", "FinalizationRegistry")],
+)
+def test_a_callback_of_a_page_that_went_reaches_only_a_document_of_its_origin(
+    page_url: str, where: str, callback: str, host: str
+) -> None:
+    # A callback that runs after its page went, in a frame's window or the page's own, still holds the top-level window,
+    # which is then the next document's. The getter of `document` that it kept, called on that window, and the window's
+    # property throw for a document of another origin, where Chrome 157 leaves the next document alone. One of its own
+    # origin shows that the callback runs, which Chrome's does not reach either: a Known Gap.
+    # The page arms it as it goes, at the commit: a wait that ends a millisecond later, or a collection that finds what
+    # the registry holds gone. So the callback's task comes right after the commit, maybe before the next document's
+    # markup, and no collection takes the old window, which nothing else holds then, before it.
+    script = f"""
+      const element = document.createElement('iframe');
+      document.body.appendChild(element);
+      const w = '{where}' === 'frame' ? element.contentWindow : window;
+      w.eval(`
+        var held = top, get = Object.getOwnPropertyDescriptor(window, 'document').get;
+        var read = () => {{
+          for (const f of [() => get.call(held), () => held.document]) {{
+            try {{ f().reached = (f().reached || 0) + 1; }} catch (e) {{}}
+          }}
+        }};
+        var wait = () => {{
+          const cell = new Int32Array(new WebAssembly.Memory({{initial: 1, maximum: 1, shared: true}}).buffer);
+          Atomics.waitAsync(cell, 0, 0, 1).value.then(read);
+        }};
+        var registry = new FinalizationRegistry(read);
+      `);
+      let registered = {{}};
+      if ('{callback}' === 'FinalizationRegistry') w.registry.register(registered, 0);
+      addEventListener('pagehide', () => {{
+        registered = null;
+        if ('{callback}' === 'Atomics.waitAsync') w.wait();
+        else gc();
+      }});
+      setTimeout(() => {{ location.href = `http://{host}:${{location.port}}/child?next`; }});
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        page.evaluate(script)
+        page.wait_for_navigation(timeout=_TIMEOUT_SECONDS)
+        limit = "20000" if host == "127.0.0.1" else "2000"
+        url, reached = page.evaluate(_REACHED.replace("LIMIT", limit), timeout=_TIMEOUT_SECONDS)
+
+    assert url == page_url.replace("127.0.0.1", host) + "child?next"
+    assert reached == (2 if host == "127.0.0.1" else 0)
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_frame_s_document_keeps_its_origin_when_an_about_blank_frame_opens_it(page_url: str) -> None:
+    # An about:blank frame's timer that opens another frame's document gives it its own URL, and the document keeps its
+    # origin, so a function of its window still reaches the window of its origin that the frame then goes to, as in
+    # Chrome 157.
+    script = """
+      (async () => {
+        const tried = (f) => { try { return f(); } catch (e) { return e.name + ': ' + e.message; } };
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const element = document.createElement('iframe');
+        element.src = '/child?old';
+        document.body.appendChild(element);
+        await loaded(element);
+        const blank = document.createElement('iframe');
+        document.body.appendChild(blank);
+        const w = element.contentWindow;
+        const f = w.eval("[() => btoa('a'), () => origin, () => window.document.URL]");
+        await new Promise((resolve) => {
+          blank.contentWindow.opened = resolve;
+          blank.contentWindow.setTimeout(blank.contentWindow.eval(`() => {
+            const target = parent.frames[0].document;
+            target.open();
+            target.write('<p>opened');
+            target.close();
+            opened();
+          }`));
+        });
+        const opened = [w.document.URL, w.document.body.textContent, w.origin, w.location.href, ...f.map(tried)];
+        element.src = '/child?new';
+        await loaded(element);
+        return [opened, f.map(tried)];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        opened, left = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    origin = page_url.rstrip("/")
+    assert opened == ["about:blank", "opened", origin, "about:blank", "YQ==", origin, "about:blank"]
+    assert left == ["YQ==", origin, f"{page_url}child?new"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_s_own_members_take_calls_of_its_origin(page_url: str) -> None:
+    # What Chrome 157 gives for the same script: calls with no receiver, in sloppy and in strict code, with another
+    # object, on the window of a frame of the page's origin, and through such a frame's own functions.
+    script = """
+      (async () => {
+        const tried = (f) => { try { return f(); } catch (e) { return e.name + ': ' + e.message; } };
+        const body = `
+          const get = (name) => Object.getOwnPropertyDescriptor(window, name).get;
+          const set = (name) => Object.getOwnPropertyDescriptor(window, name).set;
+          const results = {};
+          const record = (name, f) => { try { results[name] = f(); } catch (e) { results[name] = e.name + ': ' + e.message; } };
+          record('bare', () => { const f = setTimeout, b = btoa; return [typeof f(() => 1), b('a')]; });
+          record('undefined', () => [typeof setTimeout.call(undefined, () => 1), btoa.call(undefined, 'a')]);
+          record('null', () => [typeof setTimeout.call(null, () => 1), btoa.apply(null, ['a'])]);
+          record('window', () => [typeof setTimeout.call(window, () => 1), btoa.call(self, 'a'), typeof Reflect.apply(setTimeout, window, [() => 1])]);
+          record('get', () => [undefined, null, window].map((w) => get('document').call(w) === document));
+          record('reflect get', () => Reflect.get(window, 'document', window) === document);
+          record('set', () => { set('name').call(undefined, 'n1'); const first = name; set('name').call(window, 'n2'); return [first, name]; });
+          record('handler', () => { set('onload').call(null, f0); return onload === f0; });
+          record('listener', () => {
+            let count = 0;
+            const listener = () => count++;
+            addEventListener.call(null, 'x', listener);
+            const add = addEventListener, dispatch = dispatchEvent, remove = removeEventListener;
+            add('x', listener, true);
+            dispatch(new Event('x'));
+            dispatchEvent.call(undefined, new Event('x'));
+            remove('x', listener);
+            removeEventListener.call(null, 'x', listener, true);
+            dispatch(new Event('x'));
+            return count;
+          });
+          record('object', () => setTimeout.call({}, () => 1));
+          record('node', () => btoa.call(document, 'a'));
+          record('object get', () => get('document').call({}));
+          record('object set', () => set('name').call({}, 'x'));
+          record('inherits', () => Object.create(window).document);
+          record('proxy', () => new Proxy(window, {}).document);
+          record('getComputedStyle', () => getComputedStyle.call(undefined, document.body) instanceof CSSStyleDeclaration);
+          record('replaceable', () => { const before = get('self').call(undefined) === window; return [before, get('parent').call(null) === parent, get('frames').call(window) === window]; });
+          record('fetched', () => Promise.all([fetch.call(undefined, '/child'), fetch.call(null, '/child'), Reflect.apply(fetch, window, ['/child'])])
+              .then((all) => all.map((r) => r.status), (e) => e.message));
+          return results;
+        `;
+        const f0 = () => 1;
+        const settle = async (results) => { for (const name in results) results[name] = await results[name]; return results; };
+        const record = {
+          sloppy: await settle(Function('f0', body)(f0)),
+          strict: await settle(Function('f0', "'use strict';" + body)(f0)),
+        };
+        onload = null;
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const element = document.createElement('iframe');
+        element.src = '/child?same';
+        document.body.appendChild(element);
+        await loaded(element);
+        const w = element.contentWindow;
+        const get = (from, name) => Object.getOwnPropertyDescriptor(from, name).get;
+        let heard = 0;
+        record.frame = await settle({
+          call: tried(() => [typeof setTimeout.call(w, () => 1), btoa.call(w, 'a'), typeof Reflect.apply(setTimeout, w, [() => 1])]),
+          get: tried(() => [get(window, 'document').call(w) === w.document, Reflect.get(window, 'document', w) === w.document, get(window, 'self').call(w) === w]),
+          set: tried(() => { Object.getOwnPropertyDescriptor(window, 'name').set.call(w, 'inner'); return [w.name, name]; }),
+          listener: tried(() => { addEventListener.call(w, 'x', () => heard++); dispatchEvent.call(w, new w.Event('x')); w.dispatchEvent(new Event('x')); return heard; }),
+          theirs: tried(() => [typeof w.setTimeout(() => 1), typeof w.setTimeout.call(window, () => 1), get(w, 'document').call(window) === document]),
+          theirsBare: tried(() => { const f = w.setTimeout, b = w.btoa; return [typeof f(() => 1), b('a'), get(w, 'document').call(undefined) === w.document]; }),
+          theirFunction: tried(() => [w.Function('return document')() === w.document, w.eval('parent.document === top.document'), typeof w.eval('parent.setTimeout(() => 1)')]),
+          theirCall: tried(() => [w.eval('btoa').call(window, 'a'), w.eval("addEventListener.call(parent, 'y', () => 1)"), w.eval('Reflect.apply(btoa, parent, ["a"])')]),
+          fetched: tried(() => Promise.all([fetch.call(w, '/child'), w.fetch.call(undefined, '/child'), w.fetch.call(window, '/child')]).then((all) => all.map((r) => r.status), (e) => e.message)),
+          postMessage: tried(() => [postMessage.call(w, 1, '*'), w.postMessage(1, '*'), Reflect.apply(postMessage, w, [1, '*'])]),
+        });
+        return record;
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        record = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    own = {
+        "bare": ["number", "YQ=="],
+        "undefined": ["number", "YQ=="],
+        "null": ["number", "YQ=="],
+        "window": ["number", "YQ==", "number"],
+        "get": [True, True, True],
+        "reflect get": True,
+        "set": ["n1", "n2"],
+        "handler": True,
+        "listener": 4,
+        "object": "TypeError: Illegal invocation",
+        "node": "TypeError: Illegal invocation",
+        "object get": "TypeError: Illegal invocation",
+        "object set": "TypeError: Illegal invocation",
+        "inherits": "TypeError: Illegal invocation",
+        "proxy": "TypeError: Illegal invocation",
+        "getComputedStyle": True,
+        "replaceable": [True, True, True],
+        "fetched": [200, 200, 200],
+    }
+    assert record["sloppy"] == own
+    assert record["strict"] == own
+    assert record["frame"] == {
+        "call": ["number", "YQ==", "number"],
+        "get": [True, True, True],
+        "set": ["inner", "n2"],
+        "listener": 2,
+        "theirs": ["number", "number", True],
+        "theirsBare": ["number", "YQ==", True],
+        "theirFunction": [True, True, "number"],
+        "theirCall": ["YQ==", None, "YQ=="],
+        "fetched": [200, 200, 200],
+        "postMessage": [None, None, None],
+    }
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_s_own_members_take_its_own_calls(page_url: str) -> None:
+    # What Chrome 157 gives for the same script.
+    script = """
+      (async () => {
+        const body = `
+          const record = (name, f) => { try { results[name] = f(); } catch (e) { results[name] = e.name + ': ' + e.message; } };
+          const results = {};
+          const get = Object.getOwnPropertyDescriptor(WorkerGlobalScope.prototype, 'location').get;
+          record('bare', () => { const f = setTimeout, b = btoa; return [typeof f(() => 1), b('a')]; });
+          record('undefined', () => [typeof setTimeout.call(undefined, () => 1), btoa.call(null, 'a')]);
+          record('self', () => [typeof Reflect.apply(setTimeout, self, [() => 1]), btoa.call(self, 'a')]);
+          record('get', () => [get.call(undefined) === location, get.call(null) === location, get.call(self) === location]);
+          record('listener', () => {
+            let count = 0;
+            const listener = () => count++;
+            addEventListener.call(null, 'x', listener);
+            dispatchEvent.call(undefined, new Event('x'));
+            const remove = removeEventListener;
+            remove('x', listener);
+            dispatchEvent(new Event('x'));
+            return count;
+          });
+          record('object', () => setTimeout.call({}, () => 1));
+          record('object get', () => get.call({}));
+          return results;
+        `;
+        const source = `postMessage.call(null, [Function(${JSON.stringify(body)})(), Function(${JSON.stringify("'use strict';" + body)})()])`;
+        const worker = new Worker(URL.createObjectURL(new Blob([source])));
+        return new Promise((resolve) => { worker.onmessage = (e) => resolve(e.data); worker.onerror = (e) => resolve(e.message); });
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        sloppy, strict = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    own = {
+        "bare": ["number", "YQ=="],
+        "undefined": ["number", "YQ=="],
+        "self": ["number", "YQ=="],
+        "get": [True, True, True],
+        "listener": 1,
+        "object": "TypeError: Illegal invocation",
+        "object get": "TypeError: Illegal invocation",
+    }
+    assert sloppy == own
+    assert strict == own
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_script_that_a_parent_inserts_runs_as_its_frame_s(page_url: str) -> None:
+    # A script that the parent's code inserts into a frame's document runs in the frame's window, whichever window's
+    # function inserts it, and enters it, so that what it gives its location resolves against the frame's document, as in
+    # Chrome 157. The parent's own code resolves against the parent's.
+    script = """
+      (async () => {
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const frame = async (src) => {
+          const element = document.createElement('iframe');
+          if (src) element.src = src;
+          document.body.appendChild(element);
+          if (src) await loaded(element);
+          return element;
+        };
+        const inline = (element, source) => {
+          const child = element.contentDocument.createElement('script');
+          child.textContent = source;
+          return child;
+        };
+        const runs = [];
+        for (const src of ['/dir/child', '']) {
+          const element = await frame(src);
+          const body = element.contentDocument.body;
+          const mark = (name) => inline(element, `(window.ran ||= []).push('${name}')`);
+          body.appendChild(mark('its append'));
+          Node.prototype.appendChild.call(body, mark('our append'));
+          Element.prototype.append.call(body, mark('our append()'));
+          Node.prototype.insertBefore.call(body, mark('our insertBefore'), body.firstChild);
+          const module = inline(element, `(window.ran ||= []).push('module'); dispatchEvent(new Event('moduleran'))`);
+          module.type = 'module';
+          const moduleRan = new Promise((resolve) => element.contentWindow.addEventListener('moduleran', resolve));
+          Node.prototype.appendChild.call(body, module);
+          await moduleRan;
+          runs.push([element.contentWindow.ran, window.ran]);
+          element.remove();
+        }
+        const locations = [];
+        for (const source of ["location.href = '#a'", "location = '#b'", "location.assign('#c')"]) {
+          const element = await frame('/dir/child');
+          const changed = new Promise((resolve) => { element.contentWindow.onhashchange = resolve; });
+          element.contentDocument.body.appendChild(inline(element, source));
+          await changed;
+          locations.push(element.contentWindow.location.pathname + element.contentWindow.location.hash);
+          element.remove();
+        }
+        for (const navigate of [
+          (element) => element.contentDocument.body.appendChild(inline(element, "location.href = 'next'")),
+          (element) => { element.contentWindow.location.href = 'next'; },
+        ]) {
+          const element = await frame('/dir/child');
+          navigate(element);
+          await loaded(element);
+          locations.push(element.contentWindow.location.pathname);
+          element.remove();
+        }
+        return [runs, locations];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        runs, locations = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    ran = ["its append", "our append", "our append()", "our insertBefore", "module"]
+    assert runs == [[ran, None], [ran, None]]
+    assert locations == ["/dir/child#a", "/dir/child#b", "/dir/child#c", "/dir/next", "/next"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_document_that_its_frame_left_runs_no_script_and_shares_no_realm(page_url: str) -> None:
+    # A script that the parent inserts into a document that its frame left, or that went with its frame, runs nowhere, as
+    # in Chrome 157, and what the old window makes is of its own realm. A queuing strategy's size function is too, where
+    # Chrome gives the next window's, which a Page may not for a window of another origin.
+    script = """
+      (async () => {
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const results = {};
+        for (const way of ['about:blank', 'network', 'srcdoc', 'removed']) {
+          const element = document.createElement('iframe');
+          element.src = '/child?old';
+          document.body.appendChild(element);
+          await loaded(element);
+          const oldDocument = element.contentDocument, oldFunction = element.contentWindow.Function;
+          const Strategy = element.contentWindow.CountQueuingStrategy;
+          if (way === 'removed') {
+            element.remove();
+          } else {
+            const load = loaded(element);
+            if (way === 'srcdoc') element.srcdoc = '<p>new';
+            else element.src = way === 'network' ? '/child?new' : 'about:blank';
+            await load;
+            new element.contentWindow.CountQueuingStrategy({highWaterMark: 1}).size;
+          }
+          window.ran = [];
+          for (const type of ['', 'module']) {
+            for (const append of [Node.prototype.appendChild, oldDocument.body.appendChild]) {
+              const child = oldDocument.createElement('script');
+              child.type = type;
+              child.textContent = "(window.ran ||= []).push(document.URL); try { top.ran.push('ran'); } catch (e) {}";
+              append.call(oldDocument.body, child);
+            }
+          }
+          const image = oldDocument.createElement('img');
+          image.setAttribute('onerror', "top.ran.push('handler')");
+          oldDocument.body.appendChild(image);
+          image.dispatchEvent(new Event('error'));
+          const form = oldDocument.createElement('form');
+          form.name = 'named';
+          oldDocument.body.appendChild(form);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const current = element.contentWindow;
+          results[way] = [
+            window.ran, current ? current.ran === undefined && !('named' in current.document) : true,
+            new Strategy({highWaterMark: 1}).size instanceof oldFunction,
+            Object.getPrototypeOf(oldDocument) instanceof oldFunction('return Object')(),
+          ];
+          element.remove();
+        }
+        return results;
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        results = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    expected: list[Any] = [[], True, True, True]
+    assert results == {"about:blank": expected, "network": expected, "srcdoc": expected, "removed": expected}
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_xml_document_in_a_frame_has_no_viewer(page_url: str) -> None:
+    # Chrome 157 shows its XML tree viewer for the document of the top-level frame alone.
+    script = """
+      (async () => {
+        const element = document.createElement('iframe');
+        element.src = '/xml';
+        document.body.appendChild(element);
+        await new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const inner = element.contentDocument;
+        return [inner.doctype.name, inner.documentElement.outerHTML, [...inner.childNodes].map((node) => node.nodeName)];
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script) == ["root", "<root>x</root>", ["root", "root"]]
+    with mitto.Session() as session, session._open_page(page_url + "xml", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate("[document.doctype, document.documentElement.localName]") == [None, "html"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_listener_of_a_window_that_its_frame_left_runs_nothing(page_url: str) -> None:
+    # A listener runs while its window's document is the frame's, as its document unloads too, and not once the frame
+    # shows another document or has gone, whatever its target, as in Chrome 157.
+    script = """
+      (async () => {
+        const loaded = (element) => new Promise((resolve) => element.addEventListener('load', resolve, {once: true}));
+        const results = {};
+        for (const way of ['about:blank', 'network', 'removed']) {
+          const element = document.createElement('iframe');
+          element.src = '/child?old';
+          document.body.appendChild(element);
+          await loaded(element);
+          const heard = [];
+          window.heard = heard;
+          const target = new EventTarget();
+          window.target = target;
+          const name = `x${way}`;
+          element.contentWindow.eval(`
+            const heard = top.heard;
+            const tell = (what) => heard.push(what);
+            top.target.addEventListener('${name}', () => tell('target'));
+            top.document.addEventListener('${name}', {handleEvent() { tell('object'); }});
+            top.addEventListener('${name}', function() { tell('window'); });
+            top.document.body.onclick = () => tell('handler');
+            addEventListener('pagehide', () => tell('pagehide'));
+            onunload = () => tell('unload');
+          `);
+          const fire = () => {
+            target.dispatchEvent(new Event(name));
+            document.dispatchEvent(new Event(name));
+            dispatchEvent(new Event(name));
+            document.body.click();
+          };
+          fire();
+          heard.push('|');
+          if (way === 'removed') {
+            element.remove();
+          } else {
+            const load = loaded(element);
+            element.src = way === 'network' ? '/child?new' : 'about:blank';
+            await load;
+          }
+          heard.push('|');
+          fire();
+          document.body.onclick = null;
+          results[way] = heard.filter((what) => what !== 'unload').join(' ');
+          element.remove();
+        }
+        return results;
+      })()
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        results = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    expected = "target object window handler | pagehide |"
+    assert results == {"about:blank": expected, "network": expected, "removed": expected}
 
 
 @pytest.mark.usefixtures("page_program")

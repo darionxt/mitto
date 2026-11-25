@@ -33,11 +33,13 @@ Navigation::ApiEntry ToApiEntry(const HistoryItem& item,
 
 FrameNavigationEntry::FrameNavigationEntry(std::string unique_name,
                                            HistoryItem item,
+                                           url::Origin origin,
                                            uint64_t record,
                                            bool same_document_entry,
                                            PageReferrerPolicy referrer_policy)
     : unique_name_(std::move(unique_name)),
       item_(std::move(item)),
+      origin_(std::move(origin)),
       record_(record),
       same_document_entry_(same_document_entry),
       referrer_policy_(referrer_policy) {}
@@ -54,7 +56,7 @@ SessionHistory::SessionHistory() {
   Entry initial;
   initial.root = base::MakeRefCounted<FrameNavigationEntry>(
       std::string(), HistoryItem::Create(GURL(url::kAboutBlankURL)),
-      /*record=*/0, /*same_document_entry=*/false);
+      url::Origin(), /*record=*/0, /*same_document_entry=*/false);
   initial.initial = true;
   entries_.push_back(std::move(initial));
 }
@@ -82,13 +84,11 @@ std::optional<size_t> SessionHistory::IndexOfKey(const std::u16string& key,
   // NavigateToNavigationApiKey(): back from `from` first, then forward, as
   // far as the entries of the current entry's origin go, each as
   // ShouldNavigateToEntryForNavigationApiKey() says.
-  const url::Origin origin =
-      url::Origin::Create(entries_[current_].root->item().url);
+  const url::Origin& origin = entries_[current_].root->origin();
   // Whether the entry at `index` has the key, or nullopt to stop looking.
   const auto matches = [this, &key, &origin](size_t index) {
     const Entry& entry = entries_[index];
-    if (entry.initial ||
-        !url::Origin::Create(entry.root->item().url).IsSameOriginWith(origin)) {
+    if (entry.initial || !entry.root->origin().IsSameOriginWith(origin)) {
       return std::optional<bool>();
     }
     return std::optional<bool>(entry.root->item().navigation_api_key == key);
@@ -134,8 +134,7 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
   arrays.type = type;
   // The entry that the frame came from, if it is of the new origin.
   const Entry& old = entries_[current_];
-  if (!old.initial &&
-      url::Origin::Create(old.root->item().url).IsSameOriginWith(origin)) {
+  if (!old.initial && old.root->origin().IsSameOriginWith(origin)) {
     arrays.previous =
         ToApiEntry(old.root->item(), item.document_sequence_number);
   }
@@ -151,7 +150,7 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
   }
   Entry entry;
   entry.root = base::MakeRefCounted<FrameNavigationEntry>(
-      std::string(), item, record, /*same_document_entry=*/false);
+      std::string(), item, origin, record, /*same_document_entry=*/false);
   if (type == FrameLoadType::kStandard && !old.initial) {
     PushEntry(std::move(entry));
   } else {
@@ -166,13 +165,12 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
 Navigation::EntryArrays SessionHistory::DidRestoreDocument(
     scoped_refptr<FrameNavigationEntry> entry) {
   const HistoryItem item = entry->item();
+  const url::Origin origin = entry->origin();
   // What it came from, before the current entry moves.
   const Entry& old = entries_[current_];
   Navigation::EntryArrays arrays;
   arrays.type = FrameLoadType::kBackForward;
-  const url::Origin origin = url::Origin::Create(item.url);
-  if (!old.initial &&
-      url::Origin::Create(old.root->item().url).IsSameOriginWith(origin)) {
+  if (!old.initial && old.root->origin().IsSameOriginWith(origin)) {
     arrays.previous =
         ToApiEntry(old.root->item(), item.document_sequence_number);
   }
@@ -196,6 +194,7 @@ scoped_refptr<FrameNavigationEntry> SessionHistory::CurrentRootRef() const {
 
 void SessionHistory::DidCommitSameDocumentNavigation(
     const HistoryItem& item,
+    const url::Origin& origin,
     FrameLoadType type,
     uint64_t record,
     PageReferrerPolicy referrer_policy) {
@@ -205,7 +204,7 @@ void SessionHistory::DidCommitSameDocumentNavigation(
     case FrameLoadType::kStandard: {
       Entry entry;
       entry.root = base::MakeRefCounted<FrameNavigationEntry>(
-          std::string(), item, record, /*same_document_entry=*/true,
+          std::string(), item, origin, record, /*same_document_entry=*/true,
           referrer_policy);
       PushEntry(std::move(entry));
       return;
@@ -213,7 +212,7 @@ void SessionHistory::DidCommitSameDocumentNavigation(
     case FrameLoadType::kReplaceCurrentItem:
     case FrameLoadType::kReload:
       entries_[current_].root = base::MakeRefCounted<FrameNavigationEntry>(
-          std::string(), item, record, /*same_document_entry=*/true,
+          std::string(), item, origin, record, /*same_document_entry=*/true,
           referrer_policy);
       return;
     case FrameLoadType::kBackForward:
@@ -281,8 +280,7 @@ void SessionHistory::FillApiEntries(size_t index,
       i = back ? i - 1 : i + 1;
       const Entry& entry = entries_[i];
       const HistoryItem& item = entry.root->item();
-      if (entry.initial ||
-          !url::Origin::Create(item.url).IsSameOriginWith(origin)) {
+      if (entry.initial || !entry.root->origin().IsSameOriginWith(origin)) {
         break;
       }
       if (item.item_sequence_number == last) {

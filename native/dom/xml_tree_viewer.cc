@@ -10,6 +10,7 @@
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/text.h"
@@ -369,7 +370,14 @@ void FillTree(const cppgc::Persistent<Element>& tree,
 }  // namespace
 
 bool HasNoStyleInformation(const Document& document) {
-  return !document.SawElementsInKnownNamespaces() && document.DefaultView();
+  if (document.SawElementsInKnownNamespaces()) {
+    return false;
+  }
+  // A frame's document gets none: XMLViewerForIframes is an experimental
+  // feature.
+  Window* const window = document.DefaultView();
+  const Frame* const frame = window ? window->GetFrame() : nullptr;
+  return window && !(frame && frame->Parent());
 }
 
 void TransformDocumentToXmlTreeView(Document& document) {

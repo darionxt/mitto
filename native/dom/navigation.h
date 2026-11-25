@@ -159,10 +159,10 @@ class Navigation final : public EventTarget {
   //
   // NavigationApi::InitializeForNewWindow(): where the document's entries
   // come from, which the Page gives a document that a navigation loaded,
-  // before anything reads them. Its own entry is the window's current one.
-  void InitializeForNewWindow(EntryArrays arrays) {
-    arrays_ = std::move(arrays);
-  }
+  // before anything reads them. Its own entry is the window's current one. A
+  // frame's window that its initial about:blank leaves to a document of its
+  // origin makes the new document's entries again.
+  void InitializeForNewWindow(EntryArrays arrays);
   // NavigationApi::SetEntriesForRestore(), for a document that the
   // back/forward cache restores: its entries become those of `arrays` around
   // its own, an entry of the same key and ID staying the same object, its

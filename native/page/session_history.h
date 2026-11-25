@@ -47,6 +47,7 @@ class FrameNavigationEntry final
   FrameNavigationEntry(
       std::string unique_name,
       HistoryItem item,
+      url::Origin origin,
       uint64_t record,
       bool same_document_entry,
       PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument);
@@ -58,6 +59,9 @@ class FrameNavigationEntry final
   const std::string& unique_name() const { return unique_name_; }
   const HistoryItem& item() const { return item_; }
   void set_item(HistoryItem item) { item_ = std::move(item); }
+  // The origin of the document that committed it, which its URL does not say
+  // once document.open() gave the document another's.
+  const url::Origin& origin() const { return origin_; }
   // The document whose navigation the Session made, which a traversal to the
   // entry repeats: its ID, 0 for none, as for the initial about:blank.
   uint64_t record() const { return record_; }
@@ -74,6 +78,7 @@ class FrameNavigationEntry final
 
   const std::string unique_name_;
   HistoryItem item_;
+  const url::Origin origin_;
   const uint64_t record_;
   const bool same_document_entry_;
   const PageReferrerPolicy referrer_policy_;
@@ -134,6 +139,7 @@ class SessionHistory final {
   // current one replaced for kReplaceCurrentItem and kReload, and for
   // kBackForward the entry of its item became the current one.
   void DidCommitSameDocumentNavigation(const HistoryItem& item,
+                                       const url::Origin& origin,
                                        FrameLoadType type,
                                        uint64_t record,
                                        PageReferrerPolicy referrer_policy);

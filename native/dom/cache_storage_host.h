@@ -57,6 +57,9 @@ class CacheStorageHost {
 
   // The Page no longer uses a cache that the Session opened for it.
   virtual void ReleaseCache(uint64_t cache) = 0;
+  // Whether the Session opened `cache` for the host's current document, and
+  // not for one before it.
+  virtual bool HasCache(uint64_t cache) const = 0;
 
   // The Page has made document `document`, which takes the place of the one
   // before it: what that one asked, held or opened goes, as its Mojo pipes go

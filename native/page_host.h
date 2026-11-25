@@ -347,6 +347,12 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
+    // Whether a document is cross-origin isolated, as
+    // CrossOriginIsolatedCapability() says: the top-level document's
+    // isolation, and for a frame's that, and its parent's, and the same origin
+    // as its parent's, the default allowlist 'self' of the
+    // cross-origin-isolated feature (FrameIsCrossOriginIsolated()).
+    bool cross_origin_isolated = false;
     // The URL whose cookies a document's cookie calls read and write, as
     // Blink's Document::CookieURL(): for a frame's about:blank or srcdoc its
     // creator's or its initiator's, and empty for a document's own URL, as
@@ -410,7 +416,9 @@ class PageHost final : public PageChannel::Delegate {
   void OnSameDocumentNavigation(uint64_t document, const std::string& url);
   // A navigation of document `document`'s frame to about:blank that document
   // `initiator` started.
-  void OnAboutBlankNavigation(uint64_t document, uint64_t initiator);
+  void OnAboutBlankNavigation(uint64_t document,
+                              uint64_t initiator,
+                              PageLocalNavigationKind kind);
   // Document `opener` of another window opened document `document`.
   void OnDocumentOpened(uint64_t document, uint64_t opener);
   // A traversal of the session history that leaves document `document` for
@@ -483,6 +491,25 @@ class PageHost final : public PageChannel::Delegate {
     bool cross_origin = false;
   };
   FrameTree FrameTreeOf(uint64_t id) const;
+  // Whether a frame's document of `origin` under document `parent` is
+  // cross-origin isolated: the parent is, and they are of the same origin, as
+  // the cross-origin-isolated feature's default allowlist 'self' has it. Known
+  // Gap: a frame's allow attribute and a document's Permissions-Policy for
+  // the feature, which need the container policy.
+  bool FrameIsCrossOriginIsolated(uint64_t parent,
+                                  const url::Origin& origin) const;
+  // The embedder policy of a frame's document under document `parent` that
+  // the response that `event` describes makes.
+  CrossOriginEmbedderPolicy FrameEmbedderPolicyOf(
+      uint64_t parent,
+      const RequestEvent& event) const;
+  // Whether a frame's navigation, whose response that `event` describes makes
+  // a document of embedder policy `coep`, is blocked by its parent's.
+  static bool BlocksFrameNavigation(const Request& request,
+                                    const RequestEvent& event,
+                                    const CrossOriginEmbedderPolicy& coep);
+  // Ends a frame's navigation that its parent's embedder policy blocks.
+  void BlockFrameNavigation(Request& request);
   // What the document's Cache API asks, which PageCacheStorage serves,
   // with the storage key of the document that asks.
   void OnCacheStorage(PageCacheStorageCall call,
@@ -543,6 +570,9 @@ class PageHost final : public PageChannel::Delegate {
     // A navigation, whose response the Page makes a document of, unless it
     // is a 204, a 205 or a download.
     bool is_navigation = false;
+    // A navigation of the top-level frame, which the caller hears of, and
+    // whose COOP and COEP make the Page's agent cluster.
+    bool top_level = false;
     // A dedicated worker's script: its creator's embedder policy, which the
     // worker's has to be compatible with, as DedicatedWorkerHost::CheckCOEP()
     // holds it.
@@ -550,6 +580,14 @@ class PageHost final : public PageChannel::Delegate {
     // The embedder policy of the document or worker that asks, which the
     // Cross-Origin-Resource-Policy check of a request of mode no-cors reads.
     CrossOriginEmbedderPolicy embedder_policy;
+    // A frame's navigation: the URLs of the frame's ancestors' documents, from
+    // its parent's up, as they were when it started.
+    std::vector<GURL> frame_ancestor_urls;
+    // A frame's navigation: its parent's embedder policy and origin, which
+    // NavigationRequest::EnforceCOEP() and CheckResponseAdherenceToCoep()
+    // hold each of its responses to.
+    std::optional<CrossOriginEmbedderPolicy> parent_embedder_policy;
+    url::Origin parent_origin;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
@@ -572,7 +610,9 @@ class PageHost final : public PageChannel::Delegate {
   // document, and the library reads the body to its end and drops it.
   void DropNavigation(Request& request, const RequestEvent& event);
   // Tells the Page that the response of `request` has started.
-  void StartResponse(Request& request, const RequestEvent& event);
+  // Returns whether the response reached the Page: a frame's navigation that
+  // its parent's embedder policy blocks ended instead.
+  bool StartResponse(Request& request, const RequestEvent& event);
   // Ends the sniffing of a navigation's response: a download, or the
   // response with what was read of its body.
   void FinishSniffing(Request& request);
@@ -663,6 +703,10 @@ class PageHost final : public PageChannel::Delegate {
     GURL url;
     uint64_t parent = kNoDocument;
     uint64_t target = kNoDocument;
+    // The embedder policy and the isolation of the document that the response
+    // makes.
+    CrossOriginEmbedderPolicy coep;
+    bool cross_origin_isolated = false;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
   // The navigations of frames to about:blank that have started and not
@@ -670,6 +714,7 @@ class PageHost final : public PageChannel::Delegate {
   // place of: the document that started it, and what of it the about:blank
   // takes.
   struct AboutBlankNavigation {
+    PageLocalNavigationKind kind = PageLocalNavigationKind::kAboutBlank;
     uint64_t initiator = kNoDocument;
     url::Origin origin;
     CrossOriginEmbedderPolicy coep;
@@ -693,6 +738,7 @@ class PageHost final : public PageChannel::Delegate {
     GURL url;
     int32_t status = 0;
     CrossOriginEmbedderPolicy coep;
+    bool cross_origin_isolated = false;
     int coop_ignored = 0;
     // What the navigation went as, and the Referer it sent last, which a
     // traversal to its document repeats.
@@ -751,8 +797,14 @@ class PageHost final : public PageChannel::Delegate {
     std::string referrer;
     std::vector<GURL> same_document_urls;
     size_t same_document_url_bytes = 0;
+    // Whether document.open() gave the document about:blank, or a traversal
+    // took it there, so that an entry of its may be at it.
+    bool had_about_blank = false;
   };
   std::map<uint64_t, NavigationRecord> records_;
+  // Whether an entry of the top-level document `context` may be at about:blank:
+  // a document of its origin whose record the Page still holds had it.
+  bool MayHaveAboutBlankEntry(const Context& context) const;
   // The documents whose CookieStores listen, by ID: what tells each of each
   // change, and what its cookie calls are made for.
   struct CookieStoreListener {

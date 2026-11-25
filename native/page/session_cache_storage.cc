@@ -145,6 +145,10 @@ void SessionCacheStorage::ReleaseStoredBody(uint64_t body) {
   Send(call);
 }
 
+bool SessionCacheStorage::HasCache(uint64_t cache) const {
+  return caches_.contains(cache);
+}
+
 void SessionCacheStorage::ReleaseCache(uint64_t cache) {
   // A cache of a document before has gone with it.
   if (caches_.erase(cache) == 0) {

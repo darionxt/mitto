@@ -44,6 +44,7 @@ class SessionStorageBuckets final : public StorageBucketHost {
   // its ID:
   void Ask(PageStorageBucketCall call, Answer answer) override;
   void Release(uint64_t bucket) override;
+  bool HasBucket(uint64_t bucket) const override;
   void DocumentCommitted(uint64_t document) override;
   bool UsedByDocument() const override;
 

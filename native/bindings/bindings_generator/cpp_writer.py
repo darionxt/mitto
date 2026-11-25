@@ -72,7 +72,7 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 #   it, which only a WeakRef or FinalizationRegistry can see; a class with it says in its header what it keeps.
 # - CEReactions: the Runtime has no custom elements, so there are no reactions to run around a call.
 # - CachedAccessor and CachedAttribute: a page sees the same value either way; caching only saves calls.
-# - CrossOrigin: only a frame of another origin sees it, and a Page has no frames yet.
+# - CrossOrigin: the receiver of a member that a caller of another origin may reach goes unchecked (_receiver_check()).
 # - NewObject: the class returns a new object, which Blink only checks.
 # - NoAllocDirectCall: the install plan puts the member where Blink does; V8's fast call itself only saves time.
 # - SameObject: the class keeps the object and returns it on every call, so the bindings keep nothing of their own.
@@ -630,8 +630,10 @@ class _InterfaceWriter:
     def _collection_with_behaviour(self) -> CollectionLike | None:
         """The interface's maplike or setlike declaration, when its class names it: the writer writes its members, which
         read the class's MaplikeEntries() or SetlikeValues(), as Blink's classes give their iteration source. Or its
-        value async iterable declaration, unless the class lists it as missing or names only other members: the
-        writer writes values(), which takes the iterator's source from the class's CreateAsyncIterationSource()."""
+        value async iterable or pair iterable declaration, unless the class lists it as missing or names only other
+        members: the writer writes values(), which takes the iterator's source from the class's
+        CreateAsyncIterationSource(), or a pair iterable's entries(), keys(), values() and forEach(), which take theirs
+        from its CreateIterationSource()."""
         collection = self.interface.collection
         if collection is None:
             return None
@@ -642,6 +644,8 @@ class _InterfaceWriter:
             if collection.key_type is not None:
                 raise UnhandledError(f"{where}: the C++ writer handles the behaviour of value async iterables only")
             return collection
+        if collection.kind == "iterable" and collection.key_type is not None:
+            return collection if self.implemented.has_behaviour(collection.kind) else None
         if collection.kind not in (self.implemented.implemented or ()):
             return None
         if collection.kind not in ("maplike", "setlike") or collection.value_type is None:
@@ -687,13 +691,45 @@ class _InterfaceWriter:
         ]
         return self._add_callback(name, body)
 
+    def _pair_iterable_member(self, collection: CollectionLike, name: str, member: OperationGroup) -> str:
+        """The callback of one member of a pair iterable with behaviour, as bind_gen's entriesForBinding() and the
+        others: the class makes the iteration source, and entries(), keys() and values() an iterator over it, while
+        forEach() calls its callback with each pair that the source gives."""
+        where = f"{collection.kind} of {self.interface.name}"
+        assert collection.iterator is not None
+        body = self._receiver()
+        if member.name in ("entries", "keys", "values"):
+            kind = {"entries": "kKeyValue", "keys": "kKey", "values": "kValue"}[member.name]
+            # The iterator is of the receiver's realm, as bind_gen makes it with the receiver's ScriptState.
+            body += [
+                "const v8::Local<v8::Context> context = ReceiverRealmScope::CreationContext(isolate);",
+                "v8::Local<v8::Value> iterator;",
+                f"if (NewPairIterator(context, V8{collection.iterator}::kWrapperTypeInfo,",
+                f"                    impl->CreateIterationSource(), PairIterationKind::{kind})",
+                "        .ToLocal(&iterator)) {",
+                "  info.GetReturnValue().Set(iterator);",
+                "}",
+            ]
+            return self._add_callback(name, body)
+        if member.name != "forEach":
+            raise UnhandledError(f"{where}: the C++ writer does not handle {member.name}()")
+        operation = member.only_overload(f"{where}: {member.name}()")
+        body.append(self._exception_state())
+        conversions, passed = self._arguments(operation.arguments[:1], f"operation {self.where(member.name)}")
+        body += conversions
+        body.append(f"impl->CreateIterationSource()->ForEach(isolate, {passed[0]}, info[1], info.This());")
+        return self._add_callback(name, body)
+
     def _collection_member(self, collection: CollectionLike, name: str, member: Attribute | OperationGroup) -> str:
         """The callback of one member of a read-only maplike or setlike declaration with behaviour, or of a value async
-        iterable's."""
+        iterable's or a pair iterable's."""
         where = f"{collection.kind} of {self.interface.name}"
         if collection.kind == "async iterable":
             assert isinstance(member, OperationGroup)
             return self._async_iterable_member(collection, name, member)
+        if collection.kind == "iterable":
+            assert isinstance(member, OperationGroup)
+            return self._pair_iterable_member(collection, name, member)
         loop, _, key, value = self._collection_items(collection, where)
         if isinstance(member, Attribute):
             # size
@@ -963,8 +999,9 @@ class _InterfaceWriter:
         self, overloads: list[Operation], where: str, count: int | None = None
     ) -> tuple[list[str], str, list[str], Operation, Operation] | None:
         """For two overloads that take the same arguments but one, which is a string in one and a callback function, as
-        setTimeout() has, a dictionary, as CookieStore's get() has, or a sequence, as PresentationRequest's constructor
-        has, in the other, or a sequence in one and a dictionary in the other, as MessagePort's postMessage() has: the
+        setTimeout() has, a dictionary, as CookieStore's get() has, a sequence, as PresentationRequest's constructor
+        has, or an interface, as FormData's append() has, in the other, or a sequence in one and a dictionary in the
+        other, as MessagePort's postMessage() has, or two interfaces, as URL's createObjectURL() has: the
         statements before the test of Web IDL's overload resolution that chooses the other overload for the value given
         there, the test, the statements after the overload it chooses, and the two overloads, the one that the test
         chooses first. With `count`, only the first `count` arguments of each are compared, for a call given that
@@ -1019,6 +1056,18 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
             ]
+        elif kinds == {TypeKind.INTERFACE, TypeKind.STRING}:
+            # An object of an interface that has a class chooses it, as FormData's append() takes a Blob, and anything
+            # else, null among it, the string, which every value converts to.
+            interface_type = next(
+                self.types.reduce(overload.arguments[index].idl_type)
+                for overload in overloads
+                if self.types.reduce(overload.arguments[index].idl_type).kind is TypeKind.INTERFACE
+            )
+            if interface_type.nullable or not self.types.has_class(interface_type.name):
+                return None
+            self.types.used_interfaces.add(interface_type.name)
+            chosen_kind, test = TypeKind.INTERFACE, f"V8{interface_type.name}::ToWrappable(isolate, info[{index}])"
         elif kinds == {TypeKind.INTERFACE}:
             # Two interfaces that have classes, as URL's createObjectURL() takes a Blob or a MediaSource: an object of
             # the first chooses the first, one of the second the second, and anything else, null among it, fails
@@ -1673,7 +1722,8 @@ class _InterfaceWriter:
             first = "isolate, context" if on_objects else "isolate"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, "
-                f"{callback}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
+                f"{callback}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect, "
+                f"{self._receiver_check(property_)});"
             ]
         if isinstance(member, ExposedConstruct):
             if member not in self.constructs:
@@ -1710,7 +1760,7 @@ class _InterfaceWriter:
                 signature = "v8::Local<v8::Signature>()"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "
-                f"{setter}, {attributes}, {side_effect}{data});"
+                f"{setter}, {attributes}, {side_effect}, {self._receiver_check(property_)}{data});"
             ]
         if isinstance(member, Constant):
             if on_objects:
@@ -1727,9 +1777,26 @@ class _InterfaceWriter:
             data = f", {self._known_gap_data(property_)}" if callback.startswith("&KnownGap") else ""
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, {callback}, "
-                f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect{data});"
+                f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect, "
+                f"{self._receiver_check(property_)}{data});"
             ]
         raise UnhandledError(f"{self.where(property_.name)}: the C++ writer does not install this kind of property")
+
+    def _receiver_check(self, property_: Property) -> str:
+        """Whether V8 checks the access to the receiver of an attribute's getter or an operation, as bind_gen's
+        cross_origin_check says: not for a static member, or for one that [CrossOrigin] lets another origin reach."""
+        member = property_.member
+        unchecked = property_.target == "interface"
+        if isinstance(member, Attribute):
+            values = member.extended_attributes.values_of("CrossOrigin")
+            unchecked |= "CrossOrigin" in member.extended_attributes and (not values or "Getter" in values)
+        elif isinstance(member, OperationGroup):
+            unchecked |= any("CrossOrigin" in overload.extended_attributes for overload in member.overloads)
+        if self.interface.name == "Window" and property_.name in ("location", "postMessage"):
+            # A Location checks no caller of its own yet, and a message names its target as its source, so a window
+            # gives either to callers of its origin alone.
+            unchecked = False
+        return f"CrossOriginCheck::{'kDoNotCheck' if unchecked else 'kCheck'}"
 
     @staticmethod
     def _attributes(property_: Property) -> str:
@@ -1808,6 +1875,9 @@ class _InterfaceWriter:
                 "  instance_template->SetImmutableProto();",
                 "  prototype_template->SetImmutableProto();",
             ]
+        if interface.name == "Window":
+            # As bind_gen's V8Window has it: V8 asks for each access to a window whose security token is another.
+            lines.append("  instance_template->SetAccessCheckCallback(&Window::AccessCheckCallback);")
         if "Global" in interface.extended_attributes:
             # Web IDL's [[SetPrototypeOf]] of a global object and of the prototypes on its chain.
             lines += ["  instance_template->SetImmutableProto();", "  prototype_template->SetImmutableProto();"]
@@ -1990,6 +2060,8 @@ class _InterfaceWriter:
             includes.add(f"mitto/bindings/{TABLES_HEADER}")
             if collection.kind == "async iterable":
                 includes.add("mitto/bindings/async_iterable.h")
+            elif collection.kind == "iterable":
+                includes.add("mitto/bindings/pair_iterable.h")
         source = [
             _BANNER,
             f'#include "mitto/bindings/{base}.h"',

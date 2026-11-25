@@ -52,6 +52,10 @@ bool SessionStorageBuckets::UsedByDocument() const {
   return used_;
 }
 
+bool SessionStorageBuckets::HasBucket(uint64_t bucket) const {
+  return buckets_.contains(bucket);
+}
+
 void SessionStorageBuckets::DocumentCommitted(uint64_t document) {
   used_ = false;
   // What the document before asked goes unheard.

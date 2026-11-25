@@ -2,9 +2,11 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <vector>
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
@@ -60,6 +62,67 @@ NavigationRateLimiter& RateLimiterOf(Window& window) {
 // Whether `a` and `b` are the same but for their fragments.
 bool EqualIgnoringFragment(const GURL& a, const GURL& b) {
   return a.GetWithoutRef() == b.GetWithoutRef();
+}
+
+// FrameLoader::ShouldClose(): beforeunload at the window's document, then at
+// each document of its frames, the frames under them among them, in tree
+// order, as they were when it started, while no navigation of the window's
+// frame starts. A frame that a listener took away gets none. Whether the
+// navigation may go on.
+bool DispatchBeforeUnloadEvents(Window& window) {
+  Frame* const frame = window.GetFrame();
+  std::vector<Frame*> descendants;
+  std::optional<FrameNavigationDisabler> navigation_disabler;
+  if (frame) {
+    std::vector<Frame*> pending = {frame};
+    while (!pending.empty()) {
+      Frame* const parent = pending.back();
+      pending.pop_back();
+      if (parent != frame) {
+        descendants.push_back(parent);
+      }
+      for (size_t index = parent->ChildCount(); index > 0; --index) {
+        pending.push_back(parent->ChildAt(index - 1));
+      }
+    }
+    navigation_disabler.emplace(*frame);
+  }
+  // The window's document opens nothing while any of them runs its
+  // listeners, a frame's that reaches it included.
+  Document& document = window.GetDocument();
+  const IgnoreOpensDuringUnloadCountIncrementer ignore_opens_during_unload(
+      document);
+  // A frame that went keeps its window for what still runs of it, which has
+  // lost its frame.
+  const auto remaining = [frame](Frame* descendant) -> Document* {
+    Window* const descendant_window = descendant->DomWindow();
+    if (!descendant_window || descendant_window->GetFrame() != descendant ||
+        !descendant->IsDescendantOf(*frame) ||
+        !descendant_window->HasDocument()) {
+      return nullptr;
+    }
+    return &descendant_window->GetDocument();
+  };
+  if (!document.DispatchBeforeUnloadEvent()) {
+    return false;
+  }
+  for (Frame* const descendant : descendants) {
+    Document* const descendant_document = remaining(descendant);
+    if (descendant_document &&
+        !descendant_document->DispatchBeforeUnloadEvent()) {
+      return false;
+    }
+  }
+  // Once none has kept the navigation from going on, each document that is
+  // left will unload, whether or not it has a body yet, as
+  // BeforeUnloadDoneWillUnload() has it.
+  document.BeforeUnloadDoneWillUnload();
+  for (Frame* const descendant : descendants) {
+    if (Document* const descendant_document = remaining(descendant)) {
+      descendant_document->BeforeUnloadDoneWillUnload();
+    }
+  }
+  return true;
 }
 
 // Document::OutgoingReferrer(): none for a document of an opaque origin, and
@@ -255,7 +318,8 @@ void StartNavigation(Window& window,
     return;
   }
   // A top-level frame shows no data: URL that a page navigates it to, but one
-  // that would be a download. A frame's goes on.
+  // that would be a download, as Chrome's browser blocks it for the main
+  // frame only. A frame's goes on.
   const Frame* const frame = window.GetFrame();
   if (url.SchemeIs(url::kDataScheme) && (!frame || !frame->Parent()) &&
       request.reason != ClientNavigationReason::kReload &&
@@ -289,6 +353,14 @@ void StartNavigation(Window& window,
     if (frame && frame->IsSandboxed()) {
       return;
     }
+    // Nor one that a document of another origin starts, as a parent's of a
+    // frame that has navigated elsewhere, as Blink's FrameLoader checks the
+    // origin window can reach the frame's.
+    if (request.origin_window &&
+        !request.origin_window->GetSecurityOrigin().IsSameOriginWith(
+            window.GetSecurityOrigin())) {
+      return;
+    }
     ProcessJavaScriptUrl(window, url);
     return;
   }
@@ -300,24 +372,31 @@ void StartNavigation(Window& window,
     return;
   }
   // The navigate event, which may cancel the navigation, or intercept it,
-  // which makes it one within the document, committed already.
-  Navigation::NavigateParams params;
-  params.url = url;
-  params.load_type = type;
-  params.source_element = request.source_element;
-  if (window.Navigation()->DispatchNavigateEvent(params) !=
-      Navigation::DispatchResult::kContinue) {
-    return;
+  // which makes it one within the document, committed already. It fires only
+  // where the window that starts the navigation can reach the frame's, as
+  // FrameLoader::StartNavigation() has it, so a frame's document of another
+  // origin hears nothing of its parent's navigation.
+  if (!request.origin_window ||
+      request.origin_window->GetSecurityOrigin().IsSameOriginWith(
+          window.GetSecurityOrigin())) {
+    Navigation::NavigateParams params;
+    params.url = url;
+    params.load_type = type;
+    params.source_element = request.source_element;
+    if (window.Navigation()->DispatchNavigateEvent(params) !=
+        Navigation::DispatchResult::kContinue) {
+      return;
+    }
   }
   if (!window.GetNavigationClient() || !window.HasContext()) {
     return;
   }
-  // RenderFrameImpl::BeginNavigation(): beforeunload, which lets it go on,
-  // then the document stops loading, as
+  // RenderFrameImpl::BeginNavigation(): beforeunload, at the document and at
+  // its frames', which lets it go on, then the document stops loading, as
   // CancelProvisionalLoaderForNewNavigation() aborts it, and the browser hears
   // of the navigation. A beforeunload listener that removed the frame, or the
   // initiator's, took the navigation with it.
-  if (!document.DispatchBeforeUnloadEvent()) {
+  if (!DispatchBeforeUnloadEvents(window)) {
     return;
   }
   NavigationClient* const client = window.GetNavigationClient();
@@ -349,6 +428,8 @@ void StartNavigation(Window& window,
   navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
   navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
   navigation.initiator_referrer = OutgoingReferrer(origin_window);
+  navigation.initiator_has_header_csp =
+      origin_window.GetDocument().HasHeaderDeliveredContentSecurityPolicy();
   client->BeginNavigation(navigation);
 }
 
@@ -444,7 +525,7 @@ void UpdateForSameDocumentNavigation(
     item.protect_url_in_navigation_api = document.ProtectsUrlInNavigationApi();
   }
   window.SetCurrentHistoryItem(item);
-  document.SetUrl(base::UTF8ToUTF16(url.spec()));
+  document.SetUrlKeepingOrigin(base::UTF8ToUTF16(url.spec()));
   if (NavigationClient* const client = window.GetNavigationClient()) {
     client->DidCommitSameDocumentNavigation(item, type);
   }
