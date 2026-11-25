@@ -240,6 +240,21 @@ class PageFrame final : public NavigationClient, public Frame {
   // The security token of a context of the Page whose document has
   // `origin`, an opaque one, or an empty handle if no frame's document has it.
   v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
+  // Whether a document of `origin` that the frame makes is cross-origin
+  // isolated, as the library works it out: the parent's document is, and of
+  // the same origin, the default allowlist 'self' of the
+  // cross-origin-isolated feature, which the opaque origin of a data: URL's
+  // document or an error page never is. The top-level frame's initial
+  // about:blank is not.
+  // `origin_sandboxed` is whether the frame's sandbox, as its navigation
+  // started, gives the document an opaque origin in Chrome, which isolates
+  // nothing.
+  bool IsolatedLikeParent(const url::Origin& origin,
+                          bool origin_sandboxed) const;
+  // Whether the frame's element is an iframe whose sandbox attribute withholds
+  // allow-same-origin, as Chrome takes it when a navigation of the frame
+  // starts. A frame element's sandbox attribute means nothing.
+  bool OwnerSandboxesOrigin() const;
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells
@@ -337,6 +352,9 @@ class PageFrame final : public NavigationClient, public Frame {
     // from the owner document.
     GURL about_base_url;
     GURL cookie_url;
+    // OwnerSandboxesOrigin() as it started, or of the document that started
+    // it, whose origin an about:blank takes.
+    bool origin_sandboxed = false;
     // A srcdoc's markup.
     std::u16string body;
     // Whether it reloads the frame's document, as location.reload() does.
@@ -424,6 +442,11 @@ class PageFrame final : public NavigationClient, public Frame {
   // lets its request go only while it is still the one that waits.
   uint64_t provisional_request_serial_ = 0;
   base::TimeTicks provisional_start_;
+  // OwnerSandboxesOrigin() as the network navigation started.
+  bool provisional_origin_sandboxed_ = false;
+  // Whether a sandbox, its frame's or its response's, gives the document an
+  // opaque origin in Chrome, where the Page gives it its URL's yet.
+  bool origin_sandboxed_ = false;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,
   // as Chrome's pending entry, which the next go() counts from.

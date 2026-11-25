@@ -10,6 +10,7 @@
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -179,7 +180,10 @@ void PageFrame::Start(const PageConnection& connection) {
   // gives it. Its time origin is when its context was made.
   const url::Origin origin =
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
-  context_.Reset(isolate, NewContext(base::TimeTicks::Now(), origin));
+  origin_sandboxed_ = OwnerSandboxesOrigin();
+  context_.Reset(isolate,
+                 NewContext(base::TimeTicks::Now(), origin,
+                            IsolatedLikeParent(origin, origin_sandboxed_)));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   window_->BindToContext(isolate, context());
   if (parent_) {
@@ -340,9 +344,13 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   committed.replaces = window_->DocumentId();
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin, as DocumentLoader::CommitNavigation() reuses it, and makes a
-  // new one for any other.
-  const bool reuse_window = old_document.IsInitialEmptyDocument() &&
-                            old_document.GetOrigin().IsSameOriginWith(origin);
+  // new one for any other, or for one of another isolation, as Chrome's
+  // origin then differs, an opaque one under a sandbox.
+  const bool isolated = IsolatedLikeParent(origin, navigation.origin_sandboxed);
+  const bool reuse_window =
+      old_document.IsInitialEmptyDocument() &&
+      old_document.GetOrigin().IsSameOriginWith(origin) &&
+      window_->CrossOriginIsolatedCapability() == isolated;
   {
     // DocumentLoader::CommitNavigation(): no script of the old document or
     // of its frames starts a navigation of this frame meanwhile.
@@ -365,6 +373,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
       return;
     }
   }
+  origin_sandboxed_ = navigation.origin_sandboxed;
   Document* document = nullptr;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
@@ -388,8 +397,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     // The new window's time origin is the navigation's start, as Blink's is,
     // before the old document's unload events and the task that commits.
     const v8::Local<v8::Context> context =
-        NewContext(navigation.start, origin,
-                   /*cross_origin_isolated=*/false, global_proxy);
+        NewContext(navigation.start, origin, isolated, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
@@ -616,6 +624,12 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     LocalNavigation navigation;
     navigation.start = base::TimeTicks::Now();
     navigation.url = request.url;
+    // An about:blank that the frame's own document starts has its origin,
+    // which a sandbox of its response keeps opaque in Chrome.
+    navigation.origin_sandboxed =
+        OwnerSandboxesOrigin() ||
+        (request.url.IsAboutBlank() && origin_sandboxed_ &&
+         request.initiator == window_->DocumentId());
     navigation.reload = request.reload;
     // Its document's referrer is what the initiator's outgoing referrer gives
     // a navigation to its URL under the initiator's referrer policy, as
@@ -722,6 +736,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   provisional_request_ = request;
   ++provisional_request_serial_;
   provisional_start_ = now;
+  provisional_origin_sandboxed_ = OwnerSandboxesOrigin();
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
   // A frame's navigation names the frame's document that the new one takes
@@ -1453,12 +1468,27 @@ Document& PageFrame::CommitDocument(
     committed.replaces = window_->DocumentId();
   }
   const url::Origin origin = url::Origin::Create(url);
+  // A frame's document is isolated where the Session says and its parent's
+  // window is, so that none is more so than its parent, whose own sandbox the
+  // Session cannot see yet.
+  const bool isolated =
+      parent_ ? cross_origin_isolated &&
+                    IsolatedLikeParent(origin, provisional_origin_sandboxed_)
+              : cross_origin_isolated;
+  // The Session isolates what the parent's window lets be, but for a response
+  // that sandboxes its document's origin.
+  origin_sandboxed_ = provisional_origin_sandboxed_ ||
+                      (!cross_origin_isolated &&
+                       IsolatedLikeParent(origin, /*origin_sandboxed=*/false));
   // Blink keeps the window of a frame's initial about:blank for a document of
-  // its origin, as DocumentLoader::CommitNavigation() reuses it. A top-level
-  // frame's initial about:blank has an opaque origin, so it never does.
+  // its origin and isolation, as DocumentLoader::CommitNavigation() reuses
+  // it. A top-level frame's initial about:blank has an opaque origin, so it
+  // never does.
   const Document& old_document = window_->GetDocument();
-  const bool reuse_window = old_document.IsInitialEmptyDocument() &&
-                            old_document.GetOrigin().IsSameOriginWith(origin);
+  const bool reuse_window =
+      old_document.IsInitialEmptyDocument() &&
+      old_document.GetOrigin().IsSameOriginWith(origin) &&
+      window_->CrossOriginIsolatedCapability() == isolated;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
   if (reuse_window) {
@@ -1486,7 +1516,7 @@ Document& PageFrame::CommitDocument(
       MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
     }
     const v8::Local<v8::Context> context =
-        NewContext(time_origin, origin, cross_origin_isolated, global_proxy);
+        NewContext(time_origin, origin, isolated, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
@@ -1526,6 +1556,34 @@ Document& PageFrame::CommitDocument(
     cookie_store->DocumentChanged();
   }
   return *document;
+}
+
+bool PageFrame::IsolatedLikeParent(const url::Origin& origin,
+                                   bool origin_sandboxed) const {
+  // An ancestor's sandbox counts through its document, as committed: its
+  // isolation, which the parent's window carries.
+  return parent_ && !origin_sandboxed &&
+         parent_->window_->CrossOriginIsolatedCapability() &&
+         parent_->window_->GetDocument().GetOrigin().IsSameOriginWith(origin);
+}
+
+bool PageFrame::OwnerSandboxesOrigin() const {
+  // A sandbox without allow-same-origin gives Chrome's documents of the frame
+  // an opaque origin, which the default allowlist does not take, though the
+  // Page does not make that origin yet.
+  const HTMLFrameOwnerElement* const owner = owner_.Get();
+  const std::u16string* const sandbox =
+      owner && owner->HasHTMLTagName(u"iframe")
+          ? owner->FindAttribute(u"sandbox")
+          : nullptr;
+  return sandbox &&
+         std::ranges::none_of(base::SplitStringPiece(*sandbox, u"\t\n\f\r ",
+                                                     base::KEEP_WHITESPACE,
+                                                     base::SPLIT_WANT_NONEMPTY),
+                              [](std::u16string_view token) {
+                                return base::EqualsCaseInsensitiveASCII(
+                                    token, u"allow-same-origin");
+                              });
 }
 
 v8::Local<v8::Context> PageFrame::NewContext(

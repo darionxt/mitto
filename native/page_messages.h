@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 33;
+inline constexpr uint32_t kPageProtocolVersion = 34;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -733,7 +733,8 @@ enum class PageCrossOriginIsolation : uint8_t {
 
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
-// opened the Page.
+// opened the Page: a top-level document's agent cluster's, and a frame's
+// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
