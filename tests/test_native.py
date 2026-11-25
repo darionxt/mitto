@@ -978,7 +978,8 @@ def test_request_start_reads_the_options_by_their_size(
         ),
         pytest.param(
             b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "same-origin", '
-            b'"has_user_activation": true, "initiator": "https://a.test/page", "fixed_headers": ["Accept", "a b"]}}',
+            b'"has_user_activation": true, "initiator": "https://a.test/page", "fixed_headers": ["Accept", "a b"], '
+            b'"header_order": "xhr"}}',
             id="fetch-with-everything",
         ),
         pytest.param(
@@ -1081,6 +1082,21 @@ def test_request_start_accepts_valid_options(
             b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
             b'"fixed_headers": [1]}}',
             id="fixed-headers-holds-a-number",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"header_order": "beacon"}}',
+            id="header-order-of-another-kind",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"header_order": null}}',
+            id="header-order-is-null",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"header_order": ["fetch"]}}',
+            id="header-order-is-a-list",
         ),
         pytest.param(
             b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
