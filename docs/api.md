@@ -416,7 +416,7 @@ Changes the Persona's lines for this request, by name in any case. [persona.md](
 | In `headers` | On the wire |
 | --- | --- |
 | A name the Persona has | Takes the place of the Persona's line, which keeps the Persona's spelling of the name |
-| Another name | After the Persona's lines, before what `//net` adds, but on a `fetch` or an `xhr` [where Chrome has it](#the-order-on-a-fetch-and-an-xhr) |
+| Another name | After the Persona's lines, before what `//net` adds, but on a `fetch` or an `xhr` where Chrome has it, as below |
 | A name the Persona has, with `None` | The line is gone |
 | Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
 | `User-Agent`, with `None` | The line leaves its place, and `//net` adds the Persona's value after the other lines, because a request always gets one from the context |
@@ -424,9 +424,7 @@ Changes the Persona's lines for this request, by name in any case. [persona.md](
 | A line the native core sets, such as `Origin`, `Sec-Fetch-Site` or `sec-ch-ua` | Stays as given or, with `None`, stays gone on each hop. `//net` still changes an `Origin` on a redirect, as it does in Chrome |
 | `Cookie` | Goes only if the Session holds no cookie for the URL, because `//net` writes over it otherwise |
 
-#### The order on a `fetch` and an `xhr`
-
-Chrome holds the lines that a page's script sets on `fetch()` or `XMLHttpRequest` in one table with `sec-ch-ua`, the other client hints, `User-Agent` and `Content-Type`, and sends them in the table's order, which follows from the names alone. So on a request of the kind `fetch` or `xhr`, `headers=` sets the lines, and the table their order: the names of `headers=` that a page's script may set, an `Accept` among them, go among those lines, over HTTP/1.1, HTTP/2 and HTTP/3, as Chrome sends them for the same names ([parity.md](parity.md#the-order-of-a-subresources-lines)). The order of `headers=` matters only on an `xhr` with names that share a place in the table. A name that a script may not set, such as `Cookie` or `Accept-Encoding`, or in mode `no-cors` any but the CORS-safelisted ones, keeps the place of the table above, and so does every line on a request of another kind. Chrome's table also holds `User-Agent`, `Content-Type` and the client hints, whoever gives them: a hint of the caller's goes there by itself, and a `User-Agent`, or a `Content-Type` that a script may not set, once another line of the caller's does.
+**The order on a `fetch` and an `xhr`.** Chrome holds the lines that a page's script sets on `fetch()` or `XMLHttpRequest` in one table with `sec-ch-ua`, the other client hints, `User-Agent` and `Content-Type`, and sends them in the table's order, which follows from the names alone. So on a request of the kind `fetch` or `xhr`, `headers=` sets the lines, and the table their order: the names of `headers=` that a page's script may set, an `Accept` among them, go among those lines, over HTTP/1.1, HTTP/2 and HTTP/3, as Chrome sends them for the same names ([parity.md](parity.md#the-order-of-a-subresources-lines)). The order of `headers=` matters only on an `xhr` with names that share a place in the table. A name that a script may not set, such as `Cookie` or `Accept-Encoding`, or in mode `no-cors` any but the CORS-safelisted ones, keeps the place of the table above, and so does every line on a request of another kind. Chrome's table also holds `User-Agent`, `Content-Type` and the client hints, whoever gives them: a hint of the caller's goes there by itself, and a `User-Agent`, or a `Content-Type` that a script may not set, once another line of the caller's does.
 
 `Authorization` and `Cookie` do not follow a redirect to another origin, and stay gone if a later hop comes back, as Fetch does with `Authorization`.
 
