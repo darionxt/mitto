@@ -15,6 +15,7 @@
 #include "mitto/dom/geolocation_position_error.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/garbage-collected.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -50,13 +51,11 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
  public:
   GeoNotifier(v8::Isolate* isolate,
               Geolocation* geolocation,
-              Window& window,
               v8::Local<v8::Function> success_callback,
               v8::Local<v8::Function> error_callback,
               uint32_t timeout_ms,
               int32_t watch_id)
       : geolocation_(geolocation),
-        window_(window),
         success_callback_(isolate, success_callback),
         timeout_ms_(timeout_ms),
         watch_id_(watch_id) {
@@ -67,7 +66,6 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
 
   void Trace(cppgc::Visitor* visitor) const {
     visitor->Trace(geolocation_);
-    visitor->Trace(window_);
     visitor->Trace(success_callback_);
     visitor->Trace(error_callback_);
     visitor->Trace(next_);
@@ -92,10 +90,6 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
   uint16_t fatal_code() const { return fatal_code_; }
   const std::u16string& fatal_message() const { return fatal_message_; }
   int32_t watch_id() const { return watch_id_; }
-  Window& window() const { return *window_; }
-  v8::Local<v8::Function> success_callback(v8::Isolate* isolate) const {
-    return success_callback_.Get(isolate);
-  }
   v8::Local<v8::Function> error_callback(v8::Isolate* isolate) const {
     return error_callback_.Get(isolate);
   }
@@ -111,8 +105,6 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
   }
 
   cppgc::Member<Geolocation> geolocation_;
-  // The geolocation's, with whose context the request goes.
-  const cppgc::Member<Window> window_;
   v8::TracedReference<v8::Function> success_callback_;
   v8::TracedReference<v8::Function> error_callback_;
   const uint32_t timeout_ms_;
@@ -150,9 +142,10 @@ void Geolocation::GetCurrentPositionForBindings(
   if (!window.HasContext()) {
     return;
   }
-  StartRequest(bindings::MakeGarbageCollected<GeoNotifier>(
-      isolate, this, window, success_callback, error_callback, options.timeout,
-      /*watch_id=*/0));
+  StartRequest(window, bindings::MakeGarbageCollected<GeoNotifier>(
+                           isolate, this, success_callback, error_callback,
+                           options.timeout,
+                           /*watch_id=*/0));
 }
 
 int32_t Geolocation::WatchPositionForBindings(
@@ -166,9 +159,9 @@ int32_t Geolocation::WatchPositionForBindings(
   }
   // ExecutionContext::CircularSequentialID(): from 1, never 0.
   last_watch_id_ = last_watch_id_ == INT32_MAX ? 1 : last_watch_id_ + 1;
-  StartRequest(bindings::MakeGarbageCollected<GeoNotifier>(
-      isolate, this, window, success_callback, error_callback, options.timeout,
-      last_watch_id_));
+  StartRequest(window, bindings::MakeGarbageCollected<GeoNotifier>(
+                           isolate, this, success_callback, error_callback,
+                           options.timeout, last_watch_id_));
   return last_watch_id_;
 }
 
@@ -193,10 +186,27 @@ size_t Geolocation::TimerCount() const {
   return count;
 }
 
-void Geolocation::StartRequest(GeoNotifier* notifier) {
+void Geolocation::ContextDestroyed() {
+  for (GeoNotifier* notifier = first_.Get(); notifier;
+       notifier = notifier->next()) {
+    notifier->Stop();
+  }
+  first_ = nullptr;
+}
+
+void Geolocation::StartRequest(Window& window, GeoNotifier* notifier) {
+  if (!observes_context_) {
+    observes_context_ = true;
+    window.AddContextDestroyedCallback(base::BindOnce(
+        [](cppgc::WeakPersistent<Geolocation> geolocation) {
+          if (geolocation) {
+            geolocation->ContextDestroyed();
+          }
+        },
+        cppgc::WeakPersistent<Geolocation>(this)));
+  }
   notifier->set_next(first_.Get());
   first_ = notifier;
-  Window& window = notifier->window();
   if (!window.IsSecureContextForBindings()) {
     notifier->SetFatalError(GeolocationPositionError::kPermissionDenied,
                             kInsecureOrigin);
@@ -235,8 +245,7 @@ void Geolocation::Fire(GeoNotifier* notifier) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
   // Blink's GeoNotifier::TimerFired(): a fatal error ends any request, and a
-  // timeout ends a one-shot, while a watch waits on. The callback runs in its
-  // own context, which has to be there still.
+  // timeout ends a one-shot, while a watch waits on.
   const bool fatal = notifier->fatal_code() != 0;
   const uint16_t code =
       fatal ? notifier->fatal_code() : GeolocationPositionError::kTimeout;
@@ -244,36 +253,26 @@ void Geolocation::Fire(GeoNotifier* notifier) {
       fatal ? notifier->fatal_message() : std::u16string(kTimeoutExpired);
   const v8::Local<v8::Function> error_callback =
       notifier->error_callback(isolate);
-  // Geolocation::ContextDestroyed().
-  if (!notifier->window().HasContext()) {
-    Remove(notifier);
-    return;
-  }
+  // The callback runs in its own context, which has to be there still.
   v8::Local<v8::Context> context;
-  if (!notifier->success_callback(isolate)->GetCreationContext(isolate).ToLocal(
-          &context)) {
-    Remove(notifier);
-    return;
-  }
-  const v8::Context::Scope context_scope(context);
-  const Window* const window = Window::From(isolate, context);
-  if (!window || !window->HasContext()) {
-    Remove(notifier);
-    return;
-  }
-  if (!error_callback.IsEmpty()) {
-    v8::Local<v8::Value> argument =
-        GeolocationPositionError::Create(code, message)->ToV8(isolate);
-    // As Blink's V8ScriptRunner::CallFunction(): what the callback queued
-    // runs once it returns.
-    const v8::MicrotasksScope microtasks_scope(
-        context, v8::MicrotasksScope::kRunMicrotasks);
-    const v8::TryCatch try_catch(isolate);
-    if (error_callback->Call(context, v8::Undefined(isolate), 1, &argument)
-            .IsEmpty() &&
-        try_catch.HasCaught()) {
-      bindings::ReportException(isolate, try_catch.Exception(),
-                                try_catch.Message());
+  if (!error_callback.IsEmpty() &&
+      error_callback->GetCreationContext(isolate).ToLocal(&context)) {
+    const v8::Context::Scope context_scope(context);
+    const Window* const window = Window::From(isolate, context);
+    if (window && window->HasContext()) {
+      v8::Local<v8::Value> argument =
+          GeolocationPositionError::Create(code, message)->ToV8(isolate);
+      // As Blink's V8ScriptRunner::CallFunction(): what the callback queued
+      // runs once it returns.
+      const v8::MicrotasksScope microtasks_scope(
+          context, v8::MicrotasksScope::kRunMicrotasks);
+      const v8::TryCatch try_catch(isolate);
+      if (error_callback->Call(context, v8::Undefined(isolate), 1, &argument)
+              .IsEmpty() &&
+          try_catch.HasCaught()) {
+        bindings::ReportException(isolate, try_catch.Exception(),
+                                  try_catch.Message());
+      }
     }
   }
   if (fatal || notifier->watch_id() == 0) {

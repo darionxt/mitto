@@ -80,8 +80,17 @@
   const inner = frames['same, none'].contentWindow;
   record['the page on a frame'] = await borrow(window, inner);
   record['a frame on the page'] = await borrow(inner, window);
+  // An error goes to its own callback's realm, whichever the other callback is of.
+  const doomed = document.createElement('iframe');
+  document.body.append(doomed);
+  const {Function: DoomedFunction} = doomed.contentWindow;
+  const deny = (success) => new Promise((resolve) => inner.navigator.geolocation.getCurrentPosition(success, (error) => resolve([error.message, of(error)]), {timeout: 1}));
+  const live = await deny(new DoomedFunction(''));
+  const late = deny(new DoomedFunction(''));
+  doomed.remove();
+  record['callbacks of two realms'] = {live, late: await Promise.race([late, new Promise((resolve) => setTimeout(resolve, 300, 'never'))])};
   // A navigator whose frame has gone asks no policy of its gamepads, and its geolocation calls nothing back, even what it was to.
-  const {navigator: gone, Permissions, Keyboard, NavigatorUAData, CredentialsContainer} = inner, {geolocation} = gone;
+  const {navigator: gone, Notification: GoneNotification, Permissions, Keyboard, NavigatorUAData, CredentialsContainer} = inner, {geolocation} = gone;
   const kept = {permissions: gone.permissions, keyboard: gone.keyboard, userAgentData: gone.userAgentData, credentials: gone.credentials}, realm = {Permissions, Keyboard, NavigatorUAData, CredentialsContainer};
   const heard = [];
   const locate = (name) => geolocation.getCurrentPosition(() => heard.push(name), () => heard.push(name), {timeout: 1});
@@ -90,7 +99,7 @@
   locate('after');
   const watch = geolocation.watchPosition(() => heard.push('watch'), () => heard.push('watch'), {timeout: 1});
   await new Promise((resolve) => setTimeout(resolve, 300));
-  record.gone = {gamepads: gone.getGamepads().length, heard, watch};
+  record.gone = {gamepads: gone.getGamepads().length, heard, watch, notification: GoneNotification.permission};
   // Its promises reject at once, but for what waits for a task of its own, and an error is of the function's realm.
   for (const [name, {Permissions, Keyboard, NavigatorUAData, CredentialsContainer}] of [['the page on the gone', window], ['the gone', realm]]) {
     record[name] = {};

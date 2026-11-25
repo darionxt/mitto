@@ -31,10 +31,11 @@ namespace {
 
 // Whether the browser asks about notifications of the current context, where
 // NotificationPermissionContext denies them to one that is not secure, and to a
-// frame of another origin than the top-level one's, as an opaque one is.
+// frame of another origin than the top-level one's, as an opaque one is, and
+// NotificationManager to one that has gone.
 bool MayAsk() {
   const ExecutionContext& context = ExecutionContext::Current();
-  return context.IsSecureContextForBindings() &&
+  return context.HasContext() && context.IsSecureContextForBindings() &&
          !(context.IsWindow() && Window::Current().IsCrossOriginToTop());
 }
 
