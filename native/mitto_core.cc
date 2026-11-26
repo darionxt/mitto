@@ -268,11 +268,12 @@ constexpr base::TimeDelta kDelayInitialDohProbeTimeout = base::Seconds(5);
 // takes milliseconds, and a machine where it fails never answers.
 constexpr base::TimeDelta kSystemDnsConfigTimeout = base::Seconds(1);
 
-// How often a request that a worker's end abandoned looks whether //net has
-// sent it yet, which it ends once it has, and how long it may wait: Chrome's
-// end of a worker's loaders reaches its network service after the worker's
-// thread has gone, so a request that a socket held back is not sent there.
-constexpr base::TimeDelta kSentPollInterval = base::Milliseconds(1);
+// When a request that a worker's end abandoned first looks whether //net has
+// sent it yet, which it ends once it has, each look after that waiting twice
+// as long, and how long it may wait: Chrome's end of a worker's loaders
+// reaches its network service after the worker's thread has gone, so a
+// request that a socket held back is not sent there.
+constexpr base::TimeDelta kFirstSentCheck = base::Milliseconds(1);
 constexpr base::TimeDelta kAbandonedSendGrace = base::Seconds(1);
 
 // The subdirectory of a Session's cache directory that //net owns, with the name
@@ -496,9 +497,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     abandon_once_sent_ = true;
     send_deadline_ = base::TimeTicks::Now() + kAbandonedSendGrace;
     // //net tells of no write, so the request's load state says when.
-    sent_timer_.Start(FROM_HERE, kSentPollInterval,
-                      base::BindRepeating(&RequestJob::FinishOnceSent,
-                                          base::Unretained(this)));
+    CheckSentAfter(kFirstSentCheck);
   }
 
   void Detach(base::RepeatingCallback<int(const RequestEvent&)> check_response)
@@ -525,6 +524,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   int OnConnected(net::URLRequest* request,
                   const net::TransportInfo& info,
                   net::CompletionOnceCallback callback) override {
+    over_quic_ = info.negotiated_protocol == net::NextProto::kProtoQUIC;
     connect_timer_.Stop();
     StartReadTimer();
     // A stream cannot go twice, so a request with one goes on as it is.
@@ -990,10 +990,13 @@ class RequestJob final : public net::URLRequest::Delegate,
 
   // Whether //net has put the request on the wire: it waits for the response,
   // or has its headers. A QUIC stream takes headers that flow control holds
-  // back as written, so the bytes that the stream has sent count too.
+  // back, all or in part, as written, so only its response says so.
   bool IsSent() const {
     if (!request_ || request_->response_headers()) {
       return true;
+    }
+    if (over_quic_) {
+      return false;
     }
     const net::LoadState state = request_->GetLoadState().state;
     return (state == net::LOAD_STATE_WAITING_FOR_RESPONSE ||
@@ -1001,10 +1004,21 @@ class RequestJob final : public net::URLRequest::Delegate,
            request_->GetTotalSentBytes().InBytes() > 0;
   }
 
-  void FinishOnceSent() {
-    if (IsSent() || base::TimeTicks::Now() >= send_deadline_) {
+  void CheckSentAfter(base::TimeDelta delay) {
+    sent_timer_.Start(FROM_HERE, delay,
+                      base::BindOnce(&RequestJob::FinishOnceSent,
+                                     base::Unretained(this), delay));
+  }
+
+  // Ends the abandoned request once //net has sent it, or once it has waited
+  // as long as it may, else looks again after twice `delay`.
+  void FinishOnceSent(base::TimeDelta delay) {
+    const base::TimeTicks now = base::TimeTicks::Now();
+    if (IsSent() || now >= send_deadline_) {
       Finish(net::ERR_ABORTED);
+      return;
     }
+    CheckSentAfter(std::min(2 * delay, send_deadline_ - now));
   }
 
   // `result` is net::OK when the body ended, otherwise a net error. This deletes
@@ -1106,8 +1120,10 @@ class RequestJob final : public net::URLRequest::Delegate,
   // An abandoned request that waits for //net to send it, until when, what
   // checks, and what goes once it has ended.
   bool abandon_once_sent_ = false;
+  // Whether the request went over QUIC, as its connection said.
+  bool over_quic_ = false;
   base::TimeTicks send_deadline_;
-  base::RepeatingTimer sent_timer_;
+  base::OneShotTimer sent_timer_;
   base::ScopedClosureRunner on_abandoned_end_;
   base::ByteSize received_bytes_at_read_timer_start_;
   base::ByteSize sent_bytes_at_read_timer_start_;

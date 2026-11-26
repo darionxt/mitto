@@ -215,16 +215,16 @@ _SESSION_OF_AN_ENDED_PAGE = textwrap.dedent(
     """
 )
 
-# Opens a Page at the URL in argv[1], asks it for something, and then waits at the URL in argv[2] for the server's word.
+# Opens a Page at the URL in argv[1], asks it for something, and then, while the Page is open, waits at the URL in argv[2]
+# for the server's word.
 _SESSION_THAT_WAITS = textwrap.dedent(
     """\
     import sys
 
     import mitto
 
-    with mitto.Session() as session:
-        with session._open_page(sys.argv[1], timeout=60) as page:
-            page.evaluate("1", timeout=60)
+    with mitto.Session() as session, session._open_page(sys.argv[1], timeout=60) as page:
+        page.evaluate("1", timeout=60)
         print(session.get(sys.argv[2]).text)
     """
 )
