@@ -1229,6 +1229,14 @@ class PageHost::Request final : public RequestClient {
       job_.reset();
     }
   }
+  // Lets the job end once //net has sent its request, as a dedicated worker's
+  // that ends (RunningRequest::AbandonOnceSent()).
+  void AbandonJobOnceSent() {
+    if (job_) {
+      job_->AbandonOnceSent();
+      job_.reset();
+    }
+  }
   void set_keepalive_share(std::unique_ptr<KeepaliveShare> share) {
     keepalive_share_ = std::move(share);
   }
@@ -3733,7 +3741,9 @@ void PageHost::LetKeepaliveRequestsGo(const std::set<uint64_t>* ids) {
       ++it;
       continue;
     }
-    if (!of_worker) {
+    if (of_worker) {
+      request.AbandonJobOnceSent();
+    } else {
       request.DetachJob();
     }
     PageResponseEnded ended;

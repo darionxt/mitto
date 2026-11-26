@@ -84,6 +84,7 @@
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
+#include "net/base/load_states.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/network_change_notifier.h"
@@ -266,6 +267,10 @@ constexpr base::TimeDelta kDelayInitialDohProbeTimeout = base::Seconds(5);
 // How long the first Session waits for the system's DNS settings. Reading them
 // takes milliseconds, and a machine where it fails never answers.
 constexpr base::TimeDelta kSystemDnsConfigTimeout = base::Seconds(1);
+
+// How often a request that a worker's end abandoned looks whether //net has
+// sent it yet, which it ends once it has.
+constexpr base::TimeDelta kSentPollInterval = base::Milliseconds(1);
 
 // The subdirectory of a Session's cache directory that //net owns, with the name
 // that PopulateHttpCacheDirectories() in //content gives it.
@@ -478,6 +483,19 @@ class RequestJob final : public net::URLRequest::Delegate,
     Finish(net::ERR_ABORTED);
   }
 
+  void AbandonOnceSent() override {
+    client_ = nullptr;
+    if (body_stream_ || preflight_ || IsSent()) {
+      Finish(net::ERR_ABORTED);
+      return;
+    }
+    abandon_once_sent_ = true;
+    // //net tells of no write, so the request's load state says when.
+    sent_timer_.Start(FROM_HERE, kSentPollInterval,
+                      base::BindRepeating(&RequestJob::FinishOnceSent,
+                                          base::Unretained(this)));
+  }
+
   void Detach(base::RepeatingCallback<int(const RequestEvent&)> check_response)
       override {
     owned_detached_client_ =
@@ -537,6 +555,11 @@ class RequestJob final : public net::URLRequest::Delegate,
   void OnReceivedRedirect(net::URLRequest* request,
                           const net::RedirectInfo& redirect_info,
                           bool* defer_redirect) override {
+    // An abandoned request follows no redirect.
+    if (abandon_once_sent_) {
+      Finish(net::ERR_ABORTED);
+      return;
+    }
     // //net is still in the read that brought these headers. Over HTTP/2 it has
     // yet to see the END_STREAM of their frame, so going on from here would
     // cancel a stream that is about to end. Chrome's answer to a redirect comes
@@ -587,6 +610,10 @@ class RequestJob final : public net::URLRequest::Delegate,
   void OnResponseStarted(net::URLRequest* request, int net_error) override {
     if (net_error != net::OK) {
       Finish(net_error);
+      return;
+    }
+    if (abandon_once_sent_) {
+      Finish(net::ERR_ABORTED);
       return;
     }
     // A response from a cache comes with no connection.
@@ -956,6 +983,23 @@ class RequestJob final : public net::URLRequest::Delegate,
     Finish(net::ERR_TIMED_OUT);
   }
 
+  // Whether //net has put all of the request on the wire: it waits for the
+  // response, or has its headers.
+  bool IsSent() const {
+    if (!request_ || request_->response_headers()) {
+      return true;
+    }
+    const net::LoadState state = request_->GetLoadState().state;
+    return state == net::LOAD_STATE_WAITING_FOR_RESPONSE ||
+           state == net::LOAD_STATE_READING_RESPONSE;
+  }
+
+  void FinishOnceSent() {
+    if (IsSent()) {
+      Finish(net::ERR_ABORTED);
+    }
+  }
+
   // `result` is net::OK when the body ended, otherwise a net error. This deletes
   // the job, so nothing may touch it afterwards.
   void Finish(int result) {
@@ -1052,6 +1096,9 @@ class RequestJob final : public net::URLRequest::Delegate,
   base::OneShotTimer connect_timer_;
   base::OneShotTimer read_timer_;
   base::OneShotTimer total_timer_;
+  // An abandoned request that waits for //net to send it, which this checks.
+  bool abandon_once_sent_ = false;
+  base::RepeatingTimer sent_timer_;
   base::ByteSize received_bytes_at_read_timer_start_;
   base::ByteSize sent_bytes_at_read_timer_start_;
   base::WeakPtrFactory<RequestJob> weak_ptr_factory_{this};

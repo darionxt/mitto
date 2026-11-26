@@ -74,6 +74,14 @@ class RunningRequest {
   // is going.
   virtual void Abandon() = 0;
 
+  // Ends the request once //net has sent it, or at once if it has, and tells
+  // its client nothing more, because the client is going: a dedicated worker
+  // that ends, whose loaders Chrome ends with it, though their end reaches the
+  // network service only after the worker's thread has gone, when a request
+  // that has started is on the wire. A body that streams, or a request in its
+  // preflight, ends at once.
+  virtual void AbandonOnceSent() = 0;
+
   // Goes on to the request's end with no client, reading and dropping what
   // its response holds, because its client is going and the request outlives
   // it, as Chrome's KeepAliveURLLoader finishes a keepalive request after its
