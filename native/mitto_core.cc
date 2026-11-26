@@ -270,10 +270,12 @@ constexpr base::TimeDelta kSystemDnsConfigTimeout = base::Seconds(1);
 
 // When a request that a worker's end abandoned first looks whether //net has
 // sent it yet, which it ends once it has, each look after that waiting twice
-// as long, and how long it may wait: Chrome's end of a worker's loaders
-// reaches its network service after the worker's thread has gone, so a
-// request that a socket held back is not sent there.
+// as long up to the longest wait, so that a sent request soon lets its socket
+// go to one that waits, and how long it may wait: Chrome's end of a worker's
+// loaders reaches its network service after the worker's thread has gone, so
+// a request that a socket held back is not sent there.
 constexpr base::TimeDelta kFirstSentCheck = base::Milliseconds(1);
+constexpr base::TimeDelta kLongestSentCheck = base::Milliseconds(16);
 constexpr base::TimeDelta kAbandonedSendGrace = base::Seconds(1);
 
 // The subdirectory of a Session's cache directory that //net owns, with the name
@@ -1018,7 +1020,8 @@ class RequestJob final : public net::URLRequest::Delegate,
       Finish(net::ERR_ABORTED);
       return;
     }
-    CheckSentAfter(std::min(2 * delay, send_deadline_ - now));
+    CheckSentAfter(
+        std::min({2 * delay, kLongestSentCheck, send_deadline_ - now}));
   }
 
   // `result` is net::OK when the body ended, otherwise a net error. This deletes
