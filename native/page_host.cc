@@ -2699,6 +2699,8 @@ void PageHost::OnCacheStorage(PageCacheStorageCall call,
             weak_factory_.GetWeakPtr()),
         next_cache_storage_number_);
   }
+  const Context& context = contexts_.at(context_id);
+  cache_storage_->SetContextPolicy(context_id, context.origin, context.coep);
   std::optional<std::string> storage_key =
       SecureContextStorageKey(context_id, document_url);
   bool bucket_live = true;

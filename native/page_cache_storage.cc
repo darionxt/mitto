@@ -14,6 +14,7 @@
 #include "base/time/time.h"
 #include "mitto/cache_storage/cache_storage.h"
 #include "mitto/cache_storage/cache_storage_context.h"
+#include "mitto/cross_origin_resource_policy.h"
 #include "mitto/page_messages.h"
 #include "mitto/storage_quota.h"
 #include "net/base/io_buffer.h"
@@ -224,8 +225,18 @@ uint64_t PageCacheStorage::NextNumber() const {
   return std::max(next_cache_, next_stored_body_);
 }
 
+void PageCacheStorage::SetContextPolicy(
+    uint64_t context,
+    url::Origin origin,
+    CrossOriginEmbedderPolicy embedder_policy) {
+  context_policies_[context] = {std::move(origin), std::move(embedder_policy)};
+}
+
 void PageCacheStorage::ForgetContexts(const std::set<uint64_t>& contexts) {
   gone_contexts_.insert(contexts.begin(), contexts.end());
+  for (const uint64_t context : contexts) {
+    context_policies_.erase(context);
+  }
   // Each fails from a task of its own, and no longer counts as the Page's.
   for (auto it = put_bodies_.begin(); it != put_bodies_.end();) {
     if (!contexts.contains(it->second->context())) {
@@ -705,6 +716,44 @@ void PageCacheStorage::AnswerResponses(
   answer.op = CacheStorageAnswerOp::kResponses;
   answer.question = question;
   answer.error = static_cast<uint8_t>(error);
+  // ResponseBlockedByCrossOriginResourcePolicy() of Chrome's
+  // CacheStorageDispatcherHost, for Cache.match() and matchAll() and
+  // CacheStorage.match(): under an embedder policy of require-corp or
+  // credentialless, an opaque response is held to its
+  // Cross-Origin-Resource-Policy against the context's origin, and one that
+  // fails fails the whole call. Its request counts as one that sent
+  // credentials, as kCacheStorageOpaqueResponseCredentialedForCorp, on in
+  // Chrome 157, has CacheStorageCache take any opaque response that it reads.
+  // Upstream: content/browser/cache_storage/cache_storage_dispatcher_host.cc
+  // Upstream: content/browser/cache_storage/cache_storage_cache.cc
+  if (const auto policy = context_policies_.find(context);
+      policy != context_policies_.end() &&
+      policy->second.embedder_policy.value !=
+          CrossOriginEmbedderPolicyValue::kNone &&
+      std::ranges::any_of(
+          matches, [&policy](const CacheStorageCache::MatchResult& match) {
+            const CacheResponse& response = match.response;
+            if (response.response_type != CacheResponseType::kOpaque ||
+                response.url_list.empty()) {
+              return false;
+            }
+            const auto corp =
+                response.headers.find("cross-origin-resource-policy");
+            return IsBlockedByResourcePolicy(
+                       response.url_list.back(), policy->second.origin,
+                       corp == response.headers.end()
+                           ? std::nullopt
+                           : std::optional<std::string>(corp->second),
+                       ResourcePolicyMode::kNoCors,
+                       /*request_include_credentials=*/true,
+                       policy->second.embedder_policy)
+                .has_value();
+          })) {
+    answer.error = static_cast<uint8_t>(
+        CacheStorageError::kErrorCrossOriginResourcePolicy);
+    SendAnswer(answer);
+    return;
+  }
   std::vector<uint64_t> bodies;
   for (CacheStorageCache::MatchResult& match : matches) {
     PageCacheResponse response = ToPageResponse(match.response);

@@ -259,3 +259,77 @@ def test_same_site_holds_between_hosts_of_no_registrable_domain(page_program: No
         outcomes = [_fetch(page, f"http://intranet:{port}/{policy}") for policy in ("same-site", "same-origin")]
 
     assert outcomes == ["opaque", _FAILED]
+
+
+# Matches the responses that _CACHE_STORE stored, and gives each call's outcome: a response's type, how many responses or
+# requests, or the name and message of what it threw.
+_CACHE_MATCH = """caches.open('c').then(async (cache) => {
+    const outcome = (call) => call.then(
+        (result) => result === undefined ? 'none' : Array.isArray(result) ? result.length : result.type,
+        (error) => [error.name, error.message]);
+    return {
+        none: await outcome(cache.match('/none')),
+        cross: await outcome(cache.match('/cross-origin')),
+        credentials: await outcome(cache.match('/credentials')),
+        own: await outcome(cache.match('/own')),
+        all: await outcome(cache.matchAll()),
+        allCross: await outcome(cache.matchAll('/cross-origin')),
+        storage: await outcome(caches.match('/none')),
+        storageCross: await outcome(caches.match('/cross-origin')),
+        keys: await outcome(cache.keys()),
+    };
+})"""
+
+
+@pytest.mark.parametrize("policy", ["require-corp", "credentialless"])
+def test_the_cache_api_holds_an_opaque_response_to_its_policy_under_an_embedder_policy(
+    session: mitto.Session, server: RecordingServer, other: RecordingServer, policy: str
+) -> None:
+    # CacheStorageDispatcherHost holds what Cache.match(), Cache.matchAll() and CacheStorage.match() give to the
+    # context's embedder policy: an opaque response without a policy that lets the context have it fails the whole call,
+    # and keys() gives requests alone. Chrome takes every opaque response that it stored as one whose request sent
+    # credentials, so credentialless holds them as require-corp does (Chrome for Testing 157).
+    store = f"""caches.open('c').then(async (cache) => {{
+        for (const [key, url, init] of [
+            ['/none', '{other.url("/none")}', {{mode: 'no-cors'}}],
+            ['/cross-origin', '{other.url("/cross-origin")}', {{mode: 'no-cors'}}],
+            ['/credentials', '{other.url("/none")}', {{mode: 'no-cors', credentials: 'include'}}],
+            ['/own', '/own', {{}}],
+        ]) {{
+            await cache.put(key, await fetch(url, init));
+        }}
+        return 'stored';
+    }})"""
+    server.route("/own", b"own", "text/plain")
+    failed = {
+        method: ["TypeError", f"Failed to execute '{method}' on '{interface}'"]
+        for method, interface in (("match", "Cache"), ("matchAll", "Cache"))
+    }
+
+    # One Session keeps the caches of its Pages, as a profile keeps its tabs'.
+    plain_url = server.page("/plain", _BLANK)
+    with _open_page(session, plain_url) as page:
+        assert page.evaluate(store, timeout=TIMEOUT_SECONDS) == "stored"
+    with _open_page(session, server.page("/held", _BLANK, [_coep(policy)])) as page:
+        held = page.evaluate(_CACHE_MATCH, timeout=TIMEOUT_SECONDS)
+    with _open_page(session, plain_url) as page:
+        plain = page.evaluate(_CACHE_MATCH, timeout=TIMEOUT_SECONDS)
+
+    assert held == {
+        "none": failed["match"],
+        "cross": "opaque",
+        "credentials": failed["match"],
+        "own": "basic",
+        "all": failed["matchAll"],
+        "allCross": 1,
+        "storage": ["TypeError", "Failed to execute 'match' on 'CacheStorage'"],
+        "storageCross": "opaque",
+        "keys": 4,
+    }
+    assert plain == {
+        **dict.fromkeys(("none", "cross", "credentials", "storage", "storageCross"), "opaque"),
+        "own": "basic",
+        "all": 4,
+        "allCross": 1,
+        "keys": 4,
+    }
