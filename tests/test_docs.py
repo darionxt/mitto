@@ -42,7 +42,7 @@ GUIDE = REPOSITORY / "docs" / "from-requests.md"
 README = REPOSITORY / "README.md"
 CHANGELOG = REPOSITORY / "CHANGELOG.md"
 # Each pull request's lines for callers, which the release gathers into CHANGELOG.md (docs/releasing.md).
-CHANGE_FILES = sorted((REPOSITORY / "changelog.d").glob("*.md"))
+CHANGE_FILES = sorted(path for path in (REPOSITORY / "changelog.d").glob("*.md") if not path.name.startswith("."))
 PAGES = [API_PAGE, GUIDE, README]
 # The changelog has no examples, and the checks of names and links read it as they read the pages.
 PAGES_AND_CHANGELOG = [*PAGES, CHANGELOG, *CHANGE_FILES]

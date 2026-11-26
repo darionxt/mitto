@@ -175,6 +175,27 @@ def link_changes_to(root: Path, target: Path) -> None:
         pytest.skip(f"cannot make a link here: {error}")
 
 
+def test_a_file_for_the_directory_is_refused(tmp_path: Path) -> None:
+    """Lines written in a file named changelog.d would otherwise be left out without a word."""
+    write(tmp_path, CHANGES_DIRECTORY, "- A thing.\n")
+
+    with pytest.raises(ChangelogError, match=r"changelog\.d is a file, where it should be a directory"):
+        change_files(tmp_path)
+
+
+def test_a_junction_for_the_directory_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows' junctions lead elsewhere as links do, and is_symlink() does not see them."""
+    (tmp_path / CHANGES_DIRECTORY).mkdir()
+
+    def is_junction(path: Path) -> bool:
+        return path.name == CHANGES_DIRECTORY.name
+
+    monkeypatch.setattr(Path, "is_junction", is_junction)
+
+    with pytest.raises(ChangelogError, match=r"changelog\.d is a link, where it should be a directory"):
+        change_files(tmp_path)
+
+
 @needs_git
 def test_a_link_for_the_directory_is_refused_before_anything_goes(repository: Path, tmp_path: Path) -> None:
     """Gathering deletes the files, which a link could put outside the repository."""
@@ -217,8 +238,13 @@ def test_a_file_of_anything_but_items_is_refused(tmp_path: Path, text: str, erro
 def test_a_file_that_is_not_markdown_or_no_file_is_refused(tmp_path: Path) -> None:
     write(tmp_path, change("a.txt"), "- A thing.\n")
     (tmp_path / change("b.md")).mkdir()
+    write(tmp_path, "outside.md", "- A thing from outside.\n")
+    try:
+        (tmp_path / change("c.md")).symlink_to(tmp_path / "outside.md")
+    except OSError as error:
+        pytest.skip(f"cannot make a link here: {error}")
 
-    for name in ["a.txt", "b.md"]:
+    for name in ["a.txt", "b.md", "c.md"]:
         with pytest.raises(ChangelogError, match=rf"changelog\.d/{name} is not a file of lines for callers"):
             lines_of(change(name), tmp_path)
 

@@ -122,13 +122,18 @@ def change_files(root: Path = REPOSITORY) -> list[Path]:
     A name that starts with a dot, such as macOS's .DS_Store, is no change's.
 
     Raises:
-        ChangelogError: changelog.d is a link, which could lead gathering to delete files that are not the root's.
+        ChangelogError: changelog.d is a link or a junction, which could lead gathering to delete files that are not the
+            root's, or it is no directory.
     """
     directory = root / CHANGES_DIRECTORY
-    if directory.is_symlink():
+    if directory.is_symlink() or directory.is_junction():
         raise ChangelogError(f"{CHANGES_DIRECTORY} is a link, where it should be a directory of the repository's own")
-    if not directory.is_dir():
+    if not directory.exists():
         return []
+    if not directory.is_dir():
+        raise ChangelogError(
+            f"{CHANGES_DIRECTORY} is a file, where it should be a directory of files named <branch>.md"
+        )
     return sorted(path.relative_to(root) for path in directory.iterdir() if not path.name.startswith("."))
 
 
@@ -139,10 +144,11 @@ def lines_of(path: Path, root: Path = REPOSITORY) -> list[str]:
     Blank lines and the spaces at the end of a line are left out.
 
     Raises:
-        ChangelogError: The path is not a file named `<branch>.md`, or the file holds no item, or a line that is none.
+        ChangelogError: The path is not a file named `<branch>.md`, or is a link, or the file holds no item, or a line
+            that is none.
     """
     name = path.as_posix()
-    if path.suffix != ".md" or not (root / path).is_file():
+    if path.suffix != ".md" or (root / path).is_symlink() or not (root / path).is_file():
         raise ChangelogError(f"{name} is not a file of lines for callers, which is named after its branch, as name.md")
     lines: list[str] = []
     for number, line in enumerate((root / path).read_text(encoding="utf-8").splitlines(), start=1):
