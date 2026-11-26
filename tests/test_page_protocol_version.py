@@ -23,6 +23,7 @@ def copy_of_hashed_files(tmp_path: Path) -> Path:
     copy = tmp_path / "native"
     copy.mkdir()
     for name in HASHED_FILES:
+        (copy / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(NATIVE / name, copy / name)
     return copy
 
@@ -71,6 +72,13 @@ def test_every_file_that_writes_or_reads_a_payload_is_hashed() -> None:
     }
 
     assert messages - set(HASHED_FILES) == set()
+
+
+def test_both_ends_ways_of_writing_a_storage_key_are_hashed() -> None:
+    # The library writes its own into each broadcast for a Page, which matches it against its contexts' own.
+    assert {"dom/storage_key.cc", "dom/storage_key.h", "storage/storage_key.cc", "storage/storage_key.h"} <= set(
+        hashed_files("_page_message_counterparts")
+    )
 
 
 def test_every_header_of_the_library_that_a_hashed_file_includes_is_hashed() -> None:

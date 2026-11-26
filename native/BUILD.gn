@@ -90,17 +90,29 @@ _page_message_sources = [
   "storage_bucket_messages.h",
 ]
 
+# The files that each end builds on its own but that must agree byte for byte
+# with the other end's, because what one writes into a message the other
+# compares with what it works out itself: the storage key that the library puts
+# into each broadcast for a Page, which a Page matches against its contexts'
+# own.
+_page_message_counterparts = [
+  "dom/storage_key.cc",
+  "dom/storage_key.h",
+  "storage/storage_key.cc",
+  "storage/storage_key.h",
+]
+
 # The version of the messages that both ends speak in their hello: a fingerprint
 # of the files above, so that a Page and a library built from trees whose
 # messages differ refuse each other, and no one keeps the number by hand.
 action("page_protocol_version") {
   script = "page_protocol_version.py"
-  inputs = _page_message_sources
+  inputs = _page_message_sources + _page_message_counterparts
   outputs = [ "$target_gen_dir/page_protocol_version.h" ]
   args = [
            rebase_path(".", root_build_dir),
            rebase_path(outputs[0], root_build_dir),
-         ] + _page_message_sources
+         ] + inputs
 }
 
 source_set("page_channel") {

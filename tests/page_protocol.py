@@ -15,12 +15,16 @@ NATIVE = Path(__file__).parent.parent / "native"
 _SCRIPT = NATIVE / "page_protocol_version.py"
 
 
-def hashed_files() -> list[str]:
-    """Return the files that the action hashes, as BUILD.gn names them, relative to native/."""
+def hashed_files(list_name: str | None = None) -> list[str]:
+    """Return the files that the action hashes, as BUILD.gn names them, relative to native/: those of its list
+    `list_name`, `_page_message_sources` or `_page_message_counterparts`, or of both."""
     build = (NATIVE / "BUILD.gn").read_text(encoding="utf-8")
-    listed = re.search(r"^_page_message_sources = \[(.*?)^\]", build, re.MULTILINE | re.DOTALL)
-    assert listed, "BUILD.gn has no _page_message_sources"
-    return re.findall(r'"([^"]+)"', listed[1])
+    names: list[str] = []
+    for name in [list_name] if list_name else ["_page_message_sources", "_page_message_counterparts"]:
+        listed = re.search(rf"^{name} = \[(.*?)^\]", build, re.MULTILINE | re.DOTALL)
+        assert listed, f"BUILD.gn has no {name}"
+        names += re.findall(r'"([^"]+)"', listed[1])
+    return names
 
 
 def protocol_version(source_dir: Path, names: list[str], scratch: Path) -> int:
