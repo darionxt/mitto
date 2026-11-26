@@ -238,15 +238,23 @@ def test_a_file_of_anything_but_items_is_refused(tmp_path: Path, text: str, erro
 def test_a_file_that_is_not_markdown_or_no_file_is_refused(tmp_path: Path) -> None:
     write(tmp_path, change("a.txt"), "- A thing.\n")
     (tmp_path / change("b.md")).mkdir()
+
+    for name in ["a.txt", "b.md"]:
+        with pytest.raises(ChangelogError, match=rf"changelog\.d/{name} is not a file of lines for callers"):
+            lines_of(change(name), tmp_path)
+
+
+def test_a_link_for_a_file_is_refused(tmp_path: Path) -> None:
+    """What it leads to may differ on the machine that gathers, or be outside the repository."""
     write(tmp_path, "outside.md", "- A thing from outside.\n")
+    (tmp_path / CHANGES_DIRECTORY).mkdir()
     try:
-        (tmp_path / change("c.md")).symlink_to(tmp_path / "outside.md")
+        (tmp_path / change("a.md")).symlink_to(tmp_path / "outside.md")
     except OSError as error:
         pytest.skip(f"cannot make a link here: {error}")
 
-    for name in ["a.txt", "b.md", "c.md"]:
-        with pytest.raises(ChangelogError, match=rf"changelog\.d/{name} is not a file of lines for callers"):
-            lines_of(change(name), tmp_path)
+    with pytest.raises(ChangelogError, match=r"changelog\.d/a\.md is not a file of lines for callers"):
+        lines_of(change("a.md"), tmp_path)
 
 
 def test_each_file_of_the_repository_gives_lines() -> None:
