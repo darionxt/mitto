@@ -22,7 +22,7 @@ UNHASHED_INCLUDES = frozenset({"header_rules.h", "page_protocol_version.h"})
 
 def hashed_files() -> list[str]:
     """Return the files that the action hashes, as BUILD.gn names them, relative to native/."""
-    build = (NATIVE / "BUILD.gn").read_text()
+    build = (NATIVE / "BUILD.gn").read_text(encoding="utf-8")
     listed = re.search(r"^_page_message_sources = \[(.*?)^\]", build, re.MULTILINE | re.DOTALL)
     assert listed, "BUILD.gn has no _page_message_sources"
     return re.findall(r'"([^"]+)"', listed[1])
@@ -35,7 +35,7 @@ def version(source_dir: Path, names: list[str], tmp_path: Path) -> int:
     """Return the version that the script writes for the files of `names` in `source_dir`."""
     header = tmp_path / "page_protocol_version.h"
     subprocess.run([sys.executable, SCRIPT, source_dir, header, *names], check=True)
-    written = header.read_text()
+    written = header.read_text(encoding="utf-8")
     found = re.search(r"^inline constexpr uint32_t kPageProtocolVersion = 0x([0-9a-f]{8});$", written, re.MULTILINE)
     assert found, written
     return int(found[1], 16)
@@ -62,8 +62,8 @@ def test_a_change_to_any_hashed_file_changes_the_version(tmp_path: Path, name: s
     copy = copy_of_hashed_files(tmp_path)
     before = version(copy, HASHED_FILES, tmp_path)
 
-    with (copy / name).open("a") as changed:
-        changed.write("\n")
+    with (copy / name).open("ab") as changed:
+        changed.write(b"\n")
 
     assert version(copy, HASHED_FILES, tmp_path) != before
 
@@ -79,13 +79,17 @@ def test_line_endings_and_the_order_of_the_names_leave_the_version_as_it_is(tmp_
 
 def test_every_file_that_writes_or_reads_a_payload_is_hashed() -> None:
     # The files of each family of messages, beside page_messages.h, and whatever else writes or reads one with
-    # message_coding.h. Those of the bindings' exception_messages.h are what a page's scripts read.
-    sources = [path for path in NATIVE.rglob("*") if path.suffix in {".h", ".cc"} and "test" not in path.parts]
+    # message_coding.h. Those of the bindings' exception_messages.h are what a page's scripts read. Sources are bytes
+    # here, since a few hold UTF-8 that the locale's encoding may not read.
+    sources = {
+        path.relative_to(NATIVE): path.read_bytes()
+        for path in NATIVE.rglob("*")
+        if path.suffix in {".h", ".cc"} and "test" not in path.relative_to(NATIVE).parts
+    }
     messages = {
-        path.relative_to(NATIVE).as_posix()
-        for path in sources
-        if (path.parent == NATIVE and path.stem.endswith("_messages"))
-        or '#include "mitto/message_coding.h"' in path.read_text()
+        name.as_posix()
+        for name, text in sources.items()
+        if (len(name.parts) == 1 and name.stem.endswith("_messages")) or b'#include "mitto/message_coding.h"' in text
     }
 
     assert messages - set(HASHED_FILES) == set()
@@ -95,7 +99,9 @@ def test_every_header_of_the_library_that_a_hashed_file_includes_is_hashed() -> 
     included = {
         header
         for name in HASHED_FILES
-        for header in re.findall(r'^#include "mitto/([^"]+)"$', (NATIVE / name).read_text(), re.MULTILINE)
+        for header in re.findall(
+            r'^#include "mitto/([^"]+)"$', (NATIVE / name).read_text(encoding="utf-8"), re.MULTILINE
+        )
     }
 
     assert included - set(HASHED_FILES) - UNHASHED_INCLUDES == set()

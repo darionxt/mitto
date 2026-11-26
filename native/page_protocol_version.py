@@ -55,7 +55,7 @@ def main() -> None:
     source_dir: Path = args.source_dir
     output: Path = args.output
     names: list[str] = args.names
-    output.write_text(HEADER.format(version=fingerprint(source_dir, names)), newline="\n")
+    output.write_text(HEADER.format(version=fingerprint(source_dir, names)), encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":
