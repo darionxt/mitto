@@ -733,9 +733,14 @@ void PageCacheStorage::AnswerResponses(
       std::ranges::any_of(
           matches, [&policy](const CacheStorageCache::MatchResult& match) {
             const CacheResponse& response = match.response;
-            if (response.response_type != CacheResponseType::kOpaque ||
-                response.url_list.empty()) {
+            if (response.response_type != CacheResponseType::kOpaque) {
               return false;
+            }
+            // One that an older storage directory holds of before an opaque
+            // response kept its URL and header lines has neither, and so no
+            // policy that would let the context have it.
+            if (response.url_list.empty()) {
+              return true;
             }
             const auto corp =
                 response.headers.find("cross-origin-resource-policy");
