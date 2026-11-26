@@ -30,9 +30,6 @@ pytestmark = [
 
 _TIMEOUT_SECONDS = 60
 
-# The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 36
-
 _FAKE_PAGE = textwrap.dedent(
     """\
     #!{python}
@@ -59,6 +56,12 @@ _FAKE_PAGE = textwrap.dedent(
         pending = pending[8 + size :]
         return message_type, payload
 
+    def hello():
+        # The library's hello comes first: speak its version back, as a Page of the same tree does.
+        message_type, payload = receive()
+        assert message_type == 1, message_type
+        send(1, payload)
+
     def sized(data):
         return struct.pack("<I", len(data)) + data
 
@@ -75,7 +78,7 @@ _FAKE_PAGE = textwrap.dedent(
             if message_type == 15 and struct.unpack_from("<Q", payload)[0] == number:
                 return
 
-    send(1, struct.pack("<I", {version}))
+    hello()
     send(70, struct.pack("<QBQ", 1, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
@@ -127,13 +130,13 @@ _FAKE_PAGE = textwrap.dedent(
 )
 
 # The helpers of the fake Page above, before its first message.
-_FAKE_PAGE_HELPERS = _FAKE_PAGE[: _FAKE_PAGE.index('send(1, struct.pack("<I", {version}))')]
+_FAKE_PAGE_HELPERS = _FAKE_PAGE[: _FAKE_PAGE.index("\nhello()\n") + 1]
 
 # A worker that posts as it ends: its request and its end go in one write, so the library reads both at once, as it
 # can on a busy machine.
 _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
-    send(1, struct.pack("<I", {version}))
+    hello()
     send(70, struct.pack("<QBQ", 1, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
@@ -167,7 +170,7 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
 # that origin, which no about:blank may take.
 _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
-    send(1, struct.pack("<I", {version}))
+    hello()
     send(70, struct.pack("<QBQ", 1, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
@@ -182,7 +185,7 @@ _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
 # the top-level document starts, with no policy to take.
 _FAKE_PAGE_OF_A_BLOCKED_DOCUMENT = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
-    send(1, struct.pack("<I", {version}))
+    hello()
     send(70, struct.pack("<QBQ", 1, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
@@ -327,7 +330,6 @@ def _run_page(tmp_path: Path, top: _Server, frame_site: _Server) -> str:
     """Run the fake Page in a Session of its own, and return what its call gave, as Python prints it."""
     program = _FAKE_PAGE.format(
         python=sys.executable,
-        version=_PROTOCOL_VERSION,
         frame=frame_site.url("/frame-page"),
         frame_fetch=frame_site.url("/frame-fetch"),
         worker=top.url("/worker.js"),
@@ -388,7 +390,7 @@ def test_a_request_that_a_worker_sends_as_it_ends_goes_out(tmp_path: Path, top: 
     # gone, when a request that has started is on the wire: Chrome 157 sent a POST that a worker made as it closed each
     # time. The worker's end, read with the request, ends it only once //net has sent it.
     program = _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS.format(
-        python=sys.executable, version=_PROTOCOL_VERSION, worker=top.url("/worker.js"), beacon=top.url("/beacon")
+        python=sys.executable, worker=top.url("/worker.js"), beacon=top.url("/beacon")
     )
     printed = _run_fake_page(tmp_path, program, _SESSION_THAT_WAITS, top.url("/page"), top.url("/wait-post"))
 
@@ -426,9 +428,7 @@ def test_each_documents_cookie_store_listens_on_its_own_and_a_blob_worker_speaks
 def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: Path, top: _Server) -> None:
     # Its origin is the top-level document's, but its URL may only change to another about:blank one, as the
     # renderer's own check has it.
-    program = _FAKE_PAGE_OF_A_LOCAL_URL.format(
-        python=sys.executable, version=_PROTOCOL_VERSION, other=top.url("/other-page")
-    )
+    program = _FAKE_PAGE_OF_A_LOCAL_URL.format(python=sys.executable, other=top.url("/other-page"))
 
     printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
 
@@ -446,7 +446,6 @@ def test_a_frames_local_document_with_no_embedder_policy_is_refused_under_a_pare
     # blocks, so a Page that commits it all the same is refused.
     program = _FAKE_PAGE_OF_A_BLOCKED_DOCUMENT.format(
         python=sys.executable,
-        version=_PROTOCOL_VERSION,
         frame=top.url("/coep-page"),
         initiator=2,
         kind=kind,

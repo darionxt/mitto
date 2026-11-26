@@ -4026,11 +4026,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
         Refuse("a second hello");
         return;
       }
-      if (frame->version != kPageProtocolVersion) {
-        Refuse(base::StrCat({"the Page speaks version ",
-                             base::NumberToString(frame->version),
-                             " of the messages, and the library speaks ",
-                             base::NumberToString(kPageProtocolVersion)}));
+      if (std::optional<std::string> refusal =
+              HelloRefusal(frame->version, "the Page", "the library")) {
+        Refuse(*std::move(refusal));
         return;
       }
       hello_received_ = true;
