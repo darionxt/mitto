@@ -11,6 +11,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/dom/performance_server_timing.h"
+#include "mitto/encoding/content_type.h"
 #include "url/gurl.h"
 
 namespace mitto {

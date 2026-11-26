@@ -18,6 +18,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/types/expected.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -43,6 +44,9 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
     // header lines and a null body, as the Fetch Standard's opaque filtered
     // response.
     kOpaque,
+    // Response.error()'s, a network error: status 0, no URL, no header lines
+    // and a null body.
+    kError,
   };
 
   // `new Response(body, init)`.
@@ -53,6 +57,12 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
   static Response* StaticJson(v8::Local<v8::Value> data,
                               const bindings::ResponseInit& init,
                               bindings::ExceptionState& exception_state);
+  // `Response.error()`.
+  static Response* Error();
+  // `Response.redirect(url, status)`.
+  static Response* Redirect(const std::u16string& url,
+                            uint16_t status,
+                            bindings::ExceptionState& exception_state);
   // One that fetch() got, or that the Cache API stored, whose body is `body`,
   // or none for a null body. An opaque one's body is null, and `body` is
   // that of its internal response, which no script reads, as Blink's opaque
@@ -80,21 +90,29 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
   std::string StatusText() const { return status_text_; }
   mitto::Headers* Headers() const { return headers_.Get(); }
   ReadableStream* Body() const { return BodyStream(); }
+  // A copy with a tee of its body, as Blink's clone() makes it.
+  Response* Clone(bindings::ExceptionState& exception_state);
 
   // What the Runtime reads of it itself, as Blink's FetchDataLoader reads a
   // body, such as Cache.put() does.
   //
   // Whether its body is null, as an opaque response's is.
   bool HasNullBody() const { return !body_buffer_; }
+  // Why ReadAll() gives no body: it failed, its signal aborted it, or its
+  // context went while it was read, which settles nothing.
+  enum class ReadAllError { kFailed, kAborted, kStopped };
+  using ReadAllCallback =
+      base::OnceCallback<void(base::expected<std::string, ReadAllError>)>;
   // Uses the body, as a read by a script does, and calls `done` with all of it
-  // once it has come, or with nullopt if it failed. A null body reads as
-  // empty. Its body must be neither locked nor used.
-  void ReadAll(base::OnceCallback<void(std::optional<std::string> body)> done);
+  // once it has come. A null body reads as empty. Its body must be neither
+  // locked nor used. A body that cannot be read, such as one whose frame has
+  // gone, throws, and `done` hears of nothing.
+  void ReadAll(ReadAllCallback done, bindings::ExceptionState& exception_state);
 
  private:
   // BodyMixin:
   BodyStreamBuffer* BodyBuffer() const override;
-  std::string MimeType() const override;
+  std::string ContentType() const override;
 
   ResponseType type_ = ResponseType::kDefault;
   int32_t status_ = 200;

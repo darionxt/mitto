@@ -217,7 +217,9 @@ def test_assign_and_replace_navigate_and_reload_validates_the_cache(session: mit
     assert _without(reloaded, "Cache-Control", "Referer") == _without(first, "Referer")
 
 
-def test_the_old_document_unloads_before_the_new_one_takes_its_place(session: mitto.Session, server: _Server) -> None:
+def test_the_old_document_hears_that_it_leaves_before_the_new_one_takes_its_place(
+    session: mitto.Session, server: _Server
+) -> None:
     second = server.page(
         "/second",
         "<script>window.seen = [];"
@@ -238,7 +240,9 @@ def test_the_old_document_unloads_before_the_new_one_takes_its_place(session: mi
         assert page.console_messages[0] == _native.ConsoleMessage(
             level="error", text="Permissions policy violation: unload is not allowed in this document."
         )
-    assert _events(session) == ["beforeunload", "pagehide false true true #document", "visibilitychange hidden"]
+    # The back/forward cache keeps the document, as Chrome's does with the seed's unload deprecated: persisted, and
+    # never an unload.
+    assert _events(session) == ["beforeunload", "pagehide true true true #document", "visibilitychange hidden"]
 
 
 def test_a_navigation_within_the_document_changes_its_url_with_popstate_then_hashchange(
@@ -721,7 +725,11 @@ def test_navigation_timing_says_a_reload_and_gives_the_unload_times_of_a_documen
     session: mitto.Session, server: _Server
 ) -> None:
     server.page("/second", "<title>Second</title>")
-    first = server.page("/first", "<title>First</title>")
+    # A page of no-store whose script's request gets a response of no-store is not kept in the back/forward cache, so it
+    # unloads, as in Chrome; a page that the cache keeps has no unload times to give the next one.
+    no_store = [("Cache-Control", "no-store")]
+    first = server.page("/first", "<title>First</title>", no_store)
+    server.routes["/not-stored"] = _Route(headers=[("Content-Type", "text/plain"), *no_store])
     server.routes["/bounce"] = _Route(status=302, headers=[("Location", first)])
     bounce = server.url("/bounce").replace("127.0.0.1", "localhost")
     timing = (
@@ -733,7 +741,7 @@ def test_navigation_timing_says_a_reload_and_gives_the_unload_times_of_a_documen
     with _open_page(session, first) as page:
         # The first document comes from no document, so it has no unload times.
         assert page.evaluate(timing) == [0, "navigate", False, True, False]
-        page.evaluate("location.href = '/second'")
+        page.evaluate("fetch('/not-stored').then(r => r.text()).then(() => { location.href = '/second'; return 0; })")
         _next(page)
         assert page.evaluate(timing) == [0, "navigate", True, True, True]
         page.evaluate("location.reload()")

@@ -81,6 +81,12 @@ class AnimationFrameController {
   // the context. What waits goes with the controller.
   void Stop() { weak_factory_.InvalidateWeakPtrs(); }
 
+  // A page that the back/forward cache freezes, which is hidden, begins no
+  // frame, so what waits for one waits on until Resume(), as a page in
+  // Chrome's cache gets no frames from its compositor.
+  void Freeze() { frozen_ = true; }
+  void Resume();
+
  private:
   struct FrameCallback;
   struct QueuedEvent;
@@ -106,6 +112,7 @@ class AnimationFrameController {
   int32_t last_id_ = 0;
   bool frame_requested_ = false;
   bool lifecycle_updates_deferred_ = false;
+  bool frozen_ = false;
   // The document's animation clock, from its zero, which never goes back.
   base::TimeDelta animation_time_;
   base::WeakPtrFactory<AnimationFrameController> weak_factory_{this};

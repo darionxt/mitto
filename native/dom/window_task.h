@@ -10,6 +10,7 @@
 #include "base/functional/callback.h"
 #include "base/functional/function_ref.h"
 #include "mitto/dom/event_loop.h"
+#include "v8/include/v8-forward.h"
 
 namespace mitto {
 
@@ -33,6 +34,12 @@ bool RunInWindowContext(Window* window, base::FunctionRef<void()> run);
 
 // The same for any context, a window's or a worker's, on its own thread.
 bool RunInContext(ExecutionContext* context, base::FunctionRef<void()> run);
+
+// The execution context of `context` if the back/forward cache keeps its
+// window frozen, or null: what would run there waits, held by it, as tasks
+// of Blink's frozen frames do.
+ExecutionContext* FrozenContext(v8::Isolate* isolate,
+                                v8::Local<v8::Context> context);
 
 }  // namespace mitto
 

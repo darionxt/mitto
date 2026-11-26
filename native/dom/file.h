@@ -52,12 +52,16 @@ class File final : public Blob {
   ~File() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  bool IsFile() const override;
 
   // The members of the interface.
   const std::u16string& Name() const { return name_; }
   int64_t LastModified() const;
   v8::Local<v8::Value> LastModifiedDate() const;
   const std::u16string& WebkitRelativePath() const { return relative_path_; }
+
+  // A copy named `name`, as Blink's Clone() makes for FormData.
+  File* Clone(std::u16string name) const;
 
   // Its time as a serialization writes it: none when it is not known.
   std::optional<base::Time> LastModifiedTimeForSerialization() const {

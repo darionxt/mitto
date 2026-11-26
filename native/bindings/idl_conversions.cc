@@ -451,11 +451,13 @@ v8::MaybeLocal<v8::Value> ConvertRecord(v8::Isolate* isolate,
   const v8::Local<v8::Object> result = v8::Object::New(isolate);
   if (!IterateRecord(
           isolate, value, exception_state, type.name,
-          [&](v8::Local<v8::Value> key, v8::Local<v8::Value> item) {
+          [&](v8::Local<v8::Value> key, RecordValueGetter get) {
             v8::Local<v8::Value> converted_key;
+            v8::Local<v8::Value> item;
             v8::Local<v8::Value> converted;
             return Convert(isolate, *type.members[0], key, -1, exception_state)
                        .ToLocal(&converted_key) &&
+                   get(&item) &&
                    Convert(isolate, *type.members[1], item, -1, exception_state)
                        .ToLocal(&converted) &&
                    result

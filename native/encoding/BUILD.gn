@@ -46,6 +46,7 @@ source_set("encoding") {
     "//url",
   ]
   deps = [
+    "//mitto:header_rules",
     "//mitto/html:tokenizer",
     "//third_party/ced",
     "//third_party/icu",

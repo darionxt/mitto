@@ -49,6 +49,15 @@ bindings::ScriptWrappable* File::CreateForKnownGap(
       BlobDataHandle::Create(std::string(), std::string()));
 }
 
+bool File::IsFile() const {
+  return true;
+}
+
+File* File::Clone(std::u16string name) const {
+  return Create(std::move(name), relative_path_, last_modified_,
+                GetBlobDataHandle());
+}
+
 File::File(std::u16string name,
            std::u16string relative_path,
            std::optional<base::Time> last_modified,

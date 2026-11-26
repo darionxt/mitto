@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 34;
+inline constexpr uint32_t kPageProtocolVersion = 37;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -275,10 +275,23 @@ enum class PageMessage : uint32_t {
   // To the Session: the IDs of documents whose navigations no entry of the
   // session history holds any more, each a 64-bit number, one at least.
   kRecordsReleased = 281,
+  // To the Session: the ID of the top-level document that the back/forward
+  // cache keeps, a 64-bit number, as the next document takes its place.
+  kDocumentStored = 282,
+  // To the Page: the number of a traversal request to the entry of a
+  // document that the back/forward cache keeps, a 64-bit number, which the
+  // Session answers by restoring that document in place of a response.
+  kRestore = 283,
+  // To the Session: the ID of the document that the back/forward cache kept
+  // and that is the top-level document again, a 64-bit number.
+  kDocumentRestored = 284,
+  // To the Session: the ID of a document that the back/forward cache kept
+  // and that goes, a 64-bit number.
+  kDocumentEvicted = 285,
   // To the Page: whether the document that a navigation's response makes is
-  // cross-origin isolated, as PageIsolation says, just before the response
-  // starts, as Chrome's browser gives the renderer the document's agent
-  // cluster.
+  // cross-origin isolated, and its embedder policy, as PageIsolation says, just
+  // before the response starts, as Chrome's browser gives the renderer the
+  // document's agent cluster and policy container.
   kIsolation = 300,
 };
 
@@ -731,22 +744,32 @@ enum class PageCrossOriginIsolation : uint8_t {
   kCoopAndCoep = 1,
 };
 
+// A document's enforced Cross-Origin-Embedder-Policy.
+enum class PageEmbedderPolicy : uint8_t {
+  kNone = 0,
+  kCredentialless = 1,
+  kRequireCorp = 2,
+};
+
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
-// opened the Page.
+// opened the Page: a top-level document's agent cluster's, and a frame's
+// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated. And its embedder
+// policy, which its frames' documents of no response take from it.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
+  PageEmbedderPolicy embedder_policy = PageEmbedderPolicy::kNone;
 };
 
 // A traversal of the session history to an entry of another document, which
 // repeats the navigation that made document `record`, as Chrome's browser
 // repeats an entry's own navigation, whose Initiator and Referer the Session
-// keeps. Its payload is the number, as a request's, the record, each a 64-bit
-// number, a byte of flags, 1 for an entry that a navigation within that
-// document made, a byte of the referrer policy, as a request's, and then the
-// URL in UTF-8, which is the rest: the record's URL for an entry of its
-// navigation, or one that a navigation within it gave it.
+// keeps. Its payload is the number, as a request's, the record and the stored
+// document, each a 64-bit number, a byte of flags, 1 for an entry that a
+// navigation within that document made, a byte of the referrer policy, as a
+// request's, and then the URL in UTF-8, which is the rest: the record's URL for
+// an entry of its navigation, or one that a navigation within it gave it.
 struct PageTraversalRequest {
   uint64_t number = 0;
   uint64_t record = kNoDocument;
@@ -756,6 +779,10 @@ struct PageTraversalRequest {
   // within the document made, the document's policy when it made it, as
   // Chrome's FrameNavigationEntry keeps the referrer of each commit.
   PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument;
+  // The document that was at the entry when the back/forward cache took it,
+  // which the Session may answer with a restore, and which is not always the
+  // record's: kNoDocument for none.
+  uint64_t stored_document = kNoDocument;
   std::string url;
 };
 
@@ -1239,6 +1266,8 @@ struct FrameFromPage {
   PageTraversalRequest traversal;
   // kRecordsReleased.
   std::vector<uint64_t> released_records;
+  // kDocumentStored, kDocumentRestored and kDocumentEvicted.
+  uint64_t cached_document = kNoDocument;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -1288,6 +1317,8 @@ struct FrameFromSession {
   PageCredit request_body_credit;
   // kIsolation.
   PageIsolation isolation;
+  // kRestore: the number of the traversal request.
+  uint64_t restore = 0;
   // kStorageEntries.
   PageStorageEntries storage_entries;
   // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
@@ -1381,6 +1412,10 @@ std::string EncodeTraversalRequest(uint64_t document,
                                    const PageTraversalRequest& traversal);
 // `records` holds one at least, and at most kMaxPayloadSize / 8.
 std::string EncodeRecordsReleased(const std::vector<uint64_t>& records);
+std::string EncodeDocumentStored(uint64_t document);
+std::string EncodeRestore(uint64_t number);
+std::string EncodeDocumentRestored(uint64_t document);
+std::string EncodeDocumentEvicted(uint64_t document);
 std::string EncodeAboutBlankNavigation(uint64_t document,
                                        uint64_t initiator,
                                        PageLocalNavigationKind kind);

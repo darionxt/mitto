@@ -75,7 +75,7 @@ uv run python -m tools.wpt differences
 
 It takes about 80 minutes on the Mac with its 12 Pages at once, and prints how many differences each ticket owns, and how many tests and subtests differ in each part of M8 and each directory. `--from FILE ...` writes it from the results of earlier runs instead, such as those that CI's job keeps on each Host, and marks a test flaky where they disagree. Those runs gave 3 seconds to each test that the list had run out of time, so such a test stays out of time in the list even if it now finishes later than that. A test that the list marks stays marked: delete its line by hand once it no longer varies. A prefix writes only the part of those tests. `uv run python -m tools.wpt counts` prints the counts of the list as it is. Read the diff before you commit it: fixing something only removes lines, and an added line means the Page moved away from Chrome.
 
-A pull request that changes what a Page does changes the list in the same pull request. Its `wpt` job fails until then, and keeps the results that write the list for every Host at once, from the run's number, into a directory to delete afterwards:
+A pull request that changes what a Page does changes the list in the same pull request. Its `wpt` jobs fail until then, and keep the results that write the list for every Host at once, from the run's number, into a directory to delete afterwards. A draft runs no `wpt` job, so run one by hand on its branch first ([a full run of a draft](building.md#a-full-run-of-a-draft)), and take the list from its results. The full run that marking it ready starts is of the pull request, which builds its own wheels. A push to a ready pull request that changes only the list takes the wheels of the run before it ([below](#in-ci)).
 
 ```bash
 gh run download RUN --pattern 'wpt-results-*' --dir wpt-results
@@ -147,4 +147,6 @@ Chrome as shipped blocks a window that a page opens without a gesture, so a test
 
 ## In CI
 
-The `wpt` job of CI runs on every Host once the native job has built the wheels, from the installed wheel, as the native job tests it: `python -m tools.wpt run --jobs 12`, since most Pages wait out a timeout with nothing to do. It keeps each test's result as the artifact `wpt-results-RUNNER`, whose files `--from` takes. A draft pull request runs no native job, so no `wpt` job either. On each Host it takes about 20 minutes.
+The `wpt` job of CI runs on each Host once that Host's native job has built the wheel, from the installed wheel, as the native job tests it: `python -m tools.wpt run --jobs 12`, since most Pages wait out a timeout with nothing to do. It keeps each test's result as the artifact `wpt-results-RUNNER`, whose files `--from` takes. A draft pull request runs no native job, so no `wpt` job either, unless it is started by hand ([a full run of a draft](building.md#a-full-run-of-a-draft)). On each Host it takes about 15 to 20 minutes.
+
+A push to a ready pull request that changes only the list of differences takes the wheels of the run before it, and its `wpt` job starts within a few minutes of the push, without the native jobs' builds and tests ([building.md](building.md#a-push-that-changes-only-the-list-of-differences)). `docs/building.md` says when it does not, and why a run of it cannot pass a required check for code that the tests have not seen.

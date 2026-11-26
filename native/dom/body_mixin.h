@@ -34,6 +34,7 @@ class BodyMixin {
   v8::Local<v8::Promise> ArrayBuffer(bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Blob(bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Bytes(bindings::ExceptionState& exception_state);
+  v8::Local<v8::Promise> FormData(bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Json(bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Text(bindings::ExceptionState& exception_state);
   ReadableStream* TextStream(bindings::ExceptionState& exception_state);
@@ -50,25 +51,36 @@ class BodyMixin {
 
   // Its body, or null for a null body.
   virtual BodyStreamBuffer* BodyBuffer() const = 0;
-  // The type of a Blob that blob() makes: its Content-Type line, in lowercase,
-  // or empty without one, as Blink's FetchHeaderList::ExtractMIMEType()
-  // gives it.
-  virtual std::string MimeType() const = 0;
+  // Its Content-Type, its values joined, or empty without one, as Blink's
+  // ContentType() reads it from the header list.
+  virtual std::string ContentType() const = 0;
 
  private:
   enum class ReadAs {
     kArrayBuffer,
     kBlob,
     kBytes,
+    kFormData,
+    kFailure,
     kJson,
+    // Rejects without reading the body, as formData() of a multipart type
+    // without a boundary.
+    kNothing,
     kText,
+    kUrlEncodedFormData,
   };
+
+  // The type of a Blob that blob() makes: its Content-Type, in lowercase, as
+  // Blink's FetchHeaderList::ExtractMIMEType() gives it.
+  std::string MimeType() const;
 
   void RejectInvalidConsumption(
       bindings::ExceptionState& exception_state) const;
+  // `boundary` is that of a multipart/form-data body, for kFormData.
   v8::Local<v8::Promise> LoadAndConvertBody(
       ReadAs read_as,
-      bindings::ExceptionState& exception_state);
+      bindings::ExceptionState& exception_state,
+      std::string boundary = std::string());
 };
 
 }  // namespace mitto
