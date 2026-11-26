@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/time/time.h"
 #include "mitto/request_channel.h"
 #include "net/base/io_buffer.h"
@@ -79,8 +80,10 @@ class RunningRequest {
   // that ends, whose loaders Chrome ends with it, though their end reaches the
   // network service only after the worker's thread has gone, when a request
   // that has started is on the wire. A body that streams, or a request in its
-  // preflight, ends at once.
-  virtual void AbandonOnceSent() = 0;
+  // preflight, ends at once, and one that //net has not sent within a second
+  // ends then. `on_end` runs once the request has ended, so that what it
+  // holds, such as its share of the keepalive limits, goes with it.
+  virtual void AbandonOnceSent(base::ScopedClosureRunner on_end) = 0;
 
   // Goes on to the request's end with no client, reading and dropping what
   // its response holds, because its client is going and the request outlives

@@ -269,8 +269,11 @@ constexpr base::TimeDelta kDelayInitialDohProbeTimeout = base::Seconds(5);
 constexpr base::TimeDelta kSystemDnsConfigTimeout = base::Seconds(1);
 
 // How often a request that a worker's end abandoned looks whether //net has
-// sent it yet, which it ends once it has.
+// sent it yet, which it ends once it has, and how long it may wait: Chrome's
+// end of a worker's loaders reaches its network service after the worker's
+// thread has gone, so a request that a socket held back is not sent there.
 constexpr base::TimeDelta kSentPollInterval = base::Milliseconds(1);
+constexpr base::TimeDelta kAbandonedSendGrace = base::Seconds(1);
 
 // The subdirectory of a Session's cache directory that //net owns, with the name
 // that PopulateHttpCacheDirectories() in //content gives it.
@@ -483,13 +486,15 @@ class RequestJob final : public net::URLRequest::Delegate,
     Finish(net::ERR_ABORTED);
   }
 
-  void AbandonOnceSent() override {
+  void AbandonOnceSent(base::ScopedClosureRunner on_end) override {
     client_ = nullptr;
+    on_abandoned_end_ = std::move(on_end);
     if (body_stream_ || preflight_ || IsSent()) {
       Finish(net::ERR_ABORTED);
       return;
     }
     abandon_once_sent_ = true;
+    send_deadline_ = base::TimeTicks::Now() + kAbandonedSendGrace;
     // //net tells of no write, so the request's load state says when.
     sent_timer_.Start(FROM_HERE, kSentPollInterval,
                       base::BindRepeating(&RequestJob::FinishOnceSent,
@@ -983,19 +988,21 @@ class RequestJob final : public net::URLRequest::Delegate,
     Finish(net::ERR_TIMED_OUT);
   }
 
-  // Whether //net has put all of the request on the wire: it waits for the
-  // response, or has its headers.
+  // Whether //net has put the request on the wire: it waits for the response,
+  // or has its headers. A QUIC stream takes headers that flow control holds
+  // back as written, so the bytes that the stream has sent count too.
   bool IsSent() const {
     if (!request_ || request_->response_headers()) {
       return true;
     }
     const net::LoadState state = request_->GetLoadState().state;
-    return state == net::LOAD_STATE_WAITING_FOR_RESPONSE ||
-           state == net::LOAD_STATE_READING_RESPONSE;
+    return (state == net::LOAD_STATE_WAITING_FOR_RESPONSE ||
+            state == net::LOAD_STATE_READING_RESPONSE) &&
+           request_->GetTotalSentBytes().InBytes() > 0;
   }
 
   void FinishOnceSent() {
-    if (IsSent()) {
+    if (IsSent() || base::TimeTicks::Now() >= send_deadline_) {
       Finish(net::ERR_ABORTED);
     }
   }
@@ -1096,9 +1103,12 @@ class RequestJob final : public net::URLRequest::Delegate,
   base::OneShotTimer connect_timer_;
   base::OneShotTimer read_timer_;
   base::OneShotTimer total_timer_;
-  // An abandoned request that waits for //net to send it, which this checks.
+  // An abandoned request that waits for //net to send it, until when, what
+  // checks, and what goes once it has ended.
   bool abandon_once_sent_ = false;
+  base::TimeTicks send_deadline_;
   base::RepeatingTimer sent_timer_;
+  base::ScopedClosureRunner on_abandoned_end_;
   base::ByteSize received_bytes_at_read_timer_start_;
   base::ByteSize sent_bytes_at_read_timer_start_;
   base::WeakPtrFactory<RequestJob> weak_ptr_factory_{this};

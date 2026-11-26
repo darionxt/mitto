@@ -670,6 +670,10 @@ class PageHost final : public PageChannel::Delegate {
 
   // Abandons each request in progress.
   void AbandonRequests();
+  // The requests in flight: the Page's, and those of its gone workers that
+  // //net has yet to send, which still count, as their loaders would in
+  // Chrome's network service until the worker's end reached it.
+  size_t RequestsInFlight();
 
   // Refuses what the Page sent: tells it why, closes the channel and kills the
   // process, because a Page that sends what it should not may be hostile.
@@ -841,6 +845,9 @@ class PageHost final : public PageChannel::Delegate {
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;
+  // The jobs of gone workers' requests that //net has yet to send, which end
+  // once it has, or with the Page.
+  std::vector<base::WeakPtr<RunningRequest>> sending_jobs_;
   uint64_t last_request_number_ = kNavigationRequest;
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.
