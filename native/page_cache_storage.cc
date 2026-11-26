@@ -439,12 +439,16 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       if (call.request) {
         request = ToCacheRequest(*call.request);
       }
+      const auto opener = cache_contexts_.find(call.cache);
+      const uint64_t policy_context =
+          opener != cache_contexts_.end() ? opener->second : context;
       if (call.op == CacheStorageCallOp::kCacheMatch) {
         cache->Match(
             std::move(*request), ToCacheOptions(call.options),
             base::BindOnce(
                 [](base::WeakPtr<PageCacheStorage> self, uint64_t question,
-                   uint64_t context, CacheStorageError error,
+                   uint64_t context, uint64_t policy_context,
+                   CacheStorageError error,
                    std::optional<CacheStorageCache::MatchResult> match) {
                   if (!self) {
                     return;
@@ -453,14 +457,14 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
                   if (match) {
                     matches.push_back(std::move(*match));
                   }
-                  self->AnswerResponses(question, context, error,
-                                        std::move(matches));
+                  self->AnswerResponses(question, context, policy_context,
+                                        error, std::move(matches));
                 },
-                self, question, context));
+                self, question, context, policy_context));
       } else {
         cache->MatchAll(std::move(request), ToCacheOptions(call.options),
                         base::BindOnce(&PageCacheStorage::AnswerResponses, self,
-                                       question, context));
+                                       question, context, policy_context));
       }
       return;
     }
@@ -549,12 +553,13 @@ void PageCacheStorage::AnswerGoneBucket(const PageCacheStorageCall& call,
       break;
     case CacheStorageCallOp::kMatch:
     case CacheStorageCallOp::kCacheMatch:
-      AnswerResponses(call.question, context, CacheStorageError::kErrorNotFound,
-                      {});
+      AnswerResponses(call.question, context, context,
+                      CacheStorageError::kErrorNotFound, {});
       return;
     case CacheStorageCallOp::kCacheMatchAll:
       // CacheImpl::MatchAll() answers kErrorNotFound with no responses.
-      AnswerResponses(call.question, context, CacheStorageError::kSuccess, {});
+      AnswerResponses(call.question, context, context,
+                      CacheStorageError::kSuccess, {});
       return;
     case CacheStorageCallOp::kCacheKeys:
       answer.op = CacheStorageAnswerOp::kRequests;
@@ -614,7 +619,8 @@ void PageCacheStorage::OnMatch(PageCacheStorageCall call,
         if (match) {
           matches.push_back(std::move(*match));
         }
-        self->AnswerResponses(question, context, error, std::move(matches));
+        self->AnswerResponses(question, context, context, error,
+                              std::move(matches));
       },
       weak_factory_.GetWeakPtr(), call.question, context);
   CacheStorage& caches = context_->ForKey(storage_key);
@@ -706,6 +712,7 @@ void PageCacheStorage::OnBodyPart(PageCacheStorageCall call) {
 void PageCacheStorage::AnswerResponses(
     uint64_t question,
     uint64_t context,
+    uint64_t policy_context,
     CacheStorageError error,
     std::vector<CacheStorageCache::MatchResult> matches) {
   // One whose context has gone holds nothing.
@@ -721,15 +728,19 @@ void PageCacheStorage::AnswerResponses(
   // CacheStorage.match(): under an embedder policy of require-corp or
   // credentialless, an opaque response is held to its
   // Cross-Origin-Resource-Policy against the context's origin, and one that
-  // fails fails the whole call. Its request counts as one that sent
+  // fails fails the whole call. A context whose policy is a report-only one
+  // alone holds a response to the policy that its header names, as the check
+  // runs for it too. Its request counts as one that sent
   // credentials, as kCacheStorageOpaqueResponseCredentialedForCorp, on in
   // Chrome 157, has CacheStorageCache take any opaque response that it reads.
   // Upstream: content/browser/cache_storage/cache_storage_dispatcher_host.cc
   // Upstream: content/browser/cache_storage/cache_storage_cache.cc
-  if (const auto policy = context_policies_.find(context);
+  if (const auto policy = context_policies_.find(policy_context);
       policy != context_policies_.end() &&
-      policy->second.embedder_policy.value !=
-          CrossOriginEmbedderPolicyValue::kNone &&
+      (policy->second.embedder_policy.value !=
+           CrossOriginEmbedderPolicyValue::kNone ||
+       policy->second.embedder_policy.report_only_value !=
+           CrossOriginEmbedderPolicyValue::kNone) &&
       std::ranges::any_of(
           matches, [&policy](const CacheStorageCache::MatchResult& match) {
             const CacheResponse& response = match.response;
@@ -738,9 +749,11 @@ void PageCacheStorage::AnswerResponses(
             }
             // One that an older storage directory holds of before an opaque
             // response kept its URL and header lines has neither, and so no
-            // policy that would let the context have it.
+            // policy that would let a context with an enforced embedder policy
+            // have it.
             if (response.url_list.empty()) {
-              return true;
+              return policy->second.embedder_policy.value !=
+                     CrossOriginEmbedderPolicyValue::kNone;
             }
             const auto corp =
                 response.headers.find("cross-origin-resource-policy");
