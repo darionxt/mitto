@@ -400,6 +400,9 @@ void PageFrame::CommitErrorPageSoon() {
   LocalNavigation navigation;
   navigation.url = GURL(kErrorPageUrl);
   navigation.committed.source = PageDocumentSource::kErrorPage;
+  navigation.sandbox = provisional_sandbox_;
+  navigation.sandboxed_process = IsOriginSandboxed(navigation.sandbox);
+  navigation.committed.sandboxed_origin = navigation.sandboxed_process;
   CommitWithoutNetworkSoon(std::move(navigation));
 }
 
@@ -2032,16 +2035,6 @@ void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
     return;
   }
   LetParentCheckCompleted();
-}
-
-void PageFrame::CommitErrorPageSoon() {
-  LocalNavigation navigation;
-  navigation.url = GURL(kErrorPageUrl);
-  navigation.committed.source = PageDocumentSource::kErrorPage;
-  navigation.sandbox = provisional_sandbox_;
-  navigation.sandboxed_process = IsOriginSandboxed(navigation.sandbox);
-  navigation.committed.sandboxed_origin = navigation.sandboxed_process;
-  CommitWithoutNetworkSoon(std::move(navigation));
 }
 
 void PageFrame::LetParentCheckCompleted() {
