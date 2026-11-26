@@ -227,6 +227,24 @@ def test_a_worker_holds_its_requests_to_its_own_embedder_policy(
     assert outcome == _FAILED
 
 
+def test_white_space_around_a_policy_is_spaces_and_tabs_alone(
+    session: mitto.Session, server: RecordingServer, other: RecordingServer
+) -> None:
+    # net::HttpUtil::TrimLWS() trims spaces and tabs of a header's value, so one that ends in a form feed or a vertical
+    # tab names no policy (Chrome for Testing 157).
+    policies = {"/tab": "\t cross-origin \t", "/feed": "cross-origin\x0c", "/vertical": "cross-origin\x0b"}
+    for path, policy in policies.items():
+        other.route(path, b"x", "text/plain", _corp(policy))
+
+    with _open_page(session, server.page("/", _BLANK, [_coep("require-corp")])) as page:
+        outcomes = [_fetch(page, other.url(path)) for path in policies]
+    with _open_page(session, server.page("/loose", _BLANK, [_coep("require-corp\x0c")])) as page:
+        loose = _fetch(page, other.url("/none"))
+
+    assert outcomes == ["opaque", _FAILED, _FAILED]
+    assert loose == "opaque"
+
+
 def test_same_site_holds_between_hosts_of_no_registrable_domain(page_program: None, other: RecordingServer) -> None:
     # Chrome 157 compares the registrable domains of the two origins, which a single-label host such as localhost has
     # none of, so such hosts count as one site.

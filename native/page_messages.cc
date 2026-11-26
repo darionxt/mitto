@@ -1414,7 +1414,7 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
 
 base::expected<PageIsolation, std::string> ReadIsolation(
     std::string_view payload) {
-  if (payload.size() != 9) {
+  if (payload.size() != 10) {
     return base::unexpected(
         WrongSize("cross-origin isolation", payload.size()));
   }
@@ -1426,6 +1426,13 @@ base::expected<PageIsolation, std::string> ReadIsolation(
         {"an isolation of the unknown kind ", base::NumberToString(value)}));
   }
   isolation.isolation = static_cast<PageCrossOriginIsolation>(value);
+  const uint8_t policy = static_cast<uint8_t>(payload[9]);
+  if (policy > static_cast<uint8_t>(PageEmbedderPolicy::kRequireCorp)) {
+    return base::unexpected(
+        base::StrCat({"an embedder policy of the unknown kind ",
+                      base::NumberToString(policy)}));
+  }
+  isolation.embedder_policy = static_cast<PageEmbedderPolicy>(policy);
   return isolation;
 }
 
@@ -1922,10 +1929,13 @@ std::string EncodeCredit(const PageCredit& credit) {
 }
 
 std::string EncodeIsolation(const PageIsolation& isolation) {
-  const char value = static_cast<char>(isolation.isolation);
-  return EncodeFrame(PageMessage::kIsolation,
-                     base::StrCat({EncodeUint64(isolation.navigation),
-                                   std::string_view(&value, 1)}));
+  const std::array<char, 2> values = {
+      static_cast<char>(isolation.isolation),
+      static_cast<char>(isolation.embedder_policy)};
+  return EncodeFrame(
+      PageMessage::kIsolation,
+      base::StrCat({EncodeUint64(isolation.navigation),
+                    std::string_view(values.data(), values.size())}));
 }
 
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part) {

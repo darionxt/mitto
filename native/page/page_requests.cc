@@ -613,7 +613,7 @@ void PageRequests::OnIsolation(const PageIsolation& isolation) {
   }
   open->isolation_said = true;
   if (open->client) {
-    open->client->OnIsolation(isolation.isolation);
+    open->client->OnIsolation(isolation);
   }
 }
 
