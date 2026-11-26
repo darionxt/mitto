@@ -210,25 +210,30 @@ jobs:
           key: runtime-${{ matrix.runner }}-${{ hashFiles('native/**', 'tools/workspace/**') }}
       - id: tag
         run: echo "tag=$(cat tools/workspace/chromium_tag)" >> "$GITHUB_OUTPUT"
-      # On Windows every compile and link command names the image's MSVC by its version: Chromium's
-      # build/toolchain/win/setup_toolchain.py turns the directories that vcvarsall.bat sets into -imsvc and -libpath
-      # flags. Over a build directory saved with another MSVC, ninja reruns every step, so there the keys of the build
-      # directories below also name the MSVC and the image. Linux takes its sysroot from the export, and on macOS the
-      # build links Xcode's SDK into the build directory, so their commands name neither and these outputs stay empty.
+      # Over a build directory saved on another image, ninja can rerun every step, so on Windows and macOS the keys of
+      # the build directories below name the image. On Windows every compile and link command names the image's MSVC by
+      # its version: Chromium's build/toolchain/win/setup_toolchain.py turns the directories that vcvarsall.bat sets into
+      # -imsvc and -libpath flags. Over a build directory saved with another MSVC, ninja reruns every step, so there the
+      # keys also name the MSVC. On macOS the build links Xcode's SDK into the build directory, so the commands name no
+      # part of the image, but each image installs Xcode anew: over a build directory saved on an earlier image, the
+      # SDK's files are newer than its objects, and ninja reruns every step, even with the same Xcode and SDKs. Linux
+      # takes its sysroot from the export, so its keys name neither, and these outputs stay empty there.
       - id: toolchain
-        if: runner.os == 'Windows' && !inputs.from-nothing
+        if: runner.os != 'Linux' && !inputs.from-nothing
         shell: pwsh
         run: |
-          # The Visual Studio 2026 that Chromium's build/vs_toolchain.py finds, and the MSVC that vcvarsall.bat picks.
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -version '[18.0,19.0)' -property installationPath
-          $msvc = (Get-Content -Raw "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
-          "msvc=-msvc$msvc" >> $env:GITHUB_OUTPUT
+          if ($IsWindows) {
+            # The Visual Studio 2026 that Chromium's build/vs_toolchain.py finds, and the MSVC that vcvarsall.bat picks.
+            $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -version '[18.0,19.0)' -property installationPath
+            $msvc = (Get-Content -Raw "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+            "msvc=-msvc$msvc" >> $env:GITHUB_OUTPUT
+          }
           "image=-image$env:ImageVersion" >> $env:GITHUB_OUTPUT
-      # What the export compiles to changes only with tools/workspace, and on Windows with the image, so main and pull
-      # requests reuse the build directory that main saved first with them, and rebuild only native/. A run on an image
-      # that main has not built on yet starts from main's build directory with the same MSVC, or else from another of
-      # main's, and ninja rebuilds what differs. The nightly run builds from nothing, which shows a mistake in an
-      # incremental build.
+      # What the export compiles to changes only with tools/workspace, and on Windows and macOS with the image, so main
+      # and pull requests reuse the build directory that main saved first with them, and rebuild only native/. A run on
+      # an image that main has not built on yet starts from main's build directory of another image, with the same MSVC
+      # on Windows, or else from another of main's, and ninja rebuilds what differs. The nightly run builds from nothing,
+      # which shows a mistake in an incremental build.
       - id: cached-objects
         if: steps.cached-library.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -276,8 +281,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/native-core
           key: ${{ steps.cached-library.outputs.cache-primary-key }}
-      # Only main saves a build directory, the first time it builds with a tools/workspace, and on Windows with an image:
-      # one restored from another image's directory is saved again, under this image's key.
+      # Only main saves a build directory, the first time it builds with a tools/workspace, and on Windows and macOS with
+      # an image: one restored from another image's directory is saved again, under this image's key.
       - if: steps.cached-library.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && steps.cached-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
