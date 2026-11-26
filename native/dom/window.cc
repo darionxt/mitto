@@ -528,6 +528,10 @@ url::Origin Window::GetSecurityOrigin() const {
   return GetDocument().GetOrigin();
 }
 
+url::Origin Window::AgentClusterOrigin() const {
+  return GetSecurityOrigin();
+}
+
 GURL Window::CompleteUrl(std::u16string_view url) const {
   return GetDocument().CompleteUrl(url);
 }
@@ -615,6 +619,15 @@ void Window::SetDocument(mitto::Document* document) {
   // such as the one the parser makes of a Page's markup, has their
   // properties now.
   AddNamedItemProperties(*document_);
+}
+
+v8::MaybeLocal<v8::Context> Window::ContextOfGlobalProxy(v8::Isolate* isolate) {
+  v8::Local<v8::Context> context;
+  if (!ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context) ||
+      From(isolate, context) != this) {
+    return v8::MaybeLocal<v8::Context>();
+  }
+  return context;
 }
 
 void Window::AssociateWithContext(v8::Isolate* isolate,

@@ -306,6 +306,10 @@ url::Origin WorkerGlobalScope::GetSecurityOrigin() const {
   return origin_;
 }
 
+url::Origin WorkerGlobalScope::AgentClusterOrigin() const {
+  return agent_cluster_origin_;
+}
+
 GURL WorkerGlobalScope::BaseUrl() const {
   return url_;
 }

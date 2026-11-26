@@ -69,6 +69,11 @@ class DocumentLoader final : public PageRequests::Client,
   void SetInheritedReferrerPolicy(FetchReferrerPolicy policy) {
     inherited_referrer_policy_ = policy;
   }
+  // Whether the document's embedder policy is compatible with cross-origin
+  // isolation, for a local URL's document, which takes its initiator's.
+  void SetEmbedderPolicyIsolates(bool isolates) {
+    embedder_policy_isolates_ = isolates;
+  }
   // Whether the initiator's policy container has a Content-Security-Policy
   // that a header gave, which hides the nonces of the document's elements.
   void SetInheritedHeaderCsp(bool header_csp) {
@@ -83,7 +88,7 @@ class DocumentLoader final : public PageRequests::Client,
   void StopLoading();
 
   // PageRequests::Client, for the navigation:
-  void OnIsolation(PageCrossOriginIsolation isolation) override;
+  void OnIsolation(const PageIsolation& isolation) override;
   void OnResponseStarted(const PageResponseStarted& response) override;
   void OnResponseBody(std::string bytes) override;
   void OnResponseTotals(const PageResponseEnded& ended) override;
@@ -123,6 +128,8 @@ class DocumentLoader final : public PageRequests::Client,
   // its window's agent is, as Blink's agent cluster key from the browser
   // says.
   bool cross_origin_isolated_ = false;
+  // Whether its embedder policy is compatible with cross-origin isolation.
+  bool embedder_policy_isolates_ = false;
 
   GURL url_;
   cppgc::Persistent<Document> document_;

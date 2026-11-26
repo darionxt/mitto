@@ -15,12 +15,15 @@
 #include "mitto/bindings/script_promise.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/bytes_consumer_tee.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/readable_byte_stream_controller.h"
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/readable_stream_byob_request.h"
 #include "mitto/dom/readable_stream_bytes_consumer.h"
+#include "mitto/dom/readable_stream_controller.h"
 #include "mitto/dom/stream_chunks.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -80,6 +83,8 @@ class BodyStreamBuffer::LoaderClient final
   }
 
   void Abort(v8::Local<v8::Value> reason) override { NOTREACHED(); }
+
+  void DidStopLoading() override { client_->DidStopLoading(); }
 
   void Trace(cppgc::Visitor* visitor) const override {
     visitor->Trace(buffer_);
@@ -153,11 +158,14 @@ BodyStreamBuffer::BodyStreamBuffer(v8::Isolate* isolate,
     : isolate_(isolate),
       consumer_(consumer),
       signal_(signal),
-      made_from_readable_stream_(false) {}
+      made_from_readable_stream_(false) {
+  SetContext(ExecutionContext::From(isolate, isolate->GetCurrentContext()));
+}
 
 BodyStreamBuffer::BodyStreamBuffer(v8::Isolate* isolate, ReadableStream* stream)
     : isolate_(isolate), stream_(stream), made_from_readable_stream_(true) {
   DCHECK(stream_);
+  SetContext(ExecutionContext::From(isolate, isolate->GetCurrentContext()));
 }
 
 BodyStreamBuffer::~BodyStreamBuffer() = default;
@@ -200,6 +208,12 @@ void BodyStreamBuffer::StartLoading(FetchDataLoader* loader,
                                     bindings::ExceptionState& exception_state) {
   DCHECK(!loader_);
   DCHECK(!keep_alive_);
+  if (!HasContext()) {
+    exception_state.ThrowDOMException(
+        "InvalidStateError",
+        "Cannot load body from a frame or worker than has been detached");
+    return;
+  }
   if (signal_) {
     if (signal_->Aborted()) {
       AbortLoader(client);
@@ -214,24 +228,35 @@ void BodyStreamBuffer::StartLoading(FetchDataLoader* loader,
     return;
   }
   keep_alive_ = this;
-  loader->Start(handle,
-                bindings::MakeGarbageCollected<LoaderClient>(this, client));
+  loader_client_ = bindings::MakeGarbageCollected<LoaderClient>(this, client);
   // A load that waits for more of the body stops when the context goes, a
   // window's or a worker's, as Blink's LoaderClient, an
   // ExecutionContextLifecycleObserver, stops it, so that it keeps nothing
-  // alive across a navigation.
-  if (loader_) {
-    v8::Isolate* const isolate = isolate_.get();
-    if (ExecutionContext* const execution_context =
-            ExecutionContext::From(isolate, isolate->GetCurrentContext())) {
-      execution_context->AddContextDestroyedCallback(base::BindOnce(
+  // alive across a navigation. The first read can run script, which may end
+  // the context.
+  context_destroyed_callback_ =
+      context_->AddContextDestroyedCallback(base::BindOnce(
           [](cppgc::WeakPersistent<BodyStreamBuffer> buffer) {
             if (buffer) {
               buffer->ContextDestroyed();
             }
           },
           cppgc::WeakPersistent<BodyStreamBuffer>(this)));
-    }
+  loader->Start(handle, loader_client_.Get());
+}
+
+bool BodyStreamBuffer::HasContext() const {
+  return context_ && context_->HasContext();
+}
+
+void BodyStreamBuffer::SetContext(ExecutionContext* context) {
+  context_ = context;
+  made_without_context_ = !HasContext();
+}
+
+void BodyStreamBuffer::RunInOwnContext(base::FunctionRef<void()> run) {
+  if (!RunInContext(context_.Get(), run)) {
+    run();
   }
 }
 
@@ -246,8 +271,10 @@ void BodyStreamBuffer::StopLoading() {
     DCHECK(!keep_alive_);
     return;
   }
+  LoaderClient* const client = loader_client_.Get();
   loader_->Cancel();
   EndLoading();
+  client->DidStopLoading();
 }
 
 v8::Local<v8::Promise> BodyStreamBuffer::Pull(
@@ -322,9 +349,11 @@ void BodyStreamBuffer::CloseAndLockAndDisturb(
 }
 
 void BodyStreamBuffer::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(context_);
   visitor->Trace(stream_);
   visitor->Trace(consumer_);
   visitor->Trace(loader_);
+  visitor->Trace(loader_client_);
   visitor->Trace(signal_);
   UnderlyingByteSourceBase::Trace(visitor);
   BytesConsumer::Client::Trace(visitor);
@@ -457,6 +486,65 @@ void BodyStreamBuffer::EndLoading() {
   }
   keep_alive_.Clear();
   loader_ = nullptr;
+  loader_client_ = nullptr;
+  if (context_) {
+    context_->RemoveContextDestroyedCallback(context_destroyed_callback_);
+  }
+}
+
+void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
+                           BodyStreamBuffer** branch2,
+                           bindings::ExceptionState& exception_state) {
+  DCHECK(!IsStreamLocked());
+  DCHECK(!IsStreamDisturbed());
+  *branch1 = nullptr;
+  *branch2 = nullptr;
+  if (made_from_readable_stream_) {
+    if (stream_broken_) {
+      // What state the stream is in is not known, so this throws rather
+      // than making it worse.
+      exception_state.ThrowDOMException(
+          "InvalidStateError", "Unsafe to tee stream in unknown state");
+      return;
+    }
+    ReadableStream* stream1 = nullptr;
+    ReadableStream* stream2 = nullptr;
+    RunInOwnContext([&] {
+      // A stream that a page made may have a default controller.
+      if (stream_->GetController()->IsByteStreamController()) {
+        stream_->ByteStreamTee(isolate_, &stream1, &stream2, exception_state);
+      } else {
+        DCHECK(stream_->GetController()->IsDefaultController());
+        stream_->Tee(isolate_, &stream1, &stream2, /*clone_for_branch2=*/true,
+                     exception_state);
+      }
+    });
+    if (exception_state.HadException()) {
+      stream_broken_ = true;
+      return;
+    }
+    *branch1 =
+        bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate_, stream1);
+    *branch2 =
+        bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate_, stream2);
+    (*branch1)->SetContext(context_.Get());
+    (*branch2)->SetContext(context_.Get());
+    return;
+  }
+  BytesConsumer* const handle = ReleaseHandle(exception_state);
+  if (exception_state.HadException()) {
+    stream_broken_ = true;
+    return;
+  }
+  RunInOwnContext([&] {
+    BytesConsumer* dest1 = nullptr;
+    BytesConsumer* dest2 = nullptr;
+    BytesConsumerTee(context_.Get(), handle, &dest1, &dest2);
+    *branch1 = Create(isolate_, dest1, signal_.Get());
+    *branch2 = Create(isolate_, dest2, signal_.Get());
+  });
+  (*branch1)->SetContext(context_.Get());
+  (*branch2)->SetContext(context_.Get());
 }
 
 BodyStreamBuffer* BodyStreamBuffer::CreateProxy(
@@ -467,8 +555,11 @@ BodyStreamBuffer* BodyStreamBuffer::CreateProxy(
   if (!consumer) {
     return nullptr;
   }
-  BodyStreamBuffer* const proxy =
-      BodyStreamBuffer::Create(isolate_, consumer, signal_.Get());
+  BodyStreamBuffer* proxy = nullptr;
+  RunInOwnContext([&] {
+    proxy = BodyStreamBuffer::Create(isolate_, consumer, signal_.Get());
+  });
+  proxy->SetContext(context_.Get());
   if (!made_from_readable_stream_) {
     return proxy;
   }
@@ -479,8 +570,10 @@ BodyStreamBuffer* BodyStreamBuffer::CreateProxy(
   stream_->MarkDisturbed();
   // Like this body, the proxy has no source and an unknown length, so it has
   // to be made from a ReadableStream as well.
-  return bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate_,
-                                                          proxy->Stream());
+  auto* const stream_proxy = bindings::MakeGarbageCollected<BodyStreamBuffer>(
+      isolate_, proxy->Stream());
+  stream_proxy->SetContext(context_.Get());
+  return stream_proxy;
 }
 
 BytesConsumer* BodyStreamBuffer::ReleaseHandle(
@@ -491,6 +584,12 @@ BytesConsumer* BodyStreamBuffer::ReleaseHandle(
     exception_state.ThrowDOMException(
         "InvalidStateError",
         "Body stream has suffered a fatal error and cannot be inspected");
+    return nullptr;
+  }
+  if (!HasContext() && !made_without_context_) {
+    exception_state.ThrowDOMException(
+        "InvalidStateError",
+        "Cannot release body in a window or worker that has been detached");
     return nullptr;
   }
   if (made_from_readable_stream_) {

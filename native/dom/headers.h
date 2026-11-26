@@ -45,6 +45,10 @@ class Headers final : public bindings::ScriptWrappable {
   static Headers* Create(Guard guard);
 
   explicit Headers(Guard guard);
+
+  // A copy of its lines and its guard, as Blink's FetchHeaderList::Clone()
+  // copies them.
+  Headers* Clone() const;
   ~Headers() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -89,6 +93,11 @@ class Headers final : public bindings::ScriptWrappable {
 
  private:
   class IterationSource;
+
+  // Headers::RemovePrivilegedNoCorsRequestHeaders(): a change to the list of
+  // a request of mode no-cors takes its Range line, which a Request from a
+  // cache can have.
+  void RemovePrivilegedNoCorsLines();
 
   // Each change to the list, which tells an iterator to sort and combine
   // again.

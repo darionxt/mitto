@@ -119,6 +119,10 @@ struct FetchParams {
   // The same names, each once, in the order that the script or the caller set
   // them.
   std::vector<std::string> script_headers;
+  // Whether a page's script sent them, so that Blink's map holds each in any
+  // mode, as a request of cache.keys(), of mode no-cors, keeps lines that need
+  // a preflight. A caller's line of mode no-cors that needs one is no script's.
+  bool script_headers_of_a_page = false;
   HeaderOrder header_order = HeaderOrder::kGiven;
 };
 

@@ -437,6 +437,10 @@ class PageFrame final : public NavigationClient, public Frame {
     // from the owner document.
     GURL about_base_url;
     GURL cookie_url;
+    // Whether its document's embedder policy, the parent document's for a
+    // srcdoc, the initiator's for an about:blank and none for an error page, is
+    // compatible with cross-origin isolation.
+    bool embedder_policy_isolates = false;
     // OwnerSandboxesOrigin() as it started, or of the document that started
     // it, whose origin an about:blank takes.
     bool origin_sandboxed = false;
@@ -448,6 +452,13 @@ class PageFrame final : public NavigationClient, public Frame {
   // Commits `navigation` from a later task, as Chrome's browser commits it,
   // unless a newer navigation of the frame takes its place first.
   void CommitWithoutNetworkSoon(LocalNavigation navigation);
+  // Commits Chrome's error page so, which a navigation that failed ends with.
+  void CommitErrorPageSoon();
+  // NavigationRequest::CheckResponseAdherenceToCoep(): whether the frame's
+  // parent has an embedder policy that is compatible with cross-origin
+  // isolation and a document that the frame makes without the network would
+  // take one that is not.
+  bool IsBlockedByEmbedderPolicy(bool embedder_policy_isolates) const;
   // A child frame's navigation to a data: URL, which the Page answers itself
   // from a later task, through a DocumentLoader as a response.
   void BeginDataUrlNavigation(const NavigationRequest& request);

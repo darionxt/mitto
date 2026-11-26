@@ -59,8 +59,21 @@ bool HasMissingMember(const bindings::RequestInit& init) {
          (init.redirect && *init.redirect != u"follow") ||
          (init.integrity && !init.integrity->empty()) ||
          init.ad_auction_headers.has_value() ||
-         init.target_address_space.has_value() ||
+         (init.target_address_space &&
+          *init.target_address_space != u"unknown") ||
          init.private_token.has_value() || init.retry_options.has_value();
+}
+
+// Whether `origin` made `url`, as SecurityOrigin::Create() reads it: a blob:
+// URL of an opaque origin is of the origin that registered it.
+bool IsSameOriginWithUrl(const url::Origin& origin, const GURL& url) {
+  if (url.SchemeIsBlob()) {
+    if (const std::optional<BlobUrlRegistry::Entry> entry =
+            BlobUrlRegistry::Get().ResolveEntry(url)) {
+      return origin.IsSameOriginWith(entry->origin);
+    }
+  }
+  return origin.IsSameOriginWith(url);
 }
 
 // Whether `init` has any member, which resets what a Request takes from
@@ -252,7 +265,8 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
                              parsed.host().empty() &&
                              parsed.path() == "client";
       request->referrer_ =
-          is_client || !document.GetSecurityOrigin().IsSameOriginWith(parsed)
+          is_client ||
+                  !IsSameOriginWithUrl(document.GetSecurityOrigin(), parsed)
               ? std::string(kClientReferrer)
               : parsed.spec();
     }
@@ -321,10 +335,16 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
                                           : Headers::Guard::kRequest);
   if (init.headers) {
     request->headers_->FillWith(*init.headers, exception_state);
-  } else if (input_request) {
+  } else if (input_request && AreAnyMembersPresent(init)) {
     for (const auto& [name, value] : input_request->headers_->list()) {
       request->headers_->Append(name, value, exception_state);
     }
+  } else if (input_request) {
+    // The input's list as it is, such as one from a cache, whose mode keeps
+    // scripts from adding some of its lines.
+    const Headers::Guard guard = request->headers_->guard();
+    request->headers_ = input_request->headers_->Clone();
+    request->headers_->set_guard(guard);
   }
   if (exception_state.HadException()) {
     return nullptr;
@@ -430,6 +450,10 @@ Request* Request::CreateFromStored(
   Request* const request = bindings::MakeGarbageCollected<Request>();
   request->url_ = std::move(url);
   request->method_ = std::move(method);
+  // The rest is what network.mojom.FetchAPIRequest has where nothing sets it.
+  request->mode_ = FetchMode::kNoCors;
+  request->credentials_ = FetchCredentialsMode::kOmit;
+  request->referrer_ = kNoReferrer;
   request->signal_ = AbortSignal::CreateComposite({});
   request->headers_ = Headers::Create(Headers::Guard::kRequest);
   for (const auto& [name, value] : headers) {
@@ -440,6 +464,87 @@ Request* Request::CreateFromStored(
 
 Request::Request() = default;
 Request::~Request() = default;
+
+std::u16string Request::Referrer() const {
+  return base::UTF8ToUTF16(referrer_);
+}
+
+std::u16string Request::GetReferrerPolicy() const {
+  switch (referrer_policy_) {
+    case FetchReferrerPolicy::kDefault:
+      return std::u16string();
+    case FetchReferrerPolicy::kNoReferrer:
+      return u"no-referrer";
+    case FetchReferrerPolicy::kNoReferrerWhenDowngrade:
+      return u"no-referrer-when-downgrade";
+    case FetchReferrerPolicy::kOrigin:
+      return u"origin";
+    case FetchReferrerPolicy::kOriginWhenCrossOrigin:
+      return u"origin-when-cross-origin";
+    case FetchReferrerPolicy::kSameOrigin:
+      return u"same-origin";
+    case FetchReferrerPolicy::kStrictOrigin:
+      return u"strict-origin";
+    case FetchReferrerPolicy::kStrictOriginWhenCrossOrigin:
+      return u"strict-origin-when-cross-origin";
+    case FetchReferrerPolicy::kUnsafeUrl:
+      return u"unsafe-url";
+  }
+}
+
+std::u16string Request::Mode() const {
+  switch (mode_) {
+    case FetchMode::kCors:
+      return u"cors";
+    case FetchMode::kSameOrigin:
+      return u"same-origin";
+    case FetchMode::kNoCors:
+      return u"no-cors";
+  }
+}
+
+std::u16string Request::Credentials() const {
+  switch (credentials_) {
+    case FetchCredentialsMode::kOmit:
+      return u"omit";
+    case FetchCredentialsMode::kSameOrigin:
+      return u"same-origin";
+    case FetchCredentialsMode::kInclude:
+      return u"include";
+  }
+}
+
+Request* Request::Clone(bindings::ExceptionState& exception_state) {
+  if (IsBodyLocked() || IsBodyUsed()) {
+    exception_state.ThrowTypeError("Request body is already used");
+    return nullptr;
+  }
+  Request* const request = bindings::MakeGarbageCollected<Request>();
+  // FetchRequestData::Clone(): the body goes to both through a tee.
+  if (body_buffer_) {
+    BodyStreamBuffer* branch1 = nullptr;
+    BodyStreamBuffer* branch2 = nullptr;
+    body_buffer_->Tee(&branch1, &branch2, exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+    body_buffer_ = branch1;
+    request->body_buffer_ = branch2;
+  }
+  request->url_ = url_;
+  request->method_ = method_;
+  request->headers_ = headers_->Clone();
+  request->mode_ = mode_;
+  request->credentials_ = credentials_;
+  request->referrer_ = referrer_;
+  request->referrer_policy_ = referrer_policy_;
+  request->priority_ = priority_;
+  request->keepalive_ = keepalive_;
+  request->blob_url_handle_ = blob_url_handle_;
+  request->blob_url_origin_ = blob_url_origin_;
+  request->signal_ = AbortSignal::CreateComposite({signal_.Get()});
+  return request;
+}
 
 std::string Request::ContentType() const {
   return headers_->GetValue("content-type").value_or("");

@@ -627,8 +627,9 @@ std::optional<std::string> HeaderValue(std::string_view lines,
         !base::EqualsCaseInsensitiveASCII(line.substr(0, colon), name)) {
       continue;
     }
+    // HttpUtil::TrimLWS(), which takes spaces and tabs alone for white space.
     const std::string_view item =
-        base::TrimWhitespaceASCII(line.substr(colon + 1), base::TRIM_ALL);
+        base::TrimString(line.substr(colon + 1), " \t", base::TRIM_ALL);
     value = value ? base::StrCat({*value, ", ", item}) : std::string(item);
   }
   return value;
@@ -644,6 +645,32 @@ PolicyHeaders PolicyHeadersOf(std::string_view lines) {
   headers.coop_report_only =
       HeaderValue(lines, "Cross-Origin-Opener-Policy-Report-Only");
   return headers;
+}
+
+PageEmbedderPolicy ToPageEmbedderPolicy(CrossOriginEmbedderPolicyValue value) {
+  switch (value) {
+    case CrossOriginEmbedderPolicyValue::kNone:
+      return PageEmbedderPolicy::kNone;
+    case CrossOriginEmbedderPolicyValue::kCredentialless:
+      return PageEmbedderPolicy::kCredentialless;
+    case CrossOriginEmbedderPolicyValue::kRequireCorp:
+      return PageEmbedderPolicy::kRequireCorp;
+  }
+  NOTREACHED();
+}
+
+// What the Page hears of the document that the response of navigation
+// `navigation` makes.
+PageIsolation IsolationOf(uint64_t navigation,
+                          bool cross_origin_isolated,
+                          const CrossOriginEmbedderPolicy& coep) {
+  PageIsolation isolation;
+  isolation.navigation = navigation;
+  isolation.isolation = cross_origin_isolated
+                            ? PageCrossOriginIsolation::kCoopAndCoep
+                            : PageCrossOriginIsolation::kNone;
+  isolation.embedder_policy = ToPageEmbedderPolicy(coep.value);
+  return isolation;
 }
 
 // The MIME type of a response, lowercased, as net::HttpUtil::ParseContentType()
@@ -1750,6 +1777,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       })) {
     headers.RemoveHeader(net::HttpRequestHeaders::kContentType);
   }
+  options.fetch->script_headers_of_a_page = true;
   for (const auto& [name, value] : lines) {
     // A line that Blink's map holds goes by the name that the script wrote.
     if (options.fetch->header_order != HeaderOrder::kGiven) {
@@ -2069,8 +2097,13 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
   // Where a frame's document, or a worker, that the Page makes of it comes
   // from. A frame's document has its response's embedder policy, as Chrome's
   // browser builds its policy container of it, and its isolation, which the
-  // Page commits it with.
-  std::optional<PageCrossOriginIsolation> frame_isolation;
+  // Page commits it with, as a top-level document does its agent cluster's: a
+  // frame's is CrossOriginIsolatedCapability().
+  std::optional<PageIsolation> isolation;
+  if (policies) {
+    isolation = IsolationOf(request.number(), policies->cross_origin_isolated,
+                            policies->coep);
+  }
   if (const auto frame = frame_navigation_responses_.find(request.number());
       frame != frame_navigation_responses_.end()) {
     const CrossOriginEmbedderPolicy coep =
@@ -2085,26 +2118,16 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
         !SandboxesOrigin(event.headers) &&
         FrameIsCrossOriginIsolated(frame->second.parent,
                                    url::Origin::Create(frame->second.url));
-    frame_isolation = frame->second.cross_origin_isolated
-                          ? PageCrossOriginIsolation::kCoopAndCoep
-                          : PageCrossOriginIsolation::kNone;
+    isolation = IsolationOf(request.number(),
+                            frame->second.cross_origin_isolated, coep);
   }
   if (const auto script = worker_scripts_.find(request.number());
       script != worker_scripts_.end()) {
     script->second.url = GURL(event.url);
     script->second.coep = EmbedderPolicyOf(PolicyHeadersOf(event.headers));
   }
-  if (channel_ && (policies || frame_isolation)) {
-    // The document's isolation, which Chrome's browser commits it with: a
-    // top-level document's agent cluster's, and a frame's
-    // CrossOriginIsolatedCapability().
-    PageIsolation isolation;
-    isolation.navigation = request.number();
-    isolation.isolation = frame_isolation ? *frame_isolation
-                          : policies->cross_origin_isolated
-                              ? PageCrossOriginIsolation::kCoopAndCoep
-                              : PageCrossOriginIsolation::kNone;
-    channel_->Send(EncodeIsolation(isolation));
+  if (channel_ && isolation) {
+    channel_->Send(EncodeIsolation(*isolation));
   }
   if (channel_) {
     PageResponseStarted response;
@@ -3198,6 +3221,18 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         context.coep = started->second.coep;
         about_blank_navigations_.erase(started);
         context.url = url;
+      }
+      // NavigationRequest::CheckResponseAdherenceToCoep(), which the Page has
+      // made: an error page in place of one that its parent's embedder policy
+      // blocks, which is an about:blank's or a data: URL's alone.
+      if ((committed.source == PageDocumentSource::kAboutBlank ||
+           committed.source == PageDocumentSource::kDataUrl) &&
+          !top_level &&
+          CompatibleWithCrossOriginIsolated(
+              contexts_.at(committed.parent).coep.value) &&
+          !CompatibleWithCrossOriginIsolated(context.coep.value)) {
+        Refuse("a document that its parent's embedder policy blocks");
+        return;
       }
       // Each document that a frame makes without the network is isolated by
       // its origin, as one that the network gives is: one of its isolated

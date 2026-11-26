@@ -33,7 +33,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 35;
+inline constexpr uint32_t kPageProtocolVersion = 36;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -289,9 +289,9 @@ enum class PageMessage : uint32_t {
   // and that goes, a 64-bit number.
   kDocumentEvicted = 285,
   // To the Page: whether the document that a navigation's response makes is
-  // cross-origin isolated, as PageIsolation says, just before the response
-  // starts, as Chrome's browser gives the renderer the document's agent
-  // cluster.
+  // cross-origin isolated, and its embedder policy, as PageIsolation says, just
+  // before the response starts, as Chrome's browser gives the renderer the
+  // document's agent cluster and policy container.
   kIsolation = 300,
 };
 
@@ -744,13 +744,22 @@ enum class PageCrossOriginIsolation : uint8_t {
   kCoopAndCoep = 1,
 };
 
+// A document's enforced Cross-Origin-Embedder-Policy.
+enum class PageEmbedderPolicy : uint8_t {
+  kNone = 0,
+  kCredentialless = 1,
+  kRequireCorp = 2,
+};
+
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
 // opened the Page: a top-level document's agent cluster's, and a frame's
-// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated.
+// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated. And its embedder
+// policy, which its frames' documents of no response take from it.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
+  PageEmbedderPolicy embedder_policy = PageEmbedderPolicy::kNone;
 };
 
 // A traversal of the session history to an entry of another document, which

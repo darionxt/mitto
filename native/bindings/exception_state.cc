@@ -1,6 +1,7 @@
 #include "mitto/bindings/exception_state.h"
 
 #include "base/check.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "v8/include/v8-exception.h"
@@ -33,6 +34,9 @@ void ExceptionState::ThrowDOMException(std::string_view name,
   const PerIsolateData::DOMExceptionHooks& hooks =
       PerIsolateData::From(isolate_)->dom_exception_hooks();
   CHECK(hooks.create);
+  // V8ThrowDOMException::CreateOrEmpty(): one that a call throws is of the
+  // current realm, whatever its receiver's is.
+  const ReceiverRealmScope current_realm(isolate_);
   isolate_->ThrowException(hooks.create(isolate_, name, message));
 }
 

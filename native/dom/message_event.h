@@ -31,6 +31,7 @@ class ExceptionState;
 
 class EventTarget;
 class MessagePort;
+class RemoteWindow;
 class UserActivation;
 
 class MessageEvent final : public Event {
@@ -48,7 +49,8 @@ class MessageEvent final : public Event {
                                         std::vector<MessagePort*> ports,
                                         mitto::UserActivation* user_activation);
   // The messageerror event of a message that cannot be read where it came.
-  static MessageEvent* CreateError(std::optional<std::u16string> origin);
+  static MessageEvent* CreateError(std::optional<std::u16string> origin,
+                                   EventTarget* source = nullptr);
 
   MessageEvent(const std::u16string& type,
                const bindings::MessageEventInit& init);
@@ -60,6 +62,10 @@ class MessageEvent final : public Event {
                mitto::UserActivation* user_activation);
   ~MessageEvent() override;
 
+  // A source that is a window of another process than the event's: its frame's
+  // in the event's.
+  void SetRemoteSource(RemoteWindow* window);
+
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   void Trace(cppgc::Visitor* visitor) const override;
 
@@ -67,7 +73,11 @@ class MessageEvent final : public Event {
   v8::Local<v8::Value> Data();
   std::u16string OriginForBindings() const { return origin_; }
   std::u16string LastEventId() const { return last_event_id_; }
-  EventTarget* Source() const { return source_.Get(); }
+  // Null for a window that its frame has left for another, whose WindowProxy
+  // is the other's: for one of another process, once the frame has shown a
+  // document of the event's. A removed frame's window stays the source, as in
+  // Chrome.
+  EventTarget* Source() const;
   v8::Local<v8::Value> Ports();
   mitto::UserActivation* UserActivation() const {
     return user_activation_.Get();
@@ -83,6 +93,8 @@ class MessageEvent final : public Event {
 
  private:
   void SetPorts(const std::vector<MessagePort*>& ports);
+  // A source that a script gives.
+  void SetSource(EventTarget* source);
 
   // The data a page gave, empty for null, or a message's, which is read the
   // first time into `data_`.
@@ -92,6 +104,7 @@ class MessageEvent final : public Event {
   std::u16string origin_;
   std::u16string last_event_id_;
   cppgc::Member<EventTarget> source_;
+  cppgc::Member<RemoteWindow> remote_source_;
   HeapVector<MessagePort> ports_;
   v8::TracedReference<v8::Array> ports_array_;
   cppgc::Member<mitto::UserActivation> user_activation_;

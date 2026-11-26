@@ -38,6 +38,10 @@ class FetchDataLoader : public cppgc::GarbageCollected<FetchDataLoader> {
     virtual void DidFetchDataLoadFailed() = 0;
     // The body's signal aborted before the loader started, with `reason`.
     virtual void Abort(v8::Local<v8::Value> reason) = 0;
+    // The body's context went before the whole body came, which no script
+    // hears of: a client that keeps something for the load lets go of it.
+    // Blink's clients go with their loader instead.
+    virtual void DidStopLoading() {}
 
     void Trace(cppgc::Visitor* visitor) const override {}
   };

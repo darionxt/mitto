@@ -260,6 +260,7 @@ void PageFrame::Start(const PageConnection& connection) {
     // Its policy container is its creator's, as Chrome's browser gives a new
     // frame's, and so is its referrer policy.
     document.SetReferrerPolicy(creator.GetReferrerPolicy());
+    document.SetEmbedderPolicyIsolates(creator.EmbedderPolicyIsolates());
     // Its document.cookie and storage are its origin's, for one of an HTTP or
     // HTTPS origin.
     if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
@@ -375,6 +376,18 @@ void PageFrame::CommitWithoutNetworkSoon(LocalNavigation navigation) {
                                            weak_factory_.GetWeakPtr(), number));
 }
 
+void PageFrame::CommitErrorPageSoon() {
+  LocalNavigation navigation;
+  navigation.url = GURL(kErrorPageUrl);
+  navigation.committed.source = PageDocumentSource::kErrorPage;
+  CommitWithoutNetworkSoon(std::move(navigation));
+}
+
+bool PageFrame::IsBlockedByEmbedderPolicy(bool embedder_policy_isolates) const {
+  return parent_ && !embedder_policy_isolates &&
+         parent_->window_->GetDocument().EmbedderPolicyIsolates();
+}
+
 void PageFrame::CommitWithoutNetwork(uint64_t number) {
   if (!pending_local_navigation_ ||
       pending_local_navigation_->number != number || !window_) {
@@ -465,8 +478,10 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     document->LockCompatibilityMode();
   }
   document->SetOrigin(origin);
+  DidShowDocument(*window_);
   document->SetReferrer(navigation.referrer);
   document->SetReferrerPolicy(navigation.referrer_policy);
+  document->SetEmbedderPolicyIsolates(navigation.embedder_policy_isolates);
   document->SetAboutBaseUrl(navigation.about_base_url);
   // A srcdoc takes its parent's cookie URL as it commits, as Blink's
   // DocumentInit does from its owner document, and as the Session does.
@@ -627,6 +642,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetAboutBaseUrl(old_document.FallbackBaseUrl());
   document->SetCookieUrl(old_document.CookieUrl());
   document->SetReferrerPolicy(old_document.GetReferrerPolicy());
+  document->SetEmbedderPolicyIsolates(old_document.EmbedderPolicyIsolates());
   // The referrer is the full URL of the document that started it, its
   // parent's, as RenderFrameImpl takes it from the initiator frame.
   if (parent_ && parent_->window_ && parent_->window_->HasDocument()) {
@@ -712,6 +728,8 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       Document& parent_document = parent_->window_->GetDocument();
       navigation.origin = parent_document.GetOrigin();
       navigation.referrer_policy = parent_document.GetReferrerPolicy();
+      navigation.embedder_policy_isolates =
+          parent_document.EmbedderPolicyIsolates();
       navigation.about_base_url = parent_document.BaseUrl();
       navigation.cookie_url = parent_document.CookieUrl();
     } else {
@@ -719,10 +737,17 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       navigation.committed.initiator = request.initiator;
       navigation.origin = request.initiator_origin;
       navigation.referrer_policy = request.initiator_referrer_policy;
+      navigation.embedder_policy_isolates =
+          request.initiator_embedder_policy_isolates;
       navigation.about_base_url = request.initiator_base_url;
       navigation.cookie_url = request.initiator_cookie_url;
     }
     StopAllLoaders();
+    // A srcdoc takes its parent's policy, which is compatible with itself.
+    if (IsBlockedByEmbedderPolicy(navigation.embedder_policy_isolates)) {
+      CommitErrorPageSoon();
+      return;
+    }
     // The Session takes what the about:blank inherits of its initiator now,
     // once it has heard that a data: URL or an about:blank that waited ends.
     if (navigation.committed.source == PageDocumentSource::kAboutBlank) {
@@ -872,10 +897,7 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (!data) {
     EndLocalNavigation();
     forget_request();
-    LocalNavigation navigation;
-    navigation.url = GURL(kErrorPageUrl);
-    navigation.committed.source = PageDocumentSource::kErrorPage;
-    CommitWithoutNetworkSoon(std::move(navigation));
+    CommitErrorPageSoon();
     return;
   }
   if (!IsSupportedMimeType(data->mime_type) ||
@@ -885,6 +907,12 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
     LetParentCheckCompleted();
     return;
   }
+  if (IsBlockedByEmbedderPolicy(request.initiator_embedder_policy_isolates)) {
+    EndLocalNavigation();
+    forget_request();
+    CommitErrorPageSoon();
+    return;
+  }
   // Otherwise a document of an opaque origin, through a DocumentLoader as a
   // response, which has the initiator's referrer policy too, and whether a
   // header gave the initiator a Content-Security-Policy.
@@ -892,6 +920,8 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   provisional_->AnswerByPage();
   provisional_->SetInheritedReferrerPolicy(request.initiator_referrer_policy);
   provisional_->SetInheritedHeaderCsp(request.initiator_has_header_csp);
+  provisional_->SetEmbedderPolicyIsolates(
+      request.initiator_embedder_policy_isolates);
   const base::WeakPtr<DocumentLoader> loader = provisional_->GetWeakPtr();
   PageResponseStarted response;
   response.status = 200;
@@ -1582,6 +1612,7 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   const v8::Context::Scope context_scope(context);
   Window& window = *window_;
   window.SetFrame(this);
+  DidShowDocument(window);
   window.SetNavigationClient(this);
   window.SetBackForwardCacheEviction(base::RepeatingClosure());
   runner_->sender()->SendDocumentRestored(window.DocumentId());
@@ -1966,10 +1997,7 @@ void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
   // another took the place of, ends with ERR_ABORTED, and the frame keeps
   // its document.
   if (parent_ && net_error != kNetErrorAborted && net_error != kNetOk) {
-    LocalNavigation navigation;
-    navigation.url = GURL(kErrorPageUrl);
-    navigation.committed.source = PageDocumentSource::kErrorPage;
-    CommitWithoutNetworkSoon(std::move(navigation));
+    CommitErrorPageSoon();
     return;
   }
   LetParentCheckCompleted();
@@ -2022,7 +2050,12 @@ Document& PageFrame::CommitDocument(
   if (parent_) {
     committed.replaces = window_->DocumentId();
   }
-  const url::Origin origin = url::Origin::Create(url);
+  // A data: URL's origin is opaque, made for its initiator's, in whose process
+  // Chrome has it.
+  const url::Origin origin =
+      committed.source == PageDocumentSource::kDataUrl
+          ? url::Origin::Resolve(url, provisional_request_.initiator_origin)
+          : url::Origin::Create(url);
   // A frame's document is isolated where the Session says and its parent's
   // window is, so that none is more so than its parent, whose own sandbox the
   // Session cannot see yet.
@@ -2111,6 +2144,7 @@ Document& PageFrame::CommitDocument(
     GiveStorage(*document);
   }
   Window::Current().SetDocument(document);
+  DidShowDocument(*window_);
   // The reused window's CookieStore listens as its new document.
   if (cookie_store) {
     cookie_store->DocumentChanged();
