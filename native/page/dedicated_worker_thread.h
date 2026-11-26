@@ -81,6 +81,9 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     url::Origin outside_origin;
     // The origin that keys its agent cluster, its creator's.
     url::Origin agent_cluster_origin;
+    // What its storage is keyed by: its creator's key, or its own opaque
+    // origin's.
+    std::string storage_key;
     std::u16string name;
     // The URL that new Worker() asked for, the key of a module worker's root
     // in its module map, which a redirect does not change.

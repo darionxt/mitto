@@ -447,14 +447,13 @@ class SessionLink final : public PageChannel::Delegate
     // What the Page's BroadcastChannels send to the Session's other Pages. A
     // message too large for a frame stays in the Page.
     BroadcastChannelService::Get().SetSessionSender(base::BindRepeating(
-        [](scoped_refptr<SessionSender> sender, const std::string& name,
-           bool locked, std::vector<uint8_t> data) {
+        [](scoped_refptr<SessionSender> sender, uint64_t context,
+           const std::string& name, bool locked, std::vector<uint8_t> data) {
           PageBroadcast broadcast;
           broadcast.name = name;
           broadcast.locked = locked;
           broadcast.data.assign(data.begin(), data.end());
           if (BroadcastFits(broadcast)) {
-            const uint64_t context = ExecutionContext::Current().ContextId();
             sender->SendFromContext(context,
                                     EncodeBroadcast(context, broadcast));
           }
@@ -490,7 +489,7 @@ class SessionLink final : public PageChannel::Delegate
       return;
     }
     BroadcastChannelService::Get().OnSessionMessage(
-        broadcast.origin, broadcast.name, broadcast.locked,
+        broadcast.storage_key, broadcast.name, broadcast.locked,
         std::vector<uint8_t>(broadcast.data.begin(), broadcast.data.end()));
   }
 

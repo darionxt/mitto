@@ -174,7 +174,7 @@ LockService::LockService() = default;
 LockService::~LockService() = default;
 
 int64_t LockService::RequestLock(scoped_refptr<Client> client,
-                                 std::string origin,
+                                 std::string group,
                                  std::string client_id,
                                  std::string name,
                                  Mode mode,
@@ -185,7 +185,7 @@ int64_t LockService::RequestLock(scoped_refptr<Client> client,
     lock_id = ++next_lock_id_;
   }
   Post(base::BindOnce(&LockService::DoRequestLock, base::Unretained(this),
-                      std::move(origin),
+                      std::move(group),
                       Lock(std::move(client), std::move(client_id),
                            std::move(name), mode, lock_id),
                       wait));
@@ -193,30 +193,30 @@ int64_t LockService::RequestLock(scoped_refptr<Client> client,
 }
 
 void LockService::QueryState(
-    std::string origin,
+    std::string group,
     base::OnceCallback<void(std::vector<Info>, std::vector<Info>)> answer) {
   Post(base::BindOnce(
-      [](LockService* service, const std::string& origin,
+      [](LockService* service, const std::string& group,
          base::OnceCallback<void(std::vector<Info>, std::vector<Info>)>
              answer) {
-        auto [pending, held] = service->Snapshot(origin);
+        auto [pending, held] = service->Snapshot(group);
         Post(base::BindOnce(std::move(answer), std::move(pending),
                             std::move(held)));
       },
-      base::Unretained(this), std::move(origin), std::move(answer)));
+      base::Unretained(this), std::move(group), std::move(answer)));
 }
 
-void LockService::ReleaseLockNow(const std::string& origin, int64_t lock_id) {
-  DoReleaseLock(origin, lock_id);
+void LockService::ReleaseLockNow(const std::string& group, int64_t lock_id) {
+  DoReleaseLock(group, lock_id);
 }
 
 // LockManager::RequestLock(), once the request has reached the browser.
-void LockService::DoRequestLock(std::string origin, Lock lock, WaitMode wait) {
+void LockService::DoRequestLock(std::string group, Lock lock, WaitMode wait) {
   if (wait == WaitMode::kPreempt) {
     CHECK_EQ(lock.mode, Mode::kExclusive);
   }
   const base::AutoLock locked(lock_);
-  std::unique_ptr<LockGroupState>& state = lock_groups_[origin];
+  std::unique_ptr<LockGroupState>& state = lock_groups_[group];
   if (!state) {
     state = std::make_unique<LockGroupState>();
   }
@@ -226,13 +226,13 @@ void LockService::DoRequestLock(std::string origin, Lock lock, WaitMode wait) {
     state->AddRequest(std::move(lock), wait);
   }
   if (state->IsEmpty()) {
-    lock_groups_.erase(origin);
+    lock_groups_.erase(group);
   }
 }
 
-void LockService::DoReleaseLock(std::string origin, int64_t lock_id) {
+void LockService::DoReleaseLock(std::string group, int64_t lock_id) {
   const base::AutoLock locked(lock_);
-  const auto it = lock_groups_.find(origin);
+  const auto it = lock_groups_.find(group);
   if (it == lock_groups_.end()) {
     return;
   }
@@ -243,9 +243,9 @@ void LockService::DoReleaseLock(std::string origin, int64_t lock_id) {
 }
 
 std::pair<std::vector<LockService::Info>, std::vector<LockService::Info>>
-LockService::Snapshot(const std::string& origin) const {
+LockService::Snapshot(const std::string& group) const {
   const base::AutoLock locked(lock_);
-  const auto it = lock_groups_.find(origin);
+  const auto it = lock_groups_.find(group);
   if (it == lock_groups_.end()) {
     return {};
   }

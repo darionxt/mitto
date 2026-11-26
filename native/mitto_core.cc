@@ -173,7 +173,7 @@ struct MittoSession final : public mitto::PageNetwork {
   }
   const mitto::NetworkQuality* GetNetworkQuality() const override;
   void BroadcastFromPage(const mitto::PageHost& from,
-                         const url::Origin& origin,
+                         const mitto::StorageKey& storage_key,
                          const mitto::PageBroadcast& broadcast) override;
   mitto::CacheStorageContext& cache_storage() override;
   mitto::StorageQuota& storage_quota() override;
@@ -1196,11 +1196,11 @@ mitto::PreconnectManager& MittoSession::preconnect_manager() {
 }
 
 void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
-                                     const url::Origin& origin,
+                                     const mitto::StorageKey& storage_key,
                                      const mitto::PageBroadcast& broadcast) {
   for (const std::unique_ptr<mitto::PageHost>& page : pages) {
     if (page.get() != &from) {
-      page->DeliverBroadcast(origin, broadcast);
+      page->DeliverBroadcast(storage_key, broadcast);
     }
   }
 }

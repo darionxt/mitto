@@ -628,6 +628,8 @@ source_set("dom") {
     "storage_backend.h",
     "storage_event.cc",
     "storage_event.h",
+    "storage_key.cc",
+    "storage_key.h",
     "storage_bucket.cc",
     "storage_bucket.h",
     "storage_bucket_host.h",

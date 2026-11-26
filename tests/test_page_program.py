@@ -157,7 +157,7 @@ _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
 _DOCUMENT_STORED = 282
-_PROTOCOL_VERSION = 36
+_PROTOCOL_VERSION = 37
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -1035,6 +1035,8 @@ def test_a_page_keeps_local_storage_in_its_session(session: _Session) -> None:
     assert payload == struct.pack("<Q", 1) + _storage_source(token, _DOCUMENT_URL) + _sized(_LATIN_1 + b"n") + (
         _LATIN_1 + b"\xe9"
     )
+    # A listener of storage events makes the window's Storage objects, as Blink's does, so sessionStorage's area is bound.
+    assert session.receive() == (_STORAGE_BIND, _DOCUMENT + struct.pack("<QBQ", 2, 2, 3))
     assert session.evaluated() == (2, False, '"é"')
 
     # Another Page's change reaches the window, and one for the observer that the read replaced does not.
@@ -1431,17 +1433,23 @@ def test_a_fetchs_request_init_reaches_the_session_in_its_request(session: _Sess
     assert session.close() == 0
 
 
-def test_a_broadcast_from_another_page_reaches_only_the_channels_of_its_origin(session: _Session) -> None:
-    # The Session names the origin of the Page that sent it. A channel that it reaches fires an event, whatever its
-    # bytes read back as.
+def test_a_broadcast_from_another_page_reaches_only_the_channels_of_its_storage_key(session: _Session) -> None:
+    # The Session names the storage key of the context that sent it, which for a frame under another site's document has
+    # that site. A channel that it reaches fires an event, whatever its bytes read back as.
     session.start()
     _loaded(session)
     assert session.evaluate(
         "window.heard = []; const channel = new BroadcastChannel('news');"
         " channel.onmessage = channel.onmessageerror = (e) => heard.push(e.type); 'listening'"
     ) == (False, '"listening"')
-    for origin in (b"http://elsewhere.test", b"http://www.example.test"):
-        session.send(_BROADCAST_RECEIVED, _sized(origin) + _sized(b"news") + b"\x00" + b"not a value")
+    for key in (
+        b"http://elsewhere.test/",
+        b"http://www.example.test/^0http://elsewhere.test",
+        b"http://www.example.test/^31",
+        b"http://www.example.test",
+        b"http://www.example.test/",
+    ):
+        session.send(_BROADCAST_RECEIVED, _sized(key) + _sized(b"news") + b"\x00" + b"not a value")
 
     assert session.evaluate("new Promise((resolve) => setTimeout(() => resolve(heard.length), 50))", call=2) == (
         False,

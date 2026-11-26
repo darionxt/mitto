@@ -8,12 +8,9 @@
 // It stands where the browser does: a message reaches it from a task of its
 // own, and each connection gets it from another, as a mojo message each way
 // would, on the thread of the connection's channel, the main thread's or a
-// dedicated worker's. Its state is held under a lock. Until frames have storage
-// keys of their own (#261), a channel's key is its document's origin, since a
-// Page has only its top-level document, and channels of an opaque origin reach
-// only those of their own window. A message carries its bytes alone, as a
-// CloneableMessage does through the browser, so a WebAssembly module in it
-// reads back as nothing.
+// dedicated worker's. Its state is held under a lock. A message carries its
+// bytes alone, as a CloneableMessage does through the browser, so a WebAssembly
+// module in it reads back as nothing.
 //
 // Upstream: content/browser/broadcast_channel/broadcast_channel_service.cc
 // Upstream: third_party/blink/renderer/modules/broadcastchannel/broadcast_channel.cc
@@ -27,7 +24,6 @@
 #include <vector>
 
 #include "base/functional/callback.h"
-#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
@@ -42,10 +38,14 @@ class ExecutionContext;
 
 class BroadcastChannelService {
  public:
-  // Sends a message of a channel of `name` to the Session: whether it is
-  // locked to the Page's agent cluster, and its bytes.
-  using SessionSender = base::RepeatingCallback<
-      void(const std::string& name, bool locked, std::vector<uint8_t> data)>;
+  // Sends a message of a channel of `name` of the context numbered
+  // `context_id` to the Session: whether it is locked to the Page's agent
+  // cluster, and its bytes.
+  using SessionSender =
+      base::RepeatingCallback<void(uint64_t context_id,
+                                   const std::string& name,
+                                   bool locked,
+                                   std::vector<uint8_t> data)>;
 
   // The Page's.
   static BroadcastChannelService& Get();
@@ -67,13 +67,15 @@ class BroadcastChannelService {
                    const std::u16string& name);
   void Disconnect(uint64_t connection);
 
-  // A message of the channel of `connection`.
-  void Post(uint64_t connection, const SerializedScriptValue& message);
+  // A message of the channel of `connection`, whose context is numbered
+  // `context_id`.
+  void Post(uint64_t connection,
+            uint64_t context_id,
+            const SerializedScriptValue& message);
 
   // A message from another Page of the Session, for the channels of
-  // `origin`, serialized, which the Session matched with one of this Page's
-  // contexts.
-  void OnSessionMessage(const std::string& origin,
+  // `storage_key`, which the Session matched with one of this Page's contexts.
+  void OnSessionMessage(const std::string& storage_key,
                         const std::string& name,
                         bool locked,
                         std::vector<uint8_t> data);
@@ -83,7 +85,6 @@ class BroadcastChannelService {
     Connection(uint64_t id,
                std::string key,
                bool opaque,
-               const ExecutionContext* context,
                scoped_refptr<base::SingleThreadTaskRunner> runner,
                std::string name,
                BroadcastChannel* channel);
@@ -92,12 +93,10 @@ class BroadcastChannelService {
     ~Connection();
 
     uint64_t id;
-    // The serialized origin of the channel's context.
+    // The storage key of the channel's context, and whether its origin is
+    // opaque, whose messages stay in the Page.
     std::string key;
     bool opaque;
-    // The channel's context, which only names it: another thread's is never
-    // reached through it.
-    raw_ptr<const ExecutionContext> context;
     // Where the channel receives, on its thread.
     scoped_refptr<base::SingleThreadTaskRunner> runner;
     // In UTF-8, as the name reaches Chrome's browser.

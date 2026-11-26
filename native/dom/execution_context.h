@@ -93,6 +93,8 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // an origin: a window's own, and for a worker its creator's, whose cluster
   // it is in whatever its own origin.
   virtual url::Origin AgentClusterOrigin() const = 0;
+  // What its storage is keyed by (storage_key.h).
+  virtual std::string StorageKey() const = 0;
   // `url` resolved against the context's base URL, as Blink's CompleteURL():
   // the document's, with its query in the document's encoding, or the
   // worker's URL, in UTF-8.
