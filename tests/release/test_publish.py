@@ -221,11 +221,38 @@ def test_a_relative_link_in_the_entry_leads_to_the_version_s_tag(tree: Path) -> 
     ) in notes
 
 
-def test_the_version_in_pyproject_has_its_notes() -> None:
-    """So a run that raises the version stops in its pull request until the version has an entry."""
-    version = project_version()
+def test_the_version_in_pyproject_has_its_notes(tree: Path) -> None:
+    """So a run that raises the version stops in its pull request until the version has an entry.
 
-    assert release_notes(version).startswith(f"mitto {version} presents Chrome ")
+    It reads a copy of the repository's files without changelog.d, whose files the release's own pull request gathers.
+    """
+    version = project_version(tree)
+
+    assert release_notes(version, tree).startswith(f"mitto {version} presents Chrome ")
+
+
+@pytest.mark.parametrize("version", ["0.9.0", "0.9.0rc1"])
+def test_a_release_with_files_left_in_changelog_d_is_refused(tree: Path, version: str) -> None:
+    """Their lines would be missing from the notes. A dry run stops as the release would."""
+    with_changelog(tree, "## 0.9.0\n\nA change.\n")
+    (tree / "changelog.d").mkdir()
+    for name in ["frame-storage.md", "a-fix.md"]:
+        (tree / "changelog.d" / name).write_text("- A change.\n", encoding="utf-8")
+
+    with pytest.raises(
+        PublishError,
+        match=r"changelog\.d still holds changelog\.d/a-fix\.md, changelog\.d/frame-storage\.md, whose lines the "
+        r"entry for 0\.9\.0 in CHANGELOG\.md lacks: gather them with `uv run python -m tools\.release changelog 0\.9\.0`",
+    ):
+        release_notes(version, tree)
+
+
+def test_an_empty_changelog_d_or_a_hidden_file_in_it_holds_nothing_to_gather(tree: Path) -> None:
+    with_changelog(tree, "## 0.9.0\n\nA change.\n")
+    (tree / "changelog.d").mkdir()
+    (tree / "changelog.d" / ".DS_Store").write_bytes(b"")
+
+    assert release_notes("0.9.0", tree).startswith("mitto 0.9.0 presents Chrome ")
 
 
 def test_the_command_fails_on_a_version_with_no_entry() -> None:
