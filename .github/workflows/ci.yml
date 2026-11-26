@@ -215,9 +215,9 @@ jobs:
       # its version: Chromium's build/toolchain/win/setup_toolchain.py turns the directories that vcvarsall.bat sets into
       # -imsvc and -libpath flags. Over a build directory saved with another MSVC, ninja reruns every step, so there the
       # keys also name the MSVC. On macOS the build links Xcode's SDK into the build directory, so the commands name no
-      # part of the image, but a new image with the same Xcode and SDKs still made ninja rerun every step over a build
-      # directory saved on the one before. Linux takes its sysroot from the export, so its keys name neither, and these
-      # outputs stay empty there.
+      # part of the image, but each image installs Xcode anew: over a build directory saved on an earlier image, the
+      # SDK's files are newer than its objects, and ninja reruns every step, even with the same Xcode and SDKs. Linux
+      # takes its sysroot from the export, so its keys name neither, and these outputs stay empty there.
       - id: toolchain
         if: runner.os != 'Linux' && !inputs.from-nothing
         shell: pwsh
