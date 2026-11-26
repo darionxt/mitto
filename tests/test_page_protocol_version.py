@@ -7,38 +7,16 @@ of a message, and the tests run that script as GN does, with no build.
 import hashlib
 import re
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-NATIVE = Path(__file__).parent.parent / "native"
-SCRIPT = NATIVE / "page_protocol_version.py"
+from tests.page_protocol import NATIVE, hashed_files, protocol_version
+
 # The headers of the library's that a hashed file includes but that define no bytes of a message: the Fetch Standard's
 # checks of a header line, and the version itself.
 UNHASHED_INCLUDES = frozenset({"header_rules.h", "page_protocol_version.h"})
-
-
-def hashed_files() -> list[str]:
-    """Return the files that the action hashes, as BUILD.gn names them, relative to native/."""
-    build = (NATIVE / "BUILD.gn").read_text(encoding="utf-8")
-    listed = re.search(r"^_page_message_sources = \[(.*?)^\]", build, re.MULTILINE | re.DOTALL)
-    assert listed, "BUILD.gn has no _page_message_sources"
-    return re.findall(r'"([^"]+)"', listed[1])
-
-
 HASHED_FILES = hashed_files()
-
-
-def version(source_dir: Path, names: list[str], tmp_path: Path) -> int:
-    """Return the version that the script writes for the files of `names` in `source_dir`."""
-    header = tmp_path / "page_protocol_version.h"
-    subprocess.run([sys.executable, SCRIPT, source_dir, header, *names], check=True)
-    written = header.read_text(encoding="utf-8")
-    found = re.search(r"^inline constexpr uint32_t kPageProtocolVersion = 0x([0-9a-f]{8});$", written, re.MULTILINE)
-    assert found, written
-    return int(found[1], 16)
 
 
 def copy_of_hashed_files(tmp_path: Path) -> Path:
@@ -54,18 +32,18 @@ def test_the_version_is_the_start_of_the_sha256_of_each_files_name_and_text(tmp_
     for name in sorted(HASHED_FILES):
         digest.update(name.encode() + b"\0" + (NATIVE / name).read_bytes().replace(b"\r\n", b"\n") + b"\0")
 
-    assert version(NATIVE, HASHED_FILES, tmp_path) == int(digest.hexdigest()[:8], 16)
+    assert protocol_version(NATIVE, HASHED_FILES, tmp_path) == int(digest.hexdigest()[:8], 16)
 
 
 @pytest.mark.parametrize("name", HASHED_FILES)
 def test_a_change_to_any_hashed_file_changes_the_version(tmp_path: Path, name: str) -> None:
     copy = copy_of_hashed_files(tmp_path)
-    before = version(copy, HASHED_FILES, tmp_path)
+    before = protocol_version(copy, HASHED_FILES, tmp_path)
 
     with (copy / name).open("ab") as changed:
         changed.write(b"\n")
 
-    assert version(copy, HASHED_FILES, tmp_path) != before
+    assert protocol_version(copy, HASHED_FILES, tmp_path) != before
 
 
 def test_line_endings_and_the_order_of_the_names_leave_the_version_as_it_is(tmp_path: Path) -> None:
@@ -74,7 +52,7 @@ def test_line_endings_and_the_order_of_the_names_leave_the_version_as_it_is(tmp_
         path = copy / name
         path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
 
-    assert version(copy, HASHED_FILES[::-1], tmp_path) == version(NATIVE, HASHED_FILES, tmp_path)
+    assert protocol_version(copy, HASHED_FILES[::-1], tmp_path) == protocol_version(NATIVE, HASHED_FILES, tmp_path)
 
 
 def test_every_file_that_writes_or_reads_a_payload_is_hashed() -> None:

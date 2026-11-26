@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
+from tests.page_protocol import NATIVE, hashed_files, protocol_version
 from tools.parity import BASELINES_DIRECTORY
 
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
@@ -679,6 +680,11 @@ def test_a_page_refuses_a_start_that_is_not_what_a_machine_gives(
     session.start(start)
 
     assert session.refusal() == why
+
+
+def test_a_page_speaks_the_version_that_this_trees_message_files_give(session: _Session, tmp_path: Path) -> None:
+    # The Page program under test comes from this tree, so its hello carries what the build works out from these files.
+    assert session.page_version() == protocol_version(NATIVE, hashed_files(), tmp_path)
 
 
 def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> None:
