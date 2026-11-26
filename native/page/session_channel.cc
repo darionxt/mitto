@@ -187,11 +187,9 @@ class SessionLink final : public PageChannel::Delegate
                              " came before the hello"}));
         return;
       }
-      if (frame->version != kPageProtocolVersion) {
-        Refuse(base::StrCat({"the library speaks version ",
-                             base::NumberToString(frame->version),
-                             " of the messages, and the Page speaks ",
-                             base::NumberToString(kPageProtocolVersion)}));
+      if (std::optional<std::string> refusal =
+              HelloRefusal(frame->version, "the library", "the Page")) {
+        Refuse(*std::move(refusal));
         return;
       }
       hello_received_ = true;

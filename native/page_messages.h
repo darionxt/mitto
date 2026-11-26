@@ -30,11 +30,6 @@ class DictValue;
 
 namespace mitto {
 
-// Both ends speak exactly this version and refuse any other, because the Page
-// program ships beside the library, built from the same tree. Increase it with
-// any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 37;
-
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
 inline constexpr size_t kFrameHeaderSize = 8;
@@ -92,7 +87,7 @@ inline constexpr int kPageExitOutOfMemory = 3;
 // The types of message. Each says which way it goes and what its payload holds.
 enum class PageMessage : uint32_t {
   // Each way, first and only once: the version of these messages that the
-  // sender speaks, as a 32-bit number.
+  // sender speaks, a 32-bit fingerprint of them (EncodeHello()).
   kHello = 1,
   // Each way: why the sender refuses what it got, in UTF-8. The sender closes
   // the channel after it.
@@ -1332,7 +1327,19 @@ struct FrameFromSession {
 // kMaxPayloadSize bytes.
 std::string EncodeFrame(PageMessage type, std::string_view payload);
 
+// Both ends speak exactly one version of the messages, kPageProtocolVersion,
+// and refuse any other, because the Page program ships beside the library,
+// built from the same tree. The build works it out as a fingerprint of the
+// files that define the bytes of a message (page_protocol_version.py), into a
+// header that only page_messages.cc reads, so a change to the messages needs no
+// change to it.
 std::string EncodeHello();
+// Why an end refuses the other's hello of `version`, naming both versions, or
+// nothing if it speaks that version too. `sender` and `receiver` name the two
+// ends, as "the Page" and "the library".
+std::optional<std::string> HelloRefusal(uint32_t version,
+                                        std::string_view sender,
+                                        std::string_view receiver);
 // With the start's connection.
 std::string EncodeStart(const PageStart& start);
 
