@@ -68,6 +68,7 @@
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
 #include "mitto/preconnect_manager.h"
+#include "mitto/range_after_cache.h"
 #include "mitto/ready_requests.h"
 #include "mitto/request_channel.h"
 #include "mitto/request_client.h"
@@ -1213,6 +1214,10 @@ void ConfigureHttpCache(net::URLRequestContextBuilder& builder,
                         const SessionSettings& settings) {
   if (!settings.http_cache_in_memory && !settings.http_cache_directory) {
     builder.DisableHttpCache();
+    // What Chrome's cache does to a request's Range line, which no Session
+    // without one would do.
+    builder.set_network_delegate(
+        std::make_unique<NoHttpCacheNetworkDelegate>());
     return;
   }
   net::URLRequestContextBuilder::HttpCacheParams params;
