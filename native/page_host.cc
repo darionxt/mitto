@@ -1229,6 +1229,19 @@ class PageHost::Request final : public RequestClient {
       job_.reset();
     }
   }
+  // Lets the job end once //net has sent its request, as a dedicated worker's
+  // that ends (RunningRequest::AbandonOnceSent()), with its share of the
+  // keepalive limits until then, and returns it while it goes on.
+  base::WeakPtr<RunningRequest> AbandonJobOnceSent() {
+    base::WeakPtr<RunningRequest> job = std::move(job_);
+    job_.reset();
+    if (job) {
+      job->AbandonOnceSent(base::ScopedClosureRunner(
+          base::BindOnce([](std::unique_ptr<KeepaliveShare>) {},
+                         std::move(keepalive_share_))));
+    }
+    return job;
+  }
   void set_keepalive_share(std::unique_ptr<KeepaliveShare> share) {
     keepalive_share_ = std::move(share);
   }
@@ -1613,7 +1626,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     return;
   }
   last_request_number_ = asked.number;
-  if (requests_.size() >= kMaxPageRequests) {
+  if (RequestsInFlight() >= kMaxPageRequests) {
     Refuse(base::StrCat({"more than ", base::NumberToString(kMaxPageRequests),
                          " requests at once"}));
     return;
@@ -2262,14 +2275,27 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
 }
 
 void PageHost::AbandonRequests() {
-  // A keepalive request goes on without its Page, and the Session finishes
-  // it. Each other Request abandons its job as it goes.
+  // A document's keepalive request goes on without its Page, and the Session
+  // finishes it. Each other Request abandons its job as it goes, and so does a
+  // gone worker's that //net has yet to send.
   for (auto& [number, request] : requests_) {
-    if (request->checks().keepalive) {
+    if (request->checks().keepalive && !IsOfWorker(*request)) {
       request->DetachJob();
     }
   }
   requests_.clear();
+  for (const base::WeakPtr<RunningRequest>& job : sending_jobs_) {
+    if (job) {
+      job->Abandon();
+    }
+  }
+  sending_jobs_.clear();
+}
+
+size_t PageHost::RequestsInFlight() {
+  std::erase_if(sending_jobs_,
+                [](const base::WeakPtr<RunningRequest>& job) { return !job; });
+  return requests_.size() + sending_jobs_.size();
 }
 
 // static
@@ -3519,7 +3545,7 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
     return;
   }
   last_request_number_ = traversal.number;
-  if (requests_.size() >= kMaxPageRequests) {
+  if (RequestsInFlight() >= kMaxPageRequests) {
     Refuse(base::StrCat({"more than ", base::NumberToString(kMaxPageRequests),
                          " requests at once"}));
     return;
@@ -3719,15 +3745,27 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
   });
 }
 
+bool PageHost::IsOfWorker(const Request& request) const {
+  const auto context = contexts_.find(request.context());
+  return context != contexts_.end() && context->second.is_worker;
+}
+
 void PageHost::LetKeepaliveRequestsGo(const std::set<uint64_t>* ids) {
   for (auto it = requests_.begin(); it != requests_.end();) {
     Request& request = *it->second;
-    if (!request.checks().keepalive ||
+    const bool of_worker = IsOfWorker(request);
+    if ((!request.checks().keepalive && !of_worker) ||
         (ids && !ids->contains(request.context()))) {
       ++it;
       continue;
     }
-    request.DetachJob();
+    if (of_worker) {
+      if (base::WeakPtr<RunningRequest> job = request.AbandonJobOnceSent()) {
+        sending_jobs_.push_back(std::move(job));
+      }
+    } else {
+      request.DetachJob();
+    }
     PageResponseEnded ended;
     ended.number = it->first;
     ended.net_error = net::ERR_ABORTED;

@@ -231,21 +231,6 @@ std::string HeaderField(std::string_view headers, std::string_view name) {
   return base::JoinString(values, ", ");
 }
 
-std::string HttpContentType(std::string_view headers) {
-  std::string mime_type;
-  const std::string field =
-      base::ToLowerASCII(HeaderField(headers, "content-type"));
-  for (const std::string_view value : base::SplitStringPiece(
-           field, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    const std::string_view type = base::TrimString(
-        value.substr(0, value.find(';')), " \t", base::TRIM_ALL);
-    if (type.find('/') != std::string_view::npos && type != "*/*") {
-      mime_type = std::string(type);
-    }
-  }
-  return mime_type;
-}
-
 // Whether a response's Cache-Control value, `raw_value`, has the directive
 // no-store, as Blink's ParseCacheControlDirectives() finds it, with its
 // separators of RFC 2616.

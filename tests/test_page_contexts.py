@@ -129,6 +129,40 @@ _FAKE_PAGE = textwrap.dedent(
 # The helpers of the fake Page above, before its first message.
 _FAKE_PAGE_HELPERS = _FAKE_PAGE[: _FAKE_PAGE.index('send(1, struct.pack("<I", {version}))')]
 
+# A worker that posts as it ends: its request and its end go in one write, so the library reads both at once, as it
+# can on a busy machine.
+_FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    send(1, struct.pack("<I", {version}))
+    send(70, struct.pack("<QBQ", 1, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    while True:
+        message_type, payload = receive()
+        if message_type == 4:
+            call = struct.unpack_from("<Q", payload)[0]
+            break
+    send(8, request(2, 1, 9, "{worker}"))
+    wait_for_end(1)
+    send(100, struct.pack("<QQBBQ", 3, 2, 1, 0, 1))
+    post = (
+        struct.pack("<QQBB", 3, 2, 2, 0)
+        + struct.pack("<BBBBBQ", 0, 0, 0, 0, 0, 0)
+        + sized("{beacon}".encode())
+        + sized(b"POST")
+        + sized(b"Content-Type: text/plain;charset=UTF-8\\n")
+        + sized(b"")
+        + b"\\x01kept"
+    )
+    gone = struct.pack("<Q", 3)
+    channel.sendall(struct.pack("<II", len(post), 8) + post + struct.pack("<II", len(gone), 101) + gone)
+    send(5, struct.pack("<QB", call, 0) + b"0")
+    while channel.recv(65536):
+        pass
+    """
+)
+
 # A frame's about:blank, of the top-level document's HTTP origin, that says a navigation within it gave it an HTTP URL of
 # that origin, which no about:blank may take.
 _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
@@ -181,6 +215,20 @@ _SESSION_OF_AN_ENDED_PAGE = textwrap.dedent(
     """
 )
 
+# Opens a Page at the URL in argv[1], asks it for something, and then, while the Page is open, waits at the URL in argv[2]
+# for the server's word.
+_SESSION_THAT_WAITS = textwrap.dedent(
+    """\
+    import sys
+
+    import mitto
+
+    with mitto.Session() as session, session._open_page(sys.argv[1], timeout=60) as page:
+        page.evaluate("1", timeout=60)
+        print(session.get(sys.argv[2]).text)
+    """
+)
+
 # Opens a Page at the URL in argv[1] in a Session that has the frame site's cookie, and asks it for something.
 _SESSION = textwrap.dedent(
     """\
@@ -202,6 +250,9 @@ class _Server:
     def __init__(self, host: str) -> None:
         self.host = host
         self.requests: list[tuple[str, list[tuple[str, str]]]] = []
+        # The path and body of each POST, and whether one has come.
+        self.posted: list[tuple[str, bytes]] = []
+        self.post_came = threading.Event()
         self.lock = threading.Lock()
         server = self
 
@@ -212,6 +263,8 @@ class _Server:
                 with server.lock:
                     server.requests.append((self.path, list(self.headers.items())))
                 body = b"<p>page</p>"
+                if self.path == "/wait-post":
+                    body = b"posted" if server.post_came.wait(_TIMEOUT_SECONDS) else b"nothing"
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html" if self.path.endswith("page") else "text/javascript")
                 if self.path == "/set":
@@ -221,6 +274,15 @@ class _Server:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+
+            def do_POST(self) -> None:
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                with server.lock:
+                    server.posted.append((self.path, body))
+                server.post_came.set()
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def log_message(self, format: str, *args: Any) -> None:
                 pass
@@ -319,6 +381,19 @@ def test_a_frames_requests_have_its_place_in_the_frame_tree(tmp_path: Path, top:
         session.get(frame_site.url("/set"))
         session.get(frame_site.url("/frame-fetch"), kind="fetch", initiator=frame_site.url("/frame-page"))
     assert _value(frame_site.headers_of("/frame-fetch")[-1], "Cookie") == "f=1"
+
+
+def test_a_request_that_a_worker_sends_as_it_ends_goes_out(tmp_path: Path, top: _Server) -> None:
+    # Chrome ends a worker's loaders with it, but that end reaches its network service only after the worker's thread has
+    # gone, when a request that has started is on the wire: Chrome 157 sent a POST that a worker made as it closed each
+    # time. The worker's end, read with the request, ends it only once //net has sent it.
+    program = _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS.format(
+        python=sys.executable, version=_PROTOCOL_VERSION, worker=top.url("/worker.js"), beacon=top.url("/beacon")
+    )
+    printed = _run_fake_page(tmp_path, program, _SESSION_THAT_WAITS, top.url("/page"), top.url("/wait-post"))
+
+    assert printed == "posted"
+    assert top.posted == [("/beacon", b"kept")]
 
 
 def test_a_workers_requests_send_no_client_hints_and_its_script_as_referrer(

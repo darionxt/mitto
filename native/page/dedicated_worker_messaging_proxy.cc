@@ -20,6 +20,7 @@
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "mitto/dom/worker.h"
+#include "mitto/page/page_fetcher.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-isolate.h"
@@ -158,10 +159,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   params_.script_url = url;
   params_.module = options.module;
   params_.credentials = options.credentials;
-  if (context.IsWindow()) {
-    params_.referrer_policy =
-        static_cast<Window&>(context).GetDocument().GetReferrerPolicy();
-  }
+  params_.referrer_policy = context.GetReferrerPolicy();
   params_.strict_mime_type = !context.IsWindow();
   params_.secure_context = context.IsSecureContext();
   // DedicatedWorkerGlobalScope: the creator's capability, which a worker of a
@@ -255,11 +253,13 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
     return;
   }
   // The browser's WorkerScriptFetcher: destination worker, mode same-origin,
-  // the credentials of `new Worker()`'s options, and the entry that
-  // WorkerMainScriptLoader adds to the creator's Performance Timeline.
+  // the credentials of `new Worker()`'s options, the creator's referrer policy,
+  // and the entry that WorkerMainScriptLoader adds to the creator's
+  // Performance Timeline.
   PageRequest request;
   request.kind = PageRequestKind::kWorker;
   request.url = url.spec();
+  request.referrer_policy = ToPageReferrerPolicy(params_.referrer_policy);
   switch (options.credentials) {
     case FetchCredentialsMode::kOmit:
       request.credentials = PageCredentialsMode::kOmit;

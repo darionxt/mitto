@@ -1253,6 +1253,60 @@ def test_a_fetch_asks_the_session_for_what_its_script_gives_and_resolves_with_th
     assert session.close() == 0
 
 
+_WORKER_KIND = 9
+_WORKER_STARTED = 100
+_CONTEXT_GONE = 101
+
+
+def test_a_fetch_that_a_worker_starts_as_it_closes_reaches_the_session_before_the_worker_goes(
+    session: _Session,
+) -> None:
+    # Whether the network sends it before the Session lets the worker's request go is a race, in Chrome too, whose
+    # POST reached its server each time. What the Page owes is the order: the request before the worker's end.
+    session.start()
+    _loaded(session)
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"new Worker('/closing.js'); 'started'")
+    script = b"fetch('/beacon', { method: 'POST', body: 'kept' }); close();"
+    # What came of anything but the document, in order: the worker's start, its requests, any cancel and its end. A
+    # cancel before the end would let the Session abort the POST before it heard that the worker went.
+    seen: list[tuple[object, ...]] = []
+    while not seen or seen[-1][0] != "gone":
+        message_type, payload = session.receive()
+        context = payload[:8]
+        if message_type == _REQUEST and context == _DOCUMENT and payload[16] == _WORKER_KIND:
+            number = struct.unpack_from("<Q", payload, 8)[0]
+            _respond(session, number, "http://www.example.test/closing.js", "text/javascript")
+            _body(session, number, script)
+            _end(session, number)
+        elif message_type == _WORKER_STARTED:
+            seen.append(("started", context))
+        elif message_type == _REQUEST and context != _DOCUMENT:
+            # Its URL, method, lines and referrer follow its number, Kind, flags and the 13 bytes of its mode and the
+            # rest, each with its size, and then whether it has a body, and the body.
+            fields: list[bytes] = []
+            at = 31
+            for _ in range(4):
+                size = struct.unpack_from("<I", payload, at)[0]
+                fields.append(payload[at + 4 : at + 4 + size])
+                at += 4 + size
+            number = struct.unpack_from("<Q", payload, 8)[0]
+            seen.append(("request", context, number, payload[16], fields[0], fields[1], payload[at:]))
+        elif message_type == _CANCEL:
+            seen.append(("cancel", struct.unpack("<Q", payload)[0]))
+        elif message_type == _CONTEXT_GONE:
+            seen.append(("gone", context))
+
+    assert [event[0] for event in seen] == ["started", "request", "gone"]
+    worker = seen[0][1]
+    number = seen[1][2]
+    assert seen == [
+        ("started", worker),
+        ("request", worker, number, _FETCH_KIND, b"http://www.example.test/beacon", b"POST", b"\x01kept"),
+        ("gone", worker),
+    ]
+    assert session.close() == 0
+
+
 @pytest.mark.parametrize("when", ["response", "end"])
 def test_a_fetch_that_page_code_aborts_while_its_promise_resolves_outlives_the_call(
     session: _Session, when: str
