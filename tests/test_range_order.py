@@ -186,7 +186,6 @@ def test_a_callers_range_line_goes_where_chromes_cache_puts_it(server_url: str, 
         assert lines is not None
         names, value = lines.split(" | ")
         order = names.split(",")
-        after_net = order.index("Accept-Language") < order.index("Range") and order.index("Cookie") < order.index(
-            "Range"
-        )
-        assert (after_net, value) == ((True, moved) if moved else (False, headers["Range"]))
+        range_at = order.index("Range")
+        assert [order.index(name) < range_at for name in ("Accept-Language", "Cookie")] == 2 * [moved is not None]
+        assert value == (moved or headers["Range"])
