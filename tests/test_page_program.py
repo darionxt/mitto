@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
+from tests.page_protocol import NATIVE, hashed_files, protocol_version
 from tools.parity import BASELINES_DIRECTORY
 
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
@@ -157,7 +158,6 @@ _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
 _DOCUMENT_STORED = 282
-_PROTOCOL_VERSION = 37
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -272,9 +272,21 @@ class _Session:
             else:
                 return message_type, payload
 
+    def page_version(self) -> int:
+        """Return the version of the messages that the Page's hello, its first message, speaks."""
+        message_type, payload = self.receive()
+        assert message_type == _HELLO
+        (version,) = struct.unpack("<I", payload)
+        return version
+
+    def hello(self) -> int:
+        """Speak the Page's version of the messages back to it, as a library of the same tree does, and return it."""
+        version = self.page_version()
+        self.send(_HELLO, struct.pack("<I", version))
+        return version
+
     def start(self, start: dict[str, object] = _DEFAULT_START) -> None:
-        assert self.receive() == (_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
-        self.send(_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
+        self.hello()
         self.send(_START, json.dumps(start).encode())
 
     def evaluate(self, script: str, call: int = 1) -> tuple[bool, str]:
@@ -670,13 +682,28 @@ def test_a_page_refuses_a_start_that_is_not_what_a_machine_gives(
     assert session.refusal() == why
 
 
-def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> None:
-    assert session.receive()[0] == _HELLO
-    session.send(_HELLO, struct.pack("<I", 99))
+def test_a_page_speaks_the_version_that_this_trees_message_files_give(session: _Session, tmp_path: Path) -> None:
+    # The Page program under test comes from this tree, so its hello carries what the build works out from these files.
+    assert session.page_version() == protocol_version(NATIVE, hashed_files(), tmp_path)
 
-    assert (
-        session.refusal() == f"the library speaks version 99 of the messages, and the Page speaks {_PROTOCOL_VERSION}"
+
+def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> None:
+    version = session.page_version()
+    other = (version + 1) % 2**32
+    session.send(_HELLO, struct.pack("<I", other))
+
+    assert session.refusal() == (
+        f"the library speaks version 0x{other:08x} of the messages, and the Page speaks 0x{version:08x}"
     )
+
+
+def test_a_page_refuses_a_second_hello(session: _Session) -> None:
+    version = session.hello()
+    session.send(_START, json.dumps(_DEFAULT_START).encode())
+
+    session.send(_HELLO, struct.pack("<I", version))
+
+    assert session.refusal() == "a second hello"
 
 
 @pytest.mark.parametrize(
@@ -686,7 +713,6 @@ def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> No
         pytest.param(_EVALUATED, struct.pack("<QB", 1, 0), "message type 5 only goes to a Session", id="wrong-way"),
         pytest.param(_CONSOLE, b"\x02log", "message type 6 only goes to a Session", id="console-wrong-way"),
         pytest.param(_UNCAUGHT_ERROR, b"no", "message type 7 only goes to a Session", id="uncaught-wrong-way"),
-        pytest.param(_HELLO, struct.pack("<I", _PROTOCOL_VERSION), "a second hello", id="second-hello"),
         pytest.param(_START, b"[]", "a start that is not a JSON object", id="start-not-object"),
         pytest.param(_EVALUATE, b"\x01", "a script of 1 bytes", id="short-script"),
     ],
@@ -702,8 +728,7 @@ def test_a_page_refuses_a_message_it_does_not_know_and_says_why(
 
 
 def test_a_page_refuses_a_script_before_its_start(session: _Session) -> None:
-    assert session.receive()[0] == _HELLO
-    session.send(_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
+    session.hello()
     session.send(_EVALUATE, struct.pack("<Q", 1) + b"1")
 
     assert session.refusal() == "a script came before the start"

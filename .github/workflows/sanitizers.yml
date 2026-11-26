@@ -20,6 +20,7 @@ on:
       - tests/data/document_encodings.json
       - tests/data/page_cases.json
       - tests/page_cases.js
+      - tests/page_protocol.py
       - tests/test_core_test_program.py
       - tests/test_page_abort.py
       - tests/test_page_bindings.py

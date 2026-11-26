@@ -84,7 +84,7 @@ select = [
 ignore = ["E501"] # The formatter handles line length.
 
 [tool.pyright]
-include = ["src", "tests", "tools", "native/bindings"]
+include = ["src", "tests", "tools", "native/bindings", "native/page_protocol_version.py"]
 # The bindings generator is a package in native/bindings, which GN runs from there. Naming any path drops pyright's
 # implicit src, so it is named too.
 extraPaths = ["src", "native/bindings"]

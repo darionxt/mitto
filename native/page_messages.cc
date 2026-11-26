@@ -1,5 +1,7 @@
 #include "mitto/page_messages.h"
 
+#include <inttypes.h>
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -19,8 +21,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "mitto/header_rules.h"
+#include "mitto/page_protocol_version.h"
 
 namespace mitto {
 namespace {
@@ -169,6 +173,12 @@ constexpr size_t kMaxHostSize = 253;
 
 constexpr uint8_t kHasResult = 0;
 constexpr uint8_t kFailed = 1;
+
+// A version of the messages, as the refusal of a hello gives it: in
+// hexadecimal, as the SHA-256 that it is the start of.
+std::string VersionText(uint32_t version) {
+  return base::StringPrintf("0x%08" PRIx32, version);
+}
 
 std::string EncodeUint32(uint32_t value) {
   const std::array<uint8_t, 4> bytes = base::U32ToLittleEndian(value);
@@ -1714,6 +1724,17 @@ std::string EncodeFrame(PageMessage type, std::string_view payload) {
 
 std::string EncodeHello() {
   return EncodeFrame(PageMessage::kHello, EncodeUint32(kPageProtocolVersion));
+}
+
+std::optional<std::string> HelloRefusal(uint32_t version,
+                                        std::string_view sender,
+                                        std::string_view receiver) {
+  if (version == kPageProtocolVersion) {
+    return std::nullopt;
+  }
+  return base::StrCat({sender, " speaks version ", VersionText(version),
+                       " of the messages, and ", receiver, " speaks ",
+                       VersionText(kPageProtocolVersion)});
 }
 
 std::string EncodeStart(const PageStart& start) {

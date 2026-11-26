@@ -198,6 +198,25 @@ _FAKE_PAGE = textwrap.dedent(
     def send(message_type, payload):
         channel.sendall(struct.pack("<II", len(payload), message_type) + payload)
 
+    def receive_exactly(size):
+        data = b""
+        while len(data) < size:
+            chunk = channel.recv(size - len(data))
+            if not chunk:
+                sys.exit(0)
+            data += chunk
+        return data
+
+    def library_version():
+        # The library's hello comes first.
+        size, message_type = struct.unpack("<II", receive_exactly(8))
+        assert message_type == 1, message_type
+        return struct.unpack("<I", receive_exactly(size))[0]
+
+    def hello():
+        # Speaks the library's version back, as a Page of the same tree does.
+        send(1, struct.pack("<I", library_version()))
+
     {script}
     # The library ends this process, or closes the channel.
     while channel.recv(65536):
@@ -212,10 +231,6 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
     page.write_text(_FAKE_PAGE.format(python=sys.executable, name=name, script=script))
     page.chmod(0o755)
     return copy
-
-
-# The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 37
 
 
 def _script_request(number: int, url: str) -> str:
@@ -248,7 +263,7 @@ def _fetch_request(
 
 
 # The hello, and the Page's initial about:blank, document 1.
-_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack('<QBQ', 1, 0, 0))"
+_HELLO = "hello()\nsend(70, struct.pack('<QBQ', 1, 0, 0))"
 # A worker of a data: URL that document 1 started, as context 2.
 _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
 
@@ -257,13 +272,6 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
 @pytest.mark.parametrize(
     ("name", "script", "why"),
     [
-        pytest.param(
-            "another-version",
-            "send(1, struct.pack('<I', 99))",
-            "the library refused a message from the Page: the Page speaks version 99 of the messages, and the library"
-            f" speaks {_PROTOCOL_VERSION}",
-            id="another-version",
-        ),
         pytest.param(
             "unknown-message",
             f"{_HELLO}\nsend(77, b'')",
@@ -659,6 +667,25 @@ def test_a_message_that_one_side_does_not_take_ends_the_page_with_an_error_that_
     assert _run(_fake_page_program(tmp_path, name, script), "page-first-call") == (
         f"failed, refused: {why}\nended, refused: {why}\nthe Page process is gone\n"
     )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake Page program is a script")
+def test_a_page_of_another_version_of_the_messages_is_refused_with_both_versions(tmp_path: Path) -> None:
+    program = _fake_page_program(
+        tmp_path, "another-version", "send(1, struct.pack('<I', (library_version() + 1) % 2**32))"
+    )
+
+    output = _run(program, "page-first-call")
+
+    ended = re.fullmatch(r"failed, refused: (.*)\nended, refused: \1\nthe Page process is gone\n", output)
+    assert ended, output
+    versions = re.fullmatch(
+        r"the library refused a message from the Page: the Page speaks version 0x([0-9a-f]{8}) of the messages, and"
+        r" the library speaks 0x([0-9a-f]{8})",
+        ended[1],
+    )
+    assert versions, ended[1]
+    assert int(versions[1], 16) == (int(versions[2], 16) + 1) % 2**32
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the fake Page program is a script")
