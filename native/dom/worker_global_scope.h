@@ -87,6 +87,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
       bindings::ExceptionState& exception_state);
 
   // ExecutionContext:
+  FetchReferrerPolicy GetReferrerPolicy() const override;
   std::u16string Url() const override;
   EventTarget* ErrorEventTarget() override;
   url::Origin GetSecurityOrigin() const override;
@@ -116,6 +117,10 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   // for a data: URL, from when it starts.
   void SetUrl(GURL url) { url_ = std::move(url); }
   const GURL& GetUrl() const { return url_; }
+  // The policy of the response of the worker's script, from when it has come.
+  void SetReferrerPolicy(FetchReferrerPolicy policy) {
+    referrer_policy_ = policy;
+  }
   void SetOrigin(url::Origin origin) { origin_ = std::move(origin); }
   // Whether the worker runs a module script, whose importScripts() throws.
   void SetModule(bool module) { module_ = module; }
@@ -172,6 +177,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   bool module_ = false;
+  FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   FetchReferrerPolicy outside_referrer_policy_ = FetchReferrerPolicy::kDefault;
   url::Origin outside_origin_;
   url::Origin agent_cluster_origin_;

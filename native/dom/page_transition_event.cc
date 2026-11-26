@@ -25,6 +25,14 @@ PageTransitionEvent* PageTransitionEvent::CreateTrusted(
   return event;
 }
 
+PageTransitionEvent* PageTransitionEvent::CreatePersistedPageshow(
+    base::TimeTicks navigation_start) {
+  PageTransitionEvent* const event =
+      CreateTrusted(u"pageshow", /*persisted=*/true);
+  event->SetPlatformTimeStamp(navigation_start);
+  return event;
+}
+
 PageTransitionEvent::PageTransitionEvent(
     const std::u16string& type,
     const bindings::PageTransitionEventInit& init)

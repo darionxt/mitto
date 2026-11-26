@@ -225,10 +225,12 @@ class Document : public Node {
   Element* ActiveElement() const;
   // What a page of a tab in front reads, which a document of no window is
   // not, as Blink's documents without a page say, nor one that a navigation
-  // unloads, from its visibilitychange on, as Blink's IsPageVisible() says.
+  // unloads, from its visibilitychange on, nor one that the back/forward
+  // cache keeps, as Blink's IsPageVisible() says.
   bool Hidden() const {
-    return !window_ || load_event_progress_ >=
-                           LoadEventProgress::kUnloadVisibilityChangeInProgress;
+    return !window_ || page_hidden_ ||
+           load_event_progress_ >=
+               LoadEventProgress::kUnloadVisibilityChangeInProgress;
   }
   std::u16string VisibilityState() const {
     return Hidden() ? u"hidden" : u"visible";
@@ -553,6 +555,13 @@ class Document : public Node {
     referrer_policy_ = policy;
     policy_container_referrer_policy_ = policy;
   }
+  // Whether the document's Cross-Origin-Embedder-Policy is compatible with
+  // cross-origin isolation, network::CompatibleWithCrossOriginIsolated(): the
+  // response's, or that of the policy container that it took.
+  bool EmbedderPolicyIsolates() const { return embedder_policy_isolates_; }
+  void SetEmbedderPolicyIsolates(bool isolates) {
+    embedder_policy_isolates_ = isolates;
+  }
   // Whether a new entry of the document in the session history keeps its URL
   // from other documents' Navigation API entries, as Chrome's browser takes
   // it from the policy container: for a policy of no-referrer or origin that
@@ -705,6 +714,31 @@ class Document : public Node {
   // is visible, and unload at the window, once a navigation's document is
   // about to take its place.
   void DispatchUnloadEvents();
+  // What the back/forward cache does to the document of the window that it
+  // keeps, as Blink's WebViewImpl::SetPageLifecycleStateInternal() has it:
+  //
+  // DispatchPagehide() with persisted true at the window, then the page goes
+  // hidden, with visibilitychange at the document if it was visible.
+  void HideForBackForwardCache();
+  // Document::DispatchFreezeEvent(): freeze at the document.
+  void DispatchFreezeEvent();
+  // FrameFetchContext::CanRequest(): whether the document's freeze event runs,
+  // in which no request but a keepalive one starts, as the console then says
+  // of the one for `url`.
+  bool RefusesRequestWhileFreezing(const GURL& url);
+  // LocalFrame::DidResume()'s resume at the document, once the page thaws.
+  void DispatchResumeEvent();
+  // The page shows again, with visibilitychange at the document, as Page's
+  // visibility goes back to visible.
+  void ShowFromBackForwardCache();
+  // DispatchPersistedPageshowEvent(): pageshow with persisted true at the
+  // window, whose timeStamp is `navigation_start`, the restore's.
+  void DispatchPersistedPageshowEvent(base::TimeTicks navigation_start);
+  // Whether CancelParsing() stopped a parser that was parsing, as Blink's
+  // sticky kParserAborted says, which keeps the page out of the back/forward
+  // cache.
+  bool ParserAborted() const { return parser_aborted_; }
+
   // When its unload event started and ended, null until it has.
   base::TimeTicks UnloadEventStart() const { return unload_event_start_; }
   base::TimeTicks UnloadEventEnd() const { return unload_event_end_; }
@@ -817,6 +851,12 @@ class Document : public Node {
       DocumentParser::Client* client,
       DocumentParser::Kind kind = DocumentParser::Kind::kHtml);
   void DetachParser();
+  // visibilitychange and webkitvisibilitychange at the document, as the
+  // page's visibility changes.
+  void DispatchVisibilityChange();
+  // The page went hidden or shows again: its entry in the window's Performance
+  // Timeline, and visibilitychange.
+  void DidChangePageVisibility();
   // Document::BeginLifecycleUpdatesIfRenderingReady(): the window begins
   // rendering once no script blocks it.
   void BeginLifecycleUpdatesIfRenderingReady();
@@ -907,6 +947,7 @@ class Document : public Node {
   // The response's policy, which the browser's policy container keeps.
   FetchReferrerPolicy policy_container_referrer_policy_ =
       FetchReferrerPolicy::kDefault;
+  bool embedder_policy_isolates_ = false;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;
@@ -931,6 +972,11 @@ class Document : public Node {
   bool write_recursion_is_too_deep_ = false;
   // The HTML Standard's active parser was aborted.
   bool ignore_opens_and_writes_for_abort_ = false;
+  bool parser_aborted_ = false;
+  // Whether the back/forward cache keeps the page, which is hidden then.
+  bool page_hidden_ = false;
+  // Whether its freeze event runs.
+  bool freezing_in_progress_ = false;
   HeapVector<HTMLElement> popover_auto_stack_;
   HeapVector<HTMLElement> popover_hint_stack_;
   cppgc::Member<HTMLElement> popover_hint_stack_parent_;

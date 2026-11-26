@@ -69,6 +69,7 @@ class Blob : public bindings::ScriptWrappable {
   const scoped_refptr<BlobDataHandle>& GetBlobDataHandle() const {
     return blob_data_handle_;
   }
+  virtual bool IsFile() const;
   // Adds all of its bytes to `blob_data`.
   void AppendTo(BlobData& blob_data) const;
 

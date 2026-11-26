@@ -25,6 +25,8 @@ class FormDataBytesConsumer final : public BytesConsumer {
   Result BeginRead(base::span<const char>& buffer) override;
   Result EndRead(size_t read_size) override;
   std::optional<std::string> DrainAsBytes() override;
+  // A blob of the bytes, as Blink's gives one for a tee.
+  scoped_refptr<BlobDataHandle> DrainAsBlobDataHandle() override;
   void SetClient(BytesConsumer::Client* client) override;
   void ClearClient() override;
   void Cancel() override;

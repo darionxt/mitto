@@ -94,26 +94,31 @@ v8::Local<v8::Promise> SettledPromise(v8::Isolate* isolate,
 // PopulateFetchAPIResponse(): what the Session stores of a response.
 PageCacheResponse ToPageCacheResponse(const Response& response) {
   PageCacheResponse page_response;
-  const std::string url = base::UTF16ToUTF8(response.Url());
+  // An opaque response stores the response behind it, which no script sees,
+  // as Blink's PopulateFetchAPIResponse() writes its internal response.
+  const Response& stored =
+      response.InternalResponse() ? *response.InternalResponse() : response;
+  const std::string url = base::UTF16ToUTF8(stored.Url());
   // Its URL list: empty for a response that a page made, and with every URL
   // of its redirects for a fetched one, of which only the last and whether
   // there are more than one show.
   if (!url.empty()) {
     page_response.url_list.push_back(url);
-    if (response.Redirected()) {
+    if (stored.Redirected()) {
       page_response.url_list.push_back(url);
     }
   }
-  page_response.status = response.Status();
-  page_response.status_text = response.StatusText();
+  page_response.status = stored.Status();
+  page_response.status_text = stored.StatusText();
   const std::u16string type = response.Type();
   page_response.type = type == u"basic"    ? 0
                        : type == u"cors"   ? 1
+                       : type == u"error"  ? 3
                        : type == u"opaque" ? 4
                                            : 2;
   // Each name once, the first of its values, as the mojom's map holds them.
   std::set<std::string> seen;
-  for (const auto& [name, value] : response.Headers()->list()) {
+  for (const auto& [name, value] : stored.Headers()->list()) {
     std::string lower = base::ToLowerASCII(name);
     if (seen.insert(lower).second) {
       page_response.headers.emplace_back(std::move(lower), value);
@@ -128,6 +133,7 @@ PageCacheResponse ToPageCacheResponse(const Response& response) {
   }
   page_response.response_time =
       base::Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds();
+  page_response.padding = response.Padding();
   return page_response;
 }
 
@@ -606,35 +612,58 @@ void Cache::OnResponse(uint64_t barrier,
     return;
   }
   // The body loads as a blob, from the tasks that bring it.
-  response->ReadAll(base::BindOnce(
-      [](cppgc::Persistent<Cache> self, uint64_t barrier, size_t index,
-         std::optional<std::string> body) {
-        self->CompletedResponse(barrier, index, std::move(body));
-      },
-      cppgc::Persistent<Cache>(this), barrier, index));
+  bindings::ExceptionState exception_state(isolate);
+  v8::TryCatch try_catch(isolate);
+  response->ReadAll(
+      base::BindOnce(
+          [](cppgc::Persistent<Cache> self, uint64_t barrier, size_t index,
+             base::expected<std::string, Response::ReadAllError> body) {
+            self->CompletedResponse(barrier, index, std::move(body));
+          },
+          cppgc::Persistent<Cache>(this), barrier, index),
+      exception_state);
+  if (!exception_state.HadException()) {
+    return;
+  }
+  // A body that cannot be read, such as one whose frame has gone.
+  const v8::Local<v8::Value> exception = try_catch.Exception();
+  try_catch.Reset();
+  FailBarrier(barrier, exception);
 }
 
-void Cache::CompletedResponse(uint64_t barrier,
-                              size_t index,
-                              std::optional<std::string> body) {
+void Cache::CompletedResponse(
+    uint64_t barrier,
+    size_t index,
+    base::expected<std::string, Response::ReadAllError> body) {
   PutBarrier* const state = FindBarrier(barrier);
   if (!state) {
     return;
   }
+  if (!body.has_value() && body.error() == Response::ReadAllError::kStopped) {
+    // The promise stays pending, as in Chrome, and nothing is put.
+    barriers_.erase(barrier);
+    return;
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (!body) {
-    // FailedResponse().
+  if (!body.has_value()) {
+    // FailedResponse(), or AbortedResponse() for a body that its signal
+    // aborted.
     const v8::HandleScope handle_scope(isolate);
     const v8::Local<v8::Context> context = state->context.Get(isolate);
     const v8::Context::Scope context_scope(context);
-    FailBarrier(barrier,
-                CacheCallException(
-                    isolate, "NetworkError",
-                    state->method_name + " encountered a network error",
-                    state->member, "Cache"));
+    const v8::Local<v8::Value> exception =
+        body.error() == Response::ReadAllError::kAborted
+            ? CacheCallException(isolate, "AbortError",
+                                 state->method_name + " was aborted",
+                                 state->member, "Cache")
+            : CacheCallException(
+                  isolate, "NetworkError",
+                  state->method_name + " encountered a network error",
+                  state->member, "Cache");
+    FailBarrier(barrier, exception);
     return;
   }
-  state->bodies[index] = std::move(body);
+  state->bodies[index] = std::move(body).value();
   if (++state->complete == state->requests.size()) {
     PutAll(barrier);
   }

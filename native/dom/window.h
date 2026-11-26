@@ -126,6 +126,8 @@ class Window final : public WindowProperties, public ExecutionContext {
                                v8::Local<v8::Object> success_callback,
                                v8::Local<v8::Object> error_callback);
   mitto::Navigator* Navigator();
+  // Whether the browser holds a WebAuthn request of the window's document.
+  bool HasPublicKeyRequest() const;
   mitto::Navigator* ClientInformation() { return Navigator(); }
   mitto::Screen* Screen();
   int32_t InnerWidth() const { return Start().viewport_width; }
@@ -247,6 +249,7 @@ class Window final : public WindowProperties, public ExecutionContext {
 
   // ExecutionContext:
   bool IsWindow() const override;
+  FetchReferrerPolicy GetReferrerPolicy() const override;
   std::u16string Url() const override;
   EventTarget* ErrorEventTarget() override;
   url::Origin GetSecurityOrigin() const override;
@@ -293,6 +296,18 @@ class Window final : public WindowProperties, public ExecutionContext {
   // and clears once another window takes its place.
   void SetFrame(mitto::Frame* frame) { frame_ = frame; }
   mitto::Frame* GetFrame() const { return frame_; }
+  // What drops the window's document from the back/forward cache that keeps
+  // it, which the Page sets while the cache does: once a script tries to run
+  // in its context, as Blink's LocalFrame::EvictFromBackForwardCache() does
+  // then.
+  void SetBackForwardCacheEviction(base::RepeatingClosure evict) {
+    back_forward_cache_eviction_ = std::move(evict);
+  }
+  void EvictFromBackForwardCache() {
+    if (back_forward_cache_eviction_) {
+      back_forward_cache_eviction_.Run();
+    }
+  }
   // Whether its frame is under another.
   bool IsInFrame() const;
   // The process that Chrome has its document in.
@@ -392,6 +407,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   raw_ptr<NavigationClient> navigation_client_ = nullptr;
   std::unique_ptr<HistoryItem> current_history_item_;
   raw_ptr<mitto::Frame> frame_ = nullptr;
+  base::RepeatingClosure back_forward_cache_eviction_;
   // The name of the Page program's own window, which has no frame to keep it.
   std::u16string frameless_name_;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;

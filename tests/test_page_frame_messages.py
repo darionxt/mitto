@@ -113,3 +113,28 @@ def test_a_message_for_another_origin_warns_in_its_recipient_s_console(page_url:
         f"{start} ('{other}') does not match the recipient window's origin ('{origin}').",
         f"{start} ('https://example.com') does not match the recipient window's origin ('{origin}').",
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_that_the_back_forward_cache_kept_is_its_frames_parent_again(page_url: str) -> None:
+    # A frame of another site has the page's window as its messages' source, as in Chrome: in the page that leaves, and then in
+    # the kept one that comes back to the same frame tree.
+    ask = """
+      new Promise((resolve) => {
+        onmessage = ({data}) => resolve(data.parent);
+        const element = document.createElement('iframe');
+        element.src = `http://localhost:${location.port}/child?answer`;
+        element.onload = () => postMessage.call(element.contentWindow, 'who', '*');
+        document.body.appendChild(element);
+      })
+    """
+    with mitto.Session() as session, session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        page.evaluate(
+            "onpagehide = ({persisted}) => { kept = persisted; }; location.href = '/two'", timeout=_TIMEOUT_SECONDS
+        )
+        page.wait_for_navigation(timeout=_TIMEOUT_SECONDS)
+        assert page.evaluate(ask, timeout=_TIMEOUT_SECONDS) is True
+        page.evaluate("history.back()", timeout=_TIMEOUT_SECONDS)
+        page.wait_for_navigation(timeout=_TIMEOUT_SECONDS)
+        assert page.evaluate("kept", timeout=_TIMEOUT_SECONDS) is True
+        assert page.evaluate(ask, timeout=_TIMEOUT_SECONDS) is True

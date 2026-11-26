@@ -335,23 +335,40 @@ def test_a_script_whose_mime_type_cannot_run_fires_error_as_in_chrome(
     script("/image.js", "image/png", nosniff=False)
     script("/javascript.js", "Text/JavaScript; charset=utf-8", nosniff=True)
     script("/lax.js", "text/plain", nosniff=False)
+    # A quote takes in the comma after it, and a form feed is no white space of HTTP's.
+    script("/quoted.js", 'text/javascript;", x/x', nosniff=True)
+    script("/list.js", "text/javascript, x/x", nosniff=True)
+    script("/feed.js", "text/javascript\f", nosniff=True)
     url = server.page(
         "/",
         "<script>window.seen = [];</script>"
         "<script defer src=/plain.js></script><script defer src=/image.js></script>"
         "<script defer src=/javascript.js></script><script defer src=/lax.js></script>"
-        "<script>for (const name of ['/plain.js', '/image.js']) {"
+        "<script defer src=/quoted.js></script><script defer src=/list.js></script><script defer src=/feed.js></script>"
+        "<script>for (const name of ['/plain.js', '/image.js', '/list.js', '/feed.js']) {"
         "  document.querySelector(`script[src='${name}']`).addEventListener('error', () => seen.push(name + ' error'));"
         "}</script>",
     )
 
     with _open_page(session, url) as page:
-        assert page.evaluate("seen") == ["/plain.js error", "/image.js error", "/javascript.js ran", "/lax.js ran"]
+        assert page.evaluate("seen") == [
+            "/plain.js error",
+            "/image.js error",
+            "/javascript.js ran",
+            "/lax.js ran",
+            "/quoted.js ran",
+            "/list.js error",
+            "/feed.js error",
+        ]
         # The console says why as each response ends, as Blink's ClassicPendingScript::NotifyFinished() does, so in the
         # order the responses came.
         assert sorted(message.text for message in page.console_messages if message.level == "error") == [
+            f"Refused to execute script from '{server.url('/feed.js')}' because its MIME type ('text/javascript\f') is not"
+            " executable, and strict MIME type checking is enabled.",
             f"Refused to execute script from '{server.url('/image.js')}' because its MIME type ('image/png') is not"
             " executable.",
+            f"Refused to execute script from '{server.url('/list.js')}' because its MIME type ('x/x') is not"
+            " executable, and strict MIME type checking is enabled.",
             f"Refused to execute script from '{server.url('/plain.js')}' because its MIME type ('text/plain') is not"
             " executable, and strict MIME type checking is enabled.",
         ]

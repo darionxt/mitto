@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
+from tests.page_protocol import NATIVE, hashed_files, protocol_version
 from tools.parity import BASELINES_DIRECTORY
 
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
@@ -156,7 +157,7 @@ _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
-_PROTOCOL_VERSION = 35
+_DOCUMENT_STORED = 282
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -271,9 +272,21 @@ class _Session:
             else:
                 return message_type, payload
 
+    def page_version(self) -> int:
+        """Return the version of the messages that the Page's hello, its first message, speaks."""
+        message_type, payload = self.receive()
+        assert message_type == _HELLO
+        (version,) = struct.unpack("<I", payload)
+        return version
+
+    def hello(self) -> int:
+        """Speak the Page's version of the messages back to it, as a library of the same tree does, and return it."""
+        version = self.page_version()
+        self.send(_HELLO, struct.pack("<I", version))
+        return version
+
     def start(self, start: dict[str, object] = _DEFAULT_START) -> None:
-        assert self.receive() == (_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
-        self.send(_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
+        self.hello()
         self.send(_START, json.dumps(start).encode())
 
     def evaluate(self, script: str, call: int = 1) -> tuple[bool, str]:
@@ -669,13 +682,28 @@ def test_a_page_refuses_a_start_that_is_not_what_a_machine_gives(
     assert session.refusal() == why
 
 
-def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> None:
-    assert session.receive()[0] == _HELLO
-    session.send(_HELLO, struct.pack("<I", 99))
+def test_a_page_speaks_the_version_that_this_trees_message_files_give(session: _Session, tmp_path: Path) -> None:
+    # The Page program under test comes from this tree, so its hello carries what the build works out from these files.
+    assert session.page_version() == protocol_version(NATIVE, hashed_files(), tmp_path)
 
-    assert (
-        session.refusal() == f"the library speaks version 99 of the messages, and the Page speaks {_PROTOCOL_VERSION}"
+
+def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> None:
+    version = session.page_version()
+    other = (version + 1) % 2**32
+    session.send(_HELLO, struct.pack("<I", other))
+
+    assert session.refusal() == (
+        f"the library speaks version 0x{other:08x} of the messages, and the Page speaks 0x{version:08x}"
     )
+
+
+def test_a_page_refuses_a_second_hello(session: _Session) -> None:
+    version = session.hello()
+    session.send(_START, json.dumps(_DEFAULT_START).encode())
+
+    session.send(_HELLO, struct.pack("<I", version))
+
+    assert session.refusal() == "a second hello"
 
 
 @pytest.mark.parametrize(
@@ -685,7 +713,6 @@ def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> No
         pytest.param(_EVALUATED, struct.pack("<QB", 1, 0), "message type 5 only goes to a Session", id="wrong-way"),
         pytest.param(_CONSOLE, b"\x02log", "message type 6 only goes to a Session", id="console-wrong-way"),
         pytest.param(_UNCAUGHT_ERROR, b"no", "message type 7 only goes to a Session", id="uncaught-wrong-way"),
-        pytest.param(_HELLO, struct.pack("<I", _PROTOCOL_VERSION), "a second hello", id="second-hello"),
         pytest.param(_START, b"[]", "a start that is not a JSON object", id="start-not-object"),
         pytest.param(_EVALUATE, b"\x01", "a script of 1 bytes", id="short-script"),
     ],
@@ -701,8 +728,7 @@ def test_a_page_refuses_a_message_it_does_not_know_and_says_why(
 
 
 def test_a_page_refuses_a_script_before_its_start(session: _Session) -> None:
-    assert session.receive()[0] == _HELLO
-    session.send(_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
+    session.hello()
     session.send(_EVALUATE, struct.pack("<Q", 1) + b"1")
 
     assert session.refusal() == "a script came before the start"
@@ -824,11 +850,13 @@ def _timing(
     received_bytes: int = 0,
     redirect_count: int = 0,
     ends: tuple[int, int, int] = (0, 0, 0),
+    padding: int = 0,
 ) -> bytes:
     """The Performance Timeline's part of a response: //net's ten times of its last hop, its six flags (socket reused,
     TAO passed, validated, cross-origin redirect, Critical-CH restart, opaque), the bytes that had come, its redirects,
-    and when its first hop started, its last redirect ended and the navigation restarted for Critical-CH."""
-    return struct.pack("<10q6BqI3q", *times, *flags, received_bytes, redirect_count, *ends)
+    and when its first hop started, its last redirect ended and the navigation restarted for Critical-CH. Then an opaque
+    response's padding."""
+    return struct.pack("<10q6BqI3qq", *times, *flags, received_bytes, redirect_count, *ends, padding)
 
 
 def _respond(
@@ -1254,6 +1282,142 @@ def test_a_fetch_asks_the_session_for_what_its_script_gives_and_resolves_with_th
     assert session.close() == 0
 
 
+_WORKER_KIND = 9
+_WORKER_STARTED = 100
+_CONTEXT_GONE = 101
+
+
+def test_a_fetch_that_a_worker_starts_as_it_closes_reaches_the_session_before_the_worker_goes(
+    session: _Session,
+) -> None:
+    # Whether the network sends it before the Session lets the worker's request go is a race, in Chrome too, whose
+    # POST reached its server each time. What the Page owes is the order: the request before the worker's end.
+    session.start()
+    _loaded(session)
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"new Worker('/closing.js'); 'started'")
+    script = b"fetch('/beacon', { method: 'POST', body: 'kept' }); close();"
+    # What came of anything but the document, in order: the worker's start, its requests, any cancel and its end. A
+    # cancel before the end would let the Session abort the POST before it heard that the worker went.
+    seen: list[tuple[object, ...]] = []
+    while not seen or seen[-1][0] != "gone":
+        message_type, payload = session.receive()
+        context = payload[:8]
+        if message_type == _REQUEST and context == _DOCUMENT and payload[16] == _WORKER_KIND:
+            number = struct.unpack_from("<Q", payload, 8)[0]
+            _respond(session, number, "http://www.example.test/closing.js", "text/javascript")
+            _body(session, number, script)
+            _end(session, number)
+        elif message_type == _WORKER_STARTED:
+            seen.append(("started", context))
+        elif message_type == _REQUEST and context != _DOCUMENT:
+            # Its URL, method, lines and referrer follow its number, Kind, flags and the 13 bytes of its mode and the
+            # rest, each with its size, and then whether it has a body, and the body.
+            fields: list[bytes] = []
+            at = 31
+            for _ in range(4):
+                size = struct.unpack_from("<I", payload, at)[0]
+                fields.append(payload[at + 4 : at + 4 + size])
+                at += 4 + size
+            number = struct.unpack_from("<Q", payload, 8)[0]
+            seen.append(("request", context, number, payload[16], fields[0], fields[1], payload[at:]))
+        elif message_type == _CANCEL:
+            seen.append(("cancel", struct.unpack("<Q", payload)[0]))
+        elif message_type == _CONTEXT_GONE:
+            seen.append(("gone", context))
+
+    assert [event[0] for event in seen] == ["started", "request", "gone"]
+    worker = seen[0][1]
+    number = seen[1][2]
+    assert seen == [
+        ("started", worker),
+        ("request", worker, number, _FETCH_KIND, b"http://www.example.test/beacon", b"POST", b"\x01kept"),
+        ("gone", worker),
+    ]
+    assert session.close() == 0
+
+
+@pytest.mark.parametrize("when", ["response", "end"])
+def test_a_fetch_that_page_code_aborts_while_its_promise_resolves_outlives_the_call(
+    session: _Session, when: str
+) -> None:
+    # Resolving a promise reads the `then` of the Response, or of the last read's result, whose getter aborts the fetch
+    # under the call that the request makes. What it makes after that has the sizes of what the abort would have
+    # destroyed, so that a call that goes on in a request that is gone meets its bytes.
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1)
+        + b"""(async () => {
+            const controller = new AbortController(); const { signal } = controller; window.kept = [];
+            const aborts = (value) => %s;
+            Object.defineProperty(Object.prototype, 'then', { configurable: true, get() {
+                if (aborts(this) && !signal.aborted) {
+                    controller.abort();
+                    for (let i = 0; i < 4000; ++i) kept.push(new Blob(['a'.repeat(16 * (1 + i %% 60))]));
+                }
+                return undefined;
+            } });
+            const response = await fetch('/a', { signal });
+            let end = response.type;
+            if (!signal.aborted) {
+                const reader = response.body.getReader();
+                await reader.read();
+                window.reading = true;
+                end = (await reader.read()).done;
+            }
+            delete Object.prototype.then;
+            return [end, signal.aborted, kept.length];
+        })()"""
+        % (b"value instanceof Response" if when == "response" else b"value.done === true"),
+    )
+    assert session.receive()[0] == _REQUEST
+
+    _respond(session, 1, "http://www.example.test/a", "text/plain", headers="Cache-Control: no-store\n")
+    if when == "response":
+        assert session.receive() == (_CANCEL, struct.pack("<Q", 1))
+        assert session.evaluated() == (1, False, '["basic",true,4000]')
+        _end(session, 1, _ERR_ABORTED)
+    else:
+        _body(session, 1, b"body")
+        assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 4))
+        assert session.evaluate("window.reading", 2) == (False, "true")
+        _end(session, 1)
+        assert session.evaluated() == (1, False, "[true,true,4000]")
+    assert session.evaluate("1 + 1", 3) == (False, "2")
+    assert session.close() == 0
+
+
+def test_a_keepalive_fetch_that_page_code_aborts_frees_its_bytes_at_once(session: _Session) -> None:
+    # Two bodies of 40 KiB are past the quota of 64 KiB that the keepalive requests in flight share.
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1)
+        + b"""(() => {
+            const controller = new AbortController(); const { signal } = controller;
+            const init = { method: 'POST', body: 'a'.repeat(40 * 1024), keepalive: true };
+            Object.defineProperty(Response.prototype, 'then', { configurable: true, get() {
+                if (!signal.aborted) { controller.abort(); fetch('/b', init).catch(() => {}); }
+                return undefined;
+            } });
+            fetch('/a', { ...init, signal });
+        })()""",
+    )
+    assert session.receive()[0] == _REQUEST
+    assert session.evaluated() == (1, False, "")
+
+    _respond(session, 1, "http://www.example.test/a", "text/plain")
+
+    assert session.receive() == (_CANCEL, struct.pack("<Q", 1))
+    message_type, payload = session.receive()
+    assert message_type == _REQUEST
+    assert b"http://www.example.test/b" in payload
+    _end(session, 1, _ERR_ABORTED)
+    assert session.close() == 0
+
+
 def test_a_fetchs_request_init_reaches_the_session_in_its_request(session: _Session) -> None:
     # Mode no-cors takes only the no-CORS-safelisted lines, a referrer of the document's origin goes as a URL, and a
     # fetch's priority "low" is LOWEST, sent as one more than net::LOWEST. Keepalive is flag 8.
@@ -1554,14 +1718,25 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
         pytest.param(_REQUEST, struct.pack("<QB", 1, 1) + b"x", "message type 8 only goes to a Session", id="request"),
         pytest.param(
             _ISOLATION,
-            struct.pack("<QB", 5, 1),
+            struct.pack("<QBB", 5, 1, 2),
             "a cross-origin isolation of request 5, which is not in progress",
             id="isolation-of-no-request",
         ),
         pytest.param(
-            _ISOLATION, struct.pack("<QB", 5, 2), "an isolation of the unknown kind 2", id="isolation-of-unknown-kind"
+            _ISOLATION,
+            struct.pack("<QBB", 5, 2, 0),
+            "an isolation of the unknown kind 2",
+            id="isolation-of-unknown-kind",
         ),
-        pytest.param(_ISOLATION, struct.pack("<Q", 5), "a cross-origin isolation of 8 bytes", id="isolation-too-short"),
+        pytest.param(
+            _ISOLATION,
+            struct.pack("<QBB", 5, 0, 3),
+            "an embedder policy of the unknown kind 3",
+            id="embedder-policy-of-unknown-kind",
+        ),
+        pytest.param(
+            _ISOLATION, struct.pack("<QB", 5, 1), "a cross-origin isolation of 9 bytes", id="isolation-too-short"
+        ),
         pytest.param(_RESPONSE_ENDED, _ended(0, 1), "the end of a response with the net error 1", id="positive-error"),
         pytest.param(
             _RESPONSE_ENDED, struct.pack("<Qi", 0, 0), "an end of a response of 12 bytes", id="end-without-totals"
@@ -1619,6 +1794,22 @@ def test_a_page_refuses_a_response_whose_timing_net_cannot_give(session: _Sessio
     _respond(session, 0, _DOCUMENT_URL, "text/html", timing=timing)
 
     assert session.refusal() == "a response whose timing //net cannot give"
+
+
+@pytest.mark.parametrize(
+    "timing",
+    [
+        pytest.param(_timing(padding=1), id="of-a-response-that-is-not-opaque"),
+        pytest.param(_timing(flags=(0, 0, 0, 0, 0, 1), padding=-1), id="negative"),
+        pytest.param(_timing(flags=(0, 0, 0, 0, 0, 1), padding=14431 * 1024), id="past-chromes-range"),
+    ],
+)
+def test_a_page_refuses_a_response_whose_padding_it_cannot_have(session: _Session, timing: bytes) -> None:
+    session.start()
+
+    _respond(session, 0, _DOCUMENT_URL, "text/html", timing=timing)
+
+    assert session.refusal() == "a response whose padding it cannot have"
 
 
 def test_a_page_refuses_a_response_both_cors_and_opaque(session: _Session) -> None:
@@ -2059,6 +2250,8 @@ def test_a_document_starts_a_navigation_that_its_session_makes_and_whose_respons
     document = b"<title>Next</title>"
     _respond(session, 1, "http://www.example.test/next", "text/html")
     _body(session, 1, document)
+    # The back/forward cache keeps the document that the next one takes the place of.
+    assert session.receive() == (_DOCUMENT_STORED, _DOCUMENT)
     assert session.receive() == (_CREDIT, struct.pack("<QI", 1, len(document)))
     assert session.documents[-1] == struct.pack("<QBBQQ", 3, 1, 0, 0, 1)
     _end(session, 1)

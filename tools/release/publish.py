@@ -2,7 +2,8 @@
 
 A tag vX.Y.Z publishes version X.Y.Z, which must be the version in pyproject.toml. A dry run publishes a pre-release to
 TestPyPI instead, under a version of its own, because an index never takes the same version twice. The notes of a version
-hold its entry in CHANGELOG.md, which says what changes for callers, as docs/releasing.md says.
+hold its entry in CHANGELOG.md, which says what changes for callers, as docs/releasing.md says, once the release's pull
+request has gathered the files of changelog.d into it.
 """
 
 import re
@@ -12,6 +13,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS
+from tools.release.changelog import CHANGELOG, CHANGES_DIRECTORY, ChangelogError, change_files, entries
 from tools.release.window import recorded_build
 
 __all__ = ["REPOSITORY", "PublishError", "dry_run_version", "project_version", "release_notes", "tag_version"]
@@ -21,15 +23,12 @@ REPOSITORY = Path(__file__).parents[2]
 _PYPROJECT = Path("pyproject.toml")
 _CHROMIUM_TAG = Path("tools/workspace/chromium_tag")
 _BASELINES = Path("tests/baselines")
-_CHANGELOG = Path("CHANGELOG.md")
 
 _NUMBER = r"(?:0|[1-9][0-9]*)"
 _RELEASE = rf"{_NUMBER}\.{_NUMBER}\.{_NUMBER}"
 _TAG = re.compile(rf"v(?P<version>{_RELEASE})")
 # PEP 440's normal form, in which the names of the files hold the version as it was given.
 _PRE_RELEASE = re.compile(rf"(?P<release>{_RELEASE})(?P<pre>(?:a|b|rc){_NUMBER})?(?P<dev>\.dev{_NUMBER})?")
-# A heading of CHANGELOG.md, which starts the entry of the version it names.
-_ENTRY_HEADING = re.compile(r"(?m)^## (.*)$")
 # An inline link of Markdown, whose target the notes resolve from CHANGELOG.md at the version's tag.
 _LINK = re.compile(r"\]\((?P<target>[^)\s]+)\)")
 
@@ -85,8 +84,9 @@ def release_notes(version: str, root: Path = REPOSITORY) -> str:
 
     Raises:
         PublishError: The version is not one, CHANGELOG.md has no entry for it or a heading that does not name one
-            version once, the Engine Release is not the newest Chrome Release, the engine is built from another
-            milestone, or the Baselines of a Chrome Release do not name their build.
+            version once, changelog.d still holds a file or is a link, the Engine Release is not the newest Chrome
+            Release, the engine is built from another milestone, or the Baselines of a Chrome Release do not name their
+            build.
     """
     changes = _changes(version, root)
     window = sorted(WINDOWS_PERSONAS, key=int)
@@ -104,7 +104,7 @@ def release_notes(version: str, root: Path = REPOSITORY) -> str:
         builds[release] = build
     at_tag = f"{_project(root)['urls']['Source']}/blob/v{version}/"
     building = urljoin(at_tag, "docs/building.md#build-a-wheel")
-    changelog = urljoin(at_tag, _CHANGELOG.as_posix())
+    changelog = urljoin(at_tag, CHANGELOG.as_posix())
 
     # GitHub shows each line of a release's notes on a line of its own, so a paragraph is one line.
     paragraphs = [
@@ -127,27 +127,32 @@ def _changes(version: str, root: Path) -> str:
 
     Raises:
         PublishError: The version is not one, CHANGELOG.md has no entry for it, or a heading of CHANGELOG.md is not a
-            version or names one twice.
+            version or names one twice, or changelog.d holds lines that the entry lacks or is a link.
     """
     found = _PRE_RELEASE.fullmatch(version)
     if found is None:
         raise PublishError(f"{version} is not a version, such as 0.1.0 or 0.1.0rc1")
     release = found["release"]
-    parts = _ENTRY_HEADING.split((root / _CHANGELOG).read_text(encoding="utf-8"))
-    entries: dict[str, str] = {}
-    # The text before the first heading says what the file is, and belongs to no version.
-    for heading, entry in zip(parts[1::2], parts[2::2], strict=True):
-        if re.fullmatch(_RELEASE, heading) is None:
-            raise PublishError(f"{_CHANGELOG} has a heading {heading!r}, where each names a version, such as 0.1.0")
-        if heading in entries:
-            raise PublishError(f"{_CHANGELOG} has two entries for {heading}")
-        entries[heading] = entry.strip()
-    if not entries.get(release):
-        raise PublishError(
-            f"{_CHANGELOG} has no entry for {release}, and every version needs one that says what changes for "
-            "callers (docs/releasing.md)"
+    text = (root / CHANGELOG).read_text(encoding="utf-8")
+    try:
+        changes = {entry.version: text[entry.start : entry.end].strip() for entry in entries(text)}
+        left = change_files(root)
+    except ChangelogError as error:
+        raise PublishError(str(error)) from error
+    # Gathering also writes an entry that is missing, so a missing entry names the files left too.
+    to_gather = (
+        f"{CHANGES_DIRECTORY} still holds {', '.join(path.as_posix() for path in left)}, whose lines the entry for "
+        f"{release} in {CHANGELOG} lacks: gather them with `uv run python -m tools.release changelog {release}` in "
+        "the release's pull request"
+    )
+    if not changes.get(release):
+        missing = (
+            f"{CHANGELOG} has no entry for {release}, and every version needs one that says what changes for callers"
         )
-    return entries[release]
+        raise PublishError(f"{missing}. {to_gather} (docs/releasing.md)" if left else f"{missing} (docs/releasing.md)")
+    if left:
+        raise PublishError(f"{to_gather} (docs/releasing.md)")
+    return changes[release]
 
 
 def _project(root: Path) -> dict[str, Any]:

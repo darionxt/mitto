@@ -54,6 +54,8 @@ class Geolocation final : public bindings::ScriptWrappable {
 
  private:
   void StartRequest(GeoNotifier* notifier);
+  // Whether the request of `notifier` has not ended.
+  bool Has(const GeoNotifier& notifier) const;
   void Remove(GeoNotifier* notifier);
 
   // The requests, one-shots and watches alike, in a list on the heap, as
