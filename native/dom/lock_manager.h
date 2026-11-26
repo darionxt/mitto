@@ -87,7 +87,10 @@ class LockManager final : public bindings::ScriptWrappable {
 
   // The document's origin, whose lock group this asks, and the client ID of
   // the document.
-  const std::string origin_;
+  // The lock group of the context's storage key, and whether its origin is
+  // opaque, which has none.
+  const std::string group_;
+  const bool is_opaque_;
   const std::string client_id_;
   const scoped_refptr<Connection> connection_;
   HeapVector<LockRequest> pending_requests_;

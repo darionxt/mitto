@@ -54,12 +54,16 @@ std::vector<std::u16string> ParseAndSanitize(
 
 // static
 Navigator* Navigator::Create(const PageStart& start,
-                             const PageConnection& connection) {
-  return bindings::MakeGarbageCollected<Navigator>(start, connection);
+                             const PageConnection& connection,
+                             Window* window) {
+  return bindings::MakeGarbageCollected<Navigator>(start, connection, window);
 }
 
-Navigator::Navigator(const PageStart& start, const PageConnection& connection)
-    : navigator_(start.navigator),
+Navigator::Navigator(const PageStart& start,
+                     const PageConnection& connection,
+                     Window* window)
+    : window_(window),
+      navigator_(start.navigator),
       languages_(ParseAndSanitize(start.navigator.languages, start.locale)),
       processors_(start.processors),
       memory_(start.memory),
@@ -76,6 +80,7 @@ const bindings::WrapperTypeInfo* Navigator::GetWrapperTypeInfo() const {
 
 void Navigator::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
+  visitor->Trace(window_);
   visitor->Trace(languages_array_);
   visitor->Trace(battery_promise_);
   visitor->Trace(connection_);
@@ -206,12 +211,11 @@ NavigatorUAData* Navigator::UserAgentData() const {
   return NavigatorUAData::Create(navigator_.user_agent_data);
 }
 
-// LockManager::locks(): the navigator's supplement, which the current window
-// owns, since it is that window's navigator a script reads.
+// LockManager::locks(): the navigator's supplement, of its window, whichever
+// window's script reads it.
 mitto::LockManager* Navigator::Locks() {
   if (!locks_) {
-    locks_ =
-        bindings::MakeGarbageCollected<mitto::LockManager>(Window::Current());
+    locks_ = bindings::MakeGarbageCollected<mitto::LockManager>(*window_);
   }
   return locks_.Get();
 }

@@ -17,6 +17,7 @@
 #include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/performance.h"
+#include "mitto/dom/storage_key.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "mitto/dom/worker.h"
@@ -155,6 +156,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   params_.origin = context.GetSecurityOrigin();
   params_.outside_origin = context.GetSecurityOrigin();
   params_.agent_cluster_origin = context.AgentClusterOrigin();
+  params_.storage_key = context.StorageKey();
   params_.name = options.name;
   params_.script_url = url;
   params_.module = options.module;
@@ -176,6 +178,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   // opaque origin.
   if (url.SchemeIs(url::kDataScheme)) {
     params_.origin = url::Origin();
+    params_.storage_key = SerializeStorageKey(params_.origin, /*ancestors=*/{});
     std::optional<DataUrlResponse> data_url = ParseDataUrl(url);
     if (!data_url) {
       EventLoop::Get()

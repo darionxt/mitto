@@ -32,13 +32,14 @@ class Storage;
 class Window;
 
 // The window's Storage of `kind`, which `slot` keeps once made. Throws a
-// SecurityError for a document of an opaque origin, and gives null for a
-// window whose context has gone with its frame, or for a Page with no Session
-// to keep its storage, as Blink does for disabled storage.
+// SecurityError for a document of an opaque origin, unless `exception_state`
+// is null, and gives null for a window whose context has gone with its frame,
+// or for a Page with no Session to keep its storage or no room for another
+// area, as Blink does for disabled storage.
 Storage* WindowStorage(Window& window,
                        PageStorageKind kind,
                        cppgc::Member<Storage>& slot,
-                       bindings::ExceptionState& exception_state);
+                       bindings::ExceptionState* exception_state);
 
 class StorageController {
  public:
@@ -51,7 +52,8 @@ class StorageController {
   ~StorageController();
 
   // The cached area of `kind` for `storage_key`, made the first time for the
-  // window of the document numbered `document`.
+  // window of the document numbered `document`, or null once the Page has
+  // bound as many as the Session lets it.
   scoped_refptr<CachedStorageArea> GetCachedArea(PageStorageKind kind,
                                                  const std::string& storage_key,
                                                  uint64_t document);

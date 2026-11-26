@@ -48,15 +48,19 @@ class Permissions;
 class PluginArray;
 class StorageBucketManager;
 class StorageManager;
+class Window;
 
 class Navigator final : public bindings::ScriptWrappable {
  public:
   // What `start` says of the browser and the machine, with `connection` for
-  // the window's document.
+  // the window's document, of `window`, or of none behind a worker's.
   static Navigator* Create(const PageStart& start,
-                           const PageConnection& connection);
+                           const PageConnection& connection,
+                           Window* window);
 
-  Navigator(const PageStart& start, const PageConnection& connection);
+  Navigator(const PageStart& start,
+            const PageConnection& connection,
+            Window* window);
   ~Navigator() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -121,6 +125,7 @@ class Navigator final : public bindings::ScriptWrappable {
   uint16_t CpuPerformance() const;
 
  private:
+  const cppgc::Member<Window> window_;
   const PageNavigator navigator_;
   // navigator.languages, from the languages of Chrome's setting, or the
   // Persona's locale for none.

@@ -1,9 +1,9 @@
 // The Web Locks of the Page's documents and workers, as the browser's
-// LockManager keeps them for each origin's lock group: for each name, a queue
-// of requests whose granted ones come first, shared ones granted together and
-// an exclusive one alone. Chrome keeps one group for an origin across a
-// profile's tabs and workers; the Page keeps one for each origin across its
-// own documents and workers, which are all the clients it has.
+// LockManager keeps them for each lock group, a storage key's: for each name, a
+// queue of requests whose granted ones come first, shared ones granted together
+// and an exclusive one alone. Chrome keeps one group for a storage key across a
+// profile's tabs and workers; the Page keeps one for each across its own
+// documents and workers, which are all the clients it has.
 //
 // It stands where the browser does: what a client asks reaches it from a task
 // of its own, and what it tells a client goes back from another, on the
@@ -79,9 +79,9 @@ class LockService {
   ~LockService();
 
   // The ID of a new lock request of `client`, whose ID is `client_id`, in the
-  // lock group of `origin`. Its answer comes once it has reached the service.
+  // lock group `group`. Its answer comes once it has reached the service.
   int64_t RequestLock(scoped_refptr<Client> client,
-                      std::string origin,
+                      std::string group,
                       std::string client_id,
                       std::string name,
                       Mode mode,
@@ -90,11 +90,11 @@ class LockService {
   // of the pipe closes, at once: the client calls it from a task of its own,
   // after what it asked before, or as its context goes, whose thread may run
   // no task again, as a worker's that ends.
-  void ReleaseLockNow(const std::string& origin, int64_t lock_id);
-  // The held locks and the waiting requests of the lock group of `origin`, as
+  void ReleaseLockNow(const std::string& group, int64_t lock_id);
+  // The held locks and the waiting requests of the lock group `group`, as
   // they stand once the question has reached the service, by name. `answer`
   // gets them from a task of its own.
-  void QueryState(std::string origin,
+  void QueryState(std::string group,
                   base::OnceCallback<void(std::vector<Info> pending,
                                           std::vector<Info> held)> answer);
 
@@ -120,10 +120,10 @@ class LockService {
   class LockGroupState;
 
   // Each runs in a task of its own, as a message reaches the browser.
-  void DoRequestLock(std::string origin, Lock lock, WaitMode wait);
-  void DoReleaseLock(std::string origin, int64_t lock_id);
+  void DoRequestLock(std::string group, Lock lock, WaitMode wait);
+  void DoReleaseLock(std::string group, int64_t lock_id);
   std::pair<std::vector<Info>, std::vector<Info>> Snapshot(
-      const std::string& origin) const;
+      const std::string& group) const;
 
   mutable base::Lock lock_;
   std::map<std::string, std::unique_ptr<LockGroupState>> lock_groups_

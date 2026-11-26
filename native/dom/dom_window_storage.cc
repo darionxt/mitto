@@ -1,19 +1,17 @@
 #include "mitto/dom/dom_window_storage.h"
 
 #include <iterator>
-#include <vector>
+#include <string_view>
+#include <utility>
 
 #include "base/no_destructor.h"
-#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/dom/cached_storage_area.h"
 #include "mitto/dom/document.h"
-#include "mitto/dom/frame.h"
 #include "mitto/dom/storage.h"
 #include "mitto/dom/storage_backend.h"
 #include "mitto/dom/window.h"
-#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -31,47 +29,12 @@ constexpr size_t kTotalCacheLimitInBytes = 5 * 1024 * 1024;
 // again from the Session when a window reaches it, so no script can tell.
 constexpr size_t kMaxCachedAreas = kMaxPageStorageAreas / 2;
 
-// net::SchemefulSite of `origin`: its scheme and registrable domain, or its
-// host where it has none, and an opaque origin its own.
-std::string SiteOf(const url::Origin& origin) {
-  if (origin.opaque()) {
-    return origin.GetDebugString();
-  }
-  const std::string domain =
-      net::registry_controlled_domains::GetDomainAndRegistry(
-          origin, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-  return base::StrCat(
-      {origin.scheme(), "://", domain.empty() ? origin.host() : domain});
-}
-
-// The storage key that the Session gives the window's document of `origin`,
-// as RenderFrameHostImpl::CalculateStorageKey() has it with third-party
-// storage partitioning: the origin, the site of the top-level document, and
-// whether a document from the window's up to it is of another site.
-std::string StorageKeyOf(const Window& window, const url::Origin& origin) {
-  std::vector<url::Origin> documents = {origin};
-  const Frame* const frame = window.GetFrame();
-  for (const Frame* ancestor = frame ? frame->Parent() : nullptr; ancestor;
-       ancestor = ancestor->Parent()) {
-    if (const Window* const ancestor_window = ancestor->DomWindow()) {
-      documents.push_back(ancestor_window->GetSecurityOrigin());
-    }
-  }
-  const std::string top_site = SiteOf(documents.back());
-  bool cross_site = false;
-  for (const url::Origin& document : documents) {
-    cross_site = cross_site || SiteOf(document) != top_site;
-  }
-  return base::StrCat({origin.Serialize(), " ", top_site,
-                       cross_site ? " cross-site" : " same-site"});
-}
-
 }  // namespace
 
 Storage* WindowStorage(Window& window,
                        PageStorageKind kind,
                        cppgc::Member<Storage>& slot,
-                       bindings::ExceptionState& exception_state) {
+                       bindings::ExceptionState* exception_state) {
   // GetOrCreateLocalStorage(): a window that has lost its frame, as a removed
   // frame's that a script still holds, whose context has gone, has none, not
   // even one it made. The Page program given a script has a window with no
@@ -79,15 +42,16 @@ Storage* WindowStorage(Window& window,
   if (!window.HasContext()) {
     return nullptr;
   }
-  const GURL url(base::UTF16ToUTF8(window.GetDocument().UrlForBinding()));
-  const url::Origin origin = url::Origin::Create(url);
   // GetOrCreateLocalStorage() and GetOrCreateSessionStorage(): a document of
   // an opaque origin has no storage. No document of a Page is sandboxed yet.
-  if (origin.opaque()) {
-    exception_state.ThrowDOMException("SecurityError",
-                                      url.SchemeIs(url::kDataScheme)
-                                          ? Storage::kAccessDataMessage
-                                          : Storage::kAccessDeniedMessage);
+  if (window.GetSecurityOrigin().opaque()) {
+    if (exception_state) {
+      const GURL url(base::UTF16ToUTF8(window.GetDocument().UrlForBinding()));
+      exception_state->ThrowDOMException("SecurityError",
+                                         url.SchemeIs(url::kDataScheme)
+                                             ? Storage::kAccessDataMessage
+                                             : Storage::kAccessDeniedMessage);
+    }
     return nullptr;
   }
   if (slot) {
@@ -99,20 +63,34 @@ Storage* WindowStorage(Window& window,
   }
   // Documents of one origin in two partitions, as a top-level document's and
   // a frame's of the same origin under another site, have an area each.
-  slot = Storage::Create(
-      window, StorageController::Get().GetCachedArea(
-                  kind, StorageKeyOf(window, origin), window.DocumentId()));
+  scoped_refptr<CachedStorageArea> area =
+      StorageController::Get().GetCachedArea(kind, window.StorageKey(),
+                                             window.DocumentId());
+  if (area) {
+    slot = Storage::Create(window, std::move(area));
+  }
   return slot.Get();
 }
 
 Storage* Window::LocalStorage(bindings::ExceptionState& exception_state) {
   return WindowStorage(*this, PageStorageKind::kLocal, local_storage_,
-                       exception_state);
+                       &exception_state);
 }
 
 Storage* Window::SessionStorage(bindings::ExceptionState& exception_state) {
   return WindowStorage(*this, PageStorageKind::kSession, session_storage_,
-                       exception_state);
+                       &exception_state);
+}
+
+// DOMWindowStorageController::DidAddEventListener(): a window hears of storage
+// events once it has its Storage objects, which a listener of them makes.
+void Window::ListenersChanged(std::u16string_view type) {
+  if (type == u"storage" && HasEventListeners(type)) {
+    WindowStorage(*this, PageStorageKind::kLocal, local_storage_,
+                  /*exception_state=*/nullptr);
+    WindowStorage(*this, PageStorageKind::kSession, session_storage_,
+                  /*exception_state=*/nullptr);
+  }
 }
 
 // static
@@ -129,12 +107,20 @@ scoped_refptr<CachedStorageArea> StorageController::GetCachedArea(
     const std::string& storage_key,
     uint64_t document) {
   ClearAreasIfNeeded();
-  scoped_refptr<CachedStorageArea>& area = areas_[{kind, storage_key}];
-  if (!area) {
-    area = base::MakeRefCounted<CachedStorageArea>(kind, document,
-                                                   *StorageBackend::Get());
+  const std::pair<PageStorageKind, std::string> key(kind, storage_key);
+  const auto found = areas_.find(key);
+  if (found != areas_.end()) {
+    return found->second;
   }
-  return area;
+  // Only the windows of frames that a script holds on to once they have gone
+  // can take up the areas that the Session lets a Page bind.
+  if (areas_.size() >= kMaxPageStorageAreas) {
+    return nullptr;
+  }
+  return areas_
+      .emplace(key, base::MakeRefCounted<CachedStorageArea>(
+                        kind, document, *StorageBackend::Get()))
+      .first->second;
 }
 
 void StorageController::ClearAreasIfNeeded() {

@@ -15,6 +15,7 @@
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-isolate.h"
 
 namespace mitto {
 
@@ -114,6 +115,8 @@ void Storage::Clear(bindings::ExceptionState& exception_state) {
 std::vector<std::u16string> Storage::NamedPropertyEnumerator() const {
   std::vector<std::u16string> names;
   if (!CanAccessStorage()) {
+    bindings::ExceptionState exception_state(v8::Isolate::GetCurrent());
+    ThrowAccessDenied(exception_state);
     return names;
   }
   const unsigned length = cached_area_->GetLength();
@@ -125,7 +128,12 @@ std::vector<std::u16string> Storage::NamedPropertyEnumerator() const {
 }
 
 bool Storage::NamedPropertyQuery(const std::u16string& name) const {
-  if (name == u"length" || !CanAccessStorage()) {
+  if (name == u"length") {
+    return false;
+  }
+  if (!CanAccessStorage()) {
+    bindings::ExceptionState exception_state(v8::Isolate::GetCurrent());
+    ThrowAccessDenied(exception_state);
     return false;
   }
   return cached_area_->GetItem(name).has_value();
@@ -167,8 +175,10 @@ bool Storage::EnqueueStorageEvent(
 
 bool Storage::CanAccessStorage() const {
   // StorageController::CanAccessStorageArea(): no content setting blocks a
-  // Page's storage, so only a window that has gone loses it.
-  return window_.Get() != nullptr;
+  // Page's storage, so only a window that has gone loses it, as one whose
+  // frame was removed or shows another document has.
+  const Window* const window = window_.Get();
+  return window && window->HasContext();
 }
 
 }  // namespace mitto

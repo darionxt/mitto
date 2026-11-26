@@ -64,7 +64,8 @@ class Storage final : public bindings::ScriptWrappable {
                   bindings::ExceptionState& exception_state);
   void Clear(bindings::ExceptionState& exception_state);
 
-  // The named properties: the keys, in the order of key().
+  // The named properties: the keys, in the order of key(). Each throws a
+  // SecurityError for a window that has gone, as Blink's do.
   std::vector<std::u16string> NamedPropertyEnumerator() const;
   bool NamedPropertyQuery(const std::u16string& name) const;
 
