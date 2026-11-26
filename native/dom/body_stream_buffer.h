@@ -11,9 +11,12 @@
 #ifndef MITTO_DOM_BODY_STREAM_BUFFER_H_
 #define MITTO_DOM_BODY_STREAM_BUFFER_H_
 
+#include <stdint.h>
+
 #include <optional>
 #include <string>
 
+#include "base/functional/function_ref.h"
 #include "base/memory/raw_ptr.h"
 #include "mitto/dom/bytes_consumer.h"
 #include "mitto/dom/fetch_data_loader.h"
@@ -35,6 +38,7 @@ class ExceptionState;
 }  // namespace bindings
 
 class AbortSignal;
+class ExecutionContext;
 class ReadableStream;
 
 class BodyStreamBuffer final : public UnderlyingByteSourceBase,
@@ -68,6 +72,13 @@ class BodyStreamBuffer final : public UnderlyingByteSourceBase,
   // "Create a proxy": a new body that reads this one, whose stream is then
   // locked and disturbed.
   BodyStreamBuffer* CreateProxy(bindings::ExceptionState& exception_state);
+  // Splits the body into two that each give all of it, as clone() does,
+  // leaving this one locked: a stream's own tee for a body made from a
+  // ReadableStream, and BytesConsumerTee() for any other. Throws, and leaves
+  // both null, for a stream in a state that cannot be known.
+  void Tee(BodyStreamBuffer** branch1,
+           BodyStreamBuffer** branch2,
+           bindings::ExceptionState& exception_state);
 
   // UnderlyingByteSourceBase:
   v8::Local<v8::Promise> Pull(
@@ -107,13 +118,27 @@ class BodyStreamBuffer final : public UnderlyingByteSourceBase,
   // the load and the consumer stop, and it no longer keeps itself alive.
   void ContextDestroyed();
   void StopLoading();
+  // Whether its context is still there, as Blink's script state is valid.
+  bool HasContext() const;
+  // Sets the context, which the constructors set to the current one.
+  void SetContext(ExecutionContext* context);
+  // Runs `run` in its context, or in the current one if that has gone.
+  void RunInOwnContext(base::FunctionRef<void()> run);
 
   const raw_ptr<v8::Isolate> isolate_;
+  // The context that it was made in, or that of the body it comes from.
+  cppgc::WeakMember<ExecutionContext> context_;
+  // Whether that context had gone before this was made, which Blink's
+  // observer of it then never hears of.
+  bool made_without_context_ = false;
   cppgc::Member<ReadableStream> stream_;
   cppgc::Member<BytesConsumer> consumer_;
   // While it is loading, it keeps itself alive, as Blink's keep_alive_ does.
   cppgc::Persistent<BodyStreamBuffer> keep_alive_;
   cppgc::Member<FetchDataLoader> loader_;
+  cppgc::Member<LoaderClient> loader_client_;
+  // What tells the buffer, while it loads, that the context goes.
+  uint64_t context_destroyed_callback_ = 0;
   // The signal of the request that brought the body, if any.
   cppgc::Member<AbortSignal> signal_;
   // Whether the stream needs more data even if the desired size is not

@@ -7,6 +7,7 @@ value is what Chrome 157.0.8103.79 gave for the same script, in a page of its ow
 names the Page program, as tests/test_page_program.py does.
 """
 
+import dataclasses
 import http.server
 import os
 import subprocess
@@ -304,6 +305,84 @@ BODIES = {
 }
 
 
+# Request's and Response's members beyond their bodies, each with what Chrome 157.0.8103.79 gave for it.
+MEMBERS = {
+    "a Request's members": (
+        "const r = new Request('https://example.test/'); const k = new Request('https://example.test/', { method: 'POST',"
+        " body: 'x', mode: 'same-origin', credentials: 'include', referrer: '', referrerPolicy: 'origin', keepalive: true });"
+        " return [r, k].map((q) => [JSON.stringify(q.destination), q.referrer, JSON.stringify(q.referrerPolicy), q.mode,"
+        " q.credentials, q.cache, q.redirect, JSON.stringify(q.integrity), q.keepalive, q.isHistoryNavigation,"
+        " q.isReloadNavigation].join()).join(' / ')",
+        'value: "",about:client,"",cors,same-origin,default,follow,"",false,false,false / "",,"origin",same-origin,include,default,follow,"",true,false,false',
+    ),
+    "a Request's referrer policy that is none": (
+        "return new Request('https://example.test/', { referrerPolicy: 'Origin' }).referrerPolicy",
+        "threw: TypeError: Failed to construct 'Request': Failed to read the 'referrerPolicy' property from 'RequestInit': The provided value 'Origin' is not a valid enum value of type ReferrerPolicy.",
+    ),
+    "a Request made from another keeps its members": (
+        "const k = new Request('https://example.test/', { mode: 'no-cors', credentials: 'omit', referrerPolicy:"
+        " 'unsafe-url', keepalive: true }); const r = new Request(k); const m = new Request(k, { method: 'GET' });"
+        " return [r.mode, r.credentials, r.referrerPolicy, r.keepalive, m.mode, m.referrer, m.referrerPolicy].join()",
+        "value: no-cors,omit,unsafe-url,true,no-cors,about:client,",
+    ),
+    "Request's clone()": (
+        "const r = new Request('https://example.test/', { method: 'POST', body: 'abc', headers: { 'X-A': '1' },"
+        " referrerPolicy: 'origin' }); const c = r.clone();"
+        " return [c.url, c.method, c.headers.get('x-a'), c.referrerPolicy, c.signal !== r.signal, c.headers !== r.headers,"
+        " await r.text(), await c.text(), new Request('https://example.test/').clone().body].join()",
+        "value: https://example.test/,POST,1,origin,true,true,abc,abc,",
+    ),
+    "clone() of a used or locked body": (
+        "const used = new Request('https://example.test/', { method: 'POST', body: 'x' }); await used.text();"
+        " const locked = new Response('y'); locked.body.getReader();"
+        " return [() => used.clone(), () => locked.clone(), () => new Response(null).clone().body].map((t) => {"
+        " try { return String(t()); } catch (e) { return e.name + ': ' + e.message; } }).join(' / ')",
+        "value: TypeError: Failed to execute 'clone' on 'Request': Request body is already used / TypeError: Failed to execute 'clone' on 'Response': Response body is already used / null",
+    ),
+    "a clone's signal follows the original's": (
+        "const ac = new AbortController(); const r = new Request('https://example.test/', { signal: ac.signal });"
+        " const c = r.clone(); const before = c.signal.aborted; ac.abort('why');"
+        " return [before, c.signal.aborted, c.signal.reason].join()",
+        "value: false,true,why",
+    ),
+    "Response's clone()": (
+        "const r = new Response('hello', { status: 201, statusText: 'Made', headers: { 'x-b': '2' } }); const c = r.clone();"
+        " return [c.status, c.statusText, c.headers.get('x-b'), c.type, c.url === '', c.headers !== r.headers,"
+        " await c.text(), r.bodyUsed, await r.text()].join()",
+        "value: 201,Made,2,default,true,true,hello,false,hello",
+    ),
+    "clones of each kind of body": (
+        "const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('st')); c.close(); } });"
+        " const bytes = new ReadableStream({ type: 'bytes', start(c) { c.enqueue(new Uint8Array([98, 121])); c.close(); } });"
+        " const out = []; for (const body of [stream, bytes, new Blob(['bl']), new Uint8Array([97, 98]), 'tx',"
+        " new URLSearchParams('a=1')]) { const r = new Response(body); const c = r.clone();"
+        " out.push(await c.text() + '|' + await r.text()); } return out.join()",
+        "value: st|st,by|by,bl|bl,ab|ab,tx|tx,a=1|a=1",
+    ),
+    "when a clone's first read settles": (
+        "for (const [name, body] of [['text', 'ab'], ['blob', new Blob(['ab'])]]) { const c = new Response(body).clone();"
+        " const reader = c.body.getReader(); setTimeout(() => log.push(name + ' timeout'), 0);"
+        " const { value } = await reader.read(); log.push(name + ' read ' + value.length); await tick(); }"
+        " return log.join()",
+        "value: text timeout,text read 2,blob timeout,blob read 2",
+    ),
+    "Response.error()": (
+        "const e = Response.error(); let threw = ''; try { e.headers.set('a', 'b'); } catch (x) { threw = x.name; }"
+        " return [e.type, e.status, JSON.stringify(e.statusText), e.ok, e.body, JSON.stringify(e.url), [...e.headers].length,"
+        " threw, e.redirected, Response.error() !== e, e.clone().type].join()",
+        'value: error,0,"",false,,"",0,TypeError,false,true,error',
+    ),
+    "Response.redirect()": (
+        "const r = Response.redirect('https://example.test/x?y#z', 307); const d = Response.redirect('https://Example.test');"
+        " const errors = [() => Response.redirect('https://example.test/', 200), () => Response.redirect('http://[', 302),"
+        " () => Response.redirect()].map((t) => { try { t(); return 'ok'; } catch (e) { return e.name + ': ' + e.message; } });"
+        " return [r.status, r.headers.get('location'), r.type, r.body, JSON.stringify(r.statusText), r.redirected,"
+        " d.status, d.headers.get('location'), ...errors].join(' / ')",
+        "value: 307 / https://example.test/x?y#z / default /  / \"\" / false / 302 / https://example.test/ / RangeError: Failed to execute 'redirect' on 'Response': Invalid status code / TypeError: Failed to execute 'redirect' on 'Response': Failed to parse URL from http://[ / TypeError: Failed to execute 'redirect' on 'Response': 1 argument required, but only 0 present.",
+    ),
+}
+
+
 @pytest.fixture(scope="module")
 def program() -> Path:
     value = os.environ.get(_PROGRAM_ENV_VAR)
@@ -335,9 +414,15 @@ def test_form_bodies_and_iterators_do_what_chrome_does(program: Path, script: st
     assert _evaluate(program, script) == chrome
 
 
+@pytest.mark.parametrize(("script", "chrome"), MEMBERS.values(), ids=MEMBERS.keys())
+def test_request_and_response_members_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, script) == chrome
+
+
 @pytest.fixture
 def page_url(native_library: Any) -> Iterator[str]:
-    """The URL of an empty page on 127.0.0.1, or skip if no Page program lies beside the library."""
+    """The URL of an empty page on 127.0.0.1, whose /referer gives any origin the Referer line that came, and /names the
+    names of the lines that came, in their order, or skip if no Page program lies beside the library."""
     library_path = _native.find_library()
     assert library_path is not None
     if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
@@ -349,6 +434,11 @@ def page_url(native_library: Any) -> Iterator[str]:
         def do_GET(self) -> None:
             body = b"<!doctype html><title>t</title><body>"
             self.send_response(200)
+            if self.path == "/referer":
+                body = self.headers.get("Referer", "none").encode()
+                self.send_header("Access-Control-Allow-Origin", "*")
+            elif self.path.startswith("/names"):
+                body = ",".join(name for name in self.headers if name.lower() not in {"host", "connection"}).encode()
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -662,6 +752,160 @@ _REALM_SCRIPTS: dict[str, tuple[str, str]] = {
 }
 
 
+# Bodies of a realm's own, one of each kind that clone() copies, and the prototype whose clone() copies it.
+_CLONE_PRELUDE = """
+const streamOf = (w, text) =>
+    new w.ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(text)); c.close(); } });
+const MAKERS = [
+    ["string", (w) => new w.Response("x")], ["blob", (w) => new w.Response(new w.Blob(["x"]))],
+    ["stream", (w) => new w.Response(streamOf(w, "x"))], ["null", (w) => new w.Response(null)],
+    ["request", (w) => new w.Request("https://example.test/", { method: "POST", body: "x" })],
+    ["request without a body", (w) => new w.Request("https://example.test/")]];
+const prototypeOf = (w, kind) => kind.startsWith("request") ? w.Request.prototype : w.Response.prototype;
+const attempt = (run) => { try { return run(); } catch (e) { return "threw " + e.name + ": " + e.message; } };
+const all = async (run) => (await Promise.all(MAKERS.map(run))).join("; ");
+"""
+
+_REALM_SCRIPTS.update(
+    {
+        "a frame's clone() of the window's body": (
+            _CLONE_PRELUDE
+            + """
+        const w = frame().contentWindow;
+        return all(async ([kind, make]) => {
+            const r = make(window); const c = prototypeOf(w, kind).clone.call(r);
+            return [kind, of(c, w), of(c.headers, w), of(c.body, w), of(c.signal ?? null, w),
+                    await c.text() + await r.text()].join(" ");
+        });
+        """,
+            "string true/false true/false true/false object xx; blob true/false true/false true/false object xx; "
+            "stream true/false true/false true/false object xx; null true/false true/false object object ; "
+            "request true/false true/false true/false true/false xx; "
+            "request without a body true/false true/false object true/false ",
+        ),
+        "the window's clone() of a frame's body": (
+            _CLONE_PRELUDE
+            + """
+        const w = frame().contentWindow;
+        return all(async ([kind, make]) => {
+            const r = make(w); const c = prototypeOf(window, kind).clone.call(r);
+            return [kind, of(c, w), of(c.headers, w), of(c.body, w), of(c.signal ?? null, w),
+                    await c.text() + await r.text()].join(" ");
+        });
+        """,
+            "string false/true false/true false/true object xx; blob false/true false/true false/true object xx; "
+            "stream false/true false/true false/true object xx; null false/true false/true object object ; "
+            "request false/true false/true false/true false/true xx; "
+            "request without a body false/true false/true object false/true ",
+        ),
+        "the clone() of a frame that goes after it": (
+            _CLONE_PRELUDE
+            + """
+        return all(async ([kind, make]) => {
+            const f = frame(); const r = make(window);
+            const c = prototypeOf(f.contentWindow, kind).clone.call(r);
+            f.remove();
+            return kind + " " + await outcome(c.text()) + " " + await outcome(r.text());
+        });
+        """,
+            "string ok x ok x; blob ok x ok x; stream ok x ok x; null ok  ok ; request ok x ok x; "
+            "request without a body ok  ok ",
+        ),
+        "the clone() of a frame that has gone": (
+            _CLONE_PRELUDE
+            + """
+        return all(async ([kind, make]) => {
+            const f = frame(); const { clone } = prototypeOf(f.contentWindow, kind);
+            f.remove();
+            const r = make(window); const c = clone.call(r);
+            return kind + " " + await outcome(c.text()) + " " + await outcome(r.text());
+        });
+        """,
+            "string ok x ok x; blob ok x ok x; stream ok x ok x; null ok  ok ; request ok x ok x; "
+            "request without a body ok  ok ",
+        ),
+        "clone() of the body of a frame that has gone": (
+            _CLONE_PRELUDE
+            + """
+        return all(async ([kind, make]) => {
+            const f = frame(); const r = make(f.contentWindow);
+            f.remove();
+            const c = attempt(() => prototypeOf(window, kind).clone.call(r));
+            return kind + " " + (typeof c === "string" ? c : await outcome(c.text()));
+        });
+        """,
+            "string threw InvalidStateError: Failed to execute 'clone' on 'Response': "
+            "Cannot release body in a window or worker that has been detached; "
+            "blob threw InvalidStateError: Failed to execute 'clone' on 'Response': "
+            "Cannot release body in a window or worker that has been detached; "
+            "stream rejected InvalidStateError: Failed to execute 'text' on 'Response': "
+            "Cannot load body from a frame or worker than has been detached; null pending; "
+            "request threw InvalidStateError: Failed to execute 'clone' on 'Request': "
+            "Cannot release body in a window or worker that has been detached; request without a body pending",
+        ),
+        "bodies made after their frame has gone": (
+            _CLONE_PRELUDE
+            + """
+        return all(async ([kind, make]) => {
+            const f = frame(); const { Response, Request, Blob, ReadableStream } = f.contentWindow;
+            f.remove();
+            const r = make({ Response, Request, Blob, ReadableStream }); const c = r.clone();
+            return kind + " " + await outcome(c.text());
+        });
+        """,
+            "; ".join(
+                f"{kind} rejected InvalidStateError: Failed to execute 'text' on '{interface}': "
+                "Cannot load body from a frame or worker than has been detached"
+                if interface
+                else f"{kind} pending"
+                for kind, interface in (
+                    ("string", "Response"),
+                    ("blob", "Response"),
+                    ("stream", "Response"),
+                    ("null", None),
+                    ("request", "Request"),
+                    ("request without a body", None),
+                )
+            ),
+        ),
+        "a Request made from a Request of a frame that had gone": (
+            """
+        const f = frame(); const theirs = f.contentWindow.Request; f.remove();
+        const r = new theirs("https://example.test/", { method: "POST", body: "x" });
+        const copy = new theirs(r); const other = new theirs("https://example.test/", { method: "POST", body: "x" });
+        const mine = new Request(other);
+        return [r.bodyUsed, copy.bodyUsed, await outcome(copy.text()), other.bodyUsed, mine.bodyUsed].join("; ");
+        """,
+            "true; false; rejected InvalidStateError: Failed to execute 'text' on 'Request': "
+            "Cannot load body from a frame or worker than has been detached; true; false",
+        ),
+        "a Request made from a Request of a frame that goes": (
+            """
+        const f = frame(); const w = f.contentWindow;
+        const theirs = new w.Request("https://example.test/", { method: "POST", body: "x" });
+        const mine = new Request(theirs); const used = theirs.bodyUsed;
+        f.remove();
+        const attempt = (run) => { try { return run(); } catch (e) { return e.name + ": " + e.message; } };
+        return [used, mine.bodyUsed, attempt(() => mine.clone()), await outcome(mine.text())].join("; ");
+        """,
+            "true; false; InvalidStateError: Failed to execute 'clone' on 'Request': "
+            "Cannot release body in a window or worker that has been detached; "
+            "rejected InvalidStateError: Failed to execute 'text' on 'Request': "
+            "Cannot load body from a frame or worker than has been detached",
+        ),
+        "Response.error() and redirect() of a frame that goes": (
+            """
+        const f = frame(); const w = f.contentWindow; const R = w.Response;
+        const before = [of(R.error(), w), of(R.redirect("/a"), w), of(R.error.call(Response), w)];
+        f.remove();
+        return [...before, R.error().type, new URL(R.redirect("/a").headers.get("location")).pathname].join(" ");
+        """,
+            "false/true false/true false/true error /a",
+        ),
+    }
+)
+
+
 @pytest.mark.parametrize("name", _REALM_SCRIPTS)
 def test_body_reads_are_of_the_realm_chrome_has_them_of(page_url: str, name: str) -> None:
     script, expected = _REALM_SCRIPTS[name]
@@ -671,3 +915,206 @@ def test_body_reads_are_of_the_realm_chrome_has_them_of(page_url: str, name: str
     ):
         wrapped = f"(async () => {{ {_REALM_PRELUDE} {script} }})()"
         assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == expected
+
+
+_MEMBERS_PRELUDE = """
+const members = (r) => ["method", "destination", "referrer", "referrerPolicy", "mode", "credentials", "cache",
+    "redirect", "integrity", "keepalive", "isHistoryNavigation", "isReloadNavigation", "duplex"].map((m) => r[m]).join();
+"""
+
+# Scripts of a page of its own origin, with what Chrome 157.0.8103.79 gave for each.
+_PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
+    "the requests that a cache gives": (
+        """
+        const cache = await caches.open("requests");
+        await cache.put("/a", new Response("x"));
+        await cache.put(new Request("/b", { mode: "same-origin", credentials: "include", referrer: "",
+                                            referrerPolicy: "origin", keepalive: true }), new Response("x"));
+        return (await cache.keys()).map(members).join(" / ");
+        """,
+        "GET,,,,no-cors,omit,default,follow,,false,false,false,half / "
+        "GET,,,,no-cors,omit,default,follow,,false,false,false,half",
+    ),
+    "the header lines of copies of a cache's request": (
+        """
+        const cache = await caches.open("copies");
+        await cache.put(new Request("/h", { headers: { "X-Version": "1", "Accept-Language": "fr" } }), new Response("x"));
+        const key = (await cache.keys())[0]; const names = (r) => [...r.headers.keys()].join();
+        const copy = new Request(key); copy.headers.set("X-Late", "1"); copy.headers.delete("X-Version");
+        const made = [{ method: "GET" }, { mode: "cors" }, { signal: null }, { priority: "high" }];
+        return [names(key), names(new Request(key)), names(new Request(key, {})), names(copy),
+                ...made.map((init) => names(new Request(key, init)))].join(" / ");
+        """,
+        "accept-language,x-version / accept-language,x-version / accept-language,x-version / "
+        "accept-language,x-version / accept-language / accept-language,x-version / accept-language / accept-language",
+    ),
+    "what goes as a blob's referrer": (
+        """
+        const script = `
+            const referrer = URL.createObjectURL(new Blob(["x"]));
+            const of = async (init) => (await fetch("${location.origin}/referer", { referrer, ...init })).text();
+            (async () => postMessage([await of({}), await of({ referrerPolicy: "unsafe-url" })].join()))();`;
+        const run = (url) => new Promise((resolve) => { new Worker(url).onmessage = (event) => resolve(event.data); });
+        const referrer = URL.createObjectURL(new Blob(["x"]));
+        const mine = await (await fetch("/referer", { referrer, referrerPolicy: "unsafe-url" })).text();
+        const frame = document.createElement("iframe"); document.body.append(frame);
+        const theirs = await frame.contentWindow.fetch(location.origin + "/referer", { referrer: location.origin + "/r" });
+        return [await run("data:text/javascript," + encodeURIComponent(script)), mine,
+                (await theirs.text()).replace(location.origin, "here")].join();
+        """,
+        "none,none,none,here/r",
+    ),
+    "the referrers of an opaque origin's blobs": (
+        """
+        const script = `
+            const url = URL.createObjectURL(new Blob(["x"]));
+            const of = () => new Request("https://example.test/", { referrer: url }).referrer;
+            const kept = of() === url;
+            URL.revokeObjectURL(url);
+            postMessage([self.origin, kept, of()].join());`;
+        const worker = new Worker("data:text/javascript," + encodeURIComponent(script));
+        return new Promise((resolve) => { worker.onmessage = (event) => resolve(event.data); });
+        """,
+        "null,true,about:client",
+    ),
+    "a cache's put of a body whose frame goes while it is read": (
+        """
+        const cache = await caches.open("leaving"); const log = []; const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const remove = (f) => f.remove();
+        const navigate = (f) => new Promise((resolve) => { f.onload = resolve; f.srcdoc = "<p>"; });
+        const run = async (name, of, leave) => {
+            const f = document.createElement("iframe"); document.body.append(f); const w = f.contentWindow;
+            let controller; let cancelled = ""; const url = location.origin + "/" + name;
+            const source = { start(c) { controller = c; }, cancel() { cancelled = " cancelled"; } };
+            const put = cache.put(url, of(w, source)).then(() => "put", (e) => e.name);
+            controller.enqueue(new TextEncoder().encode("part")); await wait(30);
+            await leave(f); await wait(30);
+            let sent = "sent"; try { controller.enqueue(new TextEncoder().encode("more")); controller.close(); } catch (e) { sent = e.name; }
+            const settled = await Promise.race([put, wait(100).then(() => "pending")]);
+            log.push(name + " " + settled + cancelled + " " + sent + " " + (await cache.match(url) ? "stored" : "not stored"));
+        };
+        for (const [way, leave] of [["removed", remove], ["navigated", navigate]]) {
+            await run(way + "-theirs", (w, source) => new w.Response(new w.ReadableStream(source)), leave);
+            await run(way + "-mine", (w, source) => new w.Response(new ReadableStream(source)), leave);
+            await run(way + "-clone", (w, source) => new w.Response(new w.ReadableStream(source)).clone(), leave);
+        }
+        return log.join("; ");
+        """,
+        "removed-theirs pending sent not stored; removed-mine pending sent not stored; "
+        "removed-clone pending sent not stored; navigated-theirs pending sent not stored; "
+        "navigated-mine pending sent not stored; navigated-clone pending sent not stored",
+    ),
+    "a cache's put of a body whose frame has gone": (
+        """
+        const cache = await caches.open("gone"); const log = [];
+        for (const of of [(w) => new w.Response("x"), (w) => new w.Response(new w.ReadableStream()), (w) => new w.Response(null)]) {
+            const f = document.createElement("iframe"); document.body.append(f); const response = of(f.contentWindow);
+            f.remove();
+            log.push(await cache.put(location.origin + "/gone", response).then(() => "put", (e) => e.name + ": " + e.message));
+        }
+        return log.join("; ");
+        """,
+        "InvalidStateError: Failed to execute 'put' on 'Cache': Cannot load body from a frame or worker than has been "
+        "detached; InvalidStateError: Failed to execute 'put' on 'Cache': Cannot load body from a frame or worker than has "
+        "been detached; put",
+    ),
+    "the order of the lines of a cache's requests": (
+        """
+        const cache = await caches.open("names"); const out = [];
+        for (const lines of [[["X-Version", "1"], ["Accept-Language", "fr"], ["Content-Type", "application/json"]],
+                             [["X-Zeta", "1"], ["Accept", "text/plain"], ["X-Alpha", "2"]]]) {
+            const url = location.origin + "/names?" + out.length;
+            await cache.put(new Request(url, { headers: lines }), new Response("x"));
+            const key = (await cache.keys()).find((r) => r.url === url);
+            for (const request of [key, new Request(key)]) out.push(await (await fetch(request)).text());
+        }
+        return out.join(" / ");
+        """,
+        "sec-ch-ua-platform,X-Version,Accept-Language,sec-ch-ua,Content-Type,sec-ch-ua-mobile,User-Agent,Accept,"
+        "Sec-Fetch-Site,Sec-Fetch-Mode,Sec-Fetch-Dest,Accept-Encoding / sec-ch-ua-platform,X-Version,Accept-Language,"
+        "sec-ch-ua,Content-Type,sec-ch-ua-mobile,User-Agent,Accept,Sec-Fetch-Site,Sec-Fetch-Mode,Sec-Fetch-Dest,"
+        "Accept-Encoding / X-Zeta,X-Alpha,sec-ch-ua-platform,User-Agent,Accept,sec-ch-ua,sec-ch-ua-mobile,"
+        "Sec-Fetch-Site,Sec-Fetch-Mode,Sec-Fetch-Dest,Accept-Encoding,Accept-Language / X-Zeta,X-Alpha,"
+        "sec-ch-ua-platform,User-Agent,Accept,sec-ch-ua,sec-ch-ua-mobile,Sec-Fetch-Site,Sec-Fetch-Mode,"
+        "Sec-Fetch-Dest,Accept-Encoding,Accept-Language",
+    ),
+    "the Range line of a copy of a cache's request": (
+        """
+        const cache = await caches.open("range");
+        await cache.put(new Request(location.origin + "/range", { headers: { Range: "bytes=0-1", Accept: "a/b" } }), new Response("x"));
+        const key = (await cache.keys())[0];
+        return [(h) => {}, (h) => h.set("accept", "c/d"), (h) => h.append("accept", "c/d"), (h) => h.delete("accept"),
+                (h) => h.delete("x-none"), (h) => h.set("accept", "x".repeat(200)), (h) => h.set("range", "bytes=1-2"),
+                (h) => h.delete("range"), (h) => h.delete("cookie")].map((change) => {
+            const request = new Request(key); change(request.headers); return [...request.headers].join();
+        }).join(" / ");
+        """,
+        "accept,a/b,range,bytes=0-1 / accept,c/d / accept,a/b, c/d /  / accept,a/b,range,bytes=0-1 / "
+        "accept,a/b,range,bytes=0-1 / accept,a/b,range,bytes=0-1 / accept,a/b / accept,a/b,range,bytes=0-1",
+    ),
+    "the referrers of an initial about:blank frame's requests": (
+        """
+        const f = document.createElement("iframe"); document.body.append(f);
+        return [location.origin + "/ref", "https://other.test/ref", "/relative", "", "about:client", "about:blank"]
+            .map((referrer) => new f.contentWindow.Request(location.origin + "/x", { referrer }).referrer
+                .replace(location.origin, "here")).join();
+        """,
+        "here/ref,about:client,here/relative,,about:client,about:client",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", _PAGE_SCRIPTS)
+def test_requests_of_a_page_have_the_members_chrome_gives_them(page_url: str, name: str) -> None:
+    script, expected = _PAGE_SCRIPTS[name]
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        wrapped = f"(async () => {{ {_MEMBERS_PRELUDE} {script} }})()"
+        assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == expected
+
+
+def test_a_cache_put_whose_bodys_frame_goes_keeps_nothing(page_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The promise stays pending, and the request and the response that it waited with go. gc() is V8's, which
+    # --expose-gc gives the Page.
+    to_option = _native.PageFeatures.to_option
+
+    def with_gc(features: _native.PageFeatures) -> dict[str, object]:
+        return to_option(dataclasses.replace(features, v8_flags=(*features.v8_flags, "--expose-gc")))
+
+    monkeypatch.setattr(_native.PageFeatures, "to_option", with_gc)
+    script = """
+      (async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const cache = await caches.open("kept"); const refs = []; globalThis.cache = cache;
+        const put = (i, response) => {
+            const request = new Request(location.origin + "/" + i);
+            cache.put(request, response);
+            refs.push(new WeakRef(request), new WeakRef(response));
+        };
+        const frame = () => { const f = document.createElement("iframe"); document.body.append(f); return f; };
+        // A frame that goes while more of its body is read, and one that the body's first read removes.
+        const later = async (i) => {
+            const f = frame(); const w = f.contentWindow; let controller;
+            put(i, new w.Response(new w.ReadableStream({ start(c) { controller = c; } })));
+            controller.enqueue(new Uint8Array(10));
+            await wait(10);
+            f.remove();
+        };
+        const inPull = async (i) => {
+            const f = frame();
+            const response = new f.contentWindow.Response(new ReadableStream({ pull() { f.remove(); } }, { highWaterMark: 0 }));
+            await wait(0);
+            put(i, response);
+        };
+        for (let i = 0; i < 5; i++) { await later(i); await inPull(i + 5); }
+        for (let i = 0; i < 5; i++) { await wait(50); gc(); }
+        return refs.filter((ref) => ref.deref()).length;
+      })()
+    """
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == 0

@@ -32,6 +32,7 @@
 #include "mitto/dom/request.h"
 #include "mitto/dom/resource.h"
 #include "mitto/dom/resource_fetcher.h"
+#include "mitto/dom/script_forbidden_scope.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "mitto/dom/worker_global_scope.h"
@@ -219,7 +220,9 @@ void ExecutionContext::SetTimers(DOMTimerCoordinator* timers) {
     return;
   }
   // The context goes, and with it the signals' timers and what else goes
-  // with it.
+  // with it, which run no script, as what Blink's NotifyContextDestroyed()
+  // tells runs none.
+  const ScriptForbiddenScope forbid_script;
   std::map<uint64_t, base::OnceClosure> signal_timers;
   signal_timers.swap(signal_timers_);
   for (auto& [id, cancel] : signal_timers) {
@@ -448,7 +451,13 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   if (request->credentials() != FetchCredentialsMode::kSameOrigin) {
     data.credentials = request->credentials();
   }
+  // A referrer that is no HTTP or HTTPS URL, such as a blob: URL, sends none,
+  // as SecurityPolicy::GenerateReferrer() has it.
   data.referrer = request->referrer();
+  if (data.referrer != kClientReferrer &&
+      !GURL(data.referrer).SchemeIsHTTPOrHTTPS()) {
+    data.referrer = kNoReferrer;
+  }
   // A request whose policy is the empty string goes with the document's. A
   // worker's would go with the policy of its script's response, which it does
   // not have: a Known Gap.

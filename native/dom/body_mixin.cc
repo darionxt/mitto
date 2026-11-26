@@ -299,12 +299,6 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
   const bool has_context = execution_context && execution_context->HasContext();
   if (BodyStreamBuffer* const body_buffer =
           read_as == ReadAs::kNothing ? nullptr : BodyBuffer()) {
-    if (!has_context) {
-      exception_state.ThrowDOMException(
-          "InvalidStateError",
-          "Cannot load body from a frame or worker than has been detached");
-      return v8::Local<v8::Promise>();
-    }
     BodyConsumer::Kind kind = BodyConsumer::Kind::kText;
     FetchDataLoader* loader = nullptr;
     switch (read_as) {

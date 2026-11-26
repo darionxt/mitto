@@ -157,13 +157,17 @@ Request* RequestFromCache(const PageCacheRequest& request) {
 
 Response* ResponseFromCache(CacheStorageHost& host,
                             const PageCacheResponse& response) {
-  // network.mojom.FetchResponseType: basic, cors, default and opaque are what
-  // the Runtime's responses can be, and what a page put.
+  // network.mojom.FetchResponseType: basic, cors, default, error and opaque
+  // are what the Runtime's responses can be, and what a page put.
   Response::ResponseType type = Response::ResponseType::kDefault;
   if (response.type == 0) {
     type = Response::ResponseType::kBasic;
   } else if (response.type == 1) {
     type = Response::ResponseType::kCors;
+  } else if (response.type == 3) {
+    // A network error's, as Response.error() gives, which needs nothing
+    // else.
+    return Response::Error();
   } else if (response.type == 4) {
     type = Response::ResponseType::kOpaque;
   }

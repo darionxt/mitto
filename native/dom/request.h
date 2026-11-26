@@ -64,6 +64,25 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   AbortSignal* Signal() const { return signal_.Get(); }
   std::u16string Duplex() const { return u"half"; }
   ReadableStream* Body() const { return BodyStream(); }
+  // A Request that a script makes has no destination, as Blink's has none.
+  std::u16string Destination() const { return std::u16string(); }
+  // "about:client", the empty string for no referrer, or the URL.
+  std::u16string Referrer() const;
+  std::u16string GetReferrerPolicy() const;
+  std::u16string Mode() const;
+  std::u16string Credentials() const;
+  // The defaults, which RequestInit cannot change yet.
+  std::u16string Cache() const { return u"default"; }
+  std::u16string Redirect() const { return u"follow"; }
+  std::u16string Integrity() const { return std::u16string(); }
+  bool Keepalive() const { return keepalive_; }
+  // Its target address space, which only the default can set yet.
+  std::u16string TargetAddressSpace() const { return u"unknown"; }
+  bool IsHistoryNavigation() const { return false; }
+  bool IsReloadNavigation() const { return false; }
+  // A copy with a tee of its body and a signal that follows its own, as
+  // Blink's clone() makes it.
+  Request* Clone(bindings::ExceptionState& exception_state);
 
   // What fetch() uses.
   const GURL& url() const { return url_; }
