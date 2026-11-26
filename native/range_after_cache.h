@@ -12,8 +12,9 @@ namespace mitto {
 // The lines that a request of `method` and `load_flags` with `headers` goes
 // out with through Chrome's HTTP cache, when that cache moves its Range line:
 // HttpCache::Transaction::SetRequest() takes it off a GET of one valid range
-// that it may cache, and PartialData::RestoreHeaders() puts it back last, as
-// HttpByteRange writes it. Else nullopt, and the lines stay as they are.
+// that it may cache, and PartialData::RestoreHeaders() puts it back after the
+// others, as HttpByteRange writes it, ahead of what HTTP/2 and HTTP/3 add, such
+// as `priority`. Else nullopt, and the lines stay as they are.
 //
 // Upstream: net/http/http_cache_transaction.cc
 // Upstream: net/http/http_cache_util.cc

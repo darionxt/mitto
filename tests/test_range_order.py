@@ -1,7 +1,7 @@
 """Tests of where a request's Range line goes on the wire: docs/api.md, "The order on a `fetch` and an `xhr`".
 
-Chrome's HTTP cache takes the Range line off a GET of one valid range that it may cache and puts it back last, after
-the lines that //net adds, as it writes a range. A Session with a cache has //net's own, which does the same, and one
+Chrome's HTTP cache takes the Range line off a GET of one valid range that it may cache and puts it back after the
+lines that //net adds, as it writes a range. A Session with a cache has //net's own, which does the same, and one
 without does what it would. Each expected value is what Chrome for Testing 157.0.8103.79 gave for the same script, in a
 page of its own, over HTTP/1.1. Tests that take the native_library fixture are skipped when this machine has no native
 library.
@@ -91,32 +91,36 @@ AS_CHROME = "\n".join(
 
 
 @pytest.fixture
-def page_url(native_library: Any) -> Iterator[str]:
-    """The URL of an empty page on 127.0.0.1, whose /lines gives the names of the lines that came, in their order, and
-    the Range line, or skip if no Page program lies beside the library."""
-    library_path = _native.find_library()
-    assert library_path is not None
-    if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
-        pytest.skip("no Page program beside the library")
+def server_url(native_library: Any) -> Iterator[str]:
+    """The URL of an empty page on 127.0.0.1, whose /lines gives, in its body and in its X-Lines line, the names of the
+    lines that came, in their order, and the Range line."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
+            self._answer(head=False)
+
+        def do_HEAD(self) -> None:
+            self._answer(head=True)
+
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self._answer(head=False)
+
+        def _answer(self, head: bool) -> None:
             body = b"<!doctype html><title>t</title><body>"
+            self.send_response(200)
             if self.path.startswith("/lines"):
                 names = ",".join(name for name in self.headers if name.lower() not in {"host", "connection"})
                 body = f"{names} | {self.headers.get('Range', 'none')}".encode()
-            self.send_response(200)
+                self.send_header("X-Lines", body.decode())
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(body)
-
-        def do_POST(self) -> None:
-            self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            self.do_GET()
+            if not head:
+                self.wfile.write(body)
 
         def log_message(self, format: str, *args: Any) -> None:
             pass
@@ -126,6 +130,16 @@ def page_url(native_library: Any) -> Iterator[str]:
     yield f"http://127.0.0.1:{server.server_port}/"
     server.shutdown()
     server.server_close()
+
+
+@pytest.fixture
+def page_url(server_url: str) -> str:
+    """The same URL, or skip if no Page program lies beside the library."""
+    library_path = _native.find_library()
+    assert library_path is not None
+    if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
+        pytest.skip("no Page program beside the library")
+    return server_url
 
 
 @pytest.mark.parametrize("cache", [None, "memory"])
@@ -138,43 +152,36 @@ def test_a_pages_range_line_goes_where_chrome_sends_it(page_url: str, cache: str
 
 
 @pytest.mark.parametrize("kind", [RequestKind.FETCH, RequestKind.NAVIGATION, RequestKind.IMAGE])
-def test_a_callers_range_line_goes_where_chromes_cache_puts_it(page_url: str, kind: RequestKind) -> None:
-    # //net's cache moves it as Chrome's does, and a Session without a cache moves it the same way.
-    requests: list[tuple[str, dict[str, str]]] = [
-        ("GET", {"Range": "bytes=0-1", "X-B": "2"}),
-        ("GET", {"X-B": "2", "Range": "bytes = 00-"}),
-        ("GET", {"Range": "bytes=-5"}),
-        ("GET", {"Range": "bytes=0-1,3-4", "X-B": "2"}),
-        ("GET", {"Range": "items=1-2", "X-B": "2"}),
-        ("GET", {"Range": "bytes=0-1", "If-Range": "x"}),
-        ("GET", {"Range": "bytes=0-1", "If-Match": "x"}),
-        ("GET", {"Range": "bytes=0-1", "If-Unmodified-Since": "x"}),
-        ("GET", {"Range": "bytes=0-1", "If-None-Match": "x"}),
-        ("GET", {"Range": "bytes=0-1", "If-Modified-Since": "x"}),
-        ("GET", {"Range": "bytes=0-1", "Pragma": "no-cache"}),
-        ("HEAD", {"Range": "bytes=0-1"}),
+def test_a_callers_range_line_goes_where_chromes_cache_puts_it(server_url: str, kind: RequestKind) -> None:
+    # //net's cache moves it as Chrome's does, and a Session without a cache moves it the same way: after the lines
+    # that //net adds, or not at all.
+    requests: list[tuple[str, dict[str, str], str | None]] = [
+        ("GET", {"Range": "bytes=0-1", "X-B": "2"}, "bytes=0-1"),
+        ("GET", {"X-B": "2", "Range": "bytes = 00-"}, "bytes=0-"),
+        ("GET", {"Range": "bytes=-5"}, "bytes=-5"),
+        ("GET", {"Range": "bytes=0-1,3-4", "X-B": "2"}, None),
+        ("GET", {"Range": "items=1-2", "X-B": "2"}, None),
+        ("GET", {"Range": "bytes=0-1", "If-Range": "x"}, None),
+        ("GET", {"Range": "bytes=0-1", "If-Match": "x"}, None),
+        ("GET", {"Range": "bytes=0-1", "If-Unmodified-Since": "x"}, None),
+        ("GET", {"Range": "bytes=0-1", "If-None-Match": "x"}, None),
+        ("GET", {"Range": "bytes=0-1", "If-Modified-Since": "x"}, None),
+        ("GET", {"Range": "bytes=0-1", "Pragma": "no-cache"}, "bytes=0-1"),
+        ("HEAD", {"Range": "bytes=0-1"}, None),
     ]
-    seen: dict[str | None, list[str]] = {}
+    seen: dict[str | None, list[str | None]] = {}
     for cache in (None, "memory"):
         with mitto.Session(cache=cache) as session:
             seen[cache] = [
-                session.request(method, f"{page_url}lines?{cache}-{index}", kind=kind, headers=headers).text
-                for index, (method, headers) in enumerate(requests)
+                session.request(method, f"{server_url}lines?{cache}-{index}", kind=kind, headers=headers).headers.get(
+                    "X-Lines"
+                )
+                for index, (method, headers, _) in enumerate(requests)
             ]
     assert seen[None] == seen["memory"]
-    assert [lines.endswith(",Range | bytes=0-1") for lines in seen[None]] == [
-        True,
-        False,
-        False,
-        False,
-        False,
-        False,
-        False,
-        False,
-        False,
-        False,
-        True,
-        False,
-    ]
-    assert seen[None][1].endswith(",Range | bytes=0-")
-    assert seen[None][2].endswith(",Range | bytes=-5")
+    for lines, (_, headers, moved) in zip(seen[None], requests, strict=True):
+        assert lines is not None
+        names, value = lines.split(" | ")
+        order = names.split(",")
+        after_net = order.index("Accept-Language") < order.index("Range")
+        assert (after_net, value) == ((True, moved) if moved else (False, headers["Range"]))
