@@ -120,8 +120,13 @@ def change_files(root: Path = REPOSITORY) -> list[Path]:
     """Return what changelog.d holds, relative to the root, by name, or nothing if there is no such directory.
 
     A name that starts with a dot, such as macOS's .DS_Store, is no change's.
+
+    Raises:
+        ChangelogError: changelog.d is a link, which could lead gathering to delete files that are not the root's.
     """
     directory = root / CHANGES_DIRECTORY
+    if directory.is_symlink():
+        raise ChangelogError(f"{CHANGES_DIRECTORY} is a link, where it should be a directory of the repository's own")
     if not directory.is_dir():
         return []
     return sorted(path.relative_to(root) for path in directory.iterdir() if not path.name.startswith("."))
@@ -156,30 +161,21 @@ def in_arrival_order(files: Sequence[Path], root: Path = REPOSITORY) -> list[Pat
     merges brought them to main.
 
     The files are relative to the root, which is the top of a git repository. A file added again after it went counts
-    from the last time. A file that no commit has added comes after the others, and files that one commit added, or
-    that none did, come by name.
+    from the last time. A file that the commit checked out does not hold, such as one not committed yet, comes after
+    the others, and files that one commit added, or that the commit does not hold, come by name.
 
     Raises:
         ChangelogError: git cannot read the root's history.
     """
+    directory = CHANGES_DIRECTORY.as_posix()
+    committed = set(_git(root, "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", directory).split("\0"))
     # Each commit's names come after a mark of their own, each name ended by a NUL.
-    command = ["git", "-C", str(root), "log", "--no-renames", "--diff-filter=A", "--name-only", "--format=%x01", "-z"]
-    try:
-        log = subprocess.run(
-            [*command, "--", CHANGES_DIRECTORY.as_posix()],
-            check=True,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-        ).stdout
-    except (OSError, subprocess.CalledProcessError) as error:
-        detail = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
-        raise ChangelogError(f"git cannot read when the files of {CHANGES_DIRECTORY} came: {detail}") from error
+    log = _git(root, "log", "--no-renames", "--diff-filter=A", "--name-only", "--format=%x01", "-z", "--", directory)
     # Newest commit first, so a file's first place is the last commit that added it.
     added: dict[str, int] = {}
     for place, commit in enumerate(log.split("\x01")[1:]):
         for name in commit.split("\0"):
-            if name := name.removeprefix("\n"):
+            if (name := name.removeprefix("\n")) in committed:
                 added.setdefault(name, place)
 
     def key(path: Path) -> tuple[bool, int, str]:
@@ -187,6 +183,16 @@ def in_arrival_order(files: Sequence[Path], root: Path = REPOSITORY) -> list[Pat
         return (place is None, -(place or 0), path.as_posix())
 
     return sorted(files, key=key)
+
+
+def _git(root: Path, *args: str) -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), *args], check=True, capture_output=True, encoding="utf-8", errors="replace"
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
+        raise ChangelogError(f"git cannot read when the files of {CHANGES_DIRECTORY} came: {detail}") from error
 
 
 def gather(version: str, root: Path = REPOSITORY) -> list[Path]:

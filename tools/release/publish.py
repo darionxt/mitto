@@ -84,8 +84,9 @@ def release_notes(version: str, root: Path = REPOSITORY) -> str:
 
     Raises:
         PublishError: The version is not one, CHANGELOG.md has no entry for it or a heading that does not name one
-            version once, changelog.d still holds a file, the Engine Release is not the newest Chrome Release, the
-            engine is built from another milestone, or the Baselines of a Chrome Release do not name their build.
+            version once, changelog.d still holds a file or is a link, the Engine Release is not the newest Chrome
+            Release, the engine is built from another milestone, or the Baselines of a Chrome Release do not name their
+            build.
     """
     changes = _changes(version, root)
     window = sorted(WINDOWS_PERSONAS, key=int)
@@ -126,7 +127,7 @@ def _changes(version: str, root: Path) -> str:
 
     Raises:
         PublishError: The version is not one, CHANGELOG.md has no entry for it, or a heading of CHANGELOG.md is not a
-            version or names one twice, or changelog.d holds lines that the entry lacks.
+            version or names one twice, or changelog.d holds lines that the entry lacks or is a link.
     """
     found = _PRE_RELEASE.fullmatch(version)
     if found is None:
@@ -135,19 +136,22 @@ def _changes(version: str, root: Path) -> str:
     text = (root / CHANGELOG).read_text(encoding="utf-8")
     try:
         changes = {entry.version: text[entry.start : entry.end].strip() for entry in entries(text)}
+        left = change_files(root)
     except ChangelogError as error:
         raise PublishError(str(error)) from error
+    # Gathering also writes an entry that is missing, so a missing entry names the files left too.
+    to_gather = (
+        f"{CHANGES_DIRECTORY} still holds {', '.join(path.as_posix() for path in left)}, whose lines the entry for "
+        f"{release} in {CHANGELOG} lacks: gather them with `uv run python -m tools.release changelog {release}` in "
+        "the release's pull request"
+    )
     if not changes.get(release):
-        raise PublishError(
-            f"{CHANGELOG} has no entry for {release}, and every version needs one that says what changes for "
-            "callers (docs/releasing.md)"
+        missing = (
+            f"{CHANGELOG} has no entry for {release}, and every version needs one that says what changes for callers"
         )
-    if left := change_files(root):
-        raise PublishError(
-            f"{CHANGES_DIRECTORY} still holds {', '.join(path.as_posix() for path in left)}, whose lines the entry for "
-            f"{release} in {CHANGELOG} lacks: gather them with `uv run python -m tools.release changelog {release}` "
-            "in the release's pull request (docs/releasing.md)"
-        )
+        raise PublishError(f"{missing}. {to_gather} (docs/releasing.md)" if left else f"{missing} (docs/releasing.md)")
+    if left:
+        raise PublishError(f"{to_gather} (docs/releasing.md)")
     return changes[release]
 
 

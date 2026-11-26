@@ -168,6 +168,26 @@ def test_no_directory_holds_no_file(tmp_path: Path) -> None:
     assert change_files(tmp_path) == []
 
 
+def link_changes_to(root: Path, target: Path) -> None:
+    try:
+        (root / CHANGES_DIRECTORY).symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"cannot make a link here: {error}")
+
+
+@needs_git
+def test_a_link_for_the_directory_is_refused_before_anything_goes(repository: Path, tmp_path: Path) -> None:
+    """Gathering deletes the files, which a link could put outside the repository."""
+    outside = tmp_path / "outside"
+    write(outside, "a.md", "- A thing.\n")
+    link_changes_to(repository, outside)
+
+    with pytest.raises(ChangelogError, match=r"changelog\.d is a link, where it should be a directory"):
+        gather("0.3.0", repository)
+
+    assert (outside / "a.md").exists()
+
+
 def test_a_file_gives_its_items_without_blank_lines_or_the_spaces_after_them(tmp_path: Path) -> None:
     path = write(tmp_path, change("a.md"), "\n- One thing, with [a link](docs/api.md#machine).  \n\n- Another.\n\n")
 
@@ -237,6 +257,18 @@ def test_a_file_added_again_counts_from_the_last_time(repository: Path) -> None:
     git(repository, "commit", "--quiet", "--all", "-m", "gather")
     land(repository, "a.md", "- A.\n")
     land(repository, "b.md", "- B again.\n")
+
+    assert in_arrival_order(change_files(repository), repository) == [change("a.md"), change("b.md")]
+
+
+@needs_git
+def test_a_file_written_again_after_it_went_comes_after_the_committed_ones(repository: Path) -> None:
+    """Its old addition is not when it came, as long as no commit holds it again."""
+    land(repository, "b.md", "- B.\n")
+    (repository / change("b.md")).unlink()
+    git(repository, "commit", "--quiet", "--all", "-m", "gather")
+    land(repository, "a.md", "- A.\n")
+    write(repository, change("b.md"), "- B again, not committed.\n")
 
     assert in_arrival_order(change_files(repository), repository) == [change("a.md"), change("b.md")]
 

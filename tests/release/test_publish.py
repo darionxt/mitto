@@ -247,6 +247,32 @@ def test_a_release_with_files_left_in_changelog_d_is_refused(tree: Path, version
         release_notes(version, tree)
 
 
+def test_a_missing_entry_names_the_files_left_too(tree: Path) -> None:
+    """As when the release's pull request forgot to gather, which would also have written the entry."""
+    with_changelog(tree, "## 0.8.0\n\nA change.\n")
+    (tree / "changelog.d").mkdir()
+    (tree / "changelog.d" / "a-fix.md").write_text("- A change.\n", encoding="utf-8")
+
+    with pytest.raises(
+        PublishError,
+        match=r"CHANGELOG\.md has no entry for 0\.9\.0, and every version needs one that says what changes for callers\. "
+        r"changelog\.d still holds changelog\.d/a-fix\.md, whose lines .* changelog 0\.9\.0`",
+    ):
+        release_notes("0.9.0", tree)
+
+
+def test_a_link_for_changelog_d_is_refused(tree: Path) -> None:
+    with_changelog(tree, "## 0.9.0\n\nA change.\n")
+    (tree / "elsewhere").mkdir()
+    try:
+        (tree / "changelog.d").symlink_to(tree / "elsewhere", target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"cannot make a link here: {error}")
+
+    with pytest.raises(PublishError, match=r"changelog\.d is a link, where it should be a directory"):
+        release_notes("0.9.0", tree)
+
+
 def test_an_empty_changelog_d_or_a_hidden_file_in_it_holds_nothing_to_gather(tree: Path) -> None:
     with_changelog(tree, "## 0.9.0\n\nA change.\n")
     (tree / "changelog.d").mkdir()
