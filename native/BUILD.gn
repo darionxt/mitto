@@ -169,6 +169,8 @@ shared_library("mitto_core") {
     "page_launcher.h",
     "preconnect_manager.cc",
     "preconnect_manager.h",
+    "range_after_cache.cc",
+    "range_after_cache.h",
     "ready_requests.cc",
     "ready_requests.h",
     "request_channel.cc",

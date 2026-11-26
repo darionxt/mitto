@@ -137,7 +137,7 @@ with mitto.Session(proxy="http://user:password@proxy.example.test:8080") as sess
 
 #### `cache=`
 
-Where to keep responses, which `//net` then answers from and revalidates as Chrome's HTTP cache does, split by the top-level site of the page a request comes from. The default keeps none, where a real Chrome always has a cache, so a server sees each request.
+Where to keep responses, which `//net` then answers from and revalidates as Chrome's HTTP cache does, split by the top-level site of the page a request comes from. The default keeps none, where a real Chrome always has a cache, so a server sees each request, though a `Range` line still goes where that cache puts it ([`headers=`](#headers)).
 
 | The value | What it does |
 | --- | --- |
@@ -423,6 +423,7 @@ Changes the Persona's lines for this request, by name in any case. [persona.md](
 | `Referer` | Goes as given to every hop or, with `None`, goes from every hop, in place of what `initiator=` would make of it. `//net` still decides where it goes. A NUL character or a lone surrogate in it raises a `ValueError` that names it |
 | A line the native core sets, such as `Origin`, `Sec-Fetch-Site` or `sec-ch-ua` | Stays as given or, with `None`, stays gone on each hop. `//net` still changes an `Origin` on a redirect, as it does in Chrome |
 | `Cookie` | Goes only if the Session holds no cookie for the URL, because `//net` writes over it otherwise |
+| `Range` of one valid range, on a `GET` | Goes last, after what `//net` adds, written as Chrome's HTTP cache writes it, such as `bytes=0-1` for `bytes = 00-01`, as that cache puts it back, with a [`cache=`](#cache) or without one. With `If-Range`, `If-Match`, `If-Unmodified-Since`, `If-None-Match` or `If-Modified-Since`, which the cache does not take with a range, it stays as above |
 
 **The order on a `fetch` and an `xhr`.** Chrome holds the lines that a page's script sets on `fetch()` or `XMLHttpRequest` in one table with `sec-ch-ua`, the other client hints, `User-Agent` and `Content-Type`, and sends them in the table's order, which follows from the names alone. So on a request of the kind `fetch` or `xhr`, `headers=` sets the lines, and the table their order: the names of `headers=` that a page's script may set, an `Accept` among them, go among those lines, over HTTP/1.1, HTTP/2 and HTTP/3, as Chrome sends them for the same names ([parity.md](parity.md#the-order-of-a-subresources-lines)). The order of `headers=` matters only on an `xhr` with names that share a place in the table. A name that a script may not set, such as `Cookie` or `Accept-Encoding`, or in mode `no-cors` any but the CORS-safelisted ones, keeps the place of the table above, and so does every line on a request of another kind. Chrome's table also holds `User-Agent`, `Content-Type` and the client hints, whoever gives them: a hint of the caller's goes there by itself, and a `User-Agent`, or a `Content-Type` that a script may not set, once another line of the caller's does.
 
