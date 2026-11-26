@@ -81,7 +81,7 @@ class PageCacheStorage {
   // Checks that the question's number goes up, and that the document may
   // reach the Cache API.
   bool Admit(uint64_t question, const std::optional<std::string>& storage_key);
-  CacheStorageCache* FindCache(uint64_t cache);
+  CacheStorageCache* FindCache(uint64_t cache, uint64_t context);
   // Whether a cache's call names a cache of a bucket that has been deleted.
   bool CacheBucketGone(const PageCacheStorageCall& call) const;
   // Answers a call of a bucket that has been deleted, or of one of its caches.
@@ -100,14 +100,10 @@ class PageCacheStorage {
   void OnReadBody(uint64_t body);
   void OnBodyCredit(uint64_t body, uint32_t credit);
 
-  // Answers a question of `context` with the responses that matched, each
-  // body that has bytes kept for the Page to read, held to the embedder policy
-  // of `policy_context`: the context that opened the cache for a Cache's
-  // calls, as Chrome's CacheImpl keeps its opener's, and `context` for
-  // CacheStorage.match().
+  // Answers a question with the responses that matched, each body that has
+  // bytes kept for the Page to read.
   void AnswerResponses(uint64_t question,
                        uint64_t context,
-                       uint64_t policy_context,
                        CacheStorageError error,
                        std::vector<CacheStorageCache::MatchResult> matches);
   void SendAnswer(const PageCacheStorageAnswer& answer);

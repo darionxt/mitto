@@ -292,12 +292,23 @@ bool PageCacheStorage::Admit(uint64_t question,
   return true;
 }
 
-CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache) {
+CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache,
+                                               uint64_t context) {
   const auto found = caches_.find(cache);
   if (found == caches_.end() || !found->second.value()) {
     refuse_.Run(base::StrCat({"a Cache API call of cache ",
                               base::NumberToString(cache),
                               ", which the Page has not opened"}));
+    return nullptr;
+  }
+  // A cache answers the context that opened it alone, as Chrome's CacheImpl
+  // is bound to its opener's pipe, whose origin and embedder policy its
+  // matches are held to.
+  if (const auto opener = cache_contexts_.find(cache);
+      opener == cache_contexts_.end() || opener->second != context) {
+    refuse_.Run(
+        base::StrCat({"a Cache API call of cache ", base::NumberToString(cache),
+                      ", which another context opened"}));
     return nullptr;
   }
   return found->second.value();
@@ -431,7 +442,7 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       return;
     case CacheStorageCallOp::kCacheMatch:
     case CacheStorageCallOp::kCacheMatchAll: {
-      CacheStorageCache* const cache = FindCache(call.cache);
+      CacheStorageCache* const cache = FindCache(call.cache, context);
       if (!cache) {
         return;
       }
@@ -439,16 +450,12 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       if (call.request) {
         request = ToCacheRequest(*call.request);
       }
-      const auto opener = cache_contexts_.find(call.cache);
-      const uint64_t policy_context =
-          opener != cache_contexts_.end() ? opener->second : context;
       if (call.op == CacheStorageCallOp::kCacheMatch) {
         cache->Match(
             std::move(*request), ToCacheOptions(call.options),
             base::BindOnce(
                 [](base::WeakPtr<PageCacheStorage> self, uint64_t question,
-                   uint64_t context, uint64_t policy_context,
-                   CacheStorageError error,
+                   uint64_t context, CacheStorageError error,
                    std::optional<CacheStorageCache::MatchResult> match) {
                   if (!self) {
                     return;
@@ -457,19 +464,19 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
                   if (match) {
                     matches.push_back(std::move(*match));
                   }
-                  self->AnswerResponses(question, context, policy_context,
-                                        error, std::move(matches));
+                  self->AnswerResponses(question, context, error,
+                                        std::move(matches));
                 },
-                self, question, context, policy_context));
+                self, question, context));
       } else {
         cache->MatchAll(std::move(request), ToCacheOptions(call.options),
                         base::BindOnce(&PageCacheStorage::AnswerResponses, self,
-                                       question, context, policy_context));
+                                       question, context));
       }
       return;
     }
     case CacheStorageCallOp::kCacheKeys: {
-      CacheStorageCache* const cache = FindCache(call.cache);
+      CacheStorageCache* const cache = FindCache(call.cache, context);
       if (!cache) {
         return;
       }
@@ -498,7 +505,7 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       return;
     }
     case CacheStorageCallOp::kCacheBatch: {
-      CacheStorageCache* const cache = FindCache(call.cache);
+      CacheStorageCache* const cache = FindCache(call.cache, context);
       if (!cache) {
         return;
       }
@@ -553,13 +560,12 @@ void PageCacheStorage::AnswerGoneBucket(const PageCacheStorageCall& call,
       break;
     case CacheStorageCallOp::kMatch:
     case CacheStorageCallOp::kCacheMatch:
-      AnswerResponses(call.question, context, context,
-                      CacheStorageError::kErrorNotFound, {});
+      AnswerResponses(call.question, context, CacheStorageError::kErrorNotFound,
+                      {});
       return;
     case CacheStorageCallOp::kCacheMatchAll:
       // CacheImpl::MatchAll() answers kErrorNotFound with no responses.
-      AnswerResponses(call.question, context, context,
-                      CacheStorageError::kSuccess, {});
+      AnswerResponses(call.question, context, CacheStorageError::kSuccess, {});
       return;
     case CacheStorageCallOp::kCacheKeys:
       answer.op = CacheStorageAnswerOp::kRequests;
@@ -619,8 +625,7 @@ void PageCacheStorage::OnMatch(PageCacheStorageCall call,
         if (match) {
           matches.push_back(std::move(*match));
         }
-        self->AnswerResponses(question, context, context, error,
-                              std::move(matches));
+        self->AnswerResponses(question, context, error, std::move(matches));
       },
       weak_factory_.GetWeakPtr(), call.question, context);
   CacheStorage& caches = context_->ForKey(storage_key);
@@ -712,7 +717,6 @@ void PageCacheStorage::OnBodyPart(PageCacheStorageCall call) {
 void PageCacheStorage::AnswerResponses(
     uint64_t question,
     uint64_t context,
-    uint64_t policy_context,
     CacheStorageError error,
     std::vector<CacheStorageCache::MatchResult> matches) {
   // One whose context has gone holds nothing.
@@ -735,7 +739,7 @@ void PageCacheStorage::AnswerResponses(
   // Chrome 157, has CacheStorageCache take any opaque response that it reads.
   // Upstream: content/browser/cache_storage/cache_storage_dispatcher_host.cc
   // Upstream: content/browser/cache_storage/cache_storage_cache.cc
-  if (const auto policy = context_policies_.find(policy_context);
+  if (const auto policy = context_policies_.find(context);
       policy != context_policies_.end() &&
       (policy->second.embedder_policy.value !=
            CrossOriginEmbedderPolicyValue::kNone ||
