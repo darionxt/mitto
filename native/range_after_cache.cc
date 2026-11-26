@@ -1,61 +1,44 @@
 #include "mitto/range_after_cache.h"
 
-#include <array>
 #include <utility>
-#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/task/sequenced_task_runner.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
-#include "net/http/http_byte_range.h"
-#include "net/http/http_util.h"
+#include "net/http/http_cache_util.h"
+#include "net/http/partial_data.h"
 #include "net/url_request/url_request.h"
 
 namespace mitto {
-
-namespace {
-
-// A request with any of these goes past the cache, with its Range line where
-// it is: kPassThroughHeaders, and kValidationHeaders, which the cache does not
-// take with a range, or at all when empty.
-constexpr auto kHeadersThatDisableTheCache = std::to_array<std::string_view>(
-    {"If-Unmodified-Since", "If-Match", "If-Range", "If-Modified-Since",
-     "If-None-Match"});
-
-}  // namespace
 
 std::optional<net::HttpRequestHeaders> HeadersAfterHttpCache(
     std::string_view method,
     int load_flags,
     const net::HttpRequestHeaders& headers) {
-  const std::optional<std::string> range =
-      headers.GetHeader(net::HttpRequestHeaders::kRange);
-  if (!range || (load_flags & net::LOAD_DISABLE_CACHE) || method != "GET") {
+  if (!headers.HasHeader(net::HttpRequestHeaders::kRange) || method != "GET") {
     return std::nullopt;
   }
-  for (const std::string_view name : kHeadersThatDisableTheCache) {
-    if (headers.HasHeader(name)) {
-      return std::nullopt;
-    }
-  }
-  // PartialData::Init().
-  std::vector<net::HttpByteRange> ranges;
-  if (!net::HttpUtil::ParseRangeHeader(*range, &ranges) || ranges.size() != 1 ||
-      !ranges[0].IsValid()) {
+  // HttpCache::Transaction::SetRequest(): the cache takes no range with a
+  // validation header, nor any request with a header that is not valid, such
+  // as an empty If-None-Match, or with one that passes it by, such as If-Range.
+  load_flags |= net::http_cache_util::GetLoadFlagsForExtraHeaders(headers);
+  const auto validation =
+      net::http_cache_util::ValidationHeaders::MaybeCreate(headers);
+  if (!validation.has_value() || validation->has_value() ||
+      (load_flags & net::LOAD_DISABLE_CACHE)) {
     return std::nullopt;
   }
-  const net::HttpByteRange& byte_range = ranges[0];
+  net::PartialData partial;
+  if (!partial.Init(headers)) {
+    return std::nullopt;
+  }
   net::HttpRequestHeaders moved = headers;
   moved.RemoveHeader(net::HttpRequestHeaders::kRange);
-  // PartialData::RestoreHeaders(), from the start of the range.
-  const net::HttpByteRange restored =
-      byte_range.IsSuffixByteRange()
-          ? net::HttpByteRange::Suffix(byte_range.suffix_length())
-          : net::HttpByteRange::Bounded(byte_range.first_byte_position(),
-                                        byte_range.last_byte_position());
-  moved.SetHeader(net::HttpRequestHeaders::kRange, restored.GetHeaderValue());
+  partial.SetHeaders(moved);
+  // What the network gets of a range that the cache holds none of.
+  partial.RestoreHeaders(&moved);
   return moved;
 }
 

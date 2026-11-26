@@ -17,8 +17,6 @@ namespace mitto {
 // as `priority`. Else nullopt, and the lines stay as they are.
 //
 // Upstream: net/http/http_cache_transaction.cc
-// Upstream: net/http/http_cache_util.cc
-// Upstream: net/http/partial_data.cc
 std::optional<net::HttpRequestHeaders> HeadersAfterHttpCache(
     std::string_view method,
     int load_flags,

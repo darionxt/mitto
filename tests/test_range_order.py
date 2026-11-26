@@ -93,7 +93,7 @@ AS_CHROME = "\n".join(
 @pytest.fixture
 def server_url(native_library: Any) -> Iterator[str]:
     """The URL of an empty page on 127.0.0.1, whose /lines gives, in its body and in its X-Lines line, the names of the
-    lines that came, in their order, and the Range line."""
+    lines that came, in their order, and the Range line, and whose /cookie sets a cookie."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -111,6 +111,8 @@ def server_url(native_library: Any) -> Iterator[str]:
         def _answer(self, head: bool) -> None:
             body = b"<!doctype html><title>t</title><body>"
             self.send_response(200)
+            if self.path == "/cookie":
+                self.send_header("Set-Cookie", "kept=1; Path=/")
             if self.path.startswith("/lines"):
                 names = ",".join(name for name in self.headers if name.lower() not in {"host", "connection"})
                 body = f"{names} | {self.headers.get('Range', 'none')}".encode()
@@ -154,7 +156,7 @@ def test_a_pages_range_line_goes_where_chrome_sends_it(page_url: str, cache: str
 @pytest.mark.parametrize("kind", [RequestKind.FETCH, RequestKind.NAVIGATION, RequestKind.IMAGE])
 def test_a_callers_range_line_goes_where_chromes_cache_puts_it(server_url: str, kind: RequestKind) -> None:
     # //net's cache moves it as Chrome's does, and a Session without a cache moves it the same way: after the lines
-    # that //net adds, or not at all.
+    # that //net adds, a stored cookie's among them, or not at all.
     requests: list[tuple[str, dict[str, str], str | None]] = [
         ("GET", {"Range": "bytes=0-1", "X-B": "2"}, "bytes=0-1"),
         ("GET", {"X-B": "2", "Range": "bytes = 00-"}, "bytes=0-"),
@@ -172,6 +174,7 @@ def test_a_callers_range_line_goes_where_chromes_cache_puts_it(server_url: str, 
     seen: dict[str | None, list[str | None]] = {}
     for cache in (None, "memory"):
         with mitto.Session(cache=cache) as session:
+            session.request("GET", f"{server_url}cookie")
             seen[cache] = [
                 session.request(method, f"{server_url}lines?{cache}-{index}", kind=kind, headers=headers).headers.get(
                     "X-Lines"
@@ -183,5 +186,7 @@ def test_a_callers_range_line_goes_where_chromes_cache_puts_it(server_url: str, 
         assert lines is not None
         names, value = lines.split(" | ")
         order = names.split(",")
-        after_net = order.index("Accept-Language") < order.index("Range")
+        after_net = order.index("Accept-Language") < order.index("Range") and order.index("Cookie") < order.index(
+            "Range"
+        )
         assert (after_net, value) == ((True, moved) if moved else (False, headers["Range"]))
