@@ -52,22 +52,27 @@ class ReferrerServer(QuietServer):
         super().__init__(("127.0.0.1", 0), _Handler)
         self.referrers: dict[str, dict[str, str | None]] = {}
         self.origin = f"http://127.0.0.1:{self.server_port}"
+        # The URL of each document that the server gave, by its policy, and of each worker's script, by its case and
+        # whether it is a nested worker's.
+        self.documents: dict[str, str] = {}
+        self.scripts: dict[str, dict[str, str]] = {}
 
     def took(self, query: dict[str, str], referrer: str | None) -> None:
-        """Note the Referer of one thing that a worker asks for."""
+        """Note the Referer of one thing that a worker asks for. Only the whole URL of the case's own document or of one
+        of its workers' scripts gets a name; any other stays as it came, such as what a request asked for."""
         seen = referrer
+        case = query["case"]
+        names = {
+            f"{self.origin}/": "origin",
+            f"{self.origin}/other": "other",
+            **{url: name for name, url in self.scripts.get(case, {}).items()},
+        }
+        document = self.documents.get(case.split("/")[0])
+        if document is not None:
+            names[document] = "document"
         if referrer is not None:
-            path = urlsplit(referrer).path
-            if referrer == f"{self.origin}/":
-                seen = "origin"
-            elif path == "/":
-                seen = "document"
-            elif path == "/ask":
-                asker = parse_qs(urlsplit(referrer).query)
-                seen = "nested worker" if "nested" in asker else "worker"
-            elif path == "/other":
-                seen = "other"
-        self.referrers.setdefault(query["case"], {})[query["what"]] = seen
+            seen = names.get(referrer, referrer)
+        self.referrers.setdefault(case, {})[query["what"]] = seen
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -77,13 +82,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         query = {name: values[0] for name, values in parse_qs(url.query).items()}
         policy = query.get("policy", "")
+        assert isinstance(self.server, ReferrerServer)
         if url.path != "/ask":
+            if url.path == "/":
+                self.server.documents[policy] = self.server.origin + self.path
             body = (_PAGE % json.dumps(POLICIES)).replace("<title>r", f"<title>{policy}").encode()
             self._answer(body, "text/html; charset=utf-8", policy)
             return
-        assert isinstance(self.server, ReferrerServer)
         self.server.took(query, self.headers.get("Referer"))
         if "worker" in query:
+            name = "nested worker" if "nested" in query else "worker"
+            self.server.scripts.setdefault(query["case"], {})[name] = self.server.origin + self.path
             body = _WORKER.encode()
             if "static" in query:
                 asked = f"/ask?case={quote(query['case'], safe='')}&what=static%20import&script=1"
