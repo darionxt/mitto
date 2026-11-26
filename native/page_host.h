@@ -155,11 +155,11 @@ class PageNetwork {
   // none.
   virtual const NetworkQuality* GetNetworkQuality() const = 0;
 
-  // Hands a BroadcastChannel message of the Page `from`, whose document is of
-  // `origin`, to each other Page of the Session, as Chrome's browser process
-  // hands it to the renderers of other tabs.
+  // Hands a BroadcastChannel message of a context of the Page `from`, whose
+  // storage key is `storage_key`, to each other Page of the Session, as
+  // Chrome's browser process hands it to the renderers of other tabs.
   virtual void BroadcastFromPage(const PageHost& from,
-                                 const url::Origin& origin,
+                                 const StorageKey& storage_key,
                                  const PageBroadcast& broadcast) = 0;
   // The Session's Cache API, which its Pages share, and the quota of its
   // storage.
@@ -312,10 +312,10 @@ class PageHost final : public PageChannel::Delegate {
 
   const scoped_refptr<PageProcess>& process() const { return process_; }
 
-  // Sends the Page a BroadcastChannel message of another Page of the Session
-  // whose document is of `origin`, if the Page's document is of that origin
-  // too: the storage key of the top-level document, the only one a Page has.
-  void DeliverBroadcast(const url::Origin& origin,
+  // Sends the Page a BroadcastChannel message of a context of another Page of
+  // the Session, whose storage key is `storage_key`, if the Page has a context
+  // of that key.
+  void DeliverBroadcast(const StorageKey& storage_key,
                         const PageBroadcast& broadcast);
 
   base::WeakPtr<PageHost> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
@@ -330,6 +330,17 @@ class PageHost final : public PageChannel::Delegate {
 
   // A context of the Page's: a document, or a dedicated worker, by the ID
   // that the Page gave it.
+  // Where a document's frame is in the frame tree: the top-level document's
+  // origin, and whether a document from this one up is of another site, or of
+  // another origin, than the top-level one. A worker is in its creator's
+  // frame.
+  struct FrameTree {
+    url::Origin top_frame_origin;
+    bool is_top_level = true;
+    bool cross_site = false;
+    bool cross_origin = false;
+  };
+
   struct Context {
     // A document's URL, as the library loaded it after its navigation's
     // redirects, or about:blank; a worker's script's final URL, or its blob:
@@ -338,6 +349,10 @@ class PageHost final : public PageChannel::Delegate {
     // A document's origin, its URL's, or for a frame's initial about:blank its
     // parent's; a worker's, its creator's, or an opaque one for data:.
     url::Origin origin;
+    // Its place in the frame tree, and what its storage is keyed by, if it has
+    // any: CalculateStorageKey()'s. AddContext() works them out.
+    FrameTree frame_tree;
+    std::optional<StorageKey> storage_key;
     // The document whose frame element holds a document's frame, or the
     // context that started a worker; kNoDocument for the top-level document.
     uint64_t parent = kNoDocument;
@@ -404,7 +419,7 @@ class PageHost final : public PageChannel::Delegate {
   // A message of one of the document's BroadcastChannels, for the Session's
   // other Pages of the document's origin, which the library takes from the
   // document it loaded, not from the Page.
-  void OnBroadcast(const PageBroadcast& broadcast, const GURL& document_url);
+  void OnBroadcast(const PageBroadcast& broadcast, uint64_t context_id);
   // A document that the Page has made, which takes the place of the
   // top-level one, or of its frame's document, or is a frame's first one.
   void OnDocumentCommitted(const PageDocumentCommitted& committed);
@@ -464,8 +479,13 @@ class PageHost final : public PageChannel::Delegate {
   // Forgets `ids`, which go, with what waits for them, and lets their
   // keepalive requests go on without them.
   void ForgetContexts(const std::set<uint64_t>& ids);
+  // Only a document's keepalive request goes on without it in Chrome, in the
+  // browser's KeepAliveURLLoaderService. The network service ends a worker's
+  // once its thread has ended.
+  bool IsOfWorker(const Request& request) const;
   // Lets each keepalive request of `ids`, or of every context for null, go on
-  // without the Page, which hears that it ended.
+  // without the Page, which hears that it ended, but a worker's, whose requests
+  // all end.
   void LetKeepaliveRequestsGo(const std::set<uint64_t>* ids);
   // What a request of context `id` goes as, beside its Kind's: its
   // Initiator, its referrer's source, and its frame's place in the frame
@@ -481,16 +501,6 @@ class PageHost final : public PageChannel::Delegate {
   // place of its creator's or initiator's takes, as Blink's
   // DocumentInit::GetCookieUrl() does from its owner document.
   static GURL CookieUrlOf(const Context& context);
-  // Where document `id`'s frame is in the frame tree: the top-level
-  // document's origin, and whether a document from `id` up is of another
-  // site, or of another origin, than the top-level one.
-  struct FrameTree {
-    url::Origin top_frame_origin;
-    bool is_top_level = true;
-    bool cross_site = false;
-    bool cross_origin = false;
-  };
-  FrameTree FrameTreeOf(uint64_t id) const;
   // Whether a frame's document of `origin` under document `parent` is
   // cross-origin isolated: the parent is, and they are of the same origin, as
   // the cross-origin-isolated feature's default allowlist 'self' has it. Known
@@ -640,17 +650,20 @@ class PageHost final : public PageChannel::Delegate {
       const url::Origin& top_frame_origin,
       const url::Origin& frame_origin,
       const net::SiteForCookies& site_for_cookies);
-  // The storage key of document `id`, as Chrome works it out for a frame with
+  // Keeps `context`, a document or a worker that the Page has made, as `id`.
+  void AddContext(uint64_t id, Context context);
+
+  // The storage key of `context`, as Chrome works it out for a frame with
   // third-party storage partitioning, which it turns on: the document's
   // origin, the site of the top-level document and whether a document from
-  // `id` up is of another site. None for a document of an opaque origin, or
+  // this one up is of another site. None for a document of an opaque origin, or
   // one that is not of an HTTP or HTTPS URL, which have no storage, and for a
   // document under a top-level one of an opaque origin, whose key no other
   // top-level document ever has.
-  std::optional<StorageKey> DocumentStorageKey(uint64_t id) const;
+  static std::optional<StorageKey> CalculateStorageKey(const Context& context);
 
   // The storage key of context `id`'s IndexedDB and Cache API, as
-  // StorageKey::Serialize() writes it: DocumentStorageKey()'s, or for a
+  // StorageKey::Serialize() writes it: CalculateStorageKey()'s, or for a
   // context under a top-level document of an opaque origin one of that
   // document's own, which the Session keeps in memory. None for a context of
   // an opaque origin, or one that is not of an HTTP or HTTPS URL.
@@ -665,6 +678,10 @@ class PageHost final : public PageChannel::Delegate {
 
   // Abandons each request in progress.
   void AbandonRequests();
+  // The requests in flight: the Page's, and those of its gone workers that
+  // //net has yet to send, which still count, as their loaders would in
+  // Chrome's network service until the worker's end reached it.
+  size_t RequestsInFlight();
 
   // Refuses what the Page sent: tells it why, closes the channel and kills the
   // process, because a Page that sends what it should not may be hostile.
@@ -836,6 +853,9 @@ class PageHost final : public PageChannel::Delegate {
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;
+  // The jobs of gone workers' requests that //net has yet to send, which end
+  // once it has, or with the Page.
+  std::vector<base::WeakPtr<RunningRequest>> sending_jobs_;
   uint64_t last_request_number_ = kNavigationRequest;
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.

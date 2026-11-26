@@ -458,12 +458,9 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
       !GURL(data.referrer).SchemeIsHTTPOrHTTPS()) {
     data.referrer = kNoReferrer;
   }
-  // A request whose policy is the empty string goes with the document's. A
-  // worker's would go with the policy of its script's response, which it does
-  // not have: a Known Gap.
   data.referrer_policy =
-      request->referrer_policy() == FetchReferrerPolicy::kDefault && IsWindow()
-          ? static_cast<Window*>(this)->GetDocument().GetReferrerPolicy()
+      request->referrer_policy() == FetchReferrerPolicy::kDefault
+          ? GetReferrerPolicy()
           : request->referrer_policy();
   data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
                                        /*render_blocking=*/false);

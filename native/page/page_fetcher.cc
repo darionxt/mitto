@@ -254,7 +254,8 @@ PageRequestKind KindOf(const FetchRequestData& data) {
 
 }  // namespace
 
-PageFetcher::PageFetcher(PageRequests& requests) : requests_(requests) {}
+PageFetcher::PageFetcher(PageRequests& requests, Kind kind)
+    : requests_(requests), kind_(kind) {}
 
 PageFetcher::~PageFetcher() {
   Stop();
@@ -265,7 +266,7 @@ void PageFetcher::Stop() {
   // without a word: the Session lets it outlive the document once it hears
   // of the next one.
   for (auto& [number, request] : open_) {
-    if (request->keepalive()) {
+    if (request->keepalive() || kind_ == Kind::kWorker) {
       requests_->LetGo(number);
     } else {
       requests_->Cancel(number);

@@ -1,5 +1,7 @@
 #include "mitto/page_messages.h"
 
+#include <inttypes.h>
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -19,8 +21,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "mitto/header_rules.h"
+#include "mitto/page_protocol_version.h"
 
 namespace mitto {
 namespace {
@@ -169,6 +173,12 @@ constexpr size_t kMaxHostSize = 253;
 
 constexpr uint8_t kHasResult = 0;
 constexpr uint8_t kFailed = 1;
+
+// A version of the messages, as the refusal of a hello gives it: in
+// hexadecimal, as the SHA-256 that it is the start of.
+std::string VersionText(uint32_t version) {
+  return base::StringPrintf("0x%08" PRIx32, version);
+}
 
 std::string EncodeUint32(uint32_t value) {
   const std::array<uint8_t, 4> bytes = base::U32ToLittleEndian(value);
@@ -1414,7 +1424,7 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
 
 base::expected<PageIsolation, std::string> ReadIsolation(
     std::string_view payload) {
-  if (payload.size() != 9) {
+  if (payload.size() != 10) {
     return base::unexpected(
         WrongSize("cross-origin isolation", payload.size()));
   }
@@ -1426,6 +1436,13 @@ base::expected<PageIsolation, std::string> ReadIsolation(
         {"an isolation of the unknown kind ", base::NumberToString(value)}));
   }
   isolation.isolation = static_cast<PageCrossOriginIsolation>(value);
+  const uint8_t policy = static_cast<uint8_t>(payload[9]);
+  if (policy > static_cast<uint8_t>(PageEmbedderPolicy::kRequireCorp)) {
+    return base::unexpected(
+        base::StrCat({"an embedder policy of the unknown kind ",
+                      base::NumberToString(policy)}));
+  }
+  isolation.embedder_policy = static_cast<PageEmbedderPolicy>(policy);
   return isolation;
 }
 
@@ -1714,6 +1731,17 @@ std::string EncodeHello() {
   return EncodeFrame(PageMessage::kHello, EncodeUint32(kPageProtocolVersion));
 }
 
+std::optional<std::string> HelloRefusal(uint32_t version,
+                                        std::string_view sender,
+                                        std::string_view receiver) {
+  if (version == kPageProtocolVersion) {
+    return std::nullopt;
+  }
+  return base::StrCat({sender, " speaks version ", VersionText(version),
+                       " of the messages, and ", receiver, " speaks ",
+                       VersionText(kPageProtocolVersion)});
+}
+
 std::string EncodeStart(const PageStart& start) {
   base::DictValue dict;
   for (const StartName& name : kStartNames) {
@@ -1927,10 +1955,13 @@ std::string EncodeCredit(const PageCredit& credit) {
 }
 
 std::string EncodeIsolation(const PageIsolation& isolation) {
-  const char value = static_cast<char>(isolation.isolation);
-  return EncodeFrame(PageMessage::kIsolation,
-                     base::StrCat({EncodeUint64(isolation.navigation),
-                                   std::string_view(&value, 1)}));
+  const std::array<char, 2> values = {
+      static_cast<char>(isolation.isolation),
+      static_cast<char>(isolation.embedder_policy)};
+  return EncodeFrame(
+      PageMessage::kIsolation,
+      base::StrCat({EncodeUint64(isolation.navigation),
+                    std::string_view(values.data(), values.size())}));
 }
 
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part) {
@@ -2093,14 +2124,14 @@ bool BroadcastFits(const PageBroadcast& broadcast) {
 }
 
 bool BroadcastReceivedFits(const PageBroadcast& broadcast) {
-  // The origin and the name after their sizes, the byte that says whether it
-  // is locked, and the data.
+  // The storage key and the name after their sizes, the byte that says
+  // whether it is locked, and the data.
   const size_t fixed = 4 + 4 + 1;
-  return broadcast.origin.size() <= kMaxPayloadSize - fixed &&
+  return broadcast.storage_key.size() <= kMaxPayloadSize - fixed &&
          broadcast.name.size() <=
-             kMaxPayloadSize - fixed - broadcast.origin.size() &&
+             kMaxPayloadSize - fixed - broadcast.storage_key.size() &&
          broadcast.data.size() <= kMaxPayloadSize - fixed -
-                                      broadcast.origin.size() -
+                                      broadcast.storage_key.size() -
                                       broadcast.name.size();
 }
 
@@ -2143,7 +2174,7 @@ std::string EncodeStorageBucketsAnswer(const PageStorageBucketAnswer& answer) {
 
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
   return EncodeFrame(PageMessage::kBroadcastReceived,
-                     base::StrCat({EncodeSized(broadcast.origin),
+                     base::StrCat({EncodeSized(broadcast.storage_key),
                                    EncodeBroadcastPayload(broadcast)}));
 }
 
@@ -2936,8 +2967,8 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     }
     case PageMessage::kBroadcastReceived: {
       std::string_view bytes = payload;
-      std::string_view origin;
-      if (!TakeSized(bytes, origin) || !IsText(origin)) {
+      std::string_view storage_key;
+      if (!TakeSized(bytes, storage_key) || !IsText(storage_key)) {
         return base::unexpected("a received broadcast that is not valid");
       }
       base::expected<PageBroadcast, std::string> broadcast =
@@ -2946,7 +2977,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
         return base::unexpected(std::move(broadcast).error());
       }
       frame.broadcast = *std::move(broadcast);
-      frame.broadcast.origin = std::string(origin);
+      frame.broadcast.storage_key = std::string(storage_key);
       return frame;
     }
     case PageMessage::kCacheStorageAnswer: {

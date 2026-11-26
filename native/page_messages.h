@@ -30,11 +30,6 @@ class DictValue;
 
 namespace mitto {
 
-// Both ends speak exactly this version and refuse any other, because the Page
-// program ships beside the library, built from the same tree. Increase it with
-// any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 36;
-
 // What the padding of an opaque response is below, as Chrome's kPaddingRange
 // (response_padding.h).
 inline constexpr int64_t kResponsePaddingRange = 14431 * 1024;
@@ -96,7 +91,7 @@ inline constexpr int kPageExitOutOfMemory = 3;
 // The types of message. Each says which way it goes and what its payload holds.
 enum class PageMessage : uint32_t {
   // Each way, first and only once: the version of these messages that the
-  // sender speaks, as a 32-bit number.
+  // sender speaks, a 32-bit fingerprint of them (EncodeHello()).
   kHello = 1,
   // Each way: why the sender refuses what it got, in UTF-8. The sender closes
   // the channel after it.
@@ -293,9 +288,9 @@ enum class PageMessage : uint32_t {
   // and that goes, a 64-bit number.
   kDocumentEvicted = 285,
   // To the Page: whether the document that a navigation's response makes is
-  // cross-origin isolated, as PageIsolation says, just before the response
-  // starts, as Chrome's browser gives the renderer the document's agent
-  // cluster.
+  // cross-origin isolated, and its embedder policy, as PageIsolation says, just
+  // before the response starts, as Chrome's browser gives the renderer the
+  // document's agent cluster and policy container.
   kIsolation = 300,
 };
 
@@ -305,10 +300,10 @@ enum class PageMessage : uint32_t {
 inline constexpr size_t kPerStorageAreaQuota = 10 * 1024 * 1024;
 
 // How many storage areas a Page may have bound at once. A document binds at
-// most one of localStorage and one of sessionStorage, and a Page lets go of
-// those that no document uses once it has half as many bound, so a Page that
-// binds more is refused.
-inline constexpr size_t kMaxPageStorageAreas = 1000;
+// most one of localStorage and one of sessionStorage, and a Page, which has at
+// most 1,001 documents, lets go of those that no document uses once it has half
+// as many bound, so a Page that binds more is refused.
+inline constexpr size_t kMaxPageStorageAreas = 4096;
 
 // The most that the payload of a storage event, joined from its parts, holds:
 // more than the largest that a change to an area of the quota makes, with its
@@ -748,13 +743,22 @@ enum class PageCrossOriginIsolation : uint8_t {
   kCoopAndCoep = 1,
 };
 
+// A document's enforced Cross-Origin-Embedder-Policy.
+enum class PageEmbedderPolicy : uint8_t {
+  kNone = 0,
+  kCredentialless = 1,
+  kRequireCorp = 2,
+};
+
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
 // opened the Page: a top-level document's agent cluster's, and a frame's
-// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated.
+// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated. And its embedder
+// policy, which its frames' documents of no response take from it.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
+  PageEmbedderPolicy embedder_policy = PageEmbedderPolicy::kNone;
 };
 
 // A traversal of the session history to an entry of another document, which
@@ -1078,10 +1082,10 @@ struct PageBroadcast {
   std::string name;
   bool locked = false;
   std::string data;
-  // For kBroadcastReceived: the serialized origin of the documents that sent
-  // it, whose channels alone it reaches. Its payload starts with it, after its
-  // size.
-  std::string origin;
+  // For kBroadcastReceived: the serialized storage key of the context that
+  // sent it, whose channels alone it reaches. Its payload starts with it, after
+  // its size.
+  std::string storage_key;
 };
 
 // Where a change to a storage area comes from, as Blink's StorageAreaSource
@@ -1330,7 +1334,19 @@ struct FrameFromSession {
 // kMaxPayloadSize bytes.
 std::string EncodeFrame(PageMessage type, std::string_view payload);
 
+// Both ends speak exactly one version of the messages, kPageProtocolVersion,
+// and refuse any other, because the Page program ships beside the library,
+// built from the same tree. The build works it out as a fingerprint of the
+// files that define the bytes of a message (page_protocol_version.py), into a
+// header that only page_messages.cc reads, so a change to the messages needs no
+// change to it.
 std::string EncodeHello();
+// Why an end refuses the other's hello of `version`, naming both versions, or
+// nothing if it speaks that version too. `sender` and `receiver` name the two
+// ends, as "the Page" and "the library".
+std::optional<std::string> HelloRefusal(uint32_t version,
+                                        std::string_view sender,
+                                        std::string_view receiver);
 // With the start's connection.
 std::string EncodeStart(const PageStart& start);
 

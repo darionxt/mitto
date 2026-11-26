@@ -290,6 +290,10 @@ v8::Local<v8::Value> WorkerGlobalScope::StructuredClone(
   return serialized->Deserialize(isolate, MessagePort::PortsOf(ports));
 }
 
+FetchReferrerPolicy WorkerGlobalScope::GetReferrerPolicy() const {
+  return referrer_policy_;
+}
+
 std::u16string WorkerGlobalScope::Url() const {
   return base::UTF8ToUTF16(url_.possibly_invalid_spec());
 }
@@ -304,6 +308,10 @@ url::Origin WorkerGlobalScope::GetSecurityOrigin() const {
 
 url::Origin WorkerGlobalScope::AgentClusterOrigin() const {
   return agent_cluster_origin_;
+}
+
+std::string WorkerGlobalScope::StorageKey() const {
+  return storage_key_;
 }
 
 GURL WorkerGlobalScope::BaseUrl() const {

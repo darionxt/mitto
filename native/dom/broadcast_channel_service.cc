@@ -14,7 +14,6 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/serialized_script_value.h"
-#include "url/gurl.h"
 #include "url/origin.h"
 
 namespace mitto {
@@ -35,14 +34,12 @@ BroadcastChannelService::Connection::Connection(
     uint64_t id,
     std::string key,
     bool opaque,
-    const ExecutionContext* context,
     scoped_refptr<base::SingleThreadTaskRunner> runner,
     std::string name,
     BroadcastChannel* channel)
     : id(id),
       key(std::move(key)),
       opaque(opaque),
-      context(context),
       runner(std::move(runner)),
       name(std::move(name)),
       channel(channel) {}
@@ -68,8 +65,6 @@ void BroadcastChannelService::SetSessionSender(SessionSender sender) {
 uint64_t BroadcastChannelService::Connect(BroadcastChannel* channel,
                                           ExecutionContext& context,
                                           const std::u16string& name) {
-  const url::Origin origin =
-      url::Origin::Create(GURL(base::UTF16ToUTF8(context.Url())));
   const scoped_refptr<base::SingleThreadTaskRunner> runner = CurrentRunner();
   const base::AutoLock lock(lock_);
   // Dispose(): the connections of this thread's channels that the collector
@@ -79,8 +74,9 @@ uint64_t BroadcastChannelService::Connect(BroadcastChannel* channel,
   });
   const uint64_t id = ++next_connection_;
   // Mojo carries the name as UTF-8, with a lone surrogate as U+FFFD.
-  connections_.emplace_back(id, origin.Serialize(), origin.opaque(), &context,
-                            runner, base::UTF16ToUTF8(name), channel);
+  connections_.emplace_back(id, context.StorageKey(),
+                            context.GetSecurityOrigin().opaque(), runner,
+                            base::UTF16ToUTF8(name), channel);
   return id;
 }
 
@@ -92,6 +88,7 @@ void BroadcastChannelService::Disconnect(uint64_t connection) {
 }
 
 void BroadcastChannelService::Post(uint64_t connection,
+                                   uint64_t context_id,
                                    const SerializedScriptValue& message) {
   const bool locked = message.IsLockedToAgentCluster();
   // The connections that the message finds once it reaches the service, which
@@ -107,13 +104,12 @@ void BroadcastChannelService::Post(uint64_t connection,
       return;
     }
     for (const Connection& c : connections_) {
-      if (c.id != from->id && c.key == from->key && c.name == from->name &&
-          (!from->opaque || c.context == from->context)) {
+      if (c.id != from->id && c.key == from->key && c.name == from->name) {
         recipients.emplace_back(c.id, c.runner);
       }
     }
     if (session_sender_ && !from->opaque) {
-      session_sender_.Run(from->name, locked, message.wire_data());
+      session_sender_.Run(context_id, from->name, locked, message.wire_data());
     }
   }
   // The hop to the service and the one back, each a task of the recipient's
@@ -136,7 +132,7 @@ void BroadcastChannelService::Post(uint64_t connection,
   }
 }
 
-void BroadcastChannelService::OnSessionMessage(const std::string& origin,
+void BroadcastChannelService::OnSessionMessage(const std::string& storage_key,
                                                const std::string& name,
                                                bool locked,
                                                std::vector<uint8_t> data) {
@@ -145,7 +141,7 @@ void BroadcastChannelService::OnSessionMessage(const std::string& origin,
   {
     const base::AutoLock lock(lock_);
     for (const Connection& c : connections_) {
-      if (!c.opaque && c.key == origin && c.name == name) {
+      if (!c.opaque && c.key == storage_key && c.name == name) {
         recipients.emplace_back(c.id, c.runner);
       }
     }

@@ -68,6 +68,7 @@
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
 #include "mitto/preconnect_manager.h"
+#include "mitto/range_after_cache.h"
 #include "mitto/ready_requests.h"
 #include "mitto/request_channel.h"
 #include "mitto/request_client.h"
@@ -83,6 +84,7 @@
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
+#include "net/base/load_states.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/network_change_notifier.h"
@@ -171,7 +173,7 @@ struct MittoSession final : public mitto::PageNetwork {
   }
   const mitto::NetworkQuality* GetNetworkQuality() const override;
   void BroadcastFromPage(const mitto::PageHost& from,
-                         const url::Origin& origin,
+                         const mitto::StorageKey& storage_key,
                          const mitto::PageBroadcast& broadcast) override;
   mitto::CacheStorageContext& cache_storage() override;
   mitto::StorageQuota& storage_quota() override;
@@ -265,6 +267,16 @@ constexpr base::TimeDelta kDelayInitialDohProbeTimeout = base::Seconds(5);
 // How long the first Session waits for the system's DNS settings. Reading them
 // takes milliseconds, and a machine where it fails never answers.
 constexpr base::TimeDelta kSystemDnsConfigTimeout = base::Seconds(1);
+
+// When a request that a worker's end abandoned first looks whether //net has
+// sent it yet, which it ends once it has, each look after that waiting twice
+// as long up to the longest wait, so that a sent request soon lets its socket
+// go to one that waits, and how long it may wait: Chrome's end of a worker's
+// loaders reaches its network service after the worker's thread has gone, so
+// a request that a socket held back is not sent there.
+constexpr base::TimeDelta kFirstSentCheck = base::Milliseconds(1);
+constexpr base::TimeDelta kLongestSentCheck = base::Milliseconds(16);
+constexpr base::TimeDelta kAbandonedSendGrace = base::Seconds(1);
 
 // The subdirectory of a Session's cache directory that //net owns, with the name
 // that PopulateHttpCacheDirectories() in //content gives it.
@@ -477,6 +489,19 @@ class RequestJob final : public net::URLRequest::Delegate,
     Finish(net::ERR_ABORTED);
   }
 
+  void AbandonOnceSent(base::ScopedClosureRunner on_end) override {
+    client_ = nullptr;
+    on_abandoned_end_ = std::move(on_end);
+    if (body_stream_ || preflight_ || IsSent()) {
+      Finish(net::ERR_ABORTED);
+      return;
+    }
+    abandon_once_sent_ = true;
+    send_deadline_ = base::TimeTicks::Now() + kAbandonedSendGrace;
+    // //net tells of no write, so the request's load state says when.
+    CheckSentAfter(kFirstSentCheck);
+  }
+
   void Detach(base::RepeatingCallback<int(const RequestEvent&)> check_response)
       override {
     owned_detached_client_ =
@@ -501,6 +526,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   int OnConnected(net::URLRequest* request,
                   const net::TransportInfo& info,
                   net::CompletionOnceCallback callback) override {
+    over_quic_ = info.negotiated_protocol == net::NextProto::kProtoQUIC;
     connect_timer_.Stop();
     StartReadTimer();
     // A stream cannot go twice, so a request with one goes on as it is.
@@ -536,6 +562,11 @@ class RequestJob final : public net::URLRequest::Delegate,
   void OnReceivedRedirect(net::URLRequest* request,
                           const net::RedirectInfo& redirect_info,
                           bool* defer_redirect) override {
+    // An abandoned request follows no redirect.
+    if (abandon_once_sent_) {
+      Finish(net::ERR_ABORTED);
+      return;
+    }
     // //net is still in the read that brought these headers. Over HTTP/2 it has
     // yet to see the END_STREAM of their frame, so going on from here would
     // cancel a stream that is about to end. Chrome's answer to a redirect comes
@@ -586,6 +617,10 @@ class RequestJob final : public net::URLRequest::Delegate,
   void OnResponseStarted(net::URLRequest* request, int net_error) override {
     if (net_error != net::OK) {
       Finish(net_error);
+      return;
+    }
+    if (abandon_once_sent_) {
+      Finish(net::ERR_ABORTED);
       return;
     }
     // A response from a cache comes with no connection.
@@ -957,6 +992,40 @@ class RequestJob final : public net::URLRequest::Delegate,
     Finish(net::ERR_TIMED_OUT);
   }
 
+  // Whether //net has put the request on the wire: it waits for the response,
+  // or has its headers. A QUIC stream takes headers that flow control holds
+  // back, all or in part, as written, so only its response says so.
+  bool IsSent() const {
+    if (!request_ || request_->response_headers()) {
+      return true;
+    }
+    if (over_quic_) {
+      return false;
+    }
+    const net::LoadState state = request_->GetLoadState().state;
+    return (state == net::LOAD_STATE_WAITING_FOR_RESPONSE ||
+            state == net::LOAD_STATE_READING_RESPONSE) &&
+           request_->GetTotalSentBytes().InBytes() > 0;
+  }
+
+  void CheckSentAfter(base::TimeDelta delay) {
+    sent_timer_.Start(FROM_HERE, delay,
+                      base::BindOnce(&RequestJob::FinishOnceSent,
+                                     base::Unretained(this), delay));
+  }
+
+  // Ends the abandoned request once //net has sent it, or once it has waited
+  // as long as it may, else looks again after twice `delay`.
+  void FinishOnceSent(base::TimeDelta delay) {
+    const base::TimeTicks now = base::TimeTicks::Now();
+    if (IsSent() || now >= send_deadline_) {
+      Finish(net::ERR_ABORTED);
+      return;
+    }
+    CheckSentAfter(
+        std::min({2 * delay, kLongestSentCheck, send_deadline_ - now}));
+  }
+
   // `result` is net::OK when the body ended, otherwise a net error. This deletes
   // the job, so nothing may touch it afterwards.
   void Finish(int result) {
@@ -1053,6 +1122,14 @@ class RequestJob final : public net::URLRequest::Delegate,
   base::OneShotTimer connect_timer_;
   base::OneShotTimer read_timer_;
   base::OneShotTimer total_timer_;
+  // An abandoned request that waits for //net to send it, until when, what
+  // checks, and what goes once it has ended.
+  bool abandon_once_sent_ = false;
+  // Whether the request went over QUIC, as its connection said.
+  bool over_quic_ = false;
+  base::TimeTicks send_deadline_;
+  base::OneShotTimer sent_timer_;
+  base::ScopedClosureRunner on_abandoned_end_;
   base::ByteSize received_bytes_at_read_timer_start_;
   base::ByteSize sent_bytes_at_read_timer_start_;
   base::WeakPtrFactory<RequestJob> weak_ptr_factory_{this};
@@ -1121,11 +1198,11 @@ mitto::PreconnectManager& MittoSession::preconnect_manager() {
 }
 
 void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
-                                     const url::Origin& origin,
+                                     const mitto::StorageKey& storage_key,
                                      const mitto::PageBroadcast& broadcast) {
   for (const std::unique_ptr<mitto::PageHost>& page : pages) {
     if (page.get() != &from) {
-      page->DeliverBroadcast(origin, broadcast);
+      page->DeliverBroadcast(storage_key, broadcast);
     }
   }
 }
@@ -1215,6 +1292,10 @@ void ConfigureHttpCache(net::URLRequestContextBuilder& builder,
                         const SessionSettings& settings) {
   if (!settings.http_cache_in_memory && !settings.http_cache_directory) {
     builder.DisableHttpCache();
+    // What Chrome's cache does to a request's Range line, which no Session
+    // without one would do.
+    builder.set_network_delegate(
+        std::make_unique<NoHttpCacheNetworkDelegate>());
     return;
   }
   net::URLRequestContextBuilder::HttpCacheParams params;

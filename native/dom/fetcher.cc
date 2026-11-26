@@ -85,6 +85,10 @@ FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value) {
         FetchReferrerPolicyFromString(base::UTF8ToUTF16(token));
     if (named != FetchReferrerPolicy::kDefault) {
       policy = named;
+    } else if (!std::ranges::all_of(token, [](char c) {
+                 return base::IsAsciiAlpha(c) || c == '-';
+               })) {
+      return FetchReferrerPolicy::kDefault;
     }
   }
   return policy;

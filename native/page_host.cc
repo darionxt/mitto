@@ -628,8 +628,9 @@ std::optional<std::string> HeaderValue(std::string_view lines,
         !base::EqualsCaseInsensitiveASCII(line.substr(0, colon), name)) {
       continue;
     }
+    // HttpUtil::TrimLWS(), which takes spaces and tabs alone for white space.
     const std::string_view item =
-        base::TrimWhitespaceASCII(line.substr(colon + 1), base::TRIM_ALL);
+        base::TrimString(line.substr(colon + 1), " \t", base::TRIM_ALL);
     value = value ? base::StrCat({*value, ", ", item}) : std::string(item);
   }
   return value;
@@ -645,6 +646,32 @@ PolicyHeaders PolicyHeadersOf(std::string_view lines) {
   headers.coop_report_only =
       HeaderValue(lines, "Cross-Origin-Opener-Policy-Report-Only");
   return headers;
+}
+
+PageEmbedderPolicy ToPageEmbedderPolicy(CrossOriginEmbedderPolicyValue value) {
+  switch (value) {
+    case CrossOriginEmbedderPolicyValue::kNone:
+      return PageEmbedderPolicy::kNone;
+    case CrossOriginEmbedderPolicyValue::kCredentialless:
+      return PageEmbedderPolicy::kCredentialless;
+    case CrossOriginEmbedderPolicyValue::kRequireCorp:
+      return PageEmbedderPolicy::kRequireCorp;
+  }
+  NOTREACHED();
+}
+
+// What the Page hears of the document that the response of navigation
+// `navigation` makes.
+PageIsolation IsolationOf(uint64_t navigation,
+                          bool cross_origin_isolated,
+                          const CrossOriginEmbedderPolicy& coep) {
+  PageIsolation isolation;
+  isolation.navigation = navigation;
+  isolation.isolation = cross_origin_isolated
+                            ? PageCrossOriginIsolation::kCoopAndCoep
+                            : PageCrossOriginIsolation::kNone;
+  isolation.embedder_policy = ToPageEmbedderPolicy(coep.value);
+  return isolation;
 }
 
 // The MIME type of a response, lowercased, as net::HttpUtil::ParseContentType()
@@ -1203,6 +1230,19 @@ class PageHost::Request final : public RequestClient {
       job_.reset();
     }
   }
+  // Lets the job end once //net has sent its request, as a dedicated worker's
+  // that ends (RunningRequest::AbandonOnceSent()), with its share of the
+  // keepalive limits until then, and returns it while it goes on.
+  base::WeakPtr<RunningRequest> AbandonJobOnceSent() {
+    base::WeakPtr<RunningRequest> job = std::move(job_);
+    job_.reset();
+    if (job) {
+      job->AbandonOnceSent(base::ScopedClosureRunner(
+          base::BindOnce([](std::unique_ptr<KeepaliveShare>) {},
+                         std::move(keepalive_share_))));
+    }
+    return job;
+  }
   void set_keepalive_share(std::unique_ptr<KeepaliveShare> share) {
     keepalive_share_ = std::move(share);
   }
@@ -1587,7 +1627,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     return;
   }
   last_request_number_ = asked.number;
-  if (requests_.size() >= kMaxPageRequests) {
+  if (RequestsInFlight() >= kMaxPageRequests) {
     Refuse(base::StrCat({"more than ", base::NumberToString(kMaxPageRequests),
                          " requests at once"}));
     return;
@@ -2071,8 +2111,13 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
   // Where a frame's document, or a worker, that the Page makes of it comes
   // from. A frame's document has its response's embedder policy, as Chrome's
   // browser builds its policy container of it, and its isolation, which the
-  // Page commits it with.
-  std::optional<PageCrossOriginIsolation> frame_isolation;
+  // Page commits it with, as a top-level document does its agent cluster's: a
+  // frame's is CrossOriginIsolatedCapability().
+  std::optional<PageIsolation> isolation;
+  if (policies) {
+    isolation = IsolationOf(request.number(), policies->cross_origin_isolated,
+                            policies->coep);
+  }
   if (const auto frame = frame_navigation_responses_.find(request.number());
       frame != frame_navigation_responses_.end()) {
     const CrossOriginEmbedderPolicy coep =
@@ -2087,26 +2132,16 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
         !SandboxesOrigin(event.headers) &&
         FrameIsCrossOriginIsolated(frame->second.parent,
                                    url::Origin::Create(frame->second.url));
-    frame_isolation = frame->second.cross_origin_isolated
-                          ? PageCrossOriginIsolation::kCoopAndCoep
-                          : PageCrossOriginIsolation::kNone;
+    isolation = IsolationOf(request.number(),
+                            frame->second.cross_origin_isolated, coep);
   }
   if (const auto script = worker_scripts_.find(request.number());
       script != worker_scripts_.end()) {
     script->second.url = GURL(event.url);
     script->second.coep = EmbedderPolicyOf(PolicyHeadersOf(event.headers));
   }
-  if (channel_ && (policies || frame_isolation)) {
-    // The document's isolation, which Chrome's browser commits it with: a
-    // top-level document's agent cluster's, and a frame's
-    // CrossOriginIsolatedCapability().
-    PageIsolation isolation;
-    isolation.navigation = request.number();
-    isolation.isolation = frame_isolation ? *frame_isolation
-                          : policies->cross_origin_isolated
-                              ? PageCrossOriginIsolation::kCoopAndCoep
-                              : PageCrossOriginIsolation::kNone;
-    channel_->Send(EncodeIsolation(isolation));
+  if (channel_ && isolation) {
+    channel_->Send(EncodeIsolation(*isolation));
   }
   if (channel_) {
     PageResponseStarted response;
@@ -2256,14 +2291,27 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
 }
 
 void PageHost::AbandonRequests() {
-  // A keepalive request goes on without its Page, and the Session finishes
-  // it. Each other Request abandons its job as it goes.
+  // A document's keepalive request goes on without its Page, and the Session
+  // finishes it. Each other Request abandons its job as it goes, and so does a
+  // gone worker's that //net has yet to send.
   for (auto& [number, request] : requests_) {
-    if (request->checks().keepalive) {
+    if (request->checks().keepalive && !IsOfWorker(*request)) {
       request->DetachJob();
     }
   }
   requests_.clear();
+  for (const base::WeakPtr<RunningRequest>& job : sending_jobs_) {
+    if (job) {
+      job->Abandon();
+    }
+  }
+  sending_jobs_.clear();
+}
+
+size_t PageHost::RequestsInFlight() {
+  std::erase_if(sending_jobs_,
+                [](const base::WeakPtr<RunningRequest>& job) { return !job; });
+  return requests_.size() + sending_jobs_.size();
 }
 
 // static
@@ -2612,17 +2660,21 @@ void PageHost::OnCookieStoreChange(uint64_t document,
 }
 
 void PageHost::OnBroadcast(const PageBroadcast& broadcast,
-                           const GURL& document_url) {
-  // Only a document of an origin that is not opaque sends one: one of an
-  // opaque origin shares its channels with no other.
-  const url::Origin origin = url::Origin::Create(document_url);
-  if (!DocumentHasCookies(document_url) || origin.opaque()) {
+                           uint64_t context_id) {
+  // Only a context of an origin that is not opaque sends one: one of an opaque
+  // origin shares its channels with no other Page's.
+  const Context& context = contexts_.at(context_id);
+  if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     Refuse(
         "a broadcast from a Page with no document of an origin that "
         "another can share");
     return;
   }
-  network_->BroadcastFromPage(*this, origin, broadcast);
+  // Nor does one under a top-level document of an opaque origin, whose key no
+  // other Page's context has.
+  if (context.storage_key) {
+    network_->BroadcastFromPage(*this, *context.storage_key, broadcast);
+  }
 }
 
 void PageHost::OnCacheStorage(PageCacheStorageCall call,
@@ -2779,8 +2831,8 @@ std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
   if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     return std::nullopt;
   }
-  if (const std::optional<StorageKey> storage_key = DocumentStorageKey(id)) {
-    return storage_key->Serialize();
+  if (context.storage_key) {
+    return context.storage_key->Serialize();
   }
   // A frame under a top-level document of an opaque origin, such as a data:
   // URL's, whose key has that origin's nonce, which no other top-level
@@ -2797,15 +2849,16 @@ std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
   return SerializeUnderOpaqueTop(context.origin, nonce->second);
 }
 
-std::optional<StorageKey> PageHost::DocumentStorageKey(uint64_t id) const {
+// static
+std::optional<StorageKey> PageHost::CalculateStorageKey(
+    const Context& context) {
   // RenderFrameHostImpl::CalculateStorageKey(), with
   // net::features::kThirdPartyStoragePartitioning on, as in Chrome.
   // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
-  const Context& context = contexts_.at(id);
   if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     return std::nullopt;
   }
-  const FrameTree tree = FrameTreeOf(id);
+  const FrameTree& tree = context.frame_tree;
   if (tree.is_top_level) {
     return StorageKey::CreateFirstParty(context.origin);
   }
@@ -2849,8 +2902,7 @@ void PageHost::OnStorageBind(const PageStorageBind& bind, uint64_t document) {
     return;
   }
   StorageAreaImpl* area = nullptr;
-  if (const std::optional<StorageKey> storage_key =
-          DocumentStorageKey(document)) {
+  if (const std::optional<StorageKey>& storage_key = context.storage_key) {
     if (bind.kind == PageStorageKind::kLocal) {
       area = &network_->storage_context().LocalStorageArea(*storage_key);
     } else {
@@ -2970,7 +3022,7 @@ void PageHost::OnNetworkHint(const PageNetworkHint& hint, uint64_t document) {
   }
   // GetPendingIsolationInfoForSubresources() of the document's frame.
   const Context& context = contexts_.at(document);
-  const FrameTree tree = FrameTreeOf(document);
+  const FrameTree& tree = context.frame_tree;
   const net::SiteForCookies site_for_cookies =
       tree.cross_site ? net::SiteForCookies()
                       : net::SiteForCookies::FromOrigin(tree.top_frame_origin);
@@ -2991,27 +3043,24 @@ void PageHost::OnNetworkHint(const PageNetworkHint& hint, uint64_t document) {
   NOTREACHED();
 }
 
-void PageHost::DeliverBroadcast(const url::Origin& origin,
+void PageHost::DeliverBroadcast(const StorageKey& storage_key,
                                 const PageBroadcast& broadcast) {
-  // The Page hands it to the channels of its contexts of that origin, if it
-  // has one. A message too large for a frame with its origin stays out, as
-  // one too large for a frame stays in the Page that posts it.
+  // The Page hands it to the channels of its contexts of that storage key, if
+  // it has one. A message too large for a frame with its key stays out, as one
+  // too large for a frame stays in the Page that posts it.
   if (!channel_ || ended_ || refused_by_library_ ||
-      (std::ranges::none_of(
-           contexts_,
-           [&origin](const auto& entry) {
-             return DocumentHasCookies(ContextUrl(entry.second)) &&
-                    entry.second.origin.IsSameOriginWith(origin);
-           }) &&
-       std::ranges::none_of(stored_documents_, [&origin](const auto& entry) {
-         const Context& context = entry.second.context;
-         return DocumentHasCookies(ContextUrl(context)) &&
-                context.origin.IsSameOriginWith(origin);
+      (std::ranges::none_of(contexts_,
+                            [&storage_key](const auto& entry) {
+                              return entry.second.storage_key == storage_key;
+                            }) &&
+       std::ranges::none_of(stored_documents_, [&storage_key](
+                                                   const auto& entry) {
+         return entry.second.context.storage_key == storage_key;
        }))) {
     return;
   }
   PageBroadcast received = broadcast;
-  received.origin = origin.Serialize();
+  received.storage_key = storage_key.Serialize();
   if (!BroadcastReceivedFits(received)) {
     return;
   }
@@ -3216,6 +3265,18 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         about_blank_navigations_.erase(started);
         context.url = url;
       }
+      // NavigationRequest::CheckResponseAdherenceToCoep(), which the Page has
+      // made: an error page in place of one that its parent's embedder policy
+      // blocks, which is an about:blank's or a data: URL's alone.
+      if ((committed.source == PageDocumentSource::kAboutBlank ||
+           committed.source == PageDocumentSource::kDataUrl) &&
+          !top_level &&
+          CompatibleWithCrossOriginIsolated(
+              contexts_.at(committed.parent).coep.value) &&
+          !CompatibleWithCrossOriginIsolated(context.coep.value)) {
+        Refuse("a document that its parent's embedder policy blocks");
+        return;
+      }
       // Each document that a frame makes without the network is isolated by
       // its origin, as one that the network gives is: one of its isolated
       // parent's origin is, and an opaque one, an error page's or a data:
@@ -3234,7 +3295,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     if (contexts_.contains(replaced)) {
       ForgetContexts(ContextsUnder(replaced));
     }
-    contexts_.emplace(committed.document, std::move(context));
+    AddContext(committed.document, std::move(context));
     return;
   }
   const GURL url = context.url;
@@ -3297,7 +3358,7 @@ void PageHost::ReplaceTopLevelDocument(uint64_t id, Context context) {
   frame_navigation_responses_.clear();
   about_blank_navigations_.clear();
   worker_scripts_.clear();
-  contexts_.emplace(id, std::move(context));
+  AddContext(id, std::move(context));
   // The old document's Cache API goes with it, as its pipes go with its
   // context in Chrome: its puts that wait for a body fail, and what it held
   // is let go. The new document's numbers go on from its.
@@ -3501,7 +3562,7 @@ void PageHost::OnTraversalRequest(const PageTraversalRequest& traversal,
     return;
   }
   last_request_number_ = traversal.number;
-  if (requests_.size() >= kMaxPageRequests) {
+  if (RequestsInFlight() >= kMaxPageRequests) {
     Refuse(base::StrCat({"more than ", base::NumberToString(kMaxPageRequests),
                          " requests at once"}));
     return;
@@ -3701,15 +3762,27 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
   });
 }
 
+bool PageHost::IsOfWorker(const Request& request) const {
+  const auto context = contexts_.find(request.context());
+  return context != contexts_.end() && context->second.is_worker;
+}
+
 void PageHost::LetKeepaliveRequestsGo(const std::set<uint64_t>* ids) {
   for (auto it = requests_.begin(); it != requests_.end();) {
     Request& request = *it->second;
-    if (!request.checks().keepalive ||
+    const bool of_worker = IsOfWorker(request);
+    if ((!request.checks().keepalive && !of_worker) ||
         (ids && !ids->contains(request.context()))) {
       ++it;
       continue;
     }
-    request.DetachJob();
+    if (of_worker) {
+      if (base::WeakPtr<RunningRequest> job = request.AbandonJobOnceSent()) {
+        sending_jobs_.push_back(std::move(job));
+      }
+    } else {
+      request.DetachJob();
+    }
     PageResponseEnded ended;
     ended.number = it->first;
     ended.net_error = net::ERR_ABORTED;
@@ -3751,29 +3824,6 @@ bool PageHost::FrameIsCrossOriginIsolated(uint64_t parent,
          parent_context->second.origin.IsSameOriginWith(origin);
 }
 
-PageHost::FrameTree PageHost::FrameTreeOf(uint64_t id) const {
-  // A worker is in its creator's frame.
-  const Context* context = &contexts_.at(id);
-  while (context->is_worker) {
-    context = &contexts_.at(context->parent);
-  }
-  std::vector<const Context*> documents = {context};
-  while (documents.back()->parent != kNoDocument) {
-    documents.push_back(&contexts_.at(documents.back()->parent));
-  }
-  FrameTree tree;
-  tree.top_frame_origin = documents.back()->origin;
-  tree.is_top_level = documents.size() == 1;
-  const net::SchemefulSite top_site(tree.top_frame_origin);
-  for (const Context* document : documents) {
-    tree.cross_site =
-        tree.cross_site || net::SchemefulSite(document->origin) != top_site;
-    tree.cross_origin = tree.cross_origin || !document->origin.IsSameOriginWith(
-                                                 tree.top_frame_origin);
-  }
-  return tree;
-}
-
 void PageHost::FillContextFetch(uint64_t id,
                                 uint64_t parent,
                                 FetchParams& fetch) const {
@@ -3805,7 +3855,8 @@ void PageHost::FillContextFetch(uint64_t id,
   // its navigation, up to the top-level document, as Chrome's browser works
   // it out. A frame's navigation always names the top-level frame, since its
   // Initiator need not be it.
-  const FrameTree tree = FrameTreeOf(parent != kNoDocument ? parent : id);
+  const FrameTree& tree =
+      contexts_.at(parent != kNoDocument ? parent : id).frame_tree;
   if (!tree.is_top_level || parent != kNoDocument ||
       fetch.opaque_initiator.has_value()) {
     fetch.top_frame_origin = tree.top_frame_origin;
@@ -3850,7 +3901,7 @@ PageHost::CookieContext::~CookieContext() = default;
 
 PageHost::CookieContext PageHost::CookieContextOf(uint64_t id) const {
   const Context& context = contexts_.at(id);
-  const FrameTree tree = FrameTreeOf(id);
+  const FrameTree& tree = contexts_.at(id).frame_tree;
   CookieContext cookies;
   cookies.url = CookieUrlOf(context);
   cookies.site_for_cookies =
@@ -3913,7 +3964,27 @@ void PageHost::OnWorkerStarted(const PageWorkerStarted& started) {
       break;
   }
   last_context_id_ = started.worker;
-  contexts_.emplace(started.worker, std::move(worker));
+  AddContext(started.worker, std::move(worker));
+}
+
+void PageHost::AddContext(uint64_t id, Context context) {
+  // Neither its origin nor its place in the frame tree changes while it lasts.
+  FrameTree& tree = context.frame_tree;
+  if (context.parent == kNoDocument) {
+    tree.top_frame_origin = context.origin;
+  } else {
+    tree = contexts_.at(context.parent).frame_tree;
+  }
+  if (context.parent != kNoDocument && !context.is_worker) {
+    tree.is_top_level = false;
+    tree.cross_site =
+        tree.cross_site || net::SchemefulSite(context.origin) !=
+                               net::SchemefulSite(tree.top_frame_origin);
+    tree.cross_origin = tree.cross_origin ||
+                        !context.origin.IsSameOriginWith(tree.top_frame_origin);
+  }
+  context.storage_key = CalculateStorageKey(context);
+  contexts_.emplace(id, std::move(context));
 }
 
 void PageHost::OnContextGone(uint64_t context_id) {
@@ -3970,11 +4041,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
         Refuse("a second hello");
         return;
       }
-      if (frame->version != kPageProtocolVersion) {
-        Refuse(base::StrCat({"the Page speaks version ",
-                             base::NumberToString(frame->version),
-                             " of the messages, and the library speaks ",
-                             base::NumberToString(kPageProtocolVersion)}));
+      if (std::optional<std::string> refusal =
+              HelloRefusal(frame->version, "the Page", "the library")) {
+        Refuse(*std::move(refusal));
         return;
       }
       hello_received_ = true;
@@ -4072,7 +4141,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
                           CookieContextOf(frame->document));
       return;
     case PageMessage::kBroadcast:
-      OnBroadcast(frame->broadcast, document_url);
+      OnBroadcast(frame->broadcast, frame->document);
       return;
     case PageMessage::kDocumentCommitted:
       OnDocumentCommitted(frame->committed);
