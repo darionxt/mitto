@@ -206,6 +206,8 @@ struct FetchResponseHead {
   bool opaque = false;
   // Each "name: value" and a line feed, without Set-Cookie.
   std::string headers;
+  // An opaque response's padding, which the Cache API counts beside its size.
+  int64_t padding = 0;
 };
 
 // What a request can be told while it runs.

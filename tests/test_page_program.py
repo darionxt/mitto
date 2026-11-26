@@ -850,11 +850,13 @@ def _timing(
     received_bytes: int = 0,
     redirect_count: int = 0,
     ends: tuple[int, int, int] = (0, 0, 0),
+    padding: int = 0,
 ) -> bytes:
     """The Performance Timeline's part of a response: //net's ten times of its last hop, its six flags (socket reused,
     TAO passed, validated, cross-origin redirect, Critical-CH restart, opaque), the bytes that had come, its redirects,
-    and when its first hop started, its last redirect ended and the navigation restarted for Critical-CH."""
-    return struct.pack("<10q6BqI3q", *times, *flags, received_bytes, redirect_count, *ends)
+    and when its first hop started, its last redirect ended and the navigation restarted for Critical-CH. Then an opaque
+    response's padding."""
+    return struct.pack("<10q6BqI3qq", *times, *flags, received_bytes, redirect_count, *ends, padding)
 
 
 def _respond(
@@ -1792,6 +1794,22 @@ def test_a_page_refuses_a_response_whose_timing_net_cannot_give(session: _Sessio
     _respond(session, 0, _DOCUMENT_URL, "text/html", timing=timing)
 
     assert session.refusal() == "a response whose timing //net cannot give"
+
+
+@pytest.mark.parametrize(
+    "timing",
+    [
+        pytest.param(_timing(padding=1), id="of-a-response-that-is-not-opaque"),
+        pytest.param(_timing(flags=(0, 0, 0, 0, 0, 1), padding=-1), id="negative"),
+        pytest.param(_timing(flags=(0, 0, 0, 0, 0, 1), padding=14431 * 1024), id="past-chromes-range"),
+    ],
+)
+def test_a_page_refuses_a_response_whose_padding_it_cannot_have(session: _Session, timing: bytes) -> None:
+    session.start()
+
+    _respond(session, 0, _DOCUMENT_URL, "text/html", timing=timing)
+
+    assert session.refusal() == "a response whose padding it cannot have"
 
 
 def test_a_page_refuses_a_response_both_cors_and_opaque(session: _Session) -> None:

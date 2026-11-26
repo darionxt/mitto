@@ -272,7 +272,7 @@ int64_t DecodeInt64(std::string_view bytes) {
 constexpr uint32_t kMostRedirects = 20;
 
 // The fixed part of a response's payload, before its URL.
-constexpr size_t kResponseStartedFixedSize = 158;
+constexpr size_t kResponseStartedFixedSize = 166;
 
 // The times of a PageLoadTiming, in the order they travel.
 std::array<int64_t PageLoadTiming::*, 10> LoadTimingTimes() {
@@ -1506,6 +1506,7 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
   response.first_request_start = DecodeInt64(bytes.substr(134, 8));
   response.last_redirect_end = DecodeInt64(bytes.substr(142, 8));
   response.critical_ch_restart = DecodeInt64(bytes.substr(150, 8));
+  response.padding = DecodeInt64(bytes.substr(158, 8));
   bytes.remove_prefix(kResponseStartedFixedSize);
   if (!times_valid || socket_reused > 1 || timing_allow_passed > 1 ||
       validated > 1 || cross_origin_redirect > 1 || restarted > 1 ||
@@ -1514,6 +1515,10 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
       response.first_request_start < 0 || response.last_redirect_end < 0 ||
       response.critical_ch_restart < 0) {
     return base::unexpected("a response whose timing //net cannot give");
+  }
+  if (response.padding < 0 || response.padding >= kResponsePaddingRange ||
+      (response.padding != 0 && opaque == 0)) {
+    return base::unexpected("a response whose padding it cannot have");
   }
   response.timing.socket_reused = socket_reused == 1;
   response.timing_allow_passed = timing_allow_passed == 1;
@@ -2025,6 +2030,7 @@ std::string EncodeResponseStarted(const PageResponseStarted& response) {
            EncodeInt64(response.first_request_start),
            EncodeInt64(response.last_redirect_end),
            EncodeInt64(response.critical_ch_restart),
+           EncodeInt64(response.padding),
            EncodeUint32(static_cast<uint32_t>(response.url.size())),
            response.url,
            EncodeUint32(static_cast<uint32_t>(response.status_text.size())),

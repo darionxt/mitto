@@ -94,18 +94,22 @@ v8::Local<v8::Promise> SettledPromise(v8::Isolate* isolate,
 // PopulateFetchAPIResponse(): what the Session stores of a response.
 PageCacheResponse ToPageCacheResponse(const Response& response) {
   PageCacheResponse page_response;
-  const std::string url = base::UTF16ToUTF8(response.Url());
+  // An opaque response stores the response behind it, which no script sees,
+  // as Blink's PopulateFetchAPIResponse() writes its internal response.
+  const Response& stored =
+      response.InternalResponse() ? *response.InternalResponse() : response;
+  const std::string url = base::UTF16ToUTF8(stored.Url());
   // Its URL list: empty for a response that a page made, and with every URL
   // of its redirects for a fetched one, of which only the last and whether
   // there are more than one show.
   if (!url.empty()) {
     page_response.url_list.push_back(url);
-    if (response.Redirected()) {
+    if (stored.Redirected()) {
       page_response.url_list.push_back(url);
     }
   }
-  page_response.status = response.Status();
-  page_response.status_text = response.StatusText();
+  page_response.status = stored.Status();
+  page_response.status_text = stored.StatusText();
   const std::u16string type = response.Type();
   page_response.type = type == u"basic"    ? 0
                        : type == u"cors"   ? 1
@@ -114,7 +118,7 @@ PageCacheResponse ToPageCacheResponse(const Response& response) {
                                            : 2;
   // Each name once, the first of its values, as the mojom's map holds them.
   std::set<std::string> seen;
-  for (const auto& [name, value] : response.Headers()->list()) {
+  for (const auto& [name, value] : stored.Headers()->list()) {
     std::string lower = base::ToLowerASCII(name);
     if (seen.insert(lower).second) {
       page_response.headers.emplace_back(std::move(lower), value);
@@ -129,6 +133,7 @@ PageCacheResponse ToPageCacheResponse(const Response& response) {
   }
   page_response.response_time =
       base::Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds();
+  page_response.padding = response.Padding();
   return page_response;
 }
 

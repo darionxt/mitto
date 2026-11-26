@@ -869,6 +869,8 @@ class RequestJob final : public net::URLRequest::Delegate,
         static_cast<int64_t>(request_->GetTotalReceivedBytes().InBytes());
     event.validated = response_info.cache_entry_status ==
                       net::HttpResponseInfo::CacheEntryStatus::ENTRY_VALIDATED;
+    event.response_time = response_info.response_time;
+    event.method = options_.method;
     event.first_request_start = first_request_start_;
     event.critical_ch_restart = critical_ch_restart_;
     event.restarted_for_critical_ch = restarted_for_critical_ch_;
