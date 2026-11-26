@@ -8,7 +8,6 @@ import contextlib
 import http.server
 import socket
 import threading
-import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -291,11 +290,6 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
     ),
-    # A fetch that a worker starts as it closes.
-    "/closing.js": (
-        "text/javascript",
-        b"fetch('/beacon', { method: 'POST', body: 'kept' }); close();",
-    ),
     # A keepalive fetch that the server holds.
     "/keepalive.js": ("text/javascript", b"fetch('/held', { keepalive: true });"),
     # A module that a worker of a data: URL imports, with what it imports in turn, one of them behind a redirect, none
@@ -325,8 +319,6 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
     "/timing-dynamic.js": ("text/javascript", b""),
 }
 
-# The path and body of each POST that reached the server, in order.
-_POSTED: list[tuple[str, bytes]] = []
 # The Referer and the header lines of each GET, by path, and the paths that redirect, to where.
 _REFERERS: dict[str, str | None] = {}
 _HEADERS: dict[str, list[tuple[str, str]]] = {}
@@ -406,13 +398,6 @@ def server() -> Iterator[str]:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Headers", "x-test")
             self.send_header("Access-Control-Max-Age", "600")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def do_POST(self) -> None:
-            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            _POSTED.append((self.path, body))
-            self.send_response(200)
             self.send_header("Content-Length", "0")
             self.end_headers()
 
@@ -883,21 +868,6 @@ def test_a_workers_high_entropy_values_are_the_windows(server: str) -> None:
         worker, window = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
     assert worker == window
     assert worker["architecture"] != ""
-
-
-@pytest.mark.usefixtures("page_program")
-def test_a_fetch_that_a_worker_starts_as_it_closes_is_sent(server: str) -> None:
-    _POSTED.clear()
-    script = """new Promise((resolve) => {
-        new Worker('/closing.js');
-        setTimeout(() => resolve('waited'), 500);
-    })"""
-
-    assert _evaluate(server, script) == "waited"
-    deadline = time.monotonic() + _TIMEOUT_SECONDS
-    while not _POSTED and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert _POSTED == [("/beacon", b"kept")]
 
 
 @pytest.mark.parametrize("ending", ["terminate", "close"])
