@@ -74,7 +74,7 @@ _FAKE_PAGE = textwrap.dedent(
     def request(document, number, kind, url, target=0):
         return (
             struct.pack("<QQBB", document, number, kind, 0)
-            + struct.pack("<BBBBBQ", 0, 0, 0, 0, 0, target)
+            + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, target)
             + sized(url.encode()) + sized(b"GET") + sized(b"") + sized(b"") + b"\\x00"
         )
 

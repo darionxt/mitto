@@ -125,6 +125,7 @@ uint64_t PageRequests::Start(PageRequest request,
   timed.initiator_type = std::move(initiator_type);
   timed.url = base::UTF8ToUTF16(request.url);
   timed.render_blocking = render_blocking;
+  timed.follows_redirects = request.redirect_mode == PageRedirectMode::kFollow;
   ExecutionContext& context = ExecutionContext::Current();
   timed.execution_context = &context;
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
@@ -645,7 +646,11 @@ void PageRequests::ProcessResponseStarted(const PageResponseStarted& response) {
     open->timed->execution_context->DidReceiveNoStoreForScriptRequest();
   }
   if (open->timed) {
-    open->timed->response = response;
+    // A redirect that is not followed ends the load, as Blink's
+    // WillFollowRedirect() cancels it, so its entry tells nothing of it.
+    if (open->timed->follows_redirects || !IsRedirect(response)) {
+      open->timed->response = response;
+    }
     // WorkerMainScriptLoader starts once the browser hands the response over.
     // Chrome's starts once the worker's thread has, which often puts a small
     // script's end before its start: a Known Gap.

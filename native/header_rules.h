@@ -70,6 +70,10 @@ std::string HeaderField(std::string_view headers, std::string_view name);
 // Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
 bool CacheControlContainsNoStore(std::string_view raw_value);
 
+// Whether one of the lines of `headers` has a Location to go to, which
+// net::HttpResponseHeaders::IsRedirect() wants of a redirect.
+bool HasLocation(std::string_view headers);
+
 }  // namespace mitto
 
 #endif  // MITTO_HEADER_RULES_H_

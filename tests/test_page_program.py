@@ -829,13 +829,13 @@ def _request(
     referrer: str = "",
 ) -> bytes:
     """The payload of a Request of the navigation's document: its number, Kind, flags, mode (same-origin, `mode`, or the
-    kind's own), credentials mode, referrer policy and priority, the kind's own incremental, no target, its URL, method,
-    lines and referrer, and its body, if it has one."""
+    kind's own), credentials mode, referrer policy and priority, the kind's own incremental, the default cache and
+    redirect modes, no target, its URL, method, lines and referrer, and its body, if it has one."""
     has_body = b"\x00" if body is None else b"\x01" + body
     return (
         _DOCUMENT
         + struct.pack("<QBB", number, kind, flags)
-        + struct.pack("<BBBBBQ", 2 if same_origin else mode, credentials, referrer_policy, priority, 0, 0)
+        + struct.pack("<BBBBBBBQ", 2 if same_origin else mode, credentials, referrer_policy, priority, 0, 0, 0, 0)
         + _sized(url.encode())
         + _sized(method.encode())
         + _sized(headers.encode())
@@ -1310,10 +1310,10 @@ def test_a_fetch_that_a_worker_starts_as_it_closes_reaches_the_session_before_th
         elif message_type == _WORKER_STARTED:
             seen.append(("started", context))
         elif message_type == _REQUEST and context != _DOCUMENT:
-            # Its URL, method, lines and referrer follow its number, Kind, flags and the 13 bytes of its mode and the
+            # Its URL, method, lines and referrer follow its number, Kind, flags and the 15 bytes of its mode and the
             # rest, each with its size, and then whether it has a body, and the body.
             fields: list[bytes] = []
-            at = 31
+            at = 33
             for _ in range(4):
                 size = struct.unpack_from("<I", payload, at)[0]
                 fields.append(payload[at + 4 : at + 4 + size])
@@ -1581,14 +1581,14 @@ def test_a_fetch_whose_body_fills_a_frame_after_its_documents_id_is_sent_and_one
     _loaded(session)
     script = "fetch('/upload', {{method: 'POST', body: new Uint8Array({})}}).then(() => 'sent', error => String(error))"
 
-    # What the frame holds beside the body: the document's ID, the number, the kind, the flags, five bytes of modes,
+    # What the frame holds beside the body: the document's ID, the number, the kind, the flags, seven bytes of modes,
     # policy and priority, and the target, then the URL, the method, the header lines and the referrer, each after its
     # size, and the byte that says a body follows.
     session.send(_EVALUATE, struct.pack("<Q", 1) + script.format(1).encode())
     message_type, payload = session.receive()
     assert message_type == _REQUEST
     (number,) = struct.unpack_from("<Q", payload, 8)
-    offset = 31
+    offset = 33
     for _ in range(4):
         (size,) = struct.unpack_from("<I", payload, offset)
         offset += 4 + size

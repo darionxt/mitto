@@ -34,6 +34,34 @@ PageRequestMode ToPageRequestMode(FetchMode mode) {
   }
 }
 
+PageCacheMode ToPageCacheMode(FetchCacheMode cache_mode) {
+  switch (cache_mode) {
+    case FetchCacheMode::kDefault:
+      return PageCacheMode::kDefault;
+    case FetchCacheMode::kNoStore:
+      return PageCacheMode::kNoStore;
+    case FetchCacheMode::kReload:
+      return PageCacheMode::kReload;
+    case FetchCacheMode::kNoCache:
+      return PageCacheMode::kNoCache;
+    case FetchCacheMode::kForceCache:
+      return PageCacheMode::kForceCache;
+    case FetchCacheMode::kOnlyIfCached:
+      return PageCacheMode::kOnlyIfCached;
+  }
+}
+
+PageRedirectMode ToPageRedirectMode(FetchRedirectMode redirect_mode) {
+  switch (redirect_mode) {
+    case FetchRedirectMode::kFollow:
+      return PageRedirectMode::kFollow;
+    case FetchRedirectMode::kError:
+      return PageRedirectMode::kError;
+    case FetchRedirectMode::kManual:
+      return PageRedirectMode::kManual;
+  }
+}
+
 PageCredentialsMode ToPageCredentialsMode(FetchCredentialsMode credentials) {
   switch (credentials) {
     case FetchCredentialsMode::kOmit:
@@ -300,13 +328,13 @@ void PageFetcher::Fetch(FetchRequestData data,
   // A request has to fit in one frame, so a body that leaves it no room, of
   // nearly 16 MiB, fails as a request that cannot be sent does: a Known Gap.
   // Beside its URL, method, header lines, referrer and body, the frame holds
-  // 48 bytes: the document's ID, the number, seven bytes of kind, flags,
-  // modes, policy and priority, the target, four sizes and the byte that says
-  // whether a body follows.
+  // 50 bytes: the document's ID, the number, nine bytes of kind, flags,
+  // modes, policy, priority and the cache and redirect modes, the target,
+  // four sizes and the byte that says whether a body follows.
   const size_t body_size = data.body ? data.body->size() : 0;
   const bool has_referrer =
       data.referrer != kClientReferrer && data.referrer != kNoReferrer;
-  const size_t size = 48 + data.url.size() + data.method.size() +
+  const size_t size = 50 + data.url.size() + data.method.size() +
                       data.headers.size() +
                       (has_referrer ? data.referrer.size() : 0) + body_size;
   // ResourceFetcher::StartLoad() fails a keepalive request whose body would
@@ -345,6 +373,8 @@ void PageFetcher::Fetch(FetchRequestData data,
     page_request.priority = ToPagePriority(*data.priority);
   }
   page_request.keepalive = data.keepalive;
+  page_request.cache_mode = ToPageCacheMode(data.cache_mode);
+  page_request.redirect_mode = ToPageRedirectMode(data.redirect_mode);
   started.set_number(requests_->Start(std::move(page_request), started,
                                       data.render_blocking,
                                       std::move(data.initiator_type)));

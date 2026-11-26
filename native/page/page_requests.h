@@ -198,6 +198,8 @@ class PageRequests {
     std::u16string initiator_type;
     std::u16string url;
     bool render_blocking = false;
+    // Whether the Session follows its redirects.
+    bool follows_redirects = true;
     // Whether it is a module of a module worker's top-level graph, a request
     // of Kind worker in mode cors, whose entry goes to the creator's
     // timeline.

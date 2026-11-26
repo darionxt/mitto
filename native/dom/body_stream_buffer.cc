@@ -462,6 +462,11 @@ void BodyStreamBuffer::ProcessData(bindings::ExceptionState& exception_state) {
         // If |stream_needs_more_| is true, it means that pull is called and
         // the stream needs more data even if the desired size is not
         // positive.
+        // A read that resolved may have run page code, which a `then` getter
+        // holds, that aborted the fetch.
+        if (!consumer_ || !IsStreamReadable()) {
+          return;
+        }
         if (!stream_needs_more_) {
           const std::optional<double> desired_size =
               ReadableByteStreamController::GetDesiredSize(

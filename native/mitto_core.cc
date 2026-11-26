@@ -700,10 +700,9 @@ class RequestJob final : public net::URLRequest::Delegate,
     request->SetPriorityIncremental(options_.priority_incremental);
     // A reload validates what the cache holds, as NavigationRequest's
     // LoadFlagsForNavigation() has it, so //net sends Cache-Control:
-    // max-age=0 once it goes to the network.
-    if (options_.validate_cache) {
-      request->SetLoadFlags(request->load_flags() | net::LOAD_VALIDATE_CACHE);
-    }
+    // max-age=0 once it goes to the network, and a fetch()'s cache mode has
+    // the flags that Blink gives it.
+    request->SetLoadFlags(request->load_flags() | options_.cache_load_flags);
     // A history traversal takes what the cache holds, stale or not, as
     // UpdateLoadFlagsWithCacheFlags() has it for HISTORY_DIFFERENT_DOCUMENT.
     if (options_.skip_cache_validation) {
@@ -891,6 +890,14 @@ class RequestJob final : public net::URLRequest::Delegate,
       }
     }
     if (!options_.follow_redirects) {
+      // The redirect is the response, which a Page's checks see as any other,
+      // as CorsURLLoader checks a redirect that Blink does not follow.
+      if (const int error = client_->CheckResponse(
+              ResponseEvent(MITTO_EVENT_RESPONSE_STARTED));
+          error != net::OK) {
+        Finish(error);
+        return;
+      }
       PushResponseEvent(MITTO_EVENT_RESPONSE_STARTED);
       // //net does not read the body of a redirect, so this is all there is.
       Finish(net::OK);

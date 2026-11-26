@@ -1104,6 +1104,58 @@ def test_a_same_origin_fetch_does_not_follow_a_redirect_to_another_origin(
         assert other.headers_of("/dest") == []
 
 
+def test_a_fetchs_redirect_mode_stops_at_a_redirect_as_chrome_does(session: mitto.Session, server: _PageServer) -> None:
+    # redirect: "manual" gives an opaque-redirect filtered response, which keeps the URL that redirected, and "error"
+    # fails, as Blink's WillFollowRedirect() has them; neither goes where the redirect points.
+    server.routes["/dest"] = _Route(b"dest", headers=[("Content-Type", "text/plain")])
+    server.routes["/hop"] = _Route(status=302, headers=[("Location", "/dest"), ("X-Hop", "1")])
+    url = server.page("/", "<p>redirect modes</p>")
+
+    with _open_page(session, url) as page:
+        manual = page.evaluate(
+            "fetch('/hop', {redirect: 'manual'}).then(r => [r.type, r.status, r.statusText, r.ok, r.url.endsWith('/hop'),"
+            " r.redirected, [...r.headers].length, r.body === null])",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        error = page.evaluate(
+            "fetch('/hop', {redirect: 'error'}).then(() => 'fetched', error => String(error))", timeout=_TIMEOUT_SECONDS
+        )
+
+    assert manual == ["opaqueredirect", 0, "", False, True, False, 0, True]
+    assert error == "TypeError: Failed to fetch"
+    assert server.headers_of("/dest") == []
+    assert len(server.headers_of("/hop")) == 2
+
+
+def test_a_fetchs_cache_mode_sends_the_lines_that_go_with_it(session: mitto.Session, server: _PageServer) -> None:
+    # The cache mode's load flags, as Blink's GetLoadFlagsForWebUrlRequest() gives them, which //net turns into Pragma
+    # and Cache-Control lines; only-if-cached with nothing in the cache fails before it sends anything.
+    for mode in ("default", "no-store", "reload", "no-cache", "force-cache"):
+        server.routes[f"/{mode}"] = _Route(b"x", headers=[("Content-Type", "text/plain")])
+    server.routes["/only"] = _Route(b"x", headers=[("Content-Type", "text/plain")])
+    url = server.page("/", "<p>cache modes</p>")
+
+    with _open_page(session, url) as page:
+        outcomes = page.evaluate(
+            "Promise.all(['default', 'no-store', 'reload', 'no-cache', 'force-cache'].map(m => fetch('/' + m,"
+            " {cache: m}).then(r => r.text())).concat([fetch('/only', {cache: 'only-if-cached', mode: 'same-origin'})"
+            ".then(() => 'fetched', error => String(error))]))",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    def cache_lines(path: str) -> list[tuple[str, str]]:
+        (headers,) = server.headers_of(path)
+        return [(name, value) for name, value in headers if name.lower() in ("pragma", "cache-control")]
+
+    assert outcomes == ["x", "x", "x", "x", "x", "TypeError: Failed to fetch"]
+    assert cache_lines("/default") == []
+    assert cache_lines("/no-store") == [("Pragma", "no-cache"), ("Cache-Control", "no-cache")]
+    assert cache_lines("/reload") == [("Pragma", "no-cache"), ("Cache-Control", "no-cache")]
+    assert cache_lines("/no-cache") == [("Cache-Control", "max-age=0")]
+    assert cache_lines("/force-cache") == []
+    assert server.headers_of("/only") == []
+
+
 def test_a_head_request_gives_an_empty_stream_as_chrome_does(session: mitto.Session, server: _PageServer) -> None:
     server.routes["/thing"] = _Route(b"", headers=[("Content-Type", "text/plain")])
     url = server.page("/", "<p>head</p>")

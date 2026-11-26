@@ -75,6 +75,23 @@ enum class FetchPriority {
   kVeryHigh,
 };
 
+// The Fetch Standard's cache mode.
+enum class FetchCacheMode {
+  kDefault,
+  kNoStore,
+  kReload,
+  kNoCache,
+  kForceCache,
+  kOnlyIfCached,
+};
+
+// The Fetch Standard's redirect mode.
+enum class FetchRedirectMode {
+  kFollow,
+  kError,
+  kManual,
+};
+
 // A fetch priority hint, as fetch()'s priority or an element's fetchpriority
 // gives it.
 enum class FetchPriorityHint {
@@ -172,6 +189,9 @@ struct FetchRequestData {
   std::optional<FetchPriority> priority;
   // Whether it outlives its document.
   bool keepalive = false;
+  // A fetch()'s cache and redirect modes.
+  FetchCacheMode cache_mode = FetchCacheMode::kDefault;
+  FetchRedirectMode redirect_mode = FetchRedirectMode::kFollow;
   FetchDestination destination = FetchDestination::kEmpty;
   // Whether it fetches a module script, or what one imports, which the
   // Session sends as a module.

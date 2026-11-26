@@ -217,6 +217,18 @@ bool IsCorsSafelistedResponseHeaderName(std::string_view name) {
   return false;
 }
 
+bool HasLocation(std::string_view headers) {
+  for (const std::string_view line : base::SplitStringPiece(
+           headers, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(": ");
+    if (colon != std::string_view::npos && colon + 2 < line.size() &&
+        base::EqualsCaseInsensitiveASCII(line.substr(0, colon), "location")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::string HeaderField(std::string_view headers, std::string_view name) {
   std::vector<std::string_view> values;
   for (const std::string_view line : base::SplitStringPiece(

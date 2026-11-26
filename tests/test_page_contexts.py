@@ -68,7 +68,7 @@ _FAKE_PAGE = textwrap.dedent(
     def request(document, number, kind, url, target=0):
         return (
             struct.pack("<QQBB", document, number, kind, 0)
-            + struct.pack("<BBBBBQ", 0, 0, 0, 0, 0, target)
+            + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, target)
             + sized(url.encode()) + sized(b"GET") + sized(b"") + sized(b"") + b"\\x00"
         )
 
@@ -151,7 +151,7 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
     send(100, struct.pack("<QQBBQ", 3, 2, 1, 0, 1))
     post = (
         struct.pack("<QQBB", 3, 2, 2, 0)
-        + struct.pack("<BBBBBQ", 0, 0, 0, 0, 0, 0)
+        + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, 0)
         + sized("{beacon}".encode())
         + sized(b"POST")
         + sized(b"Content-Type: text/plain;charset=UTF-8\\n")

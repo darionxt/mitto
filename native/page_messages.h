@@ -646,6 +646,26 @@ struct PageEvaluated {
   std::string text;
 };
 
+// The Fetch Standard's cache mode of a request, which gives its load flags,
+// as Blink's WebURLRequest::GetLoadFlagsForWebUrlRequest() does.
+enum class PageCacheMode : uint8_t {
+  kDefault = 0,
+  kNoStore = 1,
+  kReload = 2,
+  kNoCache = 3,
+  kForceCache = 4,
+  kOnlyIfCached = 5,
+};
+
+// The Fetch Standard's redirect mode of a request: a redirect that is not
+// followed is the response, which the Page makes a network error of, or an
+// opaque-redirect filtered response.
+enum class PageRedirectMode : uint8_t {
+  kFollow = 0,
+  kError = 1,
+  kManual = 2,
+};
+
 // A request that a Page asks its Session for. Its Initiator is the document
 // that asks, as the Session loaded it, so the Page names the document and does
 // not say its URL.
@@ -654,10 +674,11 @@ struct PageEvaluated {
 // of flags, 2 for a navigation that the user activated, 4 for a navigation
 // that reloads, 8 for a request that outlives its document, 16 for a
 // synchronous one and 32 for one with no referrer, then a byte each of the
-// mode, the credentials mode, the referrer policy, the priority and whether
-// it is incremental, the target as a 64-bit number, the URL, the method, the
-// header lines and the referrer, each after its size as a 32-bit number, and
-// then a byte that is 1 if a body follows, which is the rest.
+// mode, the credentials mode, the referrer policy, the priority, whether it
+// is incremental, the cache mode and the redirect mode, the target as a
+// 64-bit number, the URL, the method, the header lines and the referrer, each
+// after its size as a 32-bit number, and then a byte that is 1 if a body
+// follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -701,6 +722,8 @@ struct PageRequest {
   // 0 for the kind's own, 1 for a response that is not used as it arrives,
   // and 2 for one that is.
   uint8_t incremental = 0;
+  PageCacheMode cache_mode = PageCacheMode::kDefault;
+  PageRedirectMode redirect_mode = PageRedirectMode::kFollow;
   // For a frame's navigation, the document that it replaces. 0 otherwise.
   uint64_t target = 0;
   // In UTF-8: a URL of the document's origin that Referer starts from, as
