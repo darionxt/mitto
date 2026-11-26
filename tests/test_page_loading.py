@@ -7,6 +7,7 @@ and needs a native library with the Page program beside it, as CI's native job i
 
 import contextlib
 import http.server
+import json
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -1154,6 +1155,93 @@ def test_a_fetchs_cache_mode_sends_the_lines_that_go_with_it(session: mitto.Sess
     assert cache_lines("/no-cache") == [("Cache-Control", "max-age=0")]
     assert cache_lines("/force-cache") == []
     assert server.headers_of("/only") == []
+
+
+def test_a_windows_conditional_fetch_validates_the_cache_as_chromes_does(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    # As Chrome 157 sent them: a window's fetch of the default cache mode with an If-* line goes as FrameFetchContext's
+    # kValidateCache, so //net puts Cache-Control: max-age=0 first, or the script's own Cache-Control in its place, and
+    # the preflight of a cross-origin one has it too. A worker's, one of another cache mode and one of mode no-cors,
+    # whose guard drops the line, have none of their own.
+    conditional = {
+        "inm": "If-None-Match: x",
+        "ims": "If-Modified-Since: Sat, 01 Jan 2000 00:00:00 GMT",
+        "im": "If-Match: x",
+        "ir": "If-Range: x",
+        "ius": "If-Unmodified-Since: Sat, 01 Jan 2000 00:00:00 GMT",
+        "lower": "if-none-match: x",
+    }
+    for name in [*conditional, "script", "force", "store", "no-cors", "post", "none", "worker"]:
+        server.routes[f"/c/{name}"] = _Route(b"x", headers=[("Content-Type", "text/plain")])
+    server.script("/w.js", "fetch('/c/worker', {headers: {'If-None-Match': 'x'}}).then(() => postMessage('done'))")
+    url = server.page("/", "<p>conditional</p>")
+    script = """
+      (async () => {
+        for (const [name, line] of Object.entries(CONDITIONAL)) {
+          const [key, value] = line.split(": ");
+          await fetch("/c/" + name, { headers: { [key]: value } });
+        }
+        await fetch("/c/script", { headers: { "X-A": "1", "If-None-Match": "x", "Cache-Control": "no-transform" } });
+        await fetch("/c/force", { cache: "force-cache", headers: { "If-None-Match": "x" } });
+        await fetch("/c/store", { cache: "no-store", headers: { "If-None-Match": "x" } });
+        await fetch("/c/no-cors", { mode: "no-cors", headers: { "If-None-Match": "x" } });
+        await fetch("/c/post", { method: "POST", body: "b", headers: { "If-None-Match": "x" } });
+        await fetch("/c/none");
+        await fetch(CROSS, { headers: { "If-None-Match": "x" } });
+        const worker = new Worker("/w.js");
+        return await new Promise((resolve) => { worker.onmessage = (event) => resolve(event.data); });
+      })()
+    """
+    with _PageServer() as other:
+        other.routes["/c/cross"] = _Route(
+            b"x", headers=[("Content-Type", "text/plain"), ("Access-Control-Allow-Origin", "*")]
+        )
+        other.routes["OPTIONS /c/cross"] = _Route(
+            headers=[("Access-Control-Allow-Origin", "*"), ("Access-Control-Allow-Headers", "If-None-Match")]
+        )
+        cross_url = json.dumps(other.url("/c/cross"))
+        script = script.replace("CONDITIONAL", json.dumps(conditional)).replace("CROSS", cross_url)
+        with _open_page(session, url) as page:
+            done = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+        (preflight,) = other.headers_of("OPTIONS /c/cross")
+        (cross,) = other.headers_of("/c/cross")
+
+    def cache_lines(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        return [(name, value) for name, value in headers if name.lower() in ("pragma", "cache-control")]
+
+    def lines_of(path: str) -> list[tuple[str, str]]:
+        (headers,) = server.headers_of(path)
+        return headers
+
+    assert done == "done"
+    for name in conditional:
+        assert cache_lines(lines_of(f"/c/{name}")) == [("Cache-Control", "max-age=0")], name
+    assert cache_lines(lines_of("/c/script")) == [("Cache-Control", "no-transform")]
+    assert cache_lines(lines_of("/c/force")) == []
+    assert cache_lines(lines_of("/c/store")) == [("Pragma", "no-cache"), ("Cache-Control", "no-cache")]
+    assert cache_lines(lines_of("/c/no-cors")) == []
+    assert not any(name.lower() == "if-none-match" for name, _ in lines_of("/c/no-cors"))
+    assert cache_lines(lines_of("/c/none")) == []
+    assert cache_lines(lines_of("/c/worker")) == []
+    assert cache_lines(preflight) == [("Cache-Control", "max-age=0")]
+    assert cache_lines(cross) == [("Cache-Control", "max-age=0")]
+    # Chrome's order of the names, which the Persona's values do not change.
+    assert [name.lower() for name, _ in lines_of("/c/inm")] == [
+        "host", "connection", "cache-control", "if-none-match", "sec-ch-ua-platform", "user-agent", "sec-ch-ua",
+        "sec-ch-ua-mobile", "accept", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "referer",
+        "accept-encoding", "accept-language",
+    ]  # fmt: skip
+    assert [name.lower() for name, _ in lines_of("/c/script")] == [
+        "host", "connection", "cache-control", "if-none-match", "sec-ch-ua-platform", "user-agent", "sec-ch-ua",
+        "x-a", "sec-ch-ua-mobile", "accept", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "referer",
+        "accept-encoding", "accept-language",
+    ]  # fmt: skip
+    assert [name.lower() for name, _ in lines_of("/c/post")] == [
+        "host", "connection", "content-length", "cache-control", "if-none-match", "sec-ch-ua-platform", "user-agent",
+        "sec-ch-ua", "content-type", "sec-ch-ua-mobile", "accept", "origin", "sec-fetch-site", "sec-fetch-mode",
+        "sec-fetch-dest", "referer", "accept-encoding", "accept-language",
+    ]  # fmt: skip
 
 
 def test_a_head_request_gives_an_empty_stream_as_chrome_does(session: mitto.Session, server: _PageServer) -> None:

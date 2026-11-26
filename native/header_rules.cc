@@ -229,6 +229,16 @@ bool HasLocation(std::string_view headers) {
   return false;
 }
 
+bool IsConditionalHeader(std::string_view name) {
+  static constexpr std::array<std::string_view, 5> kConditional = {
+      "if-match", "if-modified-since", "if-none-match", "if-range",
+      "if-unmodified-since"};
+  return std::ranges::any_of(
+      kConditional, [name](std::string_view conditional) {
+        return base::EqualsCaseInsensitiveASCII(name, conditional);
+      });
+}
+
 std::string HeaderField(std::string_view headers, std::string_view name) {
   std::vector<std::string_view> values;
   for (const std::string_view line : base::SplitStringPiece(

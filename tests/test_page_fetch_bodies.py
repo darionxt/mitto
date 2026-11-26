@@ -421,6 +421,19 @@ MODES = {
         " setTimeout(() => log.push('timeout'), 0); await p; return log.join()",
         "value: timeout,response,chunks 1",
     ),
+    "a no-cors request's body type": (
+        "const bodies = () => [new Blob(['x'], { type: 'application/json' }), new Blob(['x'], { type: 'text/plain' }),"
+        " new Blob(['x']), new Blob(['x'], { type: 'text/plain;a=\"(\"' }), 'x', new URLSearchParams('a=b')];"
+        " const out = [];"
+        " for (const mode of ['no-cors', 'cors']) out.push(mode + ' ' + bodies().map((body) =>"
+        " new Request('https://example.com/', { method: 'POST', mode, body }).headers.get('content-type')).join(', '));"
+        " out.push(String(new Request('https://example.com/', { method: 'POST', mode: 'no-cors',"
+        " headers: { 'Content-Type': 'application/json' }, body: 'x' }).headers.get('content-type')));"
+        " return out.join('; ')",
+        "value: no-cors , text/plain, , , text/plain;charset=UTF-8, application/x-www-form-urlencoded;charset=UTF-8; cors"
+        ' application/json, text/plain, , text/plain;a="(", text/plain;charset=UTF-8,'
+        " application/x-www-form-urlencoded;charset=UTF-8; text/plain;charset=UTF-8",
+    ),
 }
 
 
@@ -1304,6 +1317,22 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
                 .replace(location.origin, "here")).join();
         """,
         "here/ref,about:client,here/relative,,about:client,about:client",
+    ),
+    "the modes of fetches of an about:blank and a srcdoc frame of the page's origin": (
+        """
+        const out = [];
+        for (const srcdoc of ["", "<p>s</p>"]) {
+            const f = document.createElement("iframe"); if (srcdoc) f.srcdoc = srcdoc; document.body.append(f);
+            if (srcdoc) await new Promise((resolve) => { f.onload = resolve; });
+            for (const mode of ["same-origin", "cors", "no-cors"]) {
+                out.push(await f.contentWindow.fetch(location.origin + "/x", { mode }).then((r) => r.type + " " + r.status,
+                    (e) => e.message));
+            }
+            f.remove();
+        }
+        return out.join("; ");
+        """,
+        "basic 200; basic 200; basic 200; basic 200; basic 200; basic 200",
     ),
 }
 

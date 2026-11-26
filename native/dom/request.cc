@@ -428,8 +428,13 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
         return nullptr;
       }
     }
+    // Through the guard, as Blink's append() goes, so that a request of mode
+    // no-cors takes only a CORS-safelisted type.
     if (content_type && !request->headers_->GetValue("content-type")) {
-      request->headers_->AppendLine("Content-Type", *content_type);
+      request->headers_->Append("Content-Type", *content_type, exception_state);
+      if (exception_state.HadException()) {
+        return nullptr;
+      }
     }
   }
   // A body whose source is null, a stream's.

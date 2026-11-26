@@ -1808,6 +1808,19 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   options.fetch->has_user_activation = asked.user_activation;
   options.cache_load_flags = asked.reload ? net::LOAD_VALIDATE_CACHE
                                           : CacheLoadFlags(asked.cache_mode);
+  // A window's request of the default cache mode with a conditional line
+  // validates what the cache holds, as FrameFetchContext's
+  // ResourceRequestCachePolicy() makes it kValidateCache, so //net sends
+  // Cache-Control: max-age=0, or the script's line in its place. A worker's
+  // FetchContext leaves the default.
+  // Upstream: third_party/blink/renderer/core/loader/frame_fetch_context.cc
+  if (!context.is_worker && !asked.reload &&
+      asked.cache_mode == PageCacheMode::kDefault &&
+      std::ranges::any_of(lines, [](const auto& entry) {
+        return IsConditionalHeader(entry.first);
+      })) {
+    options.cache_load_flags |= net::LOAD_VALIDATE_CACHE;
+  }
   // A redirect that is not followed is the response, which the Page makes a
   // network error of, or an opaque-redirect filtered response, as Chrome's
   // CorsURLLoader and Blink's FetchManager split the work.
