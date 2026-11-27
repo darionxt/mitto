@@ -1,6 +1,7 @@
 #include "mitto/page/page_frame.h"
 
 #include <algorithm>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -441,8 +442,10 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   committed.replaces = window_->DocumentId();
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin, as DocumentLoader::CommitNavigation() reuses it, and makes a
-  // new one for any other, or for one of another isolation, as Chrome's
-  // origin then differs, an opaque one under a sandbox.
+  // new one for any other, as Chrome's origin then differs, an opaque one under
+  // a sandbox, or of another agent cluster's isolation, as
+  // ShouldReuseDOMWindow() has it, whatever the document's permissions policy
+  // says.
   const bool agent_isolated =
       parent_ && parent_->window_->AgentCrossOriginIsolated();
   // Chrome's error page is never isolated, whatever its frame's allow.
@@ -454,7 +457,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   const bool reuse_window =
       old_document.IsInitialEmptyDocument() &&
       old_document.GetOrigin().IsSameOriginWith(origin) &&
-      window_->CrossOriginIsolatedCapability() == isolated;
+      window_->AgentCrossOriginIsolated() == agent_isolated;
   {
     // DocumentLoader::CommitNavigation(): no script of the old document or
     // of its frames starts a navigation of this frame meanwhile.
@@ -488,6 +491,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
       cookie_store->DocumentWillChange();
     }
     EndOldDocumentInWindow();
+    TakeIsolationFromWindow(isolated);
     window_->SetDocumentId(SendDocumentCommitted(committed));
     document = Document::CreateHTML();
     // A reused window keeps its time origin, while the new document's
@@ -2153,13 +2157,15 @@ Document& PageFrame::CommitDocument(
   origin_sandboxed_ = provisional_origin_sandboxed_ || response_sandboxed;
   response_sandboxed_ = response_sandboxed;
   // Blink keeps the window of a frame's initial about:blank for a document of
-  // its origin and isolation, as DocumentLoader::CommitNavigation() reuses
-  // it. A top-level frame's initial about:blank has an opaque origin, so it
-  // never does, and one whose window the back/forward cache took has none.
+  // its origin and its agent cluster's isolation, as
+  // DocumentLoader::CommitNavigation() reuses it, whatever the document's
+  // permissions policy says. A top-level frame's initial about:blank has an
+  // opaque origin, so it never does, and one whose window the back/forward
+  // cache took has none.
   const bool reuse_window =
       window_ && window_->GetDocument().IsInitialEmptyDocument() &&
       window_->GetDocument().GetOrigin().IsSameOriginWith(origin) &&
-      window_->CrossOriginIsolatedCapability() == isolated;
+      window_->AgentCrossOriginIsolated() == agent_isolated;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
   if (reuse_window) {
@@ -2169,6 +2175,7 @@ Document& PageFrame::CommitDocument(
     }
     EndOldDocumentInWindow();
     window_->SetAgentCrossOriginIsolated(agent_isolated);
+    TakeIsolationFromWindow(isolated);
     window_->SetDocumentId(SendDocumentCommitted(committed));
   } else {
     // The frame keeps its WindowProxy, which takes the new window, as
@@ -2272,6 +2279,21 @@ bool PageFrame::IsolatesDocument(bool agent_isolated,
     }
   }
   return AllowsIsolation(origin, container_policy, declared, headerless);
+}
+
+void PageFrame::TakeIsolationFromWindow(bool isolated) {
+  // A reused window takes its new document's capability. Chrome makes a
+  // frame's initial about:blank's context only once a script reaches its
+  // window, so the context of a first document that is not isolated has no
+  // SharedArrayBuffer; the Page made the context at once, and takes it away.
+  // A window that a script reached first keeps it in Chrome: a Known Gap.
+  if (window_->CrossOriginIsolatedCapability() && !isolated) {
+    v8::Isolate* const isolate = runner_->isolate();
+    std::ignore = context()->Global()->Delete(
+        context(),
+        v8::String::NewFromUtf8Literal(isolate, "SharedArrayBuffer"));
+  }
+  window_->SetCrossOriginIsolatedCapability(isolated);
 }
 
 bool PageFrame::AllowsIsolation(const url::Origin& origin,

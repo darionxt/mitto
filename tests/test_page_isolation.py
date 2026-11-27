@@ -793,6 +793,41 @@ def test_a_page_whose_policy_takes_the_feature_is_not_isolated(
     ]
 
 
+def test_a_frame_keeps_its_window_when_its_policy_takes_the_feature(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A same-origin frame's first document keeps the initial about:blank's window, as Blink's ShouldReuseDOMWindow()
+    # compares the agent cluster's isolation, and is not isolated where its response's Permissions-Policy takes the
+    # feature, as Chrome for Testing 157 gave. Chrome keeps SharedArrayBuffer there, as the script reached the window
+    # first, where the Page takes it away, as Chrome does for a window that no script reached: a Known Gap.
+    server.route(
+        "/rhdr",
+        b"<!doctype html><title>r</title>",
+        "text/html",
+        [*_POLICY_HEADERS, ("Permissions-Policy", "cross-origin-isolated=()")],
+    )
+    server.route("/rplain", _BLANK.encode(), "text/html", _POLICY_HEADERS)
+    script = """(async () => {
+        const one = async (src) => {
+            const frame = document.createElement('iframe');
+            frame.src = src;
+            document.documentElement.appendChild(frame);
+            const before = frame.contentWindow;
+            before.foo = 1;
+            const was = [before.crossOriginIsolated, typeof before.SharedArrayBuffer];
+            await new Promise((resolve) => frame.onload = resolve);
+            const after = frame.contentWindow;
+            return [was, after === before, after.foo, after.crossOriginIsolated];
+        };
+        return [await one('/rhdr'), await one('/rplain')];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [
+        [[True, "function"], True, 1, False],
+        [[True, "function"], True, 1, True],
+    ]
+
+
 def test_a_frame_s_requests_are_held_to_its_own_embedder_policy(
     session: mitto.Session, server: RecordingServer
 ) -> None:
