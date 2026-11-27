@@ -150,9 +150,11 @@ struct RequestOptions {
   // False makes a redirect the response, as mitto_request_start() describes.
   bool follow_redirects = true;
 
-  // A Page's reload, which validates what the cache holds: //net's
-  // LOAD_VALIDATE_CACHE. No option of the C API's sets it.
-  bool validate_cache = false;
+  // //net's load flags for the cache of a Page's request: LOAD_VALIDATE_CACHE
+  // for a reload, and a fetch()'s cache mode's, as Blink's
+  // GetLoadFlagsForWebUrlRequest() gives them, so that //net adds the lines
+  // that go with them. No option of the C API's sets them.
+  int cache_load_flags = 0;
 
   // A Page's traversal of its session history to another document, which
   // takes what the cache holds without validating it: //net's

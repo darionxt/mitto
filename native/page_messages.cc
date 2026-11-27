@@ -251,6 +251,8 @@ constexpr uint8_t kLastReferrerPolicy =
 // 1 and net::HIGHEST, which the Page program cannot name.
 constexpr uint8_t kLastPriority = 6;
 constexpr uint8_t kLastIncremental = 2;
+constexpr uint8_t kLastCacheMode = 5;
+constexpr uint8_t kLastRedirectMode = 2;
 
 std::string EncodeInt32(int32_t value) {
   return EncodeUint32(static_cast<uint32_t>(value));
@@ -780,6 +782,17 @@ std::optional<std::string> CheckRequestModes(const PageRequest& request) {
   const PageRequestMode mode = request.mode;
   const PageCredentialsMode credentials = request.credentials;
   const bool is_default_mode = mode == PageRequestMode::kKindDefault;
+  // Only a fetch's RequestInit sets a cache mode and a redirect mode.
+  if ((request.cache_mode != PageCacheMode::kDefault ||
+       request.redirect_mode != PageRedirectMode::kFollow) &&
+      request.kind != PageRequestKind::kFetch) {
+    return "a request with a cache or redirect mode that its kind never has";
+  }
+  // Request's constructor throws for any other.
+  if (request.cache_mode == PageCacheMode::kOnlyIfCached &&
+      mode != PageRequestMode::kSameOrigin) {
+    return "a request of only the cache in a mode other than same-origin";
+  }
   switch (request.kind) {
     case PageRequestKind::kNavigation:
     case PageRequestKind::kIframe:
@@ -829,8 +842,9 @@ std::optional<std::string> CheckRequestModes(const PageRequest& request) {
 
 base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   // The number, the kind, the flags, the mode, the credentials mode, the
-  // referrer policy, the priority, whether it is incremental, the target.
-  constexpr size_t kFixedSize = 8 + 1 + 1 + 5 + 8;
+  // referrer policy, the priority, whether it is incremental, the cache mode,
+  // the redirect mode, the target.
+  constexpr size_t kFixedSize = 8 + 1 + 1 + 7 + 8;
   if (bytes.size() < kFixedSize) {
     return base::unexpected(WrongSize("request", bytes.size()));
   }
@@ -860,16 +874,21 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   const uint8_t referrer_policy = static_cast<uint8_t>(bytes[12]);
   request.priority = static_cast<uint8_t>(bytes[13]);
   request.incremental = static_cast<uint8_t>(bytes[14]);
+  const uint8_t cache_mode = static_cast<uint8_t>(bytes[15]);
+  const uint8_t redirect_mode = static_cast<uint8_t>(bytes[16]);
   if (mode > kLastRequestMode || credentials > kLastCredentialsMode ||
       referrer_policy > kLastReferrerPolicy ||
       request.priority > kLastPriority ||
-      request.incremental > kLastIncremental) {
+      request.incremental > kLastIncremental || cache_mode > kLastCacheMode ||
+      redirect_mode > kLastRedirectMode) {
     return base::unexpected("a request with a value out of range");
   }
   request.mode = static_cast<PageRequestMode>(mode);
   request.credentials = static_cast<PageCredentialsMode>(credentials);
   request.referrer_policy = static_cast<PageReferrerPolicy>(referrer_policy);
-  request.target = DecodeUint64(bytes.substr(15, 8));
+  request.cache_mode = static_cast<PageCacheMode>(cache_mode);
+  request.redirect_mode = static_cast<PageRedirectMode>(redirect_mode);
+  request.target = DecodeUint64(bytes.substr(17, 8));
   bytes.remove_prefix(kFixedSize);
   std::string_view url;
   std::string_view method;
@@ -1524,8 +1543,13 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
       response.critical_ch_restart < 0) {
     return base::unexpected("a response whose timing //net cannot give");
   }
+  // An opaque response has one, and an opaque redirect's, which a fetch() of
+  // redirect mode manual makes of it.
+  const bool redirect = response.status == 301 || response.status == 302 ||
+                        response.status == 303 || response.status == 307 ||
+                        response.status == 308;
   if (response.padding < 0 || response.padding >= kResponsePaddingRange ||
-      (response.padding != 0 && opaque == 0)) {
+      (response.padding != 0 && opaque == 0 && !redirect)) {
     return base::unexpected("a response whose padding it cannot have");
   }
   response.timing.socket_reused = socket_reused == 1;
@@ -1940,6 +1964,8 @@ std::string EncodeRequest(uint64_t document, const PageRequest& request) {
       static_cast<char>(request.referrer_policy),
       static_cast<char>(request.priority),
       static_cast<char>(request.incremental),
+      static_cast<char>(request.cache_mode),
+      static_cast<char>(request.redirect_mode),
   };
   const char has_body = request.body ? 1 : 0;
   return EncodeDocumentFrame(

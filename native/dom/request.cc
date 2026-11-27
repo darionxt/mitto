@@ -55,10 +55,7 @@ std::string NormalizeMethod(const std::string& method) {
 // Whether `init` sets a member whose behaviour the Runtime lacks, to a value
 // other than its default.
 bool HasMissingMember(const bindings::RequestInit& init) {
-  return (init.cache && *init.cache != u"default") ||
-         (init.redirect && *init.redirect != u"follow") ||
-         (init.integrity && !init.integrity->empty()) ||
-         init.ad_auction_headers.has_value() ||
+  return init.ad_auction_headers.has_value() ||
          (init.target_address_space &&
           *init.target_address_space != u"unknown") ||
          init.private_token.has_value() || init.retry_options.has_value();
@@ -94,6 +91,32 @@ FetchMode ModeFromString(std::u16string_view mode) {
     return FetchMode::kNoCors;
   }
   return FetchMode::kCors;
+}
+
+FetchCacheMode CacheModeFromString(std::u16string_view cache) {
+  static constexpr std::pair<std::u16string_view, FetchCacheMode> kModes[] = {
+      {u"no-store", FetchCacheMode::kNoStore},
+      {u"reload", FetchCacheMode::kReload},
+      {u"no-cache", FetchCacheMode::kNoCache},
+      {u"force-cache", FetchCacheMode::kForceCache},
+      {u"only-if-cached", FetchCacheMode::kOnlyIfCached},
+  };
+  for (const auto& [name, mode] : kModes) {
+    if (cache == name) {
+      return mode;
+    }
+  }
+  return FetchCacheMode::kDefault;
+}
+
+FetchRedirectMode RedirectModeFromString(std::u16string_view redirect) {
+  if (redirect == u"error") {
+    return FetchRedirectMode::kError;
+  }
+  if (redirect == u"manual") {
+    return FetchRedirectMode::kManual;
+  }
+  return FetchRedirectMode::kFollow;
 }
 
 FetchCredentialsMode CredentialsFromString(std::u16string_view credentials) {
@@ -208,6 +231,9 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     request->referrer_policy_ = input_request->referrer_policy_;
     request->priority_ = input_request->priority_;
     request->keepalive_ = input_request->keepalive_;
+    request->cache_mode_ = input_request->cache_mode_;
+    request->redirect_mode_ = input_request->redirect_mode_;
+    request->integrity_ = input_request->integrity_;
     request->blob_url_handle_ = input_request->blob_url_handle_;
     request->blob_url_origin_ = input_request->blob_url_origin_;
     signal = input_request->signal_.Get();
@@ -294,6 +320,21 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
   }
   if (init.credentials) {
     request->credentials_ = CredentialsFromString(*init.credentials);
+  }
+  if (init.cache) {
+    request->cache_mode_ = CacheModeFromString(*init.cache);
+  }
+  if (request->cache_mode_ == FetchCacheMode::kOnlyIfCached &&
+      request->mode_ != FetchMode::kSameOrigin) {
+    exception_state.ThrowTypeError(
+        "'only-if-cached' can be set only with 'same-origin' mode");
+    return nullptr;
+  }
+  if (init.redirect) {
+    request->redirect_mode_ = RedirectModeFromString(*init.redirect);
+  }
+  if (init.integrity) {
+    request->integrity_ = *init.integrity;
   }
   if (init.keepalive) {
     request->keepalive_ = *init.keepalive;
@@ -387,8 +428,13 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
         return nullptr;
       }
     }
+    // Through the guard, as Blink's append() goes, so that a request of mode
+    // no-cors takes only a CORS-safelisted type.
     if (content_type && !request->headers_->GetValue("content-type")) {
-      request->headers_->AppendLine("Content-Type", *content_type);
+      request->headers_->Append("Content-Type", *content_type, exception_state);
+      if (exception_state.HadException()) {
+        return nullptr;
+      }
     }
   }
   // A body whose source is null, a stream's.
@@ -503,6 +549,38 @@ std::u16string Request::Mode() const {
   }
 }
 
+std::u16string Request::Integrity() const {
+  return integrity_;
+}
+
+std::u16string Request::Cache() const {
+  switch (cache_mode_) {
+    case FetchCacheMode::kDefault:
+      return u"default";
+    case FetchCacheMode::kNoStore:
+      return u"no-store";
+    case FetchCacheMode::kReload:
+      return u"reload";
+    case FetchCacheMode::kNoCache:
+      return u"no-cache";
+    case FetchCacheMode::kForceCache:
+      return u"force-cache";
+    case FetchCacheMode::kOnlyIfCached:
+      return u"only-if-cached";
+  }
+}
+
+std::u16string Request::Redirect() const {
+  switch (redirect_mode_) {
+    case FetchRedirectMode::kFollow:
+      return u"follow";
+    case FetchRedirectMode::kError:
+      return u"error";
+    case FetchRedirectMode::kManual:
+      return u"manual";
+  }
+}
+
 std::u16string Request::Credentials() const {
   switch (credentials_) {
     case FetchCredentialsMode::kOmit:
@@ -540,6 +618,9 @@ Request* Request::Clone(bindings::ExceptionState& exception_state) {
   request->referrer_policy_ = referrer_policy_;
   request->priority_ = priority_;
   request->keepalive_ = keepalive_;
+  request->cache_mode_ = cache_mode_;
+  request->redirect_mode_ = redirect_mode_;
+  request->integrity_ = integrity_;
   request->blob_url_handle_ = blob_url_handle_;
   request->blob_url_origin_ = blob_url_origin_;
   request->signal_ = AbortSignal::CreateComposite({signal_.Get()});
