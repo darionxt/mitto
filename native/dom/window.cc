@@ -589,7 +589,7 @@ std::string Window::StorageKey() const {
   }
   // A credentialless document's has the nonce of its top-level document's
   // credentialless frames, as the Session keys its storage.
-  if (GetDocument().IsCredentialless() && top != this) {
+  if (GetDocument().InCredentiallessPartition() && top != this) {
     return SerializeStorageKeyWithNonce(
         GetSecurityOrigin(), top->GetDocument().CredentiallessNonce());
   }

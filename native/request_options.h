@@ -112,6 +112,10 @@ struct FetchParams {
   // which its IsolationInfo takes, as RenderFrameHostImpl::ComputeNonce()
   // gives it: //net then keys its cookies, connections and cache entries by it.
   std::optional<base::UnguessableToken> nonce;
+  // For a request of a worker of a data: URL with a nonce: its creator's
+  // frame's origin, which its IsolationInfo takes for the frame's, where its
+  // opaque origin stays the request's initiator.
+  std::optional<url::Origin> isolation_frame_origin;
   // A dedicated worker's request, which sends no client hints.
   bool from_worker = false;
   // Whether the document or worker that asks has the embedder policy

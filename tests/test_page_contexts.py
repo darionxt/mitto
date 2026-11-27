@@ -613,9 +613,25 @@ _OF_THE_TOP = "the library refused a message from the Page: a frame's attributes
         ),
         pytest.param(
             0,
-            [_FRAME.format(flags=2), 'send(70, struct.pack("<QBBQ", 4, 0, 0, 3))'],
+            [
+                _FRAME.format(flags=0),
+                _ATTRIBUTES.format(document=3, attributes=1),
+                _ABOUT_BLANK,
+                _BLANK_COMMIT.format(flags=2),
+                _UNDER,
+            ],
             _CREDENTIALLESS,
             id="under-a-credentialless-document",
+        ),
+        pytest.param(
+            0,
+            [
+                _FRAME.format(flags=2),
+                'send(70, struct.pack("<QBBQ", 4, 0, 0, 3))',
+                _ATTRIBUTES.format(document=2, attributes=0),
+            ],
+            _OF_THE_TOP,
+            id="under-a-credentialless-initial-about-blank",
         ),
         pytest.param(0, [_ATTRIBUTES.format(document=2, attributes=1)], _OF_THE_TOP, id="attributes-of-the-top"),
         pytest.param(

@@ -477,8 +477,7 @@ class PageFrame final : public NavigationClient, public Frame {
   // network or went to a data: URL, or a local one that the parent's embedder
   // policy blocks.
   void CommitErrorPageSoon(SandboxFlags sandbox,
-                           ContainerPolicy container_policy,
-                           bool credentialless);
+                           ContainerPolicy container_policy);
   // NavigationRequest::CheckResponseAdherenceToCoep(): whether the frame's
   // parent has an embedder policy that is compatible with cross-origin
   // isolation and a document that the frame makes without the network would

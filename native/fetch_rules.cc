@@ -234,8 +234,9 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
     const net::SiteForCookies site_for_cookies = FrameSiteForCookies();
     request.set_site_for_cookies(site_for_cookies);
     request.set_isolation_info(net::IsolationInfo::Create(
-        net::IsolationInfo::RequestType::kOther, TopFrameOrigin(), *initiator_,
-        site_for_cookies, params_.nonce));
+        net::IsolationInfo::RequestType::kOther, TopFrameOrigin(),
+        params_.isolation_frame_origin.value_or(*initiator_), site_for_cookies,
+        params_.nonce));
   }
   request.set_initiator(initiator_);
   SetRequestCredentials(request, url);

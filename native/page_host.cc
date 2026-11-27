@@ -3233,9 +3233,11 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   // NavigationRequest's is_credentialless_, fixed as the navigation started:
   // a navigation's response takes it from its request, and a document of no
   // network from the Page, as a synchronous about:blank keeps its frame's
-  // initial one's, which the library holds to its parent's below.
+  // initial one's, which the library holds to its parent's below. An error
+  // page has the default policies of ComputePoliciesForError(), and so none.
   if (committed.credentialless &&
-      committed.source == PageDocumentSource::kNavigationResponse) {
+      (committed.source == PageDocumentSource::kNavigationResponse ||
+       committed.source == PageDocumentSource::kErrorPage)) {
     Refuse("a document whose flags its source does not take");
     return;
   }
@@ -3265,6 +3267,19 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         context.coep = parent.coep;
         context.cookie_url = CookieUrlOf(parent);
         context.cross_origin_isolated = parent.cross_origin_isolated;
+        // And its parent's policy container, which RenderFrameHostImpl makes
+        // credentialless for its element only once it hears of the attribute,
+        // after the frame is made: the Page's window.credentialless may say so
+        // from the attribute, while its requests and storage stay its
+        // parent's, as Chrome's InitialEmptyDocumentInCredentiallessIframe
+        // test has them.
+        if (parent.credentialless && !committed.credentialless) {
+          Refuse(
+              "a document that is not credentialless under a credentialless "
+              "one");
+          return;
+        }
+        context.credentialless = parent.credentialless;
       }
       context.url = GURL(url::kAboutBlankURL);
       break;
@@ -3440,6 +3455,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     return;
   }
   if (!context.credentialless && !top_level &&
+      committed.source != PageDocumentSource::kErrorPage &&
       contexts_.at(committed.parent).credentialless) {
     Refuse("a document that is not credentialless under a credentialless one");
     return;
@@ -4032,8 +4048,18 @@ void PageHost::FillContextFetch(uint64_t id,
       tree.cross_site || fetch.opaque_initiator.has_value();
   fetch.cross_origin_ancestor = tree.cross_origin;
   // A credentialless document's requests are partitioned by its nonce, and so
-  // are its frames' navigations.
+  // are its frames' navigations. A nonce's partition is its frame site's, which
+  // a worker of a data: URL takes from its creator's frame, as Chrome's
+  // DedicatedWorkerHost keys its subresources by its creator's frame, though
+  // it asks as its opaque origin.
   fetch.nonce = tree.nonce;
+  if (fetch.nonce && context.is_worker && context.origin.opaque()) {
+    const Context* frame = &context;
+    while (frame->is_worker) {
+      frame = &contexts_.at(frame->parent);
+    }
+    fetch.isolation_frame_origin = frame->origin;
+  }
   fetch.from_worker = context.is_worker;
   fetch.credentialless_client =
       context.coep.value == CrossOriginEmbedderPolicyValue::kCredentialless;

@@ -242,9 +242,14 @@ void PageFrame::Start(const PageConnection& connection) {
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
   const url::Origin origin = SandboxedOrigin(parent_origin, sandbox);
   origin_sandboxed_ = IsOriginSandboxed(sandbox);
-  // RenderFrameHostImpl's initialisation: credentialless where its element is
-  // as the frame is made, or its parent's document is.
-  const bool credentialless = parent_ && PendingCredentialless();
+  // WebLocalFrameImpl::CreateChildFrame(): credentialless where its element is
+  // as the frame is made, or its parent's document is, though the browser
+  // keys its storage and requests as its parent's.
+  const bool credentialless =
+      parent_ && (OwnerCredentialless() ||
+                  parent_->window_->GetDocument().IsCredentialless());
+  const bool in_partition =
+      parent_ && parent_->window_->GetDocument().InCredentiallessPartition();
   // It is as trustworthy as its parent's, whose context is a secure one only
   // if that is.
   context_.Reset(isolate,
@@ -273,6 +278,7 @@ void PageFrame::Start(const PageConnection& connection) {
     document.SetOrigin(origin);
     document.SetSandboxFlags(sandbox);
     document.SetCredentialless(credentialless);
+    document.SetInCredentiallessPartition(in_partition);
     document.SetInSandboxedProcess(
         parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
     InheritPermissionsPolicy(document, PendingContainerPolicy());
@@ -410,13 +416,12 @@ void PageFrame::CommitWithoutNetworkSoon(LocalNavigation navigation) {
 }
 
 void PageFrame::CommitErrorPageSoon(SandboxFlags sandbox,
-                                    ContainerPolicy container_policy,
-                                    bool credentialless) {
+                                    ContainerPolicy container_policy) {
+  // ComputePoliciesForError() gives it default policies, which are not
+  // credentialless.
   LocalNavigation navigation;
   navigation.url = GURL(kErrorPageUrl);
   navigation.committed.source = PageDocumentSource::kErrorPage;
-  navigation.credentialless = credentialless;
-  navigation.committed.credentialless = credentialless;
   navigation.sandbox = sandbox;
   navigation.container_policy = std::move(container_policy);
   navigation.sandboxed_process = IsOriginSandboxed(navigation.sandbox);
@@ -436,8 +441,9 @@ bool PageFrame::OwnerCredentialless() const {
 }
 
 bool PageFrame::PendingCredentialless() const {
-  return parent_ && (OwnerCredentialless() ||
-                     parent_->window_->GetDocument().IsCredentialless());
+  return parent_ &&
+         (OwnerCredentialless() ||
+          parent_->window_->GetDocument().InCredentiallessPartition());
 }
 
 void PageFrame::DidChangeCredentialless() {
@@ -545,6 +551,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(navigation.sandbox);
   document->SetCredentialless(navigation.credentialless);
+  document->SetInCredentiallessPartition(navigation.credentialless);
   document->SetInSandboxedProcess(navigation.sandboxed_process);
   InheritPermissionsPolicy(*document, navigation.container_policy);
   DidShowDocument(*window_);
@@ -719,6 +726,8 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   // IsDocumentToCommitAnonymous(): it keeps the initial document's
   // credentialless, as the Session does with no new document.
   document->SetCredentialless(old_document.IsCredentialless());
+  document->SetInCredentiallessPartition(
+      old_document.InCredentiallessPartition());
   // The referrer is the full URL of the document that started it, its
   // parent's, as RenderFrameImpl takes it from the initiator frame.
   if (parent_ && parent_->window_ && parent_->window_->HasDocument()) {
@@ -834,8 +843,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     // A srcdoc takes its parent's policy, which is compatible with itself.
     if (IsBlockedByEmbedderPolicy(navigation.embedder_policy_isolates,
                                   navigation.credentialless)) {
-      CommitErrorPageSoon(navigation.sandbox, navigation.container_policy,
-                          navigation.credentialless);
+      CommitErrorPageSoon(navigation.sandbox, navigation.container_policy);
       return;
     }
     // The Session takes what the about:blank inherits of its initiator now,
@@ -987,8 +995,7 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (!data) {
     EndLocalNavigation();
     forget_request();
-    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_,
-                        provisional_credentialless_);
+    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_);
     return;
   }
   if (!IsSupportedMimeType(data->mime_type) ||
@@ -1002,8 +1009,7 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
                                 provisional_credentialless_)) {
     EndLocalNavigation();
     forget_request();
-    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_,
-                        provisional_credentialless_);
+    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_);
     return;
   }
   // Otherwise a document of an opaque origin, through a DocumentLoader as a
@@ -2090,8 +2096,7 @@ void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
   // another took the place of, ends with ERR_ABORTED, and the frame keeps
   // its document.
   if (parent_ && net_error != kNetErrorAborted && net_error != kNetOk) {
-    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_,
-                        provisional_credentialless_);
+    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_);
     return;
   }
   LetParentCheckCompleted();
@@ -2240,6 +2245,7 @@ Document& PageFrame::CommitDocument(
   document->SetOrigin(origin);
   document->SetSandboxFlags(sandbox);
   document->SetCredentialless(credentialless);
+  document->SetInCredentiallessPartition(credentialless);
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
   InheritPermissionsPolicy(*document, provisional_container_policy_);
   // Blink's Document::CookieURL() is the URL it was made at, which a

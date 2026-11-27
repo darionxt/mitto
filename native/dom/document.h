@@ -589,10 +589,19 @@ class Document : public Node {
   // Whether the document is credentialless, as its policy container's
   // is_credentialless says, which Chrome's browser fixes as its navigation
   // starts: its frame's element is credentialless, or its parent's document
-  // is.
+  // is. window.credentialless says so.
   bool IsCredentialless() const { return credentialless_; }
   void SetCredentialless(bool credentialless) {
     credentialless_ = credentialless;
+  }
+  // Whether the nonce of the top-level document's credentialless frames keys
+  // its storage and requests, as Chrome's browser has
+  // RenderFrameHostImpl::IsCredentialless(): as credentialless, but for a
+  // frame's initial about:blank, which keeps its parent's, as the browser hears
+  // of the frame's element only after the frame is made.
+  bool InCredentiallessPartition() const { return credentialless_partition_; }
+  void SetInCredentiallessPartition(bool in_partition) {
+    credentialless_partition_ = in_partition;
   }
   // For a top-level document: the nonce of the credentialless frames under
   // it, as Chrome's PageImpl keeps one for each main document, made at the
@@ -987,6 +996,7 @@ class Document : public Node {
       FetchReferrerPolicy::kDefault;
   bool embedder_policy_isolates_ = false;
   bool credentialless_ = false;
+  bool credentialless_partition_ = false;
   mutable std::optional<base::UnguessableToken> credentialless_nonce_;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;

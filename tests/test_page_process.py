@@ -452,7 +452,7 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
         ),
         pytest.param(
             "document-of-an-unknown-flag",
-            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 2, 1))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 4, 1))",
             "the library refused a message from the Page: a document that is not valid",
             id="document-of-an-unknown-flag",
         ),

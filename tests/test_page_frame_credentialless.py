@@ -62,6 +62,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 headers.append(("Set-Cookie", f"{self.path.partition('set=')[2]}; Path=/"))
             self._send("application/json", json.dumps(self.headers.get("Cookie")), headers)
             return
+        if self.path.startswith("/hdr.js"):
+            # What a script request said of its storage access.
+            self._send(
+                "text/javascript", f"window.hdr = {json.dumps(self.headers.get('Sec-Fetch-Storage-Access'))};", []
+            )
+            return
         if self.path.startswith("/case/"):
             case = _CASES[self.path.removeprefix("/case/")]
             self._send("text/html", "<!doctype html>", [(name, value) for name, value in case["headers"]])
