@@ -1680,11 +1680,15 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
                          " requests at once"}));
     return;
   }
+  // One that would take the deferred requests past what the Session holds
+  // fails, as one past the keepalive limits does, since a long method, which
+  // no quota counts, may take it there.
   if (asked.deferred &&
       deferred_bytes_ + DeferredBytes(asked) > kMaxDeferredBytesPerPage) {
-    Refuse(base::StrCat({"more than ",
-                         base::NumberToString(kMaxDeferredBytesPerPage),
-                         " bytes of deferred requests at once"}));
+    PageResponseEnded ended;
+    ended.number = asked.number;
+    ended.net_error = net::ERR_INSUFFICIENT_RESOURCES;
+    channel_->Send(EncodeResponseEnded(ended));
     return;
   }
   const Context& context = contexts_.at(context_id);

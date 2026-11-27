@@ -449,7 +449,7 @@ def test_a_beacon_of_a_blob_of_a_long_safelisted_type_goes_without_a_preflight(
 
 def test_a_beacon_that_cannot_go_gives_false_before_its_data_is_read(session: mitto.Session, server: _Server) -> None:
     # Chrome 157 gave false for a detached window's beacon of a stream, which CanSendBeacon() refuses before the stream
-    # throws, and for a Blob and a buffer past the keepalive quota.
+    # throws, and for a Blob, a buffer and a FormData with a file past the keepalive quota.
     url = server.page("/", "<body><p>beacon</p></body>")
     server.text("/small", "small")
     server.text("/small-beacon", "small")
@@ -462,19 +462,22 @@ def test_a_beacon_that_cannot_go_gives_false_before_its_data_is_read(session: mi
             " const navigator_of_a = a.contentWindow.navigator; a.remove(); let detached;"
             " try { detached = navigator_of_a.sendBeacon('/detached', new ReadableStream()); }"
             " catch (e) { detached = String(e); }"
+            " const form = new FormData(); form.append('f', new Blob([new Uint8Array(70000)]), 'f.bin');"
             " return [detached, navigator.sendBeacon('/big-blob', new Blob([new Uint8Array(70000)])),"
             " navigator.sendBeacon('/big-buffer', new Uint8Array(70000)),"
+            " navigator.sendBeacon('/big-form', form),"
             " navigator.sendBeacon('/small-beacon', new Blob([new Uint8Array(100)]))];"
             " })()",
             timeout=_TIMEOUT_SECONDS,
         )
         assert server.wait_for("/small-beacon")
-    assert gave == [False, False, False, True]
-    assert (server.headers_of("/detached"), server.headers_of("/big-blob"), server.headers_of("/big-buffer")) == (
+    assert gave == [False, False, False, False, True]
+    assert [server.headers_of(path) for path in ("/detached", "/big-blob", "/big-buffer", "/big-form")] == [
         [],
         [],
         [],
-    )
+        [],
+    ]
 
 
 def test_a_beacon_stays_within_the_keepalive_quota_and_refuses_what_it_cannot_send(

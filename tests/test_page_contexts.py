@@ -169,7 +169,7 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
 )
 
 # A top-level document that asks the Session to hold two deferred requests of 1,000 KiB, past three times what Blink's
-# quotas let a frame tree queue.
+# quotas let a frame tree queue, and answers the Session's call with the net error that the second ends with.
 _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
     def deferred(number):
@@ -184,8 +184,20 @@ _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
     send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    while True:
+        message_type, payload = receive()
+        if message_type == 4:
+            call = struct.unpack_from("<Q", payload)[0]
+            break
     send(8, deferred(1))
     send(8, deferred(2))
+    while True:
+        message_type, payload = receive()
+        if message_type == 15 and struct.unpack_from("<Q", payload)[0] == 2:
+            error = struct.unpack_from("<i", payload, 8)[0]
+            break
+    send(5, struct.pack("<QB", call, 0) + str(error).encode())
     while channel.recv(65536):
         pass
     """
@@ -496,19 +508,15 @@ def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: 
     assert printed == "the library refused a message from the Page: a same-document navigation to another origin"
 
 
-def test_a_page_that_asks_the_session_to_hold_more_deferred_bytes_than_blink_lets_it_is_refused(
-    tmp_path: Path, top: _Server
-) -> None:
+def test_a_deferred_request_past_what_the_session_holds_fails(tmp_path: Path, top: _Server) -> None:
     # A Page queues no more than the 640 KiB that Blink's quotas give the control documents of a frame tree, counted as
     # FetchLaterUtil counts each request, a string body by its UTF-16 length, so the Session holds no more than three
-    # times that, as UTF-8 may take, for one that asks.
+    # times that, as UTF-8 may take, and one more fails as one past the keepalive limits does.
     program = _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES.format(python=sys.executable, url=top.url("/later"))
 
-    printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
+    printed = _run_fake_page(tmp_path, program, _SESSION, top.url("/page"), top.url("/set"))
 
-    assert (
-        printed == "the library refused a message from the Page: more than 1966080 bytes of deferred requests at once"
-    )
+    assert printed == "-12"
 
 
 @pytest.mark.parametrize(

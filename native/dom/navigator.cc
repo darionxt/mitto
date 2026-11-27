@@ -20,6 +20,7 @@
 #include "mitto/dom/credentials_container.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/fetcher.h"
+#include "mitto/dom/file.h"
 #include "mitto/dom/form_data.h"
 #include "mitto/dom/geolocation.h"
 #include "mitto/dom/keyboard.h"
@@ -121,6 +122,18 @@ std::optional<BeaconBody> SerializeBeacon(
     return body;
   }
   if (FormData* const* const form_data = std::get_if<FormData*>(&*data)) {
+    // Its files alone past the keepalive quota, which the multipart body only
+    // adds to, are not copied into it.
+    uint64_t file_bytes = 0;
+    for (size_t index = 0; index < (*form_data)->size(); ++index) {
+      if (const File* const file = (*form_data)->EntryAt(index)->file()) {
+        file_bytes += file->GetBlobDataHandle()->size();
+      }
+    }
+    if (file_bytes > kKeepaliveInflightBytesQuota) {
+      body.past_quota = true;
+      return body;
+    }
     FormData::MultipartBody multipart = (*form_data)->EncodeMultiPartFormData();
     body.content_type = multipart.ContentType();
     body.bytes = std::move(multipart.bytes);

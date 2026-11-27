@@ -135,8 +135,8 @@ inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
 // and bodies: three times what Blink's quotas let the control documents of a
 // frame tree queue, the top-level document's 512 KiB and the 128 KiB of its
 // frames' minimal quotas, since a string body counts there by its UTF-16
-// length and comes as UTF-8, of up to three bytes for each unit. One that asks
-// for more is refused.
+// length and comes as UTF-8, of up to three bytes for each unit. One more
+// fails with ERR_INSUFFICIENT_RESOURCES.
 // Upstream: third_party/blink/renderer/core/fetch/fetch_later_util.h
 inline constexpr size_t kMaxDeferredBytesPerPage = 3 * 640 * 1024;
 
