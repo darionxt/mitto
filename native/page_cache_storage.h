@@ -24,6 +24,8 @@
 #include "base/memory/weak_ptr.h"
 #include "mitto/cache_storage/cache_storage_cache.h"
 #include "mitto/cache_storage_messages.h"
+#include "mitto/cross_origin_policies.h"
+#include "url/origin.h"
 
 namespace mitto {
 
@@ -56,6 +58,12 @@ class PageCacheStorage {
               const std::optional<std::string>& storage_key,
               bool bucket_live = true);
 
+  // The origin and embedder policy of the Page's context `context`, which the
+  // responses that its matches give are held to.
+  void SetContextPolicy(uint64_t context,
+                        url::Origin origin,
+                        CrossOriginEmbedderPolicy embedder_policy);
+
   // The first number that no cache or stored body has had.
   uint64_t NextNumber() const;
 
@@ -73,7 +81,10 @@ class PageCacheStorage {
   // Checks that the question's number goes up, and that the document may
   // reach the Cache API.
   bool Admit(uint64_t question, const std::optional<std::string>& storage_key);
-  CacheStorageCache* FindCache(uint64_t cache);
+  CacheStorageCache* FindCache(uint64_t cache, uint64_t context);
+  // Whether `context` opened `cache`, or no context has it open; refuses the
+  // Page otherwise.
+  bool OpenedBy(uint64_t cache, uint64_t context);
   // Whether a cache's call names a cache of a bucket that has been deleted.
   bool CacheBucketGone(const PageCacheStorageCall& call) const;
   // Answers a call of a bucket that has been deleted, or of one of its caches.
@@ -120,6 +131,12 @@ class PageCacheStorage {
   std::map<uint64_t, uint64_t> cache_contexts_;
   // The contexts that have gone.
   std::set<uint64_t> gone_contexts_;
+  // The origin and embedder policy of each context that has called.
+  struct ContextPolicy {
+    url::Origin origin;
+    CrossOriginEmbedderPolicy embedder_policy;
+  };
+  std::map<uint64_t, ContextPolicy> context_policies_;
   uint64_t next_cache_ = 1;
   // The bodies of puts that wait for the Page, by the Page's numbers.
   std::map<uint64_t, PutBody*> put_bodies_;
