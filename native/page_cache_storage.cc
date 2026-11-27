@@ -301,17 +301,21 @@ CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache,
                               ", which the Page has not opened"}));
     return nullptr;
   }
+  return OpenedBy(cache, context) ? found->second.value() : nullptr;
+}
+
+bool PageCacheStorage::OpenedBy(uint64_t cache, uint64_t context) {
   // A cache answers the context that opened it alone, as Chrome's CacheImpl
   // is bound to its opener's pipe, whose origin and embedder policy its
-  // matches are held to.
+  // matches are held to. One that is not open is FindCache()'s to refuse.
   if (const auto opener = cache_contexts_.find(cache);
-      opener == cache_contexts_.end() || opener->second != context) {
+      opener != cache_contexts_.end() && opener->second != context) {
     refuse_.Run(
         base::StrCat({"a Cache API call of cache ", base::NumberToString(cache),
                       ", which another context opened"}));
-    return nullptr;
+    return false;
   }
-  return found->second.value();
+  return true;
 }
 
 void PageCacheStorage::OnCall(PageCacheStorageCall call,
@@ -333,6 +337,9 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       stored_bodies_.erase(call.body);
       return;
     case CacheStorageCallOp::kReleaseCache:
+      if (!OpenedBy(call.cache, context)) {
+        return;
+      }
       cache_buckets_.erase(call.cache);
       cache_contexts_.erase(call.cache);
       if (caches_.erase(call.cache) == 0) {
@@ -346,6 +353,18 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
   }
   if (!Admit(call.question, storage_key)) {
     return;
+  }
+  switch (call.op) {
+    case CacheStorageCallOp::kCacheMatch:
+    case CacheStorageCallOp::kCacheMatchAll:
+    case CacheStorageCallOp::kCacheKeys:
+    case CacheStorageCallOp::kCacheBatch:
+      if (!OpenedBy(call.cache, context)) {
+        return;
+      }
+      break;
+    default:
+      break;
   }
   if (!bucket_live || CacheBucketGone(call)) {
     AnswerGoneBucket(call, context);

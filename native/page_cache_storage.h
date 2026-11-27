@@ -82,6 +82,9 @@ class PageCacheStorage {
   // reach the Cache API.
   bool Admit(uint64_t question, const std::optional<std::string>& storage_key);
   CacheStorageCache* FindCache(uint64_t cache, uint64_t context);
+  // Whether `context` opened `cache`, or no context has it open; refuses the
+  // Page otherwise.
+  bool OpenedBy(uint64_t cache, uint64_t context);
   // Whether a cache's call names a cache of a bucket that has been deleted.
   bool CacheBucketGone(const PageCacheStorageCall& call) const;
   // Answers a call of a bucket that has been deleted, or of one of its caches.

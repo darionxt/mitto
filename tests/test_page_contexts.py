@@ -224,7 +224,7 @@ _FAKE_PAGE_OF_ANOTHER_CONTEXTS_CACHE = _FAKE_PAGE_HELPERS + textwrap.dedent(
     name = "c".encode("utf-16-le")
     send(40, struct.pack("<QBQQI", 2, 1, 1, 0, 1) + name)
     wait_for_answer()
-    send(40, struct.pack("<QBQQBB", {document}, 8, 2, 1, 0, 0))
+    send(40, {call})
     # The keys come back to the opener, and the Page then answers the caller's script.
     wait_for_answer()
     while not calls:
@@ -493,22 +493,24 @@ def test_a_frames_local_document_with_no_embedder_policy_is_refused_under_a_pare
     assert printed == "the library refused a message from the Page: a document that its parent's embedder policy blocks"
 
 
+_KEYS = 'struct.pack("<QBQQBB", {document}, 8, 2, 1, 0, 0)'
+_RELEASE = 'struct.pack("<QBQ", {document}, 14, 1)'
+_REFUSED = "the library refused a message from the Page: a Cache API call of cache 1, which another context opened"
+
+
 @pytest.mark.parametrize(
-    ("document", "printed"),
+    ("call", "printed"),
     [
-        pytest.param(
-            3,
-            "the library refused a message from the Page: a Cache API call of cache 1, which another context opened",
-            id="another-context",
-        ),
-        pytest.param(2, "", id="its-opener"),
+        pytest.param(_KEYS.format(document=3), _REFUSED, id="keys-of-another-context"),
+        pytest.param(_RELEASE.format(document=3), _REFUSED, id="release-of-another-context"),
+        pytest.param(_KEYS.format(document=2), "", id="keys-of-its-opener"),
     ],
 )
 def test_a_cache_answers_the_context_that_opened_it_alone(
-    tmp_path: Path, top: _Server, document: int, printed: str
+    tmp_path: Path, top: _Server, call: str, printed: str
 ) -> None:
     # Chrome's CacheImpl is bound to the pipe of the context that opened it, whose embedder policy its matches are held
-    # to, so a Page that calls a cache from another context is refused.
-    program = _FAKE_PAGE_OF_ANOTHER_CONTEXTS_CACHE.format(python=sys.executable, document=document)
+    # to, so a Page that calls or releases a cache from another context is refused.
+    program = _FAKE_PAGE_OF_ANOTHER_CONTEXTS_CACHE.format(python=sys.executable, call=call)
 
     assert _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page")) == printed
