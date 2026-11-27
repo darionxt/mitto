@@ -446,17 +446,21 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   consumer_ = consumer;
   const std::optional<std::string> cache_control =
       all->GetValue("cache-control");
+  const bool no_store =
+      cache_control && CacheControlContainsNoStore(*cache_control);
   BytesConsumer* body_consumer = consumer;
   // An integrity check reads the body as it comes.
-  if (integrity_.empty() &&
-      (!cache_control || !CacheControlContainsNoStore(*cache_control))) {
+  if (integrity_.empty() && !no_store) {
     body_consumer = BufferingBytesConsumer::CreateWithDelay(consumer);
-  } else if (ExecutionContext* const execution_context =
-                 ExecutionContext::From(isolate_, context)) {
-    // ThreadableLoader::ResponseReceived(): a script's fetch() whose response
-    // says no-store keeps its context's page out of the back/forward cache,
-    // one that a link preloaded for it included.
-    execution_context->DidReceiveNoStoreForScriptRequest();
+  }
+  // ThreadableLoader::ResponseReceived(): a script's fetch() whose response
+  // says no-store keeps its context's page out of the back/forward cache, one
+  // that a link preloaded for it included, whatever checks its integrity.
+  if (no_store) {
+    if (ExecutionContext* const execution_context =
+            ExecutionContext::From(isolate_, context)) {
+      execution_context->DidReceiveNoStoreForScriptRequest();
+    }
   }
   // The Response of `type`, with `headers`, resolves the promise now, or once
   // an integrity check has the whole body, as Blink's IntegrityVerifier

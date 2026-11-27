@@ -6,6 +6,8 @@ A local server serves each page. Each test goes through both APIs, and needs a n
 beside it, as CI's native job installs it on every Host.
 """
 
+import base64
+import hashlib
 import threading
 from collections.abc import Iterator
 from typing import Any
@@ -162,6 +164,28 @@ def test_a_no_store_page_whose_script_had_a_no_store_response_is_not_kept(
         assert _next_document(page) == PageNavigation(url=first, status=200)
         assert page.evaluate("[window.marker ?? null, log]") == [None, ["pageshow:false"]]
     assert len(server.headers_of("/ns")) == 2
+
+
+def test_a_no_store_page_whose_script_checked_a_storable_responses_integrity_is_kept(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # Blink's ThreadableLoader::ResponseReceived() keeps a page out for a no-store response alone, whatever the
+    # integrity check that reads it.
+    first = server.page("/ns", "<title>NS</title>" + _LOGGING, _NO_STORE)
+    second = server.page("/b", "<title>B</title>")
+    server.route("/fetched", b"x", "text/plain")
+    integrity = "sha256-" + base64.b64encode(hashlib.sha256(b"x").digest()).decode()
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            f"fetch('/fetched', {{integrity: '{integrity}'}}).then(r => r.text())"
+            ".then(() => { window.marker = 1; location.href = '/b'; return 0; })"
+        )
+        assert _next_document(page).url == second
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate("[window.marker, log]") == [1, _KEPT_AND_BACK]
+    assert len(server.headers_of("/ns")) == 1
 
 
 def test_a_traversal_into_the_browsing_instance_of_the_page_it_leaves_does_not_keep_that_page(
