@@ -819,12 +819,29 @@ def _route_reused_frames(server: RecordingServer) -> None:
 def test_a_frame_s_first_document_takes_its_own_isolation(
     session: mitto.Session, server: RecordingServer, path: str, isolated: bool
 ) -> None:
-    # A same-origin frame's first document is isolated as its own permissions policy says, also where a script reached
-    # the initial about:blank's window first (Chrome for Testing 157).
+    # A same-origin frame's first document is isolated as its own permissions policy says, in the frame's WindowProxy,
+    # also where a script reached the initial about:blank's window first, and a window that no script reached has
+    # what its context makes of that isolation, SharedArrayBuffer and measureUserAgentSpecificMemory or neither, as
+    # Chrome for Testing 157 gave.
     _route_reused_frames(server)
-    result = _evaluate(session, server.page("/", _BLANK, _ISOLATING), _KEEPS_WINDOW.replace("PATH", path))
+    reached = _evaluate(session, server.page("/", _BLANK, _ISOLATING), _KEEPS_WINDOW.replace("PATH", path))
+    untouched = _evaluate(
+        session,
+        server.page("/untouched", _BLANK, _ISOLATING),
+        f"""(async () => {{
+            const frame = document.createElement('iframe');
+            frame.src = '{path}';
+            document.documentElement.appendChild(frame);
+            await new Promise((resolve) => frame.onload = resolve);
+            const window = frame.contentWindow;
+            return [window.crossOriginIsolated, typeof window.SharedArrayBuffer,
+                    typeof window.performance.measureUserAgentSpecificMemory];
+        }})()""",
+    )
 
-    assert result[0] is isolated
+    assert reached[:2] == [isolated, True]
+    exposed = "function" if isolated else "undefined"
+    assert untouched == [isolated, exposed, exposed]
 
 
 @pytest.mark.parametrize(
@@ -833,7 +850,7 @@ def test_a_frame_s_first_document_takes_its_own_isolation(
         pytest.param(
             "/rhdr",
             marks=pytest.mark.xfail(
-                reason="a first document of another capability gets a window of its own", strict=True
+                reason="a first document of another capability gets an inner window of its own", strict=True
             ),
         ),
         "/rplain",
@@ -842,13 +859,14 @@ def test_a_frame_s_first_document_takes_its_own_isolation(
 def test_a_frame_keeps_its_initial_window_for_its_first_document(
     session: mitto.Session, server: RecordingServer, path: str
 ) -> None:
-    # The first document keeps the initial about:blank's window, with what a script set on it and SharedArrayBuffer,
-    # which its context was made with, as Blink's ShouldReuseDOMWindow() compares the agent cluster's isolation, also
-    # where the response's Permissions-Policy takes the feature (Chrome for Testing 157): a Known Gap there.
+    # The first document keeps the initial about:blank's inner window, with what a script set on it and the
+    # SharedArrayBuffer that its context was made with, as Blink's ShouldReuseDOMWindow() compares the agent cluster's
+    # isolation, also where the response's Permissions-Policy takes the feature (Chrome for Testing 157): a Known Gap
+    # there.
     _route_reused_frames(server)
     result = _evaluate(session, server.page("/", _BLANK, _ISOLATING), _KEEPS_WINDOW.replace("PATH", path))
 
-    assert result[1:] == [True, 1, "function"]
+    assert result[2:] == [1, "function"]
 
 
 def test_a_frame_s_requests_are_held_to_its_own_embedder_policy(
