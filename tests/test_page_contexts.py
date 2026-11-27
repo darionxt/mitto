@@ -168,8 +168,8 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
     """
 )
 
-# A top-level document that asks the Session to hold two deferred requests of 400 KiB, past what Blink's quotas let a
-# frame tree queue.
+# A top-level document that asks the Session to hold two deferred requests of 1,000 KiB, past three times what Blink's
+# quotas let a frame tree queue.
 _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
     def deferred(number):
@@ -177,7 +177,7 @@ _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
             struct.pack("<QQBB", 2, number, 2, 136)
             + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, 0)
             + sized("{url}".encode()) + sized(b"POST") + sized(b"") + sized(b"")
-            + b"\\x01" + b"a" * (400 * 1024)
+            + b"\\x01" + b"a" * (1000 * 1024)
         )
 
     hello()
@@ -500,12 +500,15 @@ def test_a_page_that_asks_the_session_to_hold_more_deferred_bytes_than_blink_let
     tmp_path: Path, top: _Server
 ) -> None:
     # A Page queues no more than the 640 KiB that Blink's quotas give the control documents of a frame tree, counted as
-    # FetchLaterUtil counts each request, so the Session holds no more for one that asks.
+    # FetchLaterUtil counts each request, a string body by its UTF-16 length, so the Session holds no more than three
+    # times that, as UTF-8 may take, for one that asks.
     program = _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES.format(python=sys.executable, url=top.url("/later"))
 
     printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
 
-    assert printed == "the library refused a message from the Page: more than 655360 bytes of deferred requests at once"
+    assert (
+        printed == "the library refused a message from the Page: more than 1966080 bytes of deferred requests at once"
+    )
 
 
 @pytest.mark.parametrize(

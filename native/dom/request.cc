@@ -623,6 +623,7 @@ Request* Request::Clone(bindings::ExceptionState& exception_state) {
     }
     body_buffer_ = branch1;
     request->body_buffer_ = branch2;
+    request->body_length_ = body_length_;
   }
   request->url_ = url_;
   request->method_ = method_;

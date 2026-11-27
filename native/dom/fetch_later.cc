@@ -446,13 +446,6 @@ FetchLaterResult* FetchLater(Window& window,
         "fetchLater doesn't support body with unknown length.");
     return nullptr;
   }
-  std::optional<std::string> bytes;
-  if (body && request->Method() != "GET" && request->Method() != "HEAD") {
-    bytes = body->DrainAsBytes(exception_state);
-    if (exception_state.HadException()) {
-      return nullptr;
-    }
-  }
   const url::Origin origin = url::Origin::Create(url);
   // A string body counts by its length, as Blink's ExtractBody() records it,
   // though it goes as UTF-8.
@@ -465,6 +458,14 @@ FetchLaterResult* FetchLater(Window& window,
                       base::NumberToString(size), " bytes, expected less than ",
                       base::NumberToString(available), " bytes."}));
     return nullptr;
+  }
+  // The body's bytes, once the quota has room for them.
+  std::optional<std::string> bytes;
+  if (body && request->Method() != "GET" && request->Method() != "HEAD") {
+    bytes = body->DrainAsBytes(exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
   }
   auto* const result = bindings::MakeGarbageCollected<FetchLaterResult>();
   // The Fetch Standard's main fetch, as DeferredLoader's FetchLoaderBase

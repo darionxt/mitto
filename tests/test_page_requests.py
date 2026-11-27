@@ -822,6 +822,56 @@ def test_fetch_later_counts_a_string_body_by_its_length(session: mitto.Session, 
     assert gave == ["no throw", 70048]
 
 
+def test_a_borrowed_send_beacon_and_fetch_later_go_as_their_receivers_window(
+    session: mitto.Session, server: _Server
+) -> None:
+    # Blink's bindings give a non-static operation its receiver's ScriptState, so Chrome 157 resolved each URL against the
+    # frame's, sent each with the frame's URL as Referer, the deferred request as the frame went, and gave false for a
+    # detached frame's navigator.
+    url = _fetch_later_page(server)
+    server.page("/sub/f", f"<body><script>{_FETCH_LATER_HELPERS}</script>")
+    for path in (
+        "/sub/log/beacon",
+        "/sub/log/later",
+        "/sub/log/detached",
+        "/log/beacon",
+        "/log/later",
+        "/log/detached",
+    ):
+        server.text(path, "x")
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "(async () => {"
+            " const a = await frame('/sub/f');"
+            " const sent = Navigator.prototype.sendBeacon.call(a.contentWindow.navigator, 'log/beacon');"
+            " const result = fetchLater.call(a.contentWindow, 'log/later', {activateAfter: 600000});"
+            " const d = await frame('/sub/f'); const navigator_of_d = d.contentWindow.navigator; d.remove();"
+            " const detached = Navigator.prototype.sendBeacon.call(navigator_of_d, 'log/detached');"
+            " a.remove(); return [sent, result.activated, detached];"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert server.wait_for("/sub/log/beacon")
+        assert server.wait_for("/sub/log/later")
+    assert gave == [True, True, False]
+    frame_url = server.url("/sub/f")
+    assert _value(server.headers_of("/sub/log/beacon")[0], "Referer") == frame_url
+    assert _value(server.headers_of("/sub/log/later")[0], "Referer") == frame_url
+    assert [server.headers_of(path) for path in ("/log/beacon", "/log/later", "/sub/log/detached")] == [[], [], []]
+
+
+def test_fetch_later_counts_a_cloned_requests_body(session: mitto.Session, server: _Server) -> None:
+    # A clone keeps its body's length, as Blink's FetchRequestData::Clone() does, so Chrome 157 refused this one.
+    url = server.page("/", "<p>later</p>")
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "const request = new Request('/x', {method: 'POST', body: 'a'.repeat(70000)});"
+            " let name = 'no throw'; try { fetchLater(request.clone()); } catch (e) { name = e.name; } name",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    assert gave == "QuotaExceededError"
+
+
 def test_a_detached_frames_fetch_later_throws_before_it_takes_its_input(
     session: mitto.Session, server: _Server
 ) -> None:

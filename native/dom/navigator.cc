@@ -40,7 +40,9 @@
 #include "mitto/header_rules.h"
 #include "url/gurl.h"
 #include "v8/include/v8-array-buffer.h"
+#include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
+#include "v8/include/v8-object.h"
 
 namespace mitto {
 namespace {
@@ -472,9 +474,20 @@ std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(
 bool Navigator::SendBeacon(const std::u16string& url_string,
                            const std::optional<BeaconData>& data,
                            bindings::ExceptionState& exception_state) {
-  // The navigator's window, which the current window owns, since it is that
-  // window's navigator a script reads, as LockManager's.
-  Window& window = Window::Current();
+  // The navigator's window, in whose realm it runs, as Blink's bindings give
+  // a non-static operation its receiver's ScriptState, so that a sendBeacon()
+  // that another window borrows resolves, checks and goes as this one's.
+  if (!window_) {
+    return false;
+  }
+  Window& window = *window_;
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Context> context;
+  std::optional<v8::Context::Scope> context_scope;
+  if (window.HasContext() &&
+      window.ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context)) {
+    context_scope.emplace(context);
+  }
   const GURL url = window.CompleteUrl(url_string);
   if (!url.is_valid()) {
     exception_state.ThrowTypeError(

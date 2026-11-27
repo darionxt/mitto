@@ -868,9 +868,9 @@ size_t KeepaliveBytes(const GURL& url, const net::HttpRequestHeaders& headers) {
 }
 
 // What a deferred request holds against kMaxDeferredBytesPerPage, as
-// FetchLaterUtil::CalculateRequestSize() counts it: its URL without the
-// fragment, the referrer that the Page names, each header line's name and
-// value, and its body.
+// FetchLaterUtil::CalculateRequestSize() counts it, with its method, which
+// the Session holds too: its URL without the fragment, the referrer that the
+// Page names, each header line's name and value, and its body.
 size_t DeferredBytes(const PageRequest& asked) {
   size_t bytes =
       std::string_view(asked.url).substr(0, asked.url.find('#')).size();
@@ -880,7 +880,8 @@ size_t DeferredBytes(const PageRequest& asked) {
     const size_t colon = line.find(": ");
     bytes += colon == std::string_view::npos ? line.size() : line.size() - 2;
   }
-  return bytes + asked.referrer.size() + (asked.body ? asked.body->size() : 0);
+  return bytes + asked.method.size() + asked.referrer.size() +
+         (asked.body ? asked.body->size() : 0);
 }
 
 // A keepalive request's place among those in flight of its Session and of its

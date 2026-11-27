@@ -439,6 +439,16 @@ FetchLaterResult* Window::FetchLater(
     const bindings::RequestOrUSVString& input,
     const bindings::DeferredRequestInit& init,
     bindings::ExceptionState& exception_state) {
+  // In this window's realm, as Blink's bindings give a non-static operation
+  // its receiver's ScriptState, so that a fetchLater() that another window
+  // borrows resolves, queues and goes as this one's.
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Context> context;
+  if (HasContext() &&
+      ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context)) {
+    const v8::Context::Scope context_scope(context);
+    return mitto::FetchLater(*this, input, init, exception_state);
+  }
   return mitto::FetchLater(*this, input, init, exception_state);
 }
 

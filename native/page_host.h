@@ -131,12 +131,14 @@ inline constexpr size_t kMaxKeepaliveRequestsPerPage = 256;
 inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
 
 // How many bytes of fetchLater() requests one Page may hold at once, counted
-// by their URLs without the fragment, their header lines and their bodies:
-// what Blink's quotas let the control documents of a frame tree queue, the
-// top-level document's 512 KiB and the 128 KiB of its frames' minimal quotas.
-// One that asks for more is refused.
+// by their URLs without the fragment, their methods, referrers, header lines
+// and bodies: three times what Blink's quotas let the control documents of a
+// frame tree queue, the top-level document's 512 KiB and the 128 KiB of its
+// frames' minimal quotas, since a string body counts there by its UTF-16
+// length and comes as UTF-8, of up to three bytes for each unit. One that asks
+// for more is refused.
 // Upstream: third_party/blink/renderer/core/fetch/fetch_later_util.h
-inline constexpr size_t kMaxDeferredBytesPerPage = 640 * 1024;
+inline constexpr size_t kMaxDeferredBytesPerPage = 3 * 640 * 1024;
 
 // What a Page's Session gives it, on the network thread: its requests and its
 // cookies.
