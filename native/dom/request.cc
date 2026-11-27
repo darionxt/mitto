@@ -13,19 +13,24 @@
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/v8_blob.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/bindings/v8_form_data.h"
 #include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_request.h"
+#include "mitto/bindings/v8_url_search_params.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/blob.h"
 #include "mitto/dom/blob_bytes_consumer.h"
+#include "mitto/dom/blob_data.h"
 #include "mitto/dom/blob_url_registry.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/bytes_consumer.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/form_data.h"
 #include "mitto/dom/form_data_bytes_consumer.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/readable_stream.h"
+#include "mitto/dom/url_search_params.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
@@ -50,12 +55,22 @@ std::string NormalizeMethod(const std::string& method) {
 // Whether `init` sets a member whose behaviour the Runtime lacks, to a value
 // other than its default.
 bool HasMissingMember(const bindings::RequestInit& init) {
-  return (init.cache && *init.cache != u"default") ||
-         (init.redirect && *init.redirect != u"follow") ||
-         (init.integrity && !init.integrity->empty()) ||
-         init.ad_auction_headers.has_value() ||
-         init.target_address_space.has_value() ||
+  return init.ad_auction_headers.has_value() ||
+         (init.target_address_space &&
+          *init.target_address_space != u"unknown") ||
          init.private_token.has_value() || init.retry_options.has_value();
+}
+
+// Whether `origin` made `url`, as SecurityOrigin::Create() reads it: a blob:
+// URL of an opaque origin is of the origin that registered it.
+bool IsSameOriginWithUrl(const url::Origin& origin, const GURL& url) {
+  if (url.SchemeIsBlob()) {
+    if (const std::optional<BlobUrlRegistry::Entry> entry =
+            BlobUrlRegistry::Get().ResolveEntry(url)) {
+      return origin.IsSameOriginWith(entry->origin);
+    }
+  }
+  return origin.IsSameOriginWith(url);
 }
 
 // Whether `init` has any member, which resets what a Request takes from
@@ -78,6 +93,32 @@ FetchMode ModeFromString(std::u16string_view mode) {
   return FetchMode::kCors;
 }
 
+FetchCacheMode CacheModeFromString(std::u16string_view cache) {
+  static constexpr std::pair<std::u16string_view, FetchCacheMode> kModes[] = {
+      {u"no-store", FetchCacheMode::kNoStore},
+      {u"reload", FetchCacheMode::kReload},
+      {u"no-cache", FetchCacheMode::kNoCache},
+      {u"force-cache", FetchCacheMode::kForceCache},
+      {u"only-if-cached", FetchCacheMode::kOnlyIfCached},
+  };
+  for (const auto& [name, mode] : kModes) {
+    if (cache == name) {
+      return mode;
+    }
+  }
+  return FetchCacheMode::kDefault;
+}
+
+FetchRedirectMode RedirectModeFromString(std::u16string_view redirect) {
+  if (redirect == u"error") {
+    return FetchRedirectMode::kError;
+  }
+  if (redirect == u"manual") {
+    return FetchRedirectMode::kManual;
+  }
+  return FetchRedirectMode::kFollow;
+}
+
 FetchCredentialsMode CredentialsFromString(std::u16string_view credentials) {
   if (credentials == u"omit") {
     return FetchCredentialsMode::kOmit;
@@ -93,8 +134,14 @@ FetchCredentialsMode CredentialsFromString(std::u16string_view credentials) {
 BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
                               v8::Local<v8::Value> value,
                               std::optional<std::string>* content_type,
-                              bindings::ExceptionState& exception_state) {
+                              bindings::ExceptionState& exception_state,
+                              uint64_t* length) {
+  uint64_t ignored_length = 0;
+  if (!length) {
+    length = &ignored_length;
+  }
   if (Blob* const blob = bindings::V8Blob::ToWrappable(isolate, value)) {
+    *length = blob->GetBlobDataHandle()->size();
     if (!blob->GetBlobDataHandle()->GetType().empty()) {
       *content_type = blob->GetBlobDataHandle()->GetType();
     }
@@ -102,6 +149,38 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
         isolate,
         bindings::MakeGarbageCollected<BlobBytesConsumer>(
             &ExecutionContext::Current(), blob->GetBlobDataHandle()),
+        /*signal=*/nullptr);
+  }
+  if (FormData* const form_data =
+          bindings::V8FormData::ToWrappable(isolate, value)) {
+    FormData::MultipartBody body = form_data->EncodeMultiPartFormData();
+    *content_type = body.ContentType();
+    *length = body.bytes.size();
+    if (!body.has_files) {
+      return BodyStreamBuffer::Create(
+          isolate,
+          bindings::MakeGarbageCollected<FormDataBytesConsumer>(
+              std::move(body.bytes)),
+          /*signal=*/nullptr);
+    }
+    // Blink reads a body with a file's bytes in it as a blob of the whole
+    // body, as DataAndEncodedFileOrBlobBytesConsumer does.
+    return BodyStreamBuffer::Create(
+        isolate,
+        bindings::MakeGarbageCollected<BlobBytesConsumer>(
+            &ExecutionContext::Current(),
+            BlobDataHandle::Create(std::move(body.bytes), body.ContentType())),
+        /*signal=*/nullptr);
+  }
+  if (URLSearchParams* const params =
+          bindings::V8URLSearchParams::ToWrappable(isolate, value)) {
+    *content_type = "application/x-www-form-urlencoded;charset=UTF-8";
+    std::string encoded = base::UTF16ToUTF8(params->ToString());
+    *length = encoded.size();
+    return BodyStreamBuffer::Create(
+        isolate,
+        bindings::MakeGarbageCollected<FormDataBytesConsumer>(
+            std::move(encoded)),
         /*signal=*/nullptr);
   }
   std::string bytes;
@@ -114,6 +193,7 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
       return nullptr;
     }
     bytes.assign(static_cast<const char*>(store->Data()), store->ByteLength());
+    *length = bytes.size();
   } else if (value->IsArrayBufferView()) {
     const v8::Local<v8::ArrayBufferView> view = value.As<v8::ArrayBufferView>();
     if (view->ByteLength() > std::numeric_limits<uint32_t>::max()) {
@@ -123,12 +203,17 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
     }
     bytes.resize(view->ByteLength());
     view->CopyContents(bytes.data(), bytes.size());
+    *length = bytes.size();
   } else {
+    // What the page's own conversion throws reaches the caller through
+    // `exception_state`.
+    const bindings::TryRethrowScope rethrow_scope(isolate, exception_state);
     std::u16string text;
     if (!bindings::FromV8USVString(isolate, value, &text)) {
       return nullptr;
     }
     *content_type = "text/plain;charset=UTF-8";
+    *length = text.size();
     bytes = base::UTF16ToUTF8(text);
   }
   return BodyStreamBuffer::Create(
@@ -158,6 +243,9 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     request->referrer_policy_ = input_request->referrer_policy_;
     request->priority_ = input_request->priority_;
     request->keepalive_ = input_request->keepalive_;
+    request->cache_mode_ = input_request->cache_mode_;
+    request->redirect_mode_ = input_request->redirect_mode_;
+    request->integrity_ = input_request->integrity_;
     request->blob_url_handle_ = input_request->blob_url_handle_;
     request->blob_url_origin_ = input_request->blob_url_origin_;
     signal = input_request->signal_.Get();
@@ -215,7 +303,8 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
                              parsed.host().empty() &&
                              parsed.path() == "client";
       request->referrer_ =
-          is_client || !document.GetSecurityOrigin().IsSameOriginWith(parsed)
+          is_client ||
+                  !IsSameOriginWithUrl(document.GetSecurityOrigin(), parsed)
               ? std::string(kClientReferrer)
               : parsed.spec();
     }
@@ -243,6 +332,21 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
   }
   if (init.credentials) {
     request->credentials_ = CredentialsFromString(*init.credentials);
+  }
+  if (init.cache) {
+    request->cache_mode_ = CacheModeFromString(*init.cache);
+  }
+  if (request->cache_mode_ == FetchCacheMode::kOnlyIfCached &&
+      request->mode_ != FetchMode::kSameOrigin) {
+    exception_state.ThrowTypeError(
+        "'only-if-cached' can be set only with 'same-origin' mode");
+    return nullptr;
+  }
+  if (init.redirect) {
+    request->redirect_mode_ = RedirectModeFromString(*init.redirect);
+  }
+  if (init.integrity) {
+    request->integrity_ = *init.integrity;
   }
   if (init.keepalive) {
     request->keepalive_ = *init.keepalive;
@@ -284,10 +388,16 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
                                           : Headers::Guard::kRequest);
   if (init.headers) {
     request->headers_->FillWith(*init.headers, exception_state);
-  } else if (input_request) {
+  } else if (input_request && AreAnyMembersPresent(init)) {
     for (const auto& [name, value] : input_request->headers_->list()) {
       request->headers_->Append(name, value, exception_state);
     }
+  } else if (input_request) {
+    // The input's list as it is, such as one from a cache, whose mode keeps
+    // scripts from adding some of its lines.
+    const Headers::Guard guard = request->headers_->guard();
+    request->headers_ = input_request->headers_->Clone();
+    request->headers_->set_guard(guard);
   }
   if (exception_state.HadException()) {
     return nullptr;
@@ -303,6 +413,7 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     return nullptr;
   }
   BodyStreamBuffer* body = input_body;
+  request->body_length_ = input_request ? input_request->body_length_ : 0;
   if (has_init_body) {
     ReadableStream* const stream =
         bindings::V8ReadableStream::ToWrappable(isolate, *init.body);
@@ -324,14 +435,21 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
         return nullptr;
       }
       body = bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate, stream);
+      request->body_length_ = 0;
     } else {
-      body = ExtractBody(isolate, *init.body, &content_type, exception_state);
+      body = ExtractBody(isolate, *init.body, &content_type, exception_state,
+                         &request->body_length_);
       if (!body) {
         return nullptr;
       }
     }
+    // Through the guard, as Blink's append() goes, so that a request of mode
+    // no-cors takes only a CORS-safelisted type.
     if (content_type && !request->headers_->GetValue("content-type")) {
-      request->headers_->AppendLine("Content-Type", *content_type);
+      request->headers_->Append("Content-Type", *content_type, exception_state);
+      if (exception_state.HadException()) {
+        return nullptr;
+      }
     }
   }
   // A body whose source is null, a stream's.
@@ -393,6 +511,10 @@ Request* Request::CreateFromStored(
   Request* const request = bindings::MakeGarbageCollected<Request>();
   request->url_ = std::move(url);
   request->method_ = std::move(method);
+  // The rest is what network.mojom.FetchAPIRequest has where nothing sets it.
+  request->mode_ = FetchMode::kNoCors;
+  request->credentials_ = FetchCredentialsMode::kOmit;
+  request->referrer_ = kNoReferrer;
   request->signal_ = AbortSignal::CreateComposite({});
   request->headers_ = Headers::Create(Headers::Guard::kRequest);
   for (const auto& [name, value] : headers) {
@@ -404,8 +526,125 @@ Request* Request::CreateFromStored(
 Request::Request() = default;
 Request::~Request() = default;
 
-std::string Request::MimeType() const {
-  return base::ToLowerASCII(headers_->GetValue("content-type").value_or(""));
+std::u16string Request::Referrer() const {
+  return base::UTF8ToUTF16(referrer_);
+}
+
+std::u16string Request::GetReferrerPolicy() const {
+  switch (referrer_policy_) {
+    case FetchReferrerPolicy::kDefault:
+      return std::u16string();
+    case FetchReferrerPolicy::kNoReferrer:
+      return u"no-referrer";
+    case FetchReferrerPolicy::kNoReferrerWhenDowngrade:
+      return u"no-referrer-when-downgrade";
+    case FetchReferrerPolicy::kOrigin:
+      return u"origin";
+    case FetchReferrerPolicy::kOriginWhenCrossOrigin:
+      return u"origin-when-cross-origin";
+    case FetchReferrerPolicy::kSameOrigin:
+      return u"same-origin";
+    case FetchReferrerPolicy::kStrictOrigin:
+      return u"strict-origin";
+    case FetchReferrerPolicy::kStrictOriginWhenCrossOrigin:
+      return u"strict-origin-when-cross-origin";
+    case FetchReferrerPolicy::kUnsafeUrl:
+      return u"unsafe-url";
+  }
+}
+
+std::u16string Request::Mode() const {
+  switch (mode_) {
+    case FetchMode::kCors:
+      return u"cors";
+    case FetchMode::kSameOrigin:
+      return u"same-origin";
+    case FetchMode::kNoCors:
+      return u"no-cors";
+  }
+}
+
+std::u16string Request::Integrity() const {
+  return integrity_;
+}
+
+std::u16string Request::Cache() const {
+  switch (cache_mode_) {
+    case FetchCacheMode::kDefault:
+      return u"default";
+    case FetchCacheMode::kNoStore:
+      return u"no-store";
+    case FetchCacheMode::kReload:
+      return u"reload";
+    case FetchCacheMode::kNoCache:
+      return u"no-cache";
+    case FetchCacheMode::kForceCache:
+      return u"force-cache";
+    case FetchCacheMode::kOnlyIfCached:
+      return u"only-if-cached";
+  }
+}
+
+std::u16string Request::Redirect() const {
+  switch (redirect_mode_) {
+    case FetchRedirectMode::kFollow:
+      return u"follow";
+    case FetchRedirectMode::kError:
+      return u"error";
+    case FetchRedirectMode::kManual:
+      return u"manual";
+  }
+}
+
+std::u16string Request::Credentials() const {
+  switch (credentials_) {
+    case FetchCredentialsMode::kOmit:
+      return u"omit";
+    case FetchCredentialsMode::kSameOrigin:
+      return u"same-origin";
+    case FetchCredentialsMode::kInclude:
+      return u"include";
+  }
+}
+
+Request* Request::Clone(bindings::ExceptionState& exception_state) {
+  if (IsBodyLocked() || IsBodyUsed()) {
+    exception_state.ThrowTypeError("Request body is already used");
+    return nullptr;
+  }
+  Request* const request = bindings::MakeGarbageCollected<Request>();
+  // FetchRequestData::Clone(): the body goes to both through a tee.
+  if (body_buffer_) {
+    BodyStreamBuffer* branch1 = nullptr;
+    BodyStreamBuffer* branch2 = nullptr;
+    body_buffer_->Tee(&branch1, &branch2, exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+    body_buffer_ = branch1;
+    request->body_buffer_ = branch2;
+    request->body_length_ = body_length_;
+  }
+  request->url_ = url_;
+  request->method_ = method_;
+  request->headers_ = headers_->Clone();
+  request->mode_ = mode_;
+  request->credentials_ = credentials_;
+  request->referrer_ = referrer_;
+  request->referrer_policy_ = referrer_policy_;
+  request->priority_ = priority_;
+  request->keepalive_ = keepalive_;
+  request->cache_mode_ = cache_mode_;
+  request->redirect_mode_ = redirect_mode_;
+  request->integrity_ = integrity_;
+  request->blob_url_handle_ = blob_url_handle_;
+  request->blob_url_origin_ = blob_url_origin_;
+  request->signal_ = AbortSignal::CreateComposite({signal_.Get()});
+  return request;
+}
+
+std::string Request::ContentType() const {
+  return headers_->GetValue("content-type").value_or("");
 }
 
 BodyStreamBuffer* Request::BodyBuffer() const {

@@ -64,6 +64,24 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   AbortSignal* Signal() const { return signal_.Get(); }
   std::u16string Duplex() const { return u"half"; }
   ReadableStream* Body() const { return BodyStream(); }
+  // A Request that a script makes has no destination, as Blink's has none.
+  std::u16string Destination() const { return std::u16string(); }
+  // "about:client", the empty string for no referrer, or the URL.
+  std::u16string Referrer() const;
+  std::u16string GetReferrerPolicy() const;
+  std::u16string Mode() const;
+  std::u16string Credentials() const;
+  std::u16string Cache() const;
+  std::u16string Redirect() const;
+  std::u16string Integrity() const;
+  bool Keepalive() const { return keepalive_; }
+  // Its target address space, which only the default can set yet.
+  std::u16string TargetAddressSpace() const { return u"unknown"; }
+  bool IsHistoryNavigation() const { return false; }
+  bool IsReloadNavigation() const { return false; }
+  // A copy with a tee of its body and a signal that follows its own, as
+  // Blink's clone() makes it.
+  Request* Clone(bindings::ExceptionState& exception_state);
 
   // What fetch() uses.
   const GURL& url() const { return url_; }
@@ -74,6 +92,9 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   FetchReferrerPolicy referrer_policy() const { return referrer_policy_; }
   FetchPriorityHint priority() const { return priority_; }
   bool keepalive() const { return keepalive_; }
+  FetchCacheMode cache_mode() const { return cache_mode_; }
+  FetchRedirectMode redirect_mode() const { return redirect_mode_; }
+  const std::u16string& integrity() const { return integrity_; }
   // For a blob: URL, the blob that it named when the Request was made, as
   // Blink resolves it then, so that a fetch works after the URL is revoked,
   // and the origin of the context that made it; null and nullopt when it
@@ -84,6 +105,9 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   const std::optional<url::Origin>& blob_url_origin() const {
     return blob_url_origin_;
   }
+  // The length of its body as Blink's FetchRequestData::BufferByteLength()
+  // holds it, which fetchLater() counts: its init's body's, or its input's.
+  uint64_t body_length() const { return body_length_; }
   // Takes its body for fetch(), as Blink's FetchRequestData::Pass() does,
   // leaving it a body that is closed, locked and disturbed; null for a null
   // body.
@@ -92,18 +116,23 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
  private:
   // BodyMixin:
   BodyStreamBuffer* BodyBuffer() const override;
-  std::string MimeType() const override;
+  std::string ContentType() const override;
 
   GURL url_;
   std::string method_ = "GET";
   cppgc::Member<mitto::Headers> headers_;
   cppgc::Member<BodyStreamBuffer> body_buffer_;
+  uint64_t body_length_ = 0;
   FetchMode mode_ = FetchMode::kCors;
   FetchCredentialsMode credentials_ = FetchCredentialsMode::kSameOrigin;
   std::string referrer_ = kClientReferrer;
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   FetchPriorityHint priority_ = FetchPriorityHint::kAuto;
   bool keepalive_ = false;
+  FetchCacheMode cache_mode_ = FetchCacheMode::kDefault;
+  FetchRedirectMode redirect_mode_ = FetchRedirectMode::kFollow;
+  // Its integrity metadata.
+  std::u16string integrity_;
   scoped_refptr<BlobDataHandle> blob_url_handle_;
   std::optional<url::Origin> blob_url_origin_;
   cppgc::Member<AbortSignal> signal_;
@@ -113,14 +142,19 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
 // other than a ReadableStream: a Blob gives its bytes, read as Blink's
 // BlobBytesConsumer reads them, and its type, if it has one, as the
 // Content-Type that `content_type` gets; an ArrayBuffer or a view of one gives
-// its bytes; and anything else, which is a string as far as the Runtime's
+// its bytes; a FormData gives a multipart/form-data body, read as a blob if it
+// holds a file, and a URLSearchParams an application/x-www-form-urlencoded
+// one; and anything else, which is a string as far as the Runtime's
 // interfaces go, gives the UTF-8 of String(value) and a Content-Type of
 // text/plain;charset=UTF-8. Returns null if
 // String() threw, or after throwing for a buffer larger than Blink takes.
+// `length`, if given, gets the body's length as Blink's ExtractBody() records
+// it: a string's in UTF-16 code units, and every other body's in bytes.
 BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
                               v8::Local<v8::Value> value,
                               std::optional<std::string>* content_type,
-                              bindings::ExceptionState& exception_state);
+                              bindings::ExceptionState& exception_state,
+                              uint64_t* length = nullptr);
 
 }  // namespace mitto
 

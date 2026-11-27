@@ -157,15 +157,21 @@ Request* RequestFromCache(const PageCacheRequest& request) {
 
 Response* ResponseFromCache(CacheStorageHost& host,
                             const PageCacheResponse& response) {
-  // network.mojom.FetchResponseType: basic, cors, default and opaque are what
-  // the Runtime's responses can be, and what a page put.
+  // network.mojom.FetchResponseType: basic, cors, default, error and opaque
+  // are what the Runtime's responses can be, and what a page put.
   Response::ResponseType type = Response::ResponseType::kDefault;
   if (response.type == 0) {
     type = Response::ResponseType::kBasic;
   } else if (response.type == 1) {
     type = Response::ResponseType::kCors;
+  } else if (response.type == 3) {
+    // A network error's, as Response.error() gives, which needs nothing
+    // else.
+    return Response::Error();
   } else if (response.type == 4) {
     type = Response::ResponseType::kOpaque;
+  } else if (response.type == 5) {
+    type = Response::ResponseType::kOpaqueRedirect;
   }
   // The filtered response of its type: no Set-Cookie for a basic one, and of
   // a CORS one only the safelisted names and the exposed ones.
@@ -190,9 +196,11 @@ Response* ResponseFromCache(CacheStorageHost& host,
                                  ? std::u16string()
                                  : base::UTF8ToUTF16(response.url_list.back());
   if (response.body == 0) {
-    return Response::CreateFetched(type, response.status, response.status_text,
-                                   url, response.url_list.size() > 1, headers,
-                                   nullptr);
+    Response* const fetched = Response::CreateFetched(
+        type, response.status, response.status_text, url,
+        response.url_list.size() > 1, headers, nullptr);
+    fetched->SetPadding(response.padding);
+    return fetched;
   }
   // The loader goes to the host, and its consumer to the body, which drops
   // the stored body once it goes.
@@ -202,9 +210,11 @@ Response* ResponseFromCache(CacheStorageHost& host,
   BodyStreamBuffer* const body = BodyStreamBuffer::Create(
       isolate, loader->consumer(), /*signal=*/nullptr);
   host.AdoptStoredBody(response.body, std::move(loader));
-  return Response::CreateFetched(type, response.status, response.status_text,
-                                 url, response.url_list.size() > 1, headers,
-                                 body);
+  Response* const fetched =
+      Response::CreateFetched(type, response.status, response.status_text, url,
+                              response.url_list.size() > 1, headers, body);
+  fetched->SetPadding(response.padding);
+  return fetched;
 }
 
 bool CacheContextIsAlive(v8::Isolate* isolate,

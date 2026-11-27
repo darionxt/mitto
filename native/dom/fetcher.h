@@ -75,6 +75,23 @@ enum class FetchPriority {
   kVeryHigh,
 };
 
+// The Fetch Standard's cache mode.
+enum class FetchCacheMode {
+  kDefault,
+  kNoStore,
+  kReload,
+  kNoCache,
+  kForceCache,
+  kOnlyIfCached,
+};
+
+// The Fetch Standard's redirect mode.
+enum class FetchRedirectMode {
+  kFollow,
+  kError,
+  kManual,
+};
+
 // A fetch priority hint, as fetch()'s priority or an element's fetchpriority
 // gives it.
 enum class FetchPriorityHint {
@@ -112,7 +129,7 @@ bool IsContentTypeOptionsNosniff(std::string_view headers);
 
 // The referrer policy that a Referrer-Policy header names: the last of its
 // comma-separated tokens that names one, without white space around it, and
-// kDefault where none does.
+// kDefault where none does, or where one is not letters and hyphens.
 // Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
 FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value);
 
@@ -143,6 +160,11 @@ CrossOriginAttribute CrossOriginAttributeFromValue(
 
 // The referrer of a request that is the document's, as Blink's referrer string
 // says it, and of one that has none.
+// How many bytes of the bodies of a document's keepalive requests may be in
+// flight at once. One more fails before it goes.
+// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
+inline constexpr size_t kKeepaliveInflightBytesQuota = 64 * 1024;
+
 inline constexpr char kClientReferrer[] = "about:client";
 inline constexpr char kNoReferrer[] = "";
 
@@ -172,10 +194,20 @@ struct FetchRequestData {
   std::optional<FetchPriority> priority;
   // Whether it outlives its document.
   bool keepalive = false;
+  // A fetch()'s cache and redirect modes.
+  FetchCacheMode cache_mode = FetchCacheMode::kDefault;
+  FetchRedirectMode redirect_mode = FetchRedirectMode::kFollow;
   FetchDestination destination = FetchDestination::kEmpty;
   // Whether it fetches a module script, or what one imports, which the
   // Session sends as a module.
   bool is_module = false;
+  // Whether it is navigator.sendBeacon()'s, which the Session sends as a
+  // beacon, as Blink's request context BEACON says.
+  bool is_beacon = false;
+  // Whether it is fetchLater()'s, keepalive too, which the Session holds
+  // until FetchController::SendDeferred(), its document goes or its Page
+  // ends, and whose client hears nothing of its response.
+  bool deferred = false;
   // Whether it blocks rendering, which its entry of the Performance Timeline
   // says.
   bool render_blocking = false;
@@ -206,6 +238,8 @@ struct FetchResponseHead {
   bool opaque = false;
   // Each "name: value" and a line feed, without Set-Cookie.
   std::string headers;
+  // An opaque response's padding, which the Cache API counts beside its size.
+  int64_t padding = 0;
 };
 
 // What a request can be told while it runs.
@@ -214,9 +248,13 @@ class FetchController {
   // The client has taken `bytes` more of the body, which lets the Session
   // send as many more.
   virtual void TookBody(size_t bytes) = 0;
-  // Ends the request, and destroys its client before it returns, so the
-  // client must touch nothing of itself after calling it.
+  // Ends the request, and destroys its client before it returns, or, under a
+  // call to the client, once that call has returned. So the client must touch
+  // nothing of itself after calling it, and hears nothing more.
   virtual void Cancel() = 0;
+  // For a deferred request: has the Session send it now, and destroys the
+  // client before it returns, as Cancel() does.
+  virtual void SendDeferred() {}
 
   // For a body that streams: how many more bytes of it the Session takes now,
   // none until it starts reading the body. A request whose body does not
@@ -248,6 +286,10 @@ class FetchClient {
   virtual void OnResponseEnded(int net_error) = 0;
   // For a request whose body streams: the Session takes more of it.
   virtual void OnBodyRoom() {}
+  // For a deferred request: its document has gone, and the Session sends it
+  // then, as FetchLaterManager::ContextDestroyed() processes each loader
+  // before any script runs again.
+  virtual void OnDocumentGone() {}
 };
 
 class Fetcher {

@@ -95,10 +95,19 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK((frame->request.target != 0) ==
                 (frame->request.kind == mitto::PageRequestKind::kIframe));
           CHECK(!frame->request.no_referrer || frame->request.referrer.empty());
+          // Only a fetch has a cache mode or a redirect mode of its own.
+          CHECK((frame->request.cache_mode == mitto::PageCacheMode::kDefault &&
+                 frame->request.redirect_mode ==
+                     mitto::PageRedirectMode::kFollow) ||
+                frame->request.kind == mitto::PageRequestKind::kFetch);
           // Only a fetch's body streams, and then none comes with it.
           CHECK(!frame->request.streams_body ||
                 (frame->request.kind == mitto::PageRequestKind::kFetch &&
                  !frame->request.body));
+          // Only a fetch of mode same-origin asks the cache alone.
+          CHECK(frame->request.cache_mode !=
+                    mitto::PageCacheMode::kOnlyIfCached ||
+                frame->request.mode == mitto::PageRequestMode::kSameOrigin);
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
           CHECK(base::IsStringUTF8AllowingNoncharacters(
               frame->request.referrer));
@@ -107,7 +116,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_EQ(frame->request.url.size() + frame->request.method.size() +
                        frame->request.headers.size() +
                        frame->request.referrer.size() +
-                       frame->request.body.value_or("").size() + 48,
+                       frame->request.body.value_or("").size() + 50,
                    payload.size());
           break;
         case mitto::PageMessage::kCredit:
@@ -124,6 +133,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_EQ(payload.size(), 8u);
           break;
         case mitto::PageMessage::kCancel:
+        case mitto::PageMessage::kSendDeferredRequest:
           CHECK_EQ(payload.size(), 8u);
           break;
         case mitto::PageMessage::kKnownGap:
@@ -252,6 +262,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                        .substr(mitto::kFrameHeaderSize),
                    payload);
           break;
+        case mitto::PageMessage::kDocumentStored:
+        case mitto::PageMessage::kDocumentRestored:
+        case mitto::PageMessage::kDocumentEvicted:
+          CHECK_NE(frame->cached_document, mitto::kNoDocument);
+          CHECK_EQ(payload.size(), 8u);
+          break;
         case mitto::PageMessage::kContextGone:
           CHECK_NE(frame->gone_context, mitto::kNoDocument);
           CHECK_EQ(payload.size(), 8u);
@@ -321,6 +337,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kRequestBodyCredit:
         case mitto::PageMessage::kPermissionsPolicy:
         case mitto::PageMessage::kIsolation:
+        case mitto::PageMessage::kRestore:
           // Only a Session sends these.
           NOTREACHED();
       }

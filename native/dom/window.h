@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
@@ -58,10 +59,12 @@ class CookieStore;
 class Storage;
 class Crypto;
 class CustomElementRegistry;
+class DeferredFetches;
 class Document;
 class DocumentLoadTiming;
 class Element;
 class Event;
+class FetchLaterResult;
 class Frame;
 class History;
 class IDBFactory;
@@ -128,6 +131,8 @@ class Window final : public WindowProperties, public ExecutionContext {
                                v8::Local<v8::Object> success_callback,
                                v8::Local<v8::Object> error_callback);
   mitto::Navigator* Navigator();
+  // Whether the browser holds a WebAuthn request of the window's document.
+  bool HasPublicKeyRequest() const;
   mitto::Navigator* ClientInformation() { return Navigator(); }
   mitto::Screen* Screen();
   int32_t InnerWidth() const { return Start().viewport_width; }
@@ -218,6 +223,17 @@ class Window final : public WindowProperties, public ExecutionContext {
   // time, which a document whose origin may not reach IndexedDB has too: its
   // calls throw.
   IDBFactory* IndexedDB();
+  // fetchLater(), as fetch_later.h says.
+  FetchLaterResult* FetchLater(const bindings::RequestOrUSVString& input,
+                               const bindings::DeferredRequestInit& init,
+                               bindings::ExceptionState& exception_state);
+  // The deferred requests of fetchLater() that have not gone yet, made the
+  // first time.
+  const scoped_refptr<DeferredFetches>& GetDeferredFetches();
+  // Those requests, or null before the first.
+  const DeferredFetches* FindDeferredFetches() const {
+    return deferred_fetches_.get();
+  }
   // WindowLocalStorage and WindowSessionStorage, in dom_window_storage.cc.
   mitto::Storage* LocalStorage(bindings::ExceptionState& exception_state);
   mitto::Storage* SessionStorage(bindings::ExceptionState& exception_state);
@@ -250,6 +266,7 @@ class Window final : public WindowProperties, public ExecutionContext {
 
   // ExecutionContext:
   bool IsWindow() const override;
+  FetchReferrerPolicy GetReferrerPolicy() const override;
   std::u16string Url() const override;
   EventTarget* ErrorEventTarget() override;
   url::Origin GetSecurityOrigin() const override;
@@ -296,6 +313,18 @@ class Window final : public WindowProperties, public ExecutionContext {
   // and clears once another window takes its place.
   void SetFrame(mitto::Frame* frame) { frame_ = frame; }
   mitto::Frame* GetFrame() const { return frame_; }
+  // What drops the window's document from the back/forward cache that keeps
+  // it, which the Page sets while the cache does: once a script tries to run
+  // in its context, as Blink's LocalFrame::EvictFromBackForwardCache() does
+  // then.
+  void SetBackForwardCacheEviction(base::RepeatingClosure evict) {
+    back_forward_cache_eviction_ = std::move(evict);
+  }
+  void EvictFromBackForwardCache() {
+    if (back_forward_cache_eviction_) {
+      back_forward_cache_eviction_.Run();
+    }
+  }
   // The same as AddConsoleMessage(), of a permissions policy: nothing for a
   // window of no frame, or for one that has been said so before, if a duplicate
   // is to be discarded, as FrameConsole discards it.
@@ -406,10 +435,12 @@ class Window final : public WindowProperties, public ExecutionContext {
   raw_ptr<NavigationClient> navigation_client_ = nullptr;
   std::unique_ptr<HistoryItem> current_history_item_;
   raw_ptr<mitto::Frame> frame_ = nullptr;
+  base::RepeatingClosure back_forward_cache_eviction_;
   // The name of the Page program's own window, which has no frame to keep it.
   std::u16string frameless_name_;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
   raw_ptr<AnimationFrameController> animation_frames_ = nullptr;
+  scoped_refptr<DeferredFetches> deferred_fetches_;
 };
 
 }  // namespace mitto

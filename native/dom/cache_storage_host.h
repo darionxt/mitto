@@ -65,6 +65,10 @@ class CacheStorageHost {
   // before it: what that one asked, held or opened goes, as its Mojo pipes go
   // with its context, and nothing of it reaches the Session from here on.
   virtual void DocumentCommitted(uint64_t document) = 0;
+  // Whether the document that committed last has asked, held or opened anything
+  // of the Session here, which the back/forward cache cannot keep yet: its
+  // document unloads (a Known Gap).
+  virtual bool UsedByDocument() const = 0;
 
  protected:
   virtual ~CacheStorageHost() = default;

@@ -11,6 +11,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/dom/performance_server_timing.h"
+#include "mitto/encoding/content_type.h"
 #include "url/gurl.h"
 
 namespace mitto {
@@ -235,6 +236,13 @@ base::TimeTicks TicksOf(int64_t microseconds) {
   return microseconds == 0
              ? base::TimeTicks()
              : base::TimeTicks() + base::Microseconds(microseconds);
+}
+
+bool IsRedirect(const PageResponseStarted& response) {
+  return (response.status == 301 || response.status == 302 ||
+          response.status == 303 || response.status == 307 ||
+          response.status == 308) &&
+         HasLocation(response.headers);
 }
 
 ResourceTimingInfo CreateResourceTimingInfo(base::TimeTicks start_time,

@@ -56,6 +56,7 @@ class SessionCacheStorage final : public CacheStorageHost {
   void ReleaseCache(uint64_t cache) override;
   bool HasCache(uint64_t cache) const override;
   void DocumentCommitted(uint64_t document) override;
+  bool UsedByDocument() const override;
 
   // From a task of its own: what the Session answered the document or worker
   // that `host` stands for, which goes unheard once another has its place.
@@ -82,6 +83,8 @@ class SessionCacheStorage final : public CacheStorageHost {
   // The document or worker, which every call names, and the sender's number
   // of its host.
   uint64_t document_ = kNoDocument;
+  // Whether the document has asked anything here.
+  bool used_ = false;
   uint64_t host_ = 0;
   std::map<uint64_t, Answer> questions_;
   std::map<uint64_t, std::string> put_bodies_;

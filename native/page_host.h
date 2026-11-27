@@ -131,6 +131,20 @@ inline constexpr size_t kMaxKeepaliveRequests = 2048;
 inline constexpr size_t kMaxKeepaliveRequestsPerPage = 256;
 inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
 
+// How many bytes of fetchLater() requests one document, and one Page, may hold
+// at once, counted by their URLs without the fragment, their methods,
+// referrers, header lines and bodies: three times what Blink's quotas let a
+// document queue, no more than the 512 KiB of a top-level control document,
+// and a frame tree, those 512 KiB and the 64 KiB that an iframe's allow may
+// give each of a page's at most 1,000 frames, since a string body counts there
+// by its UTF-16 length and comes as UTF-8, of up to three bytes for each unit.
+// One more is dropped.
+// Upstream: third_party/blink/renderer/core/fetch/fetch_later_util.h
+// Upstream: third_party/blink/renderer/core/page/page.cc
+inline constexpr size_t kMaxDeferredBytesPerDocument = 3 * 512 * 1024;
+inline constexpr size_t kMaxDeferredBytesPerPage =
+    3 * (512 * 1024 + 1000 * 64 * 1024);
+
 // What a Page's Session gives it, on the network thread: its requests and its
 // cookies.
 class PageNetwork {
@@ -209,6 +223,8 @@ struct PageEvent {
   int32_t status = 0;
   int32_t net_error = 0;
   std::string url;
+  // NAVIGATED: whether the back/forward cache restored the document.
+  bool restored = false;
 };
 
 // Carries a Page's events from the network thread to whichever thread holds the
@@ -364,6 +380,12 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
+    // Whether a document is cross-origin isolated, as
+    // CrossOriginIsolatedCapability() says: the top-level document's
+    // isolation, and for a frame's that, and its parent's, and the same origin
+    // as its parent's, the default allowlist 'self' of the
+    // cross-origin-isolated feature (FrameIsCrossOriginIsolated()).
+    bool cross_origin_isolated = false;
     // What the headers of a document's response say of its permissions policy,
     // which PermissionsPolicyHeaders::Allows() answers.
     PermissionsPolicyHeaders policy_headers;
@@ -400,6 +422,7 @@ class PageHost final : public PageChannel::Delegate {
   void OnGetCookies(uint64_t question, const CookieContext& context);
   void OnSetCookie(const std::string& line, const CookieContext& context);
   void OnCancel(uint64_t number);
+  void OnSendDeferredRequest(uint64_t number);
   // A fetch()'s body that streams from the Page, which a request of
   // `options.stream_body` reads.
   void OnRequestBodyPart(const PageRequestBodyPart& part);
@@ -444,11 +467,30 @@ class PageHost final : public PageChannel::Delegate {
                           uint64_t document);
   // Records that no entry of the session history holds any more.
   void OnRecordsReleased(const std::vector<uint64_t>& records);
+  // The Page's back/forward cache keeps the top-level document `document`,
+  // whose context the library keeps apart, though another takes its place.
+  void OnDocumentStored(uint64_t document);
+  // The Page restored the stored document `document`, as the library asked,
+  // which takes the place of the top-level document and of everything under
+  // it.
+  void OnDocumentRestored(uint64_t document);
+  // The stored document `document` goes.
+  void OnDocumentEvicted(uint64_t document);
+  // Top-level document `id`, of `context`, takes the place of the one before
+  // it and of everything under it, whose messages all came before this.
+  void ReplaceTopLevelDocument(uint64_t id, Context context);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
-  // with `net_error`, and `status` for one that kept the document.
-  void PushNavigated(std::string url, int32_t status, int32_t net_error);
+  // with `net_error`, and `status` for one that kept the document, or that
+  // the back/forward cache `restored`.
+  void PushNavigated(std::string url,
+                     int32_t status,
+                     int32_t net_error,
+                     bool restored = false);
+  // Context `id`, a stored document's included, or null.
+  Context* FindContext(uint64_t id);
   // Context `id`, or null after refusing a message of `type` that names a
-  // context that is not the Page's.
+  // context that is not the Page's. A message of a document that the
+  // back/forward cache keeps goes unheard.
   const Context* ContextOf(uint64_t id, uint32_t type);
   // The URL that what a context asks for is judged by: its own, or its
   // origin's for a frame's initial about:blank or a worker of a blob: URL.
@@ -459,8 +501,13 @@ class PageHost final : public PageChannel::Delegate {
   // Forgets `ids`, which go, with what waits for them, and lets their
   // keepalive requests go on without them.
   void ForgetContexts(const std::set<uint64_t>& ids);
+  // Only a document's keepalive request goes on without it in Chrome, in the
+  // browser's KeepAliveURLLoaderService. The network service ends a worker's
+  // once its thread has ended.
+  bool IsOfWorker(const Request& request) const;
   // Lets each keepalive request of `ids`, or of every context for null, go on
-  // without the Page, which hears that it ended.
+  // without the Page, which hears that it ended, but a worker's, whose requests
+  // all end.
   void LetKeepaliveRequestsGo(const std::set<uint64_t>* ids);
   // What a request of context `id` goes as, beside its Kind's: its
   // Initiator, its referrer's source, and its frame's place in the frame
@@ -476,6 +523,25 @@ class PageHost final : public PageChannel::Delegate {
   // place of its creator's or initiator's takes, as Blink's
   // DocumentInit::GetCookieUrl() does from its owner document.
   static GURL CookieUrlOf(const Context& context);
+  // Whether a frame's document of `origin` under document `parent` is
+  // cross-origin isolated: the parent is, and they are of the same origin, as
+  // the cross-origin-isolated feature's default allowlist 'self' has it. Known
+  // Gap: a frame's allow attribute and a document's Permissions-Policy for
+  // the feature, which need the container policy.
+  bool FrameIsCrossOriginIsolated(uint64_t parent,
+                                  const url::Origin& origin) const;
+  // The embedder policy of a frame's document under document `parent` that
+  // the response that `event` describes makes.
+  CrossOriginEmbedderPolicy FrameEmbedderPolicyOf(
+      uint64_t parent,
+      const RequestEvent& event) const;
+  // Whether a frame's navigation, whose response that `event` describes makes
+  // a document of embedder policy `coep`, is blocked by its parent's.
+  static bool BlocksFrameNavigation(const Request& request,
+                                    const RequestEvent& event,
+                                    const CrossOriginEmbedderPolicy& coep);
+  // Ends a frame's navigation that its parent's embedder policy blocks.
+  void BlockFrameNavigation(Request& request);
   // What the document's Cache API asks, which PageCacheStorage serves,
   // with the storage key of the document that asks.
   void OnCacheStorage(PageCacheStorageCall call,
@@ -549,6 +615,11 @@ class PageHost final : public PageChannel::Delegate {
     // A frame's navigation: the URLs of the frame's ancestors' documents, from
     // its parent's up, as they were when it started.
     std::vector<GURL> frame_ancestor_urls;
+    // A frame's navigation: its parent's embedder policy and origin, which
+    // NavigationRequest::EnforceCOEP() and CheckResponseAdherenceToCoep()
+    // hold each of its responses to.
+    std::optional<CrossOriginEmbedderPolicy> parent_embedder_policy;
+    url::Origin parent_origin;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
@@ -564,6 +635,36 @@ class PageHost final : public PageChannel::Delegate {
                     scoped_refptr<RequestChannel> body_channel,
                     FetchChecks checks);
 
+  // fetchLater()'s request, which waits until the Page asks for it, its
+  // document goes or the Page ends, as Chrome's FetchLaterLoader waits in the
+  // browser, with what StartRequest() then takes.
+  struct DeferredRequest {
+    DeferredRequest();
+    DeferredRequest(DeferredRequest&&);
+    DeferredRequest& operator=(DeferredRequest&&);
+    ~DeferredRequest();
+
+    uint64_t context_id = 0;
+    url::Origin document_origin;
+    GURL url;
+    net::HttpRequestHeaders headers;
+    RequestOptions options;
+    std::optional<std::vector<char>> body;
+    FetchChecks checks;
+    // What it holds against kMaxDeferredBytesPerPage.
+    size_t bytes = 0;
+  };
+  // Whether one more keepalive request of `url` and `headers` is past what
+  // the network service allows in flight, of the Session or of the Page.
+  bool IsPastKeepaliveLimits(const GURL& url,
+                             const net::HttpRequestHeaders& headers) const;
+  // Starts the deferred request numbered `number`, if one waits, and lets it
+  // go on without the Page, which hears nothing of it, as the browser answers
+  // a FetchLaterLoader's request to nobody.
+  void SendDeferredRequest(uint64_t number);
+  // Sends the deferred requests of the contexts `ids`, or of every context.
+  void SendDeferredRequests(const std::set<uint64_t>* ids);
+
   // What a Request hears of its job.
   void OnResponseStarted(Request& request, RequestEvent event);
   void OnBodyRead(Request& request, size_t size);
@@ -571,7 +672,9 @@ class PageHost final : public PageChannel::Delegate {
   // document, and the library reads the body to its end and drops it.
   void DropNavigation(Request& request, const RequestEvent& event);
   // Tells the Page that the response of `request` has started.
-  void StartResponse(Request& request, const RequestEvent& event);
+  // Returns whether the response reached the Page: a frame's navigation that
+  // its parent's embedder policy blocks ended instead.
+  bool StartResponse(Request& request, const RequestEvent& event);
   // Ends the sniffing of a navigation's response: a download, or the
   // response with what was read of its body.
   void FinishSniffing(Request& request);
@@ -627,6 +730,10 @@ class PageHost final : public PageChannel::Delegate {
 
   // Abandons each request in progress.
   void AbandonRequests();
+  // The requests in flight: the Page's, and those of its gone workers that
+  // //net has yet to send, which still count, as their loaders would in
+  // Chrome's network service until the worker's end reached it.
+  size_t RequestsInFlight();
 
   // Refuses what the Page sent: tells it why, closes the channel and kills the
   // process, because a Page that sends what it should not may be hostile.
@@ -665,6 +772,10 @@ class PageHost final : public PageChannel::Delegate {
     GURL url;
     uint64_t parent = kNoDocument;
     uint64_t target = kNoDocument;
+    // The embedder policy and the isolation of the document that the response
+    // makes.
+    CrossOriginEmbedderPolicy coep;
+    bool cross_origin_isolated = false;
     PermissionsPolicyHeaders policy_headers;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
@@ -697,14 +808,49 @@ class PageHost final : public PageChannel::Delegate {
     GURL url;
     int32_t status = 0;
     CrossOriginEmbedderPolicy coep;
+    bool cross_origin_isolated = false;
     int coop_ignored = 0;
     // What the navigation went as, and the Referer it sent last, which a
     // traversal to its document repeats.
     FetchParams fetch;
     std::string referrer;
+    // Whether its Cache-Control says no-store.
+    bool no_store = false;
     PermissionsPolicyHeaders policy_headers;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
+  // The top-level documents that the Page's back/forward cache keeps, by ID:
+  // each one's context, apart from the Page's, and its response's status.
+  struct StoredDocument {
+    Context context;
+    int32_t status = 0;
+  };
+  std::map<uint64_t, StoredDocument> stored_documents_;
+  // The status of the top-level document's response, which a stored
+  // document keeps.
+  int32_t top_level_status_ = 0;
+  // The traversal to the entry of a stored document that the library may
+  // restore, until the Page restores the document, or the library makes the
+  // request after all, or the Page lets it go.
+  struct PendingRestore {
+    uint64_t number = 0;
+    uint64_t document = kNoDocument;
+  };
+  std::optional<PendingRestore> pending_restore_;
+  // For each top-level document of a no-store response, the current one or a
+  // stored one, by ID: whether a cookie of its URL has changed since it
+  // committed, which keeps it from being restored, as Chrome's
+  // RenderFrameHostImpl::CookieChangeListener counts.
+  struct NoStoreWatch {
+    NoStoreWatch();
+    NoStoreWatch(NoStoreWatch&&);
+    NoStoreWatch& operator=(NoStoreWatch&&);
+    ~NoStoreWatch();
+
+    std::unique_ptr<net::CookieChangeSubscription> subscription;
+    bool cookie_changed = false;
+  };
+  std::map<uint64_t, NoStoreWatch> no_store_watches_;
   // What the library kept of the navigation that made each document that an
   // entry of the Page's session history may go back to, by the document's
   // ID, as Chrome's FrameNavigationEntry keeps it: what the navigation went
@@ -761,7 +907,17 @@ class PageHost final : public PageChannel::Delegate {
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;
+  // The jobs of gone workers' requests that //net has yet to send, which end
+  // once it has, or with the Page.
+  std::vector<base::WeakPtr<RunningRequest>> sending_jobs_;
   uint64_t last_request_number_ = kNavigationRequest;
+  // The deferred requests that wait, by number.
+  std::map<uint64_t, DeferredRequest> deferred_requests_;
+  // The bytes that they hold, in all and by the ID of the context that asked.
+  size_t deferred_bytes_ = 0;
+  std::map<uint64_t, size_t> deferred_bytes_of_context_;
+  // Takes a deferred request's bytes off what they hold.
+  void ForgetDeferredBytes(const DeferredRequest& deferred);
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.
   const scoped_refptr<KeepaliveInFlight> keepalive_in_flight_ =

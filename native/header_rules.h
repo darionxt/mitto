@@ -55,6 +55,13 @@ bool IsPrivilegedNoCorsHeaderName(std::string_view name);
 // Upstream: services/network/public/cpp/cors/cors.cc
 bool IsNoCorsSafelistedHeader(std::string_view name, std::string_view value);
 
+// Whether `media_type` is a CORS-safelisted type, whatever its length:
+// application/x-www-form-urlencoded, multipart/form-data or text/plain, with
+// no byte that a CORS-safelisted line may not hold, as a beacon's Blob type is
+// checked.
+// Upstream: services/network/public/cpp/cors/cors.cc
+bool IsCorsSafelistedContentType(std::string_view media_type);
+
 // The response header names that a script reads of a cross-origin response
 // beside those that Access-Control-Expose-Headers names.
 // Upstream: services/network/public/cpp/cors/cors.cc
@@ -65,9 +72,20 @@ bool IsCorsSafelistedResponseHeaderName(std::string_view name);
 // once. `headers` holds a line feed after each "name: value".
 std::string HeaderField(std::string_view headers, std::string_view name);
 
-// Blink's ResourceResponse::HttpContentType(): the MIME type of the last
-// media type in Content-Type that has one, in lower case, without parameters.
-std::string HttpContentType(std::string_view headers);
+// Whether a response's Cache-Control value, `raw_value`, has the directive
+// no-store, as Blink's ParseCacheControlDirectives() finds it.
+// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
+bool CacheControlContainsNoStore(std::string_view raw_value);
+
+// Whether one of the lines of `headers` has a Location to go to, which
+// net::HttpResponseHeaders::IsRedirect() wants of a redirect.
+bool HasLocation(std::string_view headers);
+
+// Whether a request's line of `name` makes Blink's ResourceRequest
+// conditional, as If-Match, If-Modified-Since, If-None-Match, If-Range and
+// If-Unmodified-Since do.
+// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_request.cc
+bool IsConditionalHeader(std::string_view name);
 
 }  // namespace mitto
 

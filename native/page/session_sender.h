@@ -110,6 +110,17 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // Any thread.
   void SendContextGone(uint64_t context);
 
+  // The back/forward cache keeps the top-level document `document`, which
+  // the Session hears of and keeps apart, though the next top-level document
+  // takes its place. Nothing that it sends reaches the Session while it is
+  // stored, and a request of its goes nowhere. The main thread.
+  void SendDocumentStored(uint64_t document);
+  // The stored document `document` is the top-level one again, in place of
+  // every context that the Session knows, which it forgets.
+  void SendDocumentRestored(uint64_t document);
+  // The stored document `document` goes, and the Session forgets it.
+  void SendDocumentEvicted(uint64_t document);
+
   // Hands `frame`, a frame of a response or credit for a request body, to the
   // route of its request, and forgets the route once the request ends.
   // Returns false for a request that has none, whose response goes to the
@@ -204,6 +215,8 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // The contexts that the Session has forgotten, and the requests of theirs
   // that went nowhere.
   std::set<uint64_t> forgotten_ GUARDED_BY(lock_);
+  // The top-level documents that the back/forward cache keeps.
+  std::set<uint64_t> stored_ GUARDED_BY(lock_);
   std::set<uint64_t> unsent_requests_ GUARDED_BY(lock_);
   // A host of a context's, whose answers go to `route`.
   template <typename Route>

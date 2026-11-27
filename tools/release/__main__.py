@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mitto._persona import WINDOWS_PERSONAS
 from tools.parity import BASELINES_DIRECTORY, BaselineError, KnownGapsError
+from tools.release.changelog import CHANGELOG, CHANGES_DIRECTORY, ChangelogError, gather
 from tools.release.chrome_releases import security_fixes
 from tools.release.drop import REPOSITORY, DropError, drop_oldest
 from tools.release.machine_sources import refresh_table
@@ -98,6 +99,18 @@ def _version(args: argparse.Namespace) -> int:
 
 def _notes(args: argparse.Namespace) -> int:
     print(release_notes(args.version), end="")
+    return 0
+
+
+def _changelog(args: argparse.Namespace) -> int:
+    gathered = gather(args.version)
+    if not gathered:
+        print(f"{CHANGES_DIRECTORY} holds no file, so {CHANGELOG} stays as it was.")
+        return 0
+    print(
+        f"Wrote the lines of these files at the end of the entry for {args.version} in {CHANGELOG}, and deleted them:"
+    )
+    print("\n".join(f"  {path.as_posix()}" for path in gathered))
     return 0
 
 
@@ -195,11 +208,20 @@ def main() -> int:
     notes.add_argument("version", help="the version, such as 0.1.0")
     notes.set_defaults(run=_notes)
 
+    changelog = commands.add_parser(
+        "changelog",
+        help="write the lines of the files in changelog.d at the end of a version's entry in CHANGELOG.md, in the order "
+        "that they came to main, and delete the files",
+    )
+    changelog.add_argument("version", help="the version that the release's pull request makes, such as 0.4.0")
+    changelog.set_defaults(run=_changelog)
+
     args = parser.parse_args()
     try:
         return args.run(args)
     except (
         BaselineError,
+        ChangelogError,
         DropError,
         ExportError,
         KnownGapsError,

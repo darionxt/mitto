@@ -187,11 +187,9 @@ class SessionLink final : public PageChannel::Delegate
                              " came before the hello"}));
         return;
       }
-      if (frame->version != kPageProtocolVersion) {
-        Refuse(base::StrCat({"the library speaks version ",
-                             base::NumberToString(frame->version),
-                             " of the messages, and the Page speaks ",
-                             base::NumberToString(kPageProtocolVersion)}));
+      if (std::optional<std::string> refusal =
+              HelloRefusal(frame->version, "the library", "the Page")) {
+        Refuse(*std::move(refusal));
         return;
       }
       hello_received_ = true;
@@ -236,6 +234,17 @@ class SessionLink final : public PageChannel::Delegate
         if (sender_->Route(*frame)) {
           return;
         }
+        networking_->PostTask(
+            FROM_HERE,
+            base::BindOnce(&SessionLink::ResponseOnMainThread,
+                           base::Unretained(this), *std::move(frame)));
+        return;
+      case PageMessage::kRestore:
+        if (!started_) {
+          Refuse("a restore came before the start");
+          return;
+        }
+        // In place of a traversal's response, in order with the responses.
         networking_->PostTask(
             FROM_HERE,
             base::BindOnce(&SessionLink::ResponseOnMainThread,
@@ -375,6 +384,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kSetCookie:
       case PageMessage::kLoaded:
       case PageMessage::kCancel:
+      case PageMessage::kSendDeferredRequest:
       case PageMessage::kKnownGap:
       case PageMessage::kCookieStoreGet:
       case PageMessage::kCookieStoreSet:
@@ -399,6 +409,9 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kNetworkHint:
       case PageMessage::kTraversalRequest:
       case PageMessage::kRecordsReleased:
+      case PageMessage::kDocumentStored:
+      case PageMessage::kDocumentRestored:
+      case PageMessage::kDocumentEvicted:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -512,6 +525,9 @@ class SessionLink final : public PageChannel::Delegate
         return;
       case PageMessage::kIsolation:
         runner_->OnIsolation(frame.isolation);
+        return;
+      case PageMessage::kRestore:
+        runner_->OnRestore(frame.restore);
         return;
       default:
         NOTREACHED();

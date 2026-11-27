@@ -116,6 +116,8 @@ class LocalSchemeFetch final : public FetchController {
   void PostRespond();
   void Respond();
   void SendResponseBody();
+  // Tells the client of the end, and destroys both.
+  void End(int net_error);
   size_t BodySize() const {
     return answer_.blob ? answer_.blob_length : answer_.body.size();
   }

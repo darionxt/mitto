@@ -35,6 +35,18 @@ RemoteWindow* Frame::RemoteWindowFor(const RendererProcess& viewer) {
 }
 
 void Frame::DidShowDocument(Window& window) {
+  // A document of the parent's origin shares the parent's quota of
+  // fetchLater(), so the frame's element reserves none for it, as Document's
+  // constructor has HTMLFrameOwnerElement::MaybeClearDeferredFetchPolicy() do.
+  // Upstream: third_party/blink/renderer/core/fetch/fetch_later_util.cc
+  if (HTMLFrameOwnerElement* const owner = Owner()) {
+    const Window* const parent_window =
+        Parent() ? Parent()->DomWindow() : nullptr;
+    if (parent_window && window.GetSecurityOrigin().IsSameOriginWith(
+                             parent_window->GetSecurityOrigin())) {
+      owner->SetDeferredFetchPolicy(DeferredFetchPolicy::kDisabled);
+    }
+  }
   const RendererProcess process = window.Process();
   std::erase_if(remote_windows_,
                 [&](const cppgc::WeakPersistent<RemoteWindow>& remote_window) {

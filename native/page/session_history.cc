@@ -162,6 +162,36 @@ Navigation::EntryArrays SessionHistory::DidCommitNavigation(
   return arrays;
 }
 
+Navigation::EntryArrays SessionHistory::DidRestoreDocument(
+    scoped_refptr<FrameNavigationEntry> entry) {
+  const HistoryItem item = entry->item();
+  const url::Origin origin = entry->origin();
+  // What it came from, before the current entry moves.
+  const Entry& old = entries_[current_];
+  Navigation::EntryArrays arrays;
+  arrays.type = FrameLoadType::kBackForward;
+  if (!old.initial && old.root->origin().IsSameOriginWith(origin)) {
+    arrays.previous =
+        ToApiEntry(old.root->item(), item.document_sequence_number);
+  }
+  if (const std::optional<size_t> index =
+          IndexOfItem(item.item_sequence_number)) {
+    current_ = *index;
+  } else {
+    // The document comes back after the entry that a listener pushed, whose
+    // push took the place of those ahead of it, as Chrome ends.
+    Entry pushed;
+    pushed.root = std::move(entry);
+    PushEntry(std::move(pushed));
+  }
+  FillApiEntries(current_, origin, arrays);
+  return arrays;
+}
+
+scoped_refptr<FrameNavigationEntry> SessionHistory::CurrentRootRef() const {
+  return entries_[current_].root;
+}
+
 void SessionHistory::DidCommitSameDocumentNavigation(
     const HistoryItem& item,
     const url::Origin& origin,

@@ -5,6 +5,7 @@ that Chrome does not isolate is not: what each page sees is held to what Chrome 
 (docs/runtime.md, "Cross-origin isolation").
 """
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -14,7 +15,7 @@ import mitto
 from mitto import _native
 from mitto._native import PrivateSettings
 from mitto._page import Page
-from tests.page_server import TIMEOUT_SECONDS, RecordingServer
+from tests.page_server import TIMEOUT_SECONDS, RecordingServer, Route
 
 _Header = tuple[str, str]
 _COOP: _Header = ("Cross-Origin-Opener-Policy", "same-origin")
@@ -471,24 +472,516 @@ def test_a_worker_that_is_not_isolated_reads_clocks_of_100_microseconds(
     assert [clocks["originsFine"], clocks["someOriginOffCoarse"]] == [True, False], clocks
 
 
+# Gives the window of a frame of the page's origin that is not isolated, though the page is: one under a frame of
+# another origin, which the default allowlist 'self' of the cross-origin-isolated feature gives nothing to pass on.
+_NESTED_SCRIPT = """const nested = await new Promise((resolve) => {
+    window.nested = resolve;
+    const frame = document.createElement('iframe');
+    frame.src = 'http://localhost:' + location.port + '/outer';
+    document.documentElement.appendChild(frame);
+});"""
+
+
+def _route_nested(server: RecordingServer) -> None:
+    corp: _Header = ("Cross-Origin-Resource-Policy", "cross-origin")
+    inner = server.url("/inner")
+    server.route("/outer", f"<!doctype html><iframe src={inner}></iframe>".encode(), "text/html", [_COEP, corp])
+    server.route("/inner", b"<!doctype html><script>top.nested(window);</script>", "text/html", [_COEP, corp])
+
+
 def test_a_frame_that_is_not_isolated_lacks_what_isolation_exposes(
     session: mitto.Session, server: RecordingServer
 ) -> None:
     # [CrossOriginIsolatedOrRuntimeEnabled] members go in each context as it is made, not in the templates that the
     # first realm makes, and a frame's interface object is made in the frame's context though another reads it: a
-    # same-origin frame that its container policy keeps from isolation has no measureUserAgentSpecificMemory(), on its
-    # Performance's prototype read from the parent first nor on its performance, though the isolated window read it
+    # same-origin frame that is not isolated has no SharedArrayBuffer and no measureUserAgentSpecificMemory(), on its
+    # Performance's prototype read from the page first nor on its performance, though the isolated window read it
     # first (Chrome for Testing 157).
-    url = server.page("/", _BLANK, _ISOLATING)
-    script = """(() => {
-        const parentHas = typeof performance.measureUserAgentSpecificMemory;
+    _route_nested(server)
+    script = (
+        "(async () => { const pageHas = typeof performance.measureUserAgentSpecificMemory;"
+        + _NESTED_SCRIPT
+        + """
+        const viaConstructor = 'measureUserAgentSpecificMemory' in nested.Performance.prototype;
+        return [crossOriginIsolated, pageHas, nested.crossOriginIsolated, typeof nested.SharedArrayBuffer,
+                viaConstructor, typeof nested.performance.measureUserAgentSpecificMemory];
+    })()"""
+    )
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [
+        True,
+        "function",
+        False,
+        "undefined",
+        False,
+        "undefined",
+    ]
+
+
+def test_a_frame_reads_clocks_of_its_own_isolation(sixty_hertz_session: mitto.Session, server: RecordingServer) -> None:
+    # An isolated page's frame that is isolated, its about:blank, reads every clock as the page does, and one that is
+    # not reads them as a page that is not (Chrome for Testing 157).
+    _route_nested(server)
+    script = (
+        "(async () => {"
+        + _NESTED_SCRIPT
+        + f"""
+        const clocks = {json.dumps(_CLOCKS)};
+        const blank = document.createElement('iframe');
+        document.documentElement.appendChild(blank);
+        return [await blank.contentWindow.eval(clocks), await nested.eval(clocks)];
+    }})()"""
+    )
+
+    isolated, other = _evaluate(sixty_hertz_session, server.page("/", _BLANK, _ISOLATING), script)
+
+    assert [_all_fine(isolated), _all_fine(other)] == [True, True], [isolated, other]
+    assert isolated["nowOffCoarse"] or isolated["hostCoarse"], isolated
+    assert isolated["temporalOffCoarse"] or isolated["hostCoarse"], isolated
+    assert [isolated[name] for name in ("eventsFollowNow", "framesOffCoarse", "idleOffCoarse")] == [True] * 3, isolated
+    off = ("nowOffCoarse", "temporalOffCoarse", "framesOffCoarse", "idleOffCoarse")
+    assert [other[name] for name in off] == [False] * 4, other
+    assert [other["eventsFollowNow"], other["originCoarse"]] == [True, True], other
+    assert [isolated["measure"], other["measure"]] == ["function", "undefined"]
+
+
+# A frame's document that asks for /seen/, its host and its own path once it runs, so that whether a frame of another
+# origin, which the page cannot read, committed its response shows on the server.
+_FRAME = b"<!doctype html><title>f</title><script>fetch('/seen/' + location.hostname + location.pathname);</script>"
+_CREDENTIALLESS: _Header = ("Cross-Origin-Embedder-Policy", "credentialless")
+_FRAMES: dict[str, list[_Header]] = {
+    "/f-none": [],
+    "/f-coep": [_COEP],
+    "/f-cl": [_CREDENTIALLESS],
+    "/f-coep-corp": [_COEP, ("Cross-Origin-Resource-Policy", "cross-origin")],
+}
+# For each frame's URL, the page reads whether its document is the page's to read, and then whether it is isolated
+# and has SharedArrayBuffer. Another origin's never is, and neither is Chrome's error page.
+_FRAMES_SCRIPT = """(async () => {
+    const one = (src) => new Promise((resolve) => {
         const frame = document.createElement('iframe');
-        frame.allow = "cross-origin-isolated 'none'";
+        frame.onload = () => resolve(frame.contentDocument
+            ? [true, frame.contentWindow.crossOriginIsolated, typeof frame.contentWindow.SharedArrayBuffer]
+            : [false]);
+        frame.src = src;
         document.documentElement.appendChild(frame);
-        const child = frame.contentWindow;
-        const viaConstructor = 'measureUserAgentSpecificMemory' in child.Performance.prototype;
-        return [crossOriginIsolated, parentHas, child.crossOriginIsolated, viaConstructor,
-                typeof child.performance.measureUserAgentSpecificMemory];
+    });
+    const out = {};
+    for (const src of SOURCES) {
+        out[src] = await one(src);
+    }
+    return out;
+})()"""
+
+
+@pytest.mark.parametrize(
+    "parent", [[_COOP, _COEP], [_COOP, _CREDENTIALLESS], []], ids=["require-corp", "credentialless", "plain"]
+)
+def test_a_frame_navigation_is_held_to_its_parent_s_embedder_policy(
+    session: mitto.Session, server: RecordingServer, parent: list[_Header]
+) -> None:
+    # NavigationRequest::CheckResponseAdherenceToCoep() and EnforceCOEP(): under require-corp or credentialless, a
+    # frame's response needs a compatible embedder policy, and one of another origin also needs
+    # Cross-Origin-Resource-Policy, else the frame commits Chrome's error page. A same-origin frame of an isolated
+    # page is isolated; one of another origin is not (Chrome for Testing 157, localhost being another origin here).
+    for path, headers in _FRAMES.items():
+        server.route(path, _FRAME, "text/html", headers)
+    other = server.origin.replace("127.0.0.1", "localhost")
+    sources = [
+        "/f-none",
+        "/f-coep",
+        "/f-cl",
+        "/f-coep-corp",
+        f"{other}/f-coep",
+        f"{other}/f-coep-corp",
+        f"{other}/f-none",
+    ]
+    url = server.page("/", _BLANK, parent)
+    isolated = bool(parent)
+    # The frames whose documents run, by host and path.
+    committed = {"/seen/localhost/f-coep-corp", "/seen/127.0.0.1/f-coep", "/seen/127.0.0.1/f-cl"}
+    committed |= {"/seen/127.0.0.1/f-coep-corp"}
+    if not isolated:
+        committed |= {"/seen/127.0.0.1/f-none", "/seen/localhost/f-coep", "/seen/localhost/f-none"}
+
+    with _open_page(session, url) as page:
+        frames = page.evaluate(_FRAMES_SCRIPT.replace("SOURCES", json.dumps(sources)), timeout=TIMEOUT_SECONDS)
+        assert all(server.wait_for_path(path) for path in committed), server.paths()
+
+    same_origin = [True, isolated, "function" if isolated else "undefined"]
+    blocked = [False]
+    assert frames == {
+        "/f-none": blocked if isolated else same_origin,
+        "/f-coep": same_origin,
+        "/f-cl": same_origin,
+        "/f-coep-corp": same_origin,
+        f"{other}/f-coep": blocked,
+        f"{other}/f-coep-corp": blocked,
+        f"{other}/f-none": blocked,
+    }
+    assert {path for path in server.paths() if path.startswith("/seen/")} == committed
+
+
+def test_frames_made_without_the_network_take_their_parent_s_isolation(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame's initial about:blank, a frame nested in it and a srcdoc have their parent's origin, and so its
+    # isolation, as the cross-origin-isolated feature's default allowlist 'self' has it (Chrome for Testing 157).
+    script = """(async () => {
+        const blank = document.createElement('iframe');
+        document.documentElement.appendChild(blank);
+        const nested = blank.contentDocument.createElement('iframe');
+        blank.contentDocument.documentElement.appendChild(nested);
+        const srcdoc = document.createElement('iframe');
+        srcdoc.srcdoc = '<p>x';
+        document.documentElement.appendChild(srcdoc);
+        await new Promise((resolve) => srcdoc.onload = resolve);
+        return [crossOriginIsolated, blank.contentWindow.crossOriginIsolated, typeof blank.contentWindow.SharedArrayBuffer,
+                nested.contentWindow.crossOriginIsolated, srcdoc.contentWindow.crossOriginIsolated];
     })()"""
 
-    assert _evaluate(session, url, script) == [True, "function", False, False, "undefined"]
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, "function", True, True]
+    assert _evaluate(session, server.page("/plain", _BLANK), script) == [False, False, "undefined", False, False]
+
+
+def test_a_frame_of_a_data_url_is_not_isolated(session: mitto.Session, server: RecordingServer) -> None:
+    # Its origin is opaque, which the default allowlist 'self' does not take, whatever its parent (Chrome for Testing
+    # 157). It says so in a request, which its embedder policy, its initiator's, lets go and then blocks.
+    server.route("/seen/data/false/undefined", b"", "text/plain")
+    script = f"""(async () => {{
+        const frame = document.createElement('iframe');
+        frame.src = "data:text/html,<script>fetch('{server.url("/seen/data/")}' + crossOriginIsolated + '/' +"
+            + " typeof SharedArrayBuffer, {{mode: 'no-cors'}}).catch(() => 0);</" + "script>";
+        const loaded = new Promise((resolve) => frame.onload = resolve);
+        document.documentElement.appendChild(frame);
+        await loaded;
+        return frame.contentDocument === null;
+    }})()"""
+
+    with _open_page(session, server.page("/", _BLANK, _ISOLATING)) as page:
+        assert page.evaluate(script, timeout=TIMEOUT_SECONDS) is True
+        assert server.wait_for_path("/seen/data/false/undefined")
+
+
+def test_a_frame_s_requests_are_held_to_its_own_embedder_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame's document has its response's embedder policy, so its no-cors fetch() of another origin without
+    # Cross-Origin-Resource-Policy fails under require-corp (Chrome for Testing 157).
+    server.route(
+        "/f-fetch",
+        b"<!doctype html><title>f</title><script>window.fetched = fetch('http://localhost:' + location.port +"
+        b" '/no-corp', {mode: 'no-cors'}).then(() => 'ok', (e) => e.name);</script>",
+        "text/html",
+        [_COEP],
+    )
+    server.route("/no-corp", b"x", "text/plain")
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/f-fetch';
+        document.documentElement.appendChild(frame);
+        await new Promise((resolve) => frame.onload = resolve);
+        return await frame.contentWindow.fetched;
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == "TypeError"
+
+
+# Whether the page reads that a frame is isolated: Chrome's page reads nothing of a document of an opaque origin.
+_ISOLATED_FRAME = (
+    "const isolated = (frame) => frame.contentDocument !== null && frame.contentWindow.crossOriginIsolated;"
+)
+
+
+def test_a_sandboxed_frame_is_isolated_only_where_it_keeps_its_origin(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A sandbox with allow-same-origin keeps a frame's origin and so its isolation (Chrome for Testing 157). Without it
+    # Chrome's frame has an opaque origin, which the default allowlist does not take: the Page does not make that
+    # origin yet (#285), but gives such a frame no isolation either.
+    script = (
+        "(() => {"
+        + _ISOLATED_FRAME
+        + """
+        const frame = (sandbox) => {
+            const element = document.createElement('iframe');
+            element.setAttribute('sandbox', sandbox);
+            document.documentElement.appendChild(element);
+            return isolated(element);
+        };
+        return [frame('allow-same-origin'), frame('allow-scripts allow-same-origin'), frame('allow-scripts')];
+    })()"""
+    )
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, False]
+
+
+def test_a_frame_response_that_is_sniffed_is_held_to_its_parent_s_embedder_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A response with no Content-Type is sniffed before it is known to make a document, and only then held to the
+    # parent's policy: Chrome's frame commits its error page, and the Page goes on (Chrome for Testing 157).
+    server.routes["/sniffed"] = Route(b"<!doctype html><title>s</title><p>sniffed", headers=[])
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/sniffed';
+        document.documentElement.appendChild(frame);
+        await new Promise((resolve) => frame.onload = resolve);
+        return [frame.contentDocument === null, crossOriginIsolated];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True]
+
+
+def test_a_frame_whose_sandbox_goes_takes_its_parent_s_isolation_again(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame made under a sandbox without allow-same-origin is not isolated; once the sandbox goes, the srcdoc that it
+    # then commits is, in a window of its own (Chrome for Testing 157).
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.setAttribute('sandbox', 'allow-scripts');
+        document.documentElement.appendChild(frame);
+        frame.removeAttribute('sandbox');
+        frame.srcdoc = '<p>x';
+        await new Promise((resolve) => frame.onload = resolve);
+        return [frame.contentWindow.crossOriginIsolated, typeof frame.contentWindow.SharedArrayBuffer];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, "function"]
+
+
+def test_a_frame_whose_response_sandboxes_it_is_not_isolated(session: mitto.Session, server: RecordingServer) -> None:
+    # Content-Security-Policy: sandbox without allow-same-origin gives Chrome's frame document an opaque origin, which
+    # the parent cannot read (Chrome for Testing 157). The Page does not make that origin yet, but gives the frame no
+    # isolation either. A frame element's sandbox attribute means nothing, so that frame keeps its isolation.
+    server.route(
+        "/f-csp",
+        b"<!doctype html><title>c</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox allow-scripts")],
+    )
+    script = (
+        "(async () => {"
+        + _ISOLATED_FRAME
+        + """
+        const frame = document.createElement('iframe');
+        frame.src = '/f-csp';
+        document.documentElement.appendChild(frame);
+        await new Promise((resolve) => frame.onload = resolve);
+        const legacy = document.createElement('frame');
+        legacy.setAttribute('sandbox', 'allow-scripts');
+        document.documentElement.appendChild(legacy);
+        return [isolated(frame), isolated(legacy)];
+    })()"""
+    )
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]
+
+
+def test_an_about_blank_of_a_sandboxed_frame_is_not_isolated(session: mitto.Session, server: RecordingServer) -> None:
+    # An about:blank takes the origin of the document that starts it, which the sandbox of that document's response
+    # made opaque, so the page cannot read it in Chrome (Chrome for Testing 157), and it is not isolated.
+    server.route(
+        "/f-self",
+        b"<!doctype html><title>s</title><script>onload = () => { location.href = 'about:blank'; };</script>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox allow-scripts")],
+    )
+    script = (
+        "(async () => {"
+        + _ISOLATED_FRAME
+        + """
+        const frame = document.createElement('iframe');
+        frame.src = '/f-self';
+        const loaded = () => new Promise((resolve) => frame.onload = resolve);
+        document.documentElement.appendChild(frame);
+        await loaded();
+        await loaded();
+        const own = isolated(frame);
+        frame.src = 'about:blank';
+        await loaded();
+        return [own, isolated(frame)];
+    })()"""
+    )
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [False, True]
+
+
+def test_a_frame_s_policy_is_split_as_the_parser_splits_it(session: mitto.Session, server: RecordingServer) -> None:
+    # The parser ignores a duplicate directive, so a sandbox that keeps allow-same-origin, then a bare one, keeps the
+    # frame's origin and its isolation. So does a sandbox whose value has a character that is not ASCII, or a vertical
+    # tab, which is no white space to the parser: it leaves the flags out. A form feed is white space, and that sandbox
+    # takes the frame's origin, so its document is not isolated (Chrome for Testing 157).
+    server.route(
+        "/f-dup",
+        b"<!doctype html><title>d</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox allow-scripts allow-same-origin; sandbox")],
+    )
+    server.route(
+        "/f-bad",
+        b"<!doctype html><title>b</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox \u00e9")],
+    )
+    server.route(
+        "/f-vt",
+        b"<!doctype html><title>v</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox allow-scripts\x0ballow-forms")],
+    )
+    server.route(
+        "/f-vt-name",
+        b"<!doctype html><title>n</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox\x0b; sandbox allow-same-origin")],
+    )
+    server.route(
+        "/f-ff",
+        b"<!doctype html><title>f</title>",
+        "text/html",
+        [_COEP, ("Content-Security-Policy", "sandbox\x0callow-scripts")],
+    )
+    script = (
+        "(async () => {"
+        + _ISOLATED_FRAME
+        + """
+        const load = async (src) => {
+            const frame = document.createElement('iframe');
+            frame.src = src;
+            document.documentElement.appendChild(frame);
+            await new Promise((resolve) => frame.onload = resolve);
+            return isolated(frame);
+        };
+        return [
+            await load('/f-dup'),
+            await load('/f-bad'),
+            await load('/f-vt'),
+            await load('/f-vt-name'),
+            await load('/f-ff'),
+        ];
+    })()"""
+    )
+
+    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, True, True, True, False]
+
+
+def test_a_redirect_s_resource_policy_comes_before_its_recursion(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # NavigationRequest::OnRequestRedirected() runs EnforceCOEP() before WillRedirectRequest() looks for a URL that two
+    # ancestors have: a redirect of another origin without Cross-Origin-Resource-Policy to such a URL ends with the
+    # error page, not with the frame keeping its document (Chrome for Testing 157).
+    other = server.origin.replace("127.0.0.1", "localhost")
+    server.route(
+        "/p",
+        b"<!doctype html><title>p</title><script>const frame = document.createElement('iframe');"
+        b"frame.src = window.parent.location.pathname === '/p' ? '" + other.encode() + b"/redir' : '/p';"
+        b"document.documentElement.appendChild(frame);</script>",
+        "text/html",
+        [_COEP],
+    )
+    server.routes["/redir"] = Route(b"", 302, [("Location", server.url("/p"))])
+    # The outer frame's load waits for the frames under it, the grandchild's navigation among them; then the page reads
+    # whether the grandchild committed the error page, which the page cannot read into, or kept its about:blank.
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        frame.src = '/p';
+        const loaded = new Promise((resolve) => frame.onload = resolve);
+        document.documentElement.appendChild(frame);
+        await loaded;
+        const inner = frame.contentDocument.querySelector('iframe');
+        const grandchild = inner.contentDocument.querySelector('iframe');
+        return grandchild.contentDocument === null ? 'error page' : 'kept';
+    })()"""
+
+    with _open_page(session, server.page("/", _BLANK, _ISOLATING)) as page:
+        assert page.evaluate(script, timeout=TIMEOUT_SECONDS) == "error page"
+        assert server.wait_for_path("/redir")
+
+
+# A frame with an embedder policy, under a page with none, holds a frame at /inner, whose next document `starter` starts:
+# the page, the frame that holds it, or a frame beside that one.
+_LOCAL_SCRIPT = """(async ({starter, url, download}) => {
+    const add = async (src, target = document) => {
+        const frame = target.createElement('iframe');
+        frame.src = src;
+        const loaded = new Promise((resolve) => frame.onload = resolve);
+        target.documentElement.appendChild(frame);
+        await loaded;
+        return frame;
+    };
+    const middle = await add('/middle');
+    const sibling = await add('/sibling');
+    const inner = await add('/inner', middle.contentDocument);
+    const [from, target] = {
+        page: [window, 'frames[0].frames[0]'],
+        middle: [middle.contentWindow, 'frames[0]'],
+        sibling: [sibling.contentWindow, 'top.frames[0].frames[0]'],
+    }[starter];
+    const loaded = new Promise((resolve) => inner.onload = resolve);
+    from.eval(target + '.location = ' + JSON.stringify(url));
+    // A download ends its frame's navigation with no load, before the load of a frame made after it.
+    await (download ? add('/sibling') : loaded);
+    return inner.contentDocument === null ? null : inner.contentWindow.location.href;
+})"""
+
+
+def _start_local(
+    server: RecordingServer, middle: str, sibling: str, starter: str, url: str, *, download: bool = False
+) -> str:
+    """Serve the frames of _LOCAL_SCRIPT, the middle one and its sibling with an embedder policy each, and return the
+    script that gives the inner frame's URL, or null where the page cannot read its document."""
+    for path, policy in {"/middle": middle, "/sibling": sibling, "/inner": "require-corp"}.items():
+        server.route(path, b"<!doctype html><title>f</title>", "text/html", [("Cross-Origin-Embedder-Policy", policy)])
+    return f"{_LOCAL_SCRIPT}({json.dumps({'starter': starter, 'url': url, 'download': download})})"
+
+
+@pytest.mark.parametrize(
+    ("middle", "starter", "sibling", "outcome"),
+    [
+        pytest.param("require-corp", "page", "unsafe-none", None, id="page"),
+        pytest.param("credentialless", "page", "unsafe-none", None, id="page-credentialless"),
+        pytest.param("require-corp", "middle", "unsafe-none", "about:blank?a", id="middle"),
+        pytest.param("require-corp", "sibling", "unsafe-none", None, id="sibling"),
+        pytest.param("require-corp", "sibling", "credentialless", "about:blank?a", id="sibling-with-a-policy"),
+        pytest.param("unsafe-none", "page", "unsafe-none", "about:blank?a", id="parent-without-a-policy"),
+    ],
+)
+def test_an_about_blank_takes_the_embedder_policy_of_who_starts_it(
+    session: mitto.Session, server: RecordingServer, middle: str, starter: str, sibling: str, outcome: str | None
+) -> None:
+    # NavigationRequest::CheckResponseAdherenceToCoep() holds an about:blank, which has the policy of the document that
+    # starts it, to its parent's, and a frame that it blocks commits the error page, which the page cannot read (Chrome
+    # for Testing 157).
+    script = _start_local(server, middle, sibling, starter, "about:blank?a")
+
+    assert _evaluate(session, server.page("/", _BLANK), script) == outcome
+
+
+@pytest.mark.parametrize(
+    ("starter", "runs"), [pytest.param("page", False, id="page"), pytest.param("middle", True, id="middle")]
+)
+def test_a_data_url_takes_the_embedder_policy_of_who_starts_it(
+    session: mitto.Session, server: RecordingServer, starter: str, runs: bool
+) -> None:
+    # As an about:blank does (Chrome for Testing 157). Its document, which the page cannot read either, asks for a script
+    # that its load waits for.
+    server.route("/seen/data", b"", _JS, [("Cross-Origin-Resource-Policy", "cross-origin")])
+    url = f"data:text/html,<script src={server.url('/seen/data')}></script>"
+    script = _start_local(server, "require-corp", "unsafe-none", starter, url)
+
+    with _open_page(session, server.page("/", _BLANK)) as page:
+        assert page.evaluate(script, timeout=TIMEOUT_SECONDS) is None
+        assert ("/seen/data" in server.paths()) is runs
+
+
+def test_a_data_url_that_would_download_keeps_the_frame_under_an_embedder_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # The parent's policy blocks what makes a document, and a download makes none (Chrome for Testing 157).
+    url = "data:application/octet-stream,x"
+    script = _start_local(server, "require-corp", "unsafe-none", "page", url, download=True)
+
+    assert _evaluate(session, server.page("/", _BLANK), script) == server.url("/inner")

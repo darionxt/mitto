@@ -14,10 +14,13 @@
 #include <string>
 
 #include "base/containers/span.h"
+#include "base/memory/scoped_refptr.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
+
+class BlobDataHandle;
 
 class BytesConsumer : public cppgc::GarbageCollected<BytesConsumer> {
  public:
@@ -61,6 +64,10 @@ class BytesConsumer : public cppgc::GarbageCollected<BytesConsumer> {
   // DrainAsFormData() gives them, after which it is closed; nullopt for one
   // that does not, which is left as it was.
   virtual std::optional<std::string> DrainAsBytes();
+  // The blob of all of its bytes, for a consumer of a blob that has not been
+  // read, as Blink's DrainAsBlobDataHandle() gives it, after which it is
+  // closed; null for any other, which is left as it was.
+  virtual scoped_refptr<BlobDataHandle> DrainAsBlobDataHandle();
 
   // Sets the client, which must not be set already.
   virtual void SetClient(Client* client) = 0;

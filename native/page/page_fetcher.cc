@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "base/functional/function_ref.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "mitto/page_messages.h"
@@ -14,11 +15,6 @@ namespace {
 // net::ERR_FAILED, which the Page program, with no //net, cannot name.
 constexpr int kFailed = -2;
 
-// How many bytes of the bodies of a document's keepalive requests may be in
-// flight at once. One more fails before it goes.
-// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
-constexpr size_t kKeepaliveInflightBytesQuota = 64 * 1024;
-
 // net::ERR_ABORTED.
 constexpr int kNetErrorAborted = -3;
 
@@ -30,6 +26,34 @@ PageRequestMode ToPageRequestMode(FetchMode mode) {
       return PageRequestMode::kSameOrigin;
     case FetchMode::kNoCors:
       return PageRequestMode::kNoCors;
+  }
+}
+
+PageCacheMode ToPageCacheMode(FetchCacheMode cache_mode) {
+  switch (cache_mode) {
+    case FetchCacheMode::kDefault:
+      return PageCacheMode::kDefault;
+    case FetchCacheMode::kNoStore:
+      return PageCacheMode::kNoStore;
+    case FetchCacheMode::kReload:
+      return PageCacheMode::kReload;
+    case FetchCacheMode::kNoCache:
+      return PageCacheMode::kNoCache;
+    case FetchCacheMode::kForceCache:
+      return PageCacheMode::kForceCache;
+    case FetchCacheMode::kOnlyIfCached:
+      return PageCacheMode::kOnlyIfCached;
+  }
+}
+
+PageRedirectMode ToPageRedirectMode(FetchRedirectMode redirect_mode) {
+  switch (redirect_mode) {
+    case FetchRedirectMode::kFollow:
+      return PageRedirectMode::kFollow;
+    case FetchRedirectMode::kError:
+      return PageRedirectMode::kError;
+    case FetchRedirectMode::kManual:
+      return PageRedirectMode::kManual;
   }
 }
 
@@ -95,8 +119,12 @@ class PageFetcher::Request final : public PageRequests::Client,
  public:
   Request(PageFetcher& fetcher,
           std::unique_ptr<FetchClient> client,
-          bool keepalive)
-      : fetcher_(fetcher), client_(std::move(client)), keepalive_(keepalive) {}
+          bool keepalive,
+          bool deferred)
+      : fetcher_(fetcher),
+        client_(std::move(client)),
+        keepalive_(keepalive),
+        deferred_(deferred) {}
 
   Request(const Request&) = delete;
   Request& operator=(const Request&) = delete;
@@ -107,6 +135,7 @@ class PageFetcher::Request final : public PageRequests::Client,
   uint64_t number() const { return number_; }
   void set_number(uint64_t number) { number_ = number; }
   bool keepalive() const { return keepalive_; }
+  bool deferred() const { return deferred_; }
   // The bytes of its body that count against the keepalive quota.
   size_t keepalive_bytes() const { return keepalive_bytes_; }
   void set_keepalive_bytes(size_t bytes) { keepalive_bytes_ = bytes; }
@@ -125,20 +154,24 @@ class PageFetcher::Request final : public PageRequests::Client,
     head.cors = response.cors;
     head.opaque = response.opaque;
     head.headers = response.headers;
-    client_->OnResponseStarted(head);
+    head.padding = response.padding;
+    CallClient([&] { client_->OnResponseStarted(head); });
   }
   void OnResponseBody(std::string bytes) override {
-    client_->OnResponseBody(std::move(bytes));
+    CallClient([&] { client_->OnResponseBody(std::move(bytes)); });
   }
   void OnResponseEnded(int net_error) override {
     if (net_error == 0 && response_url_) {
       fetcher_->finished_responses_.insert(*response_url_);
     }
+    calling_client_ = true;
     client_->OnResponseEnded(net_error);
     // Destroys this.
     fetcher_->Finished(number_);
   }
-  void OnRequestBodyCredit() override { client_->OnBodyRoom(); }
+  void OnRequestBodyCredit() override {
+    CallClient([&] { client_->OnBodyRoom(); });
+  }
 
   // FetchController:
   void TookBody(size_t bytes) override {
@@ -150,7 +183,27 @@ class PageFetcher::Request final : public PageRequests::Client,
     if (stopped_) {
       return;
     }
-    fetcher_->requests_->Cancel(number_);
+    if (deferred_) {
+      fetcher_->requests_->CancelDeferred(number_);
+    } else {
+      fetcher_->requests_->Cancel(number_);
+    }
+    // A cancel under a call to the client, as when page code that resolving
+    // the fetch's promise runs aborts it: the client goes once the call has
+    // returned, not under it.
+    if (calling_client_) {
+      stopped_ = true;
+      cancel_pending_ = true;
+      // Its bytes are not in flight any more.
+      fetcher_->keepalive_bytes_ -= keepalive_bytes_;
+      keepalive_bytes_ = 0;
+      return;
+    }
+    // Destroys this.
+    fetcher_->Finished(number_);
+  }
+  void SendDeferred() override {
+    fetcher_->requests_->SendDeferred(number_);
     // Destroys this.
     fetcher_->Finished(number_);
   }
@@ -169,12 +222,27 @@ class PageFetcher::Request final : public PageRequests::Client,
   }
 
  private:
+  // Runs a call to the client. Nothing may touch this afterwards.
+  void CallClient(base::FunctionRef<void()> call) {
+    calling_client_ = true;
+    call();
+    calling_client_ = false;
+    if (cancel_pending_) {
+      fetcher_->Finished(number_);
+    }
+  }
+
   const raw_ref<PageFetcher> fetcher_;
   const std::unique_ptr<FetchClient> client_;
   const bool keepalive_;
+  const bool deferred_;
   size_t keepalive_bytes_ = 0;
   uint64_t number_ = 0;
   bool stopped_ = false;
+  // Whether a call to the client runs, under which it may be cancelled, and
+  // whether it was.
+  bool calling_client_ = false;
+  bool cancel_pending_ = false;
   // The response's URL, once it has started.
   std::optional<std::string> response_url_;
 };
@@ -187,6 +255,9 @@ namespace {
 // send a JavaScript module's lines, Known Gaps; a classic script; an image;
 // a style sheet; a font; a favicon; a prefetch; or a fetch.
 PageRequestKind KindOf(const FetchRequestData& data) {
+  if (data.is_beacon) {
+    return PageRequestKind::kBeacon;
+  }
   // What a module worker's top-level graph imports is of destination worker,
   // which the Session sends from the worker's creator.
   if (data.is_module) {
@@ -224,7 +295,8 @@ PageRequestKind KindOf(const FetchRequestData& data) {
 
 }  // namespace
 
-PageFetcher::PageFetcher(PageRequests& requests) : requests_(requests) {}
+PageFetcher::PageFetcher(PageRequests& requests, Kind kind)
+    : requests_(requests), kind_(kind) {}
 
 PageFetcher::~PageFetcher() {
   Stop();
@@ -235,7 +307,12 @@ void PageFetcher::Stop() {
   // without a word: the Session lets it outlive the document once it hears
   // of the next one.
   for (auto& [number, request] : open_) {
-    if (request->keepalive()) {
+    // A deferred request goes as the document does, as Blink's
+    // FetchLaterManager sends each when its context is destroyed.
+    if (request->deferred()) {
+      requests_->ForgetDeferred(number);
+      request->client().OnDocumentGone();
+    } else if (request->keepalive() || kind_ == Kind::kWorker) {
       requests_->LetGo(number);
     } else {
       requests_->Cancel(number);
@@ -262,32 +339,34 @@ void PageFetcher::Abort() {
 
 void PageFetcher::Fetch(FetchRequestData data,
                         std::unique_ptr<FetchClient> client) {
-  auto request =
-      std::make_unique<Request>(*this, std::move(client), data.keepalive);
+  auto request = std::make_unique<Request>(*this, std::move(client),
+                                           data.keepalive, data.deferred);
   Request& started = *request;
   started.client().OnStarted(started);
   // A request has to fit in one frame, so a body that leaves it no room, of
   // nearly 16 MiB, fails as a request that cannot be sent does: a Known Gap.
   // Beside its URL, method, header lines, referrer and body, the frame holds
-  // 48 bytes: the document's ID, the number, seven bytes of kind, flags,
-  // modes, policy and priority, the target, four sizes and the byte that says
-  // whether a body follows.
+  // 50 bytes: the document's ID, the number, nine bytes of kind, flags,
+  // modes, policy, priority and the cache and redirect modes, the target,
+  // four sizes and the byte that says whether a body follows.
   const size_t body_size = data.body ? data.body->size() : 0;
   const bool has_referrer =
       data.referrer != kClientReferrer && data.referrer != kNoReferrer;
-  const size_t size = 48 + data.url.size() + data.method.size() +
+  const size_t size = 50 + data.url.size() + data.method.size() +
                       data.headers.size() +
                       (has_referrer ? data.referrer.size() : 0) + body_size;
   // ResourceFetcher::StartLoad() fails a keepalive request whose body would
-  // take the document's keepalive bodies past their quota.
+  // take the document's keepalive bodies past their quota. fetchLater()'s
+  // goes around it, with a quota of its own.
+  const bool counts_as_keepalive = data.keepalive && !data.deferred;
   const bool over_quota =
-      data.keepalive && data.body &&
+      counts_as_keepalive && data.body &&
       kKeepaliveInflightBytesQuota - keepalive_bytes_ < body_size;
   if (size > kMaxPayloadSize || over_quota) {
     started.client().OnResponseEnded(kFailed);
     return;
   }
-  if (data.keepalive && data.body) {
+  if (counts_as_keepalive && data.body) {
     started.set_keepalive_bytes(body_size);
     keepalive_bytes_ += body_size;
   }
@@ -314,6 +393,9 @@ void PageFetcher::Fetch(FetchRequestData data,
     page_request.priority = ToPagePriority(*data.priority);
   }
   page_request.keepalive = data.keepalive;
+  page_request.deferred = data.deferred;
+  page_request.cache_mode = ToPageCacheMode(data.cache_mode);
+  page_request.redirect_mode = ToPageRedirectMode(data.redirect_mode);
   started.set_number(requests_->Start(std::move(page_request), started,
                                       data.render_blocking,
                                       std::move(data.initiator_type)));

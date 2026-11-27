@@ -188,20 +188,24 @@ bool IsNoCorsSafelistedHeader(std::string_view name, std::string_view value) {
     return !std::ranges::any_of(value, IsCorsUnsafeRequestHeaderByte);
   }
   if (base::EqualsCaseInsensitiveASCII(name, "content-type")) {
-    if (std::ranges::any_of(value, IsCorsUnsafeRequestHeaderByte)) {
-      return false;
-    }
-    const std::optional<std::string> mime_type =
-        ExtractMimeType(base::ToLowerASCII(value));
-    return mime_type &&
-           (*mime_type == "application/x-www-form-urlencoded" ||
-            *mime_type == "multipart/form-data" || *mime_type == "text/plain");
+    return IsCorsSafelistedContentType(value);
   }
   // Accept-Language and Content-Language.
   return std::ranges::all_of(value, [](char c) {
     return base::IsAsciiAlphaNumeric(c) || c == ' ' || c == '*' || c == ',' ||
            c == '-' || c == '.' || c == ';' || c == '=';
   });
+}
+
+bool IsCorsSafelistedContentType(std::string_view media_type) {
+  if (std::ranges::any_of(media_type, IsCorsUnsafeRequestHeaderByte)) {
+    return false;
+  }
+  const std::optional<std::string> mime_type =
+      ExtractMimeType(base::ToLowerASCII(media_type));
+  return mime_type &&
+         (*mime_type == "application/x-www-form-urlencoded" ||
+          *mime_type == "multipart/form-data" || *mime_type == "text/plain");
 }
 
 bool IsCorsSafelistedResponseHeaderName(std::string_view name) {
@@ -215,6 +219,28 @@ bool IsCorsSafelistedResponseHeaderName(std::string_view name) {
     }
   }
   return false;
+}
+
+bool HasLocation(std::string_view headers) {
+  for (const std::string_view line : base::SplitStringPiece(
+           headers, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(": ");
+    if (colon != std::string_view::npos && colon + 2 < line.size() &&
+        base::EqualsCaseInsensitiveASCII(line.substr(0, colon), "location")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IsConditionalHeader(std::string_view name) {
+  static constexpr std::array<std::string_view, 5> kConditional = {
+      "if-match", "if-modified-since", "if-none-match", "if-range",
+      "if-unmodified-since"};
+  return std::ranges::any_of(
+      kConditional, [name](std::string_view conditional) {
+        return base::EqualsCaseInsensitiveASCII(name, conditional);
+      });
 }
 
 std::string HeaderField(std::string_view headers, std::string_view name) {
@@ -231,19 +257,69 @@ std::string HeaderField(std::string_view headers, std::string_view name) {
   return base::JoinString(values, ", ");
 }
 
-std::string HttpContentType(std::string_view headers) {
-  std::string mime_type;
-  const std::string field =
-      base::ToLowerASCII(HeaderField(headers, "content-type"));
-  for (const std::string_view value : base::SplitStringPiece(
-           field, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    const std::string_view type = base::TrimString(
-        value.substr(0, value.find(';')), " \t", base::TRIM_ALL);
-    if (type.find('/') != std::string_view::npos && type != "*/*") {
-      mime_type = std::string(type);
+// Whether a response's Cache-Control value, `raw_value`, has the directive
+// no-store, as Blink's ParseCacheControlDirectives() finds it, with its
+// separators of RFC 2616.
+// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
+bool CacheControlContainsNoStore(std::string_view raw_value) {
+  constexpr std::string_view kSeparators = "()<>@,;:\\\"/[]?={} \t";
+  std::string value;
+  for (const char c : raw_value) {
+    if (static_cast<unsigned char>(c) >= 0x20 && c != 0x7F) {
+      value.push_back(c);
     }
   }
-  return mime_type;
+  const auto strip = [](std::string_view text) {
+    return base::TrimString(text, " ", base::TRIM_ALL);
+  };
+  const auto trim_to_separator = [&](std::string_view text) {
+    return text.substr(0, text.find_first_of(kSeparators));
+  };
+  bool no_store = false;
+  const auto add = [&](std::string_view directive) {
+    if (base::EqualsCaseInsensitiveASCII(directive, "no-store")) {
+      no_store = true;
+    }
+  };
+  const std::string_view header = value;
+  const size_t max = header.size();
+  for (size_t pos = 0; pos < max;) {
+    const size_t next_comma = header.find(',', pos);
+    const size_t next_equal = header.find('=', pos);
+    if (next_equal != std::string_view::npos &&
+        (next_equal < next_comma || next_comma == std::string_view::npos)) {
+      // A directive with a value.
+      add(trim_to_separator(strip(header.substr(pos, next_equal - pos))));
+      pos = next_equal + 1;
+      const std::string_view rest = strip(header.substr(pos));
+      if (rest.starts_with('"')) {
+        const size_t next_quote = rest.find('"', 1);
+        if (next_quote == std::string_view::npos) {
+          return no_store;
+        }
+        pos = header.find('"', pos) + next_quote + 1;
+        const size_t comma = header.find(',', pos);
+        if (comma == std::string_view::npos) {
+          return no_store;
+        }
+        pos = comma + 1;
+      } else {
+        if (rest.find(',') == std::string_view::npos) {
+          return no_store;
+        }
+        pos = header.find(',', pos) + 1;
+      }
+    } else if (next_comma != std::string_view::npos &&
+               (next_comma < next_equal ||
+                next_equal == std::string_view::npos)) {
+      add(trim_to_separator(strip(header.substr(pos, next_comma - pos))));
+      pos = next_comma + 1;
+    } else {
+      add(trim_to_separator(strip(header.substr(pos))));
+      return no_store;
+    }
+  }
+  return no_store;
 }
 
 }  // namespace mitto

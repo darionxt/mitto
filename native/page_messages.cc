@@ -1,5 +1,7 @@
 #include "mitto/page_messages.h"
 
+#include <inttypes.h>
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -19,9 +21,11 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "mitto/header_rules.h"
 #include "mitto/message_coding.h"
+#include "mitto/page_protocol_version.h"
 
 namespace mitto {
 namespace {
@@ -171,6 +175,12 @@ constexpr size_t kMaxHostSize = 253;
 constexpr uint8_t kHasResult = 0;
 constexpr uint8_t kFailed = 1;
 
+// A version of the messages, as the refusal of a hello gives it: in
+// hexadecimal, as the SHA-256 that it is the start of.
+std::string VersionText(uint32_t version) {
+  return base::StringPrintf("0x%08" PRIx32, version);
+}
+
 std::string EncodeUint32(uint32_t value) {
   const std::array<uint8_t, 4> bytes = base::U32ToLittleEndian(value);
   return std::string(base::as_string_view(base::span(bytes)));
@@ -203,8 +213,9 @@ bool IsKnown(uint32_t type) {
          type == static_cast<uint32_t>(PageMessage::kNetworkHint) ||
          (type >= static_cast<uint32_t>(PageMessage::kStorageBuckets) &&
           type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer)) ||
+         type == static_cast<uint32_t>(PageMessage::kSendDeferredRequest) ||
          (type >= static_cast<uint32_t>(PageMessage::kTraversalRequest) &&
-          type <= static_cast<uint32_t>(PageMessage::kRecordsReleased)) ||
+          type <= static_cast<uint32_t>(PageMessage::kDocumentEvicted)) ||
          type == static_cast<uint32_t>(PageMessage::kPermissionsPolicy) ||
          type == static_cast<uint32_t>(PageMessage::kIsolation);
 }
@@ -230,9 +241,11 @@ constexpr uint8_t kKeepaliveFlag = 8;
 constexpr uint8_t kSynchronousFlag = 16;
 constexpr uint8_t kNoReferrerFlag = 32;
 constexpr uint8_t kStreamsBodyFlag = 64;
-constexpr uint8_t kRequestFlags = kUserActivationFlag | kReloadFlag |
-                                  kKeepaliveFlag | kSynchronousFlag |
-                                  kNoReferrerFlag | kStreamsBodyFlag;
+// The flags byte's last free bit.
+constexpr uint8_t kDeferredFlag = 128;
+constexpr uint8_t kRequestFlags =
+    kUserActivationFlag | kReloadFlag | kKeepaliveFlag | kSynchronousFlag |
+    kNoReferrerFlag | kStreamsBodyFlag | kDeferredFlag;
 
 // The last value of each byte of a request's fixed part.
 constexpr uint8_t kLastRequestMode = static_cast<uint8_t>(PageRequestMode::kCors);
@@ -243,6 +256,8 @@ constexpr uint8_t kLastReferrerPolicy =
 // 1 and net::HIGHEST, which the Page program cannot name.
 constexpr uint8_t kLastPriority = 6;
 constexpr uint8_t kLastIncremental = 2;
+constexpr uint8_t kLastCacheMode = 5;
+constexpr uint8_t kLastRedirectMode = 2;
 
 std::string EncodeInt32(int32_t value) {
   return EncodeUint32(static_cast<uint32_t>(value));
@@ -264,7 +279,7 @@ int64_t DecodeInt64(std::string_view bytes) {
 constexpr uint32_t kMostRedirects = 20;
 
 // The fixed part of a response's payload, before its URL.
-constexpr size_t kResponseStartedFixedSize = 158;
+constexpr size_t kResponseStartedFixedSize = 166;
 
 // The times of a PageLoadTiming, in the order they travel.
 std::array<int64_t PageLoadTiming::*, 10> LoadTimingTimes() {
@@ -772,6 +787,17 @@ std::optional<std::string> CheckRequestModes(const PageRequest& request) {
   const PageRequestMode mode = request.mode;
   const PageCredentialsMode credentials = request.credentials;
   const bool is_default_mode = mode == PageRequestMode::kKindDefault;
+  // Only a fetch's RequestInit sets a cache mode and a redirect mode.
+  if ((request.cache_mode != PageCacheMode::kDefault ||
+       request.redirect_mode != PageRedirectMode::kFollow) &&
+      request.kind != PageRequestKind::kFetch) {
+    return "a request with a cache or redirect mode that its kind never has";
+  }
+  // Request's constructor throws for any other.
+  if (request.cache_mode == PageCacheMode::kOnlyIfCached &&
+      mode != PageRequestMode::kSameOrigin) {
+    return "a request of only the cache in a mode other than same-origin";
+  }
   switch (request.kind) {
     case PageRequestKind::kNavigation:
     case PageRequestKind::kIframe:
@@ -821,8 +847,9 @@ std::optional<std::string> CheckRequestModes(const PageRequest& request) {
 
 base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   // The number, the kind, the flags, the mode, the credentials mode, the
-  // referrer policy, the priority, whether it is incremental, the target.
-  constexpr size_t kFixedSize = 8 + 1 + 1 + 5 + 8;
+  // referrer policy, the priority, whether it is incremental, the cache mode,
+  // the redirect mode, the target.
+  constexpr size_t kFixedSize = 8 + 1 + 1 + 7 + 8;
   if (bytes.size() < kFixedSize) {
     return base::unexpected(WrongSize("request", bytes.size()));
   }
@@ -847,21 +874,27 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   request.synchronous = flags & kSynchronousFlag;
   request.no_referrer = flags & kNoReferrerFlag;
   request.streams_body = flags & kStreamsBodyFlag;
+  request.deferred = flags & kDeferredFlag;
   const uint8_t mode = static_cast<uint8_t>(bytes[10]);
   const uint8_t credentials = static_cast<uint8_t>(bytes[11]);
   const uint8_t referrer_policy = static_cast<uint8_t>(bytes[12]);
   request.priority = static_cast<uint8_t>(bytes[13]);
   request.incremental = static_cast<uint8_t>(bytes[14]);
+  const uint8_t cache_mode = static_cast<uint8_t>(bytes[15]);
+  const uint8_t redirect_mode = static_cast<uint8_t>(bytes[16]);
   if (mode > kLastRequestMode || credentials > kLastCredentialsMode ||
       referrer_policy > kLastReferrerPolicy ||
       request.priority > kLastPriority ||
-      request.incremental > kLastIncremental) {
+      request.incremental > kLastIncremental || cache_mode > kLastCacheMode ||
+      redirect_mode > kLastRedirectMode) {
     return base::unexpected("a request with a value out of range");
   }
   request.mode = static_cast<PageRequestMode>(mode);
   request.credentials = static_cast<PageCredentialsMode>(credentials);
   request.referrer_policy = static_cast<PageReferrerPolicy>(referrer_policy);
-  request.target = DecodeUint64(bytes.substr(15, 8));
+  request.cache_mode = static_cast<PageCacheMode>(cache_mode);
+  request.redirect_mode = static_cast<PageRedirectMode>(redirect_mode);
+  request.target = DecodeUint64(bytes.substr(17, 8));
   bytes.remove_prefix(kFixedSize);
   std::string_view url;
   std::string_view method;
@@ -922,6 +955,12 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   if (request.keepalive && request.kind != PageRequestKind::kFetch &&
       request.kind != PageRequestKind::kBeacon) {
     return base::unexpected("keepalive on a request that is not a fetch");
+  }
+  if (request.deferred &&
+      (!request.keepalive || request.kind != PageRequestKind::kFetch ||
+       request.streams_body)) {
+    return base::unexpected(
+        "a deferred request that is not a keepalive fetch of a known body");
   }
   if (request.synchronous && request.kind != PageRequestKind::kXhr) {
     return base::unexpected("a synchronous request that is not an XHR");
@@ -1424,7 +1463,7 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
 
 base::expected<PageIsolation, std::string> ReadIsolation(
     std::string_view payload) {
-  if (payload.size() != 9) {
+  if (payload.size() != 10) {
     return base::unexpected(
         WrongSize("cross-origin isolation", payload.size()));
   }
@@ -1436,6 +1475,13 @@ base::expected<PageIsolation, std::string> ReadIsolation(
         {"an isolation of the unknown kind ", base::NumberToString(value)}));
   }
   isolation.isolation = static_cast<PageCrossOriginIsolation>(value);
+  const uint8_t policy = static_cast<uint8_t>(payload[9]);
+  if (policy > static_cast<uint8_t>(PageEmbedderPolicy::kRequireCorp)) {
+    return base::unexpected(
+        base::StrCat({"an embedder policy of the unknown kind ",
+                      base::NumberToString(policy)}));
+  }
+  isolation.embedder_policy = static_cast<PageEmbedderPolicy>(policy);
   return isolation;
 }
 
@@ -1563,6 +1609,7 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
   response.first_request_start = DecodeInt64(bytes.substr(134, 8));
   response.last_redirect_end = DecodeInt64(bytes.substr(142, 8));
   response.critical_ch_restart = DecodeInt64(bytes.substr(150, 8));
+  response.padding = DecodeInt64(bytes.substr(158, 8));
   bytes.remove_prefix(kResponseStartedFixedSize);
   if (!times_valid || socket_reused > 1 || timing_allow_passed > 1 ||
       validated > 1 || cross_origin_redirect > 1 || restarted > 1 ||
@@ -1571,6 +1618,15 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
       response.first_request_start < 0 || response.last_redirect_end < 0 ||
       response.critical_ch_restart < 0) {
     return base::unexpected("a response whose timing //net cannot give");
+  }
+  // An opaque response has one, and an opaque redirect's, which a fetch() of
+  // redirect mode manual makes of it.
+  const bool redirect = response.status == 301 || response.status == 302 ||
+                        response.status == 303 || response.status == 307 ||
+                        response.status == 308;
+  if (response.padding < 0 || response.padding >= kResponsePaddingRange ||
+      (response.padding != 0 && opaque == 0 && !redirect)) {
+    return base::unexpected("a response whose padding it cannot have");
   }
   response.timing.socket_reused = socket_reused == 1;
   response.timing_allow_passed = timing_allow_passed == 1;
@@ -1783,6 +1839,17 @@ std::string EncodeHello() {
   return EncodeFrame(PageMessage::kHello, EncodeUint32(kPageProtocolVersion));
 }
 
+std::optional<std::string> HelloRefusal(uint32_t version,
+                                        std::string_view sender,
+                                        std::string_view receiver) {
+  if (version == kPageProtocolVersion) {
+    return std::nullopt;
+  }
+  return base::StrCat({sender, " speaks version ", VersionText(version),
+                       " of the messages, and ", receiver, " speaks ",
+                       VersionText(kPageProtocolVersion)});
+}
+
 std::string EncodeStart(const PageStart& start) {
   base::DictValue dict;
   for (const StartName& name : kStartNames) {
@@ -1967,12 +2034,15 @@ std::string EncodeRequest(uint64_t document, const PageRequest& request) {
                         (request.keepalive ? kKeepaliveFlag : 0) |
                         (request.synchronous ? kSynchronousFlag : 0) |
                         (request.no_referrer ? kNoReferrerFlag : 0) |
-                        (request.streams_body ? kStreamsBodyFlag : 0)),
+                        (request.streams_body ? kStreamsBodyFlag : 0) |
+                        (request.deferred ? kDeferredFlag : 0)),
       static_cast<char>(request.mode),
       static_cast<char>(request.credentials),
       static_cast<char>(request.referrer_policy),
       static_cast<char>(request.priority),
       static_cast<char>(request.incremental),
+      static_cast<char>(request.cache_mode),
+      static_cast<char>(request.redirect_mode),
   };
   const char has_body = request.body ? 1 : 0;
   return EncodeDocumentFrame(
@@ -1989,6 +2059,10 @@ std::string EncodeCancel(uint64_t number) {
   return EncodeFrame(PageMessage::kCancel, EncodeUint64(number));
 }
 
+std::string EncodeSendDeferredRequest(uint64_t number) {
+  return EncodeFrame(PageMessage::kSendDeferredRequest, EncodeUint64(number));
+}
+
 std::string EncodeCredit(const PageCredit& credit) {
   return EncodeFrame(
       PageMessage::kCredit,
@@ -1996,10 +2070,13 @@ std::string EncodeCredit(const PageCredit& credit) {
 }
 
 std::string EncodeIsolation(const PageIsolation& isolation) {
-  const char value = static_cast<char>(isolation.isolation);
-  return EncodeFrame(PageMessage::kIsolation,
-                     base::StrCat({EncodeUint64(isolation.navigation),
-                                   std::string_view(&value, 1)}));
+  const std::array<char, 2> values = {
+      static_cast<char>(isolation.isolation),
+      static_cast<char>(isolation.embedder_policy)};
+  return EncodeFrame(
+      PageMessage::kIsolation,
+      base::StrCat({EncodeUint64(isolation.navigation),
+                    std::string_view(values.data(), values.size())}));
 }
 
 std::string EncodePermissionsPolicy(const PagePermissionsPolicy& policy) {
@@ -2076,6 +2153,7 @@ std::string EncodeResponseStarted(const PageResponseStarted& response) {
            EncodeInt64(response.first_request_start),
            EncodeInt64(response.last_redirect_end),
            EncodeInt64(response.critical_ch_restart),
+           EncodeInt64(response.padding),
            EncodeUint32(static_cast<uint32_t>(response.url.size())),
            response.url,
            EncodeUint32(static_cast<uint32_t>(response.status_text.size())),
@@ -2290,13 +2368,15 @@ std::string EncodeDocumentOpened(uint64_t document, uint64_t opener) {
 
 std::string EncodeTraversalRequest(uint64_t document,
                                    const PageTraversalRequest& traversal) {
-  const char fixed[2] = {traversal.same_document_entry ? '\1' : '\0',
-                         static_cast<char>(traversal.referrer_policy)};
+  const char fixed[2] = {
+      static_cast<char>(traversal.same_document_entry ? 1 : 0),
+      static_cast<char>(traversal.referrer_policy)};
   return EncodeDocumentFrame(
       PageMessage::kTraversalRequest, document,
       base::StrCat({EncodeUint64(traversal.number),
-                    EncodeUint64(traversal.record), std::string_view(fixed, 2),
-                    traversal.url}));
+                    EncodeUint64(traversal.record),
+                    EncodeUint64(traversal.stored_document),
+                    std::string_view(fixed, 2), traversal.url}));
 }
 
 std::string EncodeRecordsReleased(const std::vector<uint64_t>& records) {
@@ -2305,6 +2385,22 @@ std::string EncodeRecordsReleased(const std::vector<uint64_t>& records) {
     payload += EncodeUint64(record);
   }
   return EncodeFrame(PageMessage::kRecordsReleased, payload);
+}
+
+std::string EncodeDocumentStored(uint64_t document) {
+  return EncodeFrame(PageMessage::kDocumentStored, EncodeUint64(document));
+}
+
+std::string EncodeRestore(uint64_t number) {
+  return EncodeFrame(PageMessage::kRestore, EncodeUint64(number));
+}
+
+std::string EncodeDocumentRestored(uint64_t document) {
+  return EncodeFrame(PageMessage::kDocumentRestored, EncodeUint64(document));
+}
+
+std::string EncodeDocumentEvicted(uint64_t document) {
+  return EncodeFrame(PageMessage::kDocumentEvicted, EncodeUint64(document));
 }
 
 bool NamesDocument(PageMessage type) {
@@ -2596,6 +2692,13 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.cancelled = DecodeUint64(payload);
       return frame;
+    case PageMessage::kSendDeferredRequest:
+      if (payload.size() != 8) {
+        return base::unexpected(
+            WrongSize("send of a deferred request", payload.size()));
+      }
+      frame.deferred_to_send = DecodeUint64(payload);
+      return frame;
     case PageMessage::kKnownGap:
       if (!IsText(payload)) {
         return base::unexpected("a Known Gap that is not UTF-8");
@@ -2741,13 +2844,14 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       return frame;
     case PageMessage::kTraversalRequest: {
-      if (payload.size() < 19) {
+      if (payload.size() < 27) {
         return base::unexpected(WrongSize("traversal request", payload.size()));
       }
       const std::string_view bytes = payload;
       frame.traversal.number = DecodeUint64(bytes.substr(0, 8));
       frame.traversal.record = DecodeUint64(bytes.substr(8, 8));
-      const uint8_t flags = static_cast<uint8_t>(bytes[16]);
+      frame.traversal.stored_document = DecodeUint64(bytes.substr(16, 8));
+      const uint8_t flags = static_cast<uint8_t>(bytes[24]);
       if (frame.traversal.record == kNoDocument) {
         return base::unexpected("a traversal to the record of document 0");
       }
@@ -2755,18 +2859,18 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
         return base::unexpected(base::StrCat(
             {"a traversal request with flags ", base::NumberToString(flags)}));
       }
-      frame.traversal.same_document_entry = flags == 1;
-      const uint8_t policy = static_cast<uint8_t>(bytes[17]);
+      frame.traversal.same_document_entry = flags != 0;
+      const uint8_t policy = static_cast<uint8_t>(bytes[25]);
       if (policy > kLastReferrerPolicy) {
         return base::unexpected(
             base::StrCat({"a traversal request with referrer policy ",
                           base::NumberToString(policy)}));
       }
       frame.traversal.referrer_policy = static_cast<PageReferrerPolicy>(policy);
-      if (!IsText(bytes.substr(18))) {
+      if (!IsText(bytes.substr(26))) {
         return base::unexpected("a traversal request whose URL is not UTF-8");
       }
-      frame.traversal.url = std::string(bytes.substr(18));
+      frame.traversal.url = std::string(bytes.substr(26));
       return frame;
     }
     case PageMessage::kRecordsReleased: {
@@ -2783,6 +2887,18 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       return frame;
     }
+    case PageMessage::kDocumentStored:
+    case PageMessage::kDocumentRestored:
+    case PageMessage::kDocumentEvicted:
+      if (payload.size() != 8) {
+        return base::unexpected(
+            WrongSize("document of the back/forward cache", payload.size()));
+      }
+      frame.cached_document = DecodeUint64(payload);
+      if (frame.cached_document == kNoDocument) {
+        return base::unexpected("document 0 in the back/forward cache");
+      }
+      return frame;
     case PageMessage::kStorageBind: {
       base::expected<PageStorageBind, std::string> bind =
           ReadStorageBind(payload);
@@ -2869,6 +2985,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kRequestBodyCredit:
     case PageMessage::kPermissionsPolicy:
     case PageMessage::kIsolation:
+    case PageMessage::kRestore:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -3049,6 +3166,12 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.isolation = *isolation;
       return frame;
     }
+    case PageMessage::kRestore:
+      if (payload.size() != 8) {
+        return base::unexpected(WrongSize("restore", payload.size()));
+      }
+      frame.restore = DecodeUint64(payload);
+      return frame;
     case PageMessage::kStorageEntries: {
       base::expected<PageStorageEntries, std::string> entries =
           ReadStorageEntries(payload);
@@ -3084,6 +3207,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kSetCookie:
     case PageMessage::kLoaded:
     case PageMessage::kCancel:
+    case PageMessage::kSendDeferredRequest:
     case PageMessage::kKnownGap:
     case PageMessage::kCookieStoreGet:
     case PageMessage::kCookieStoreSet:
@@ -3109,6 +3233,9 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kRequestBodyEnded:
     case PageMessage::kTraversalRequest:
     case PageMessage::kRecordsReleased:
+    case PageMessage::kDocumentStored:
+    case PageMessage::kDocumentRestored:
+    case PageMessage::kDocumentEvicted:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

@@ -14,6 +14,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
+#include "mitto/bindings/per_context_data.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -317,6 +318,17 @@ v8::Local<v8::Value> ToV8StringArray(v8::Isolate* isolate,
     strings.push_back(ToV8String(isolate, text));
   }
   return v8::Array::New(isolate, strings.data(), strings.size());
+}
+
+v8::Local<v8::Value> ToV8Array(
+    v8::Isolate* isolate,
+    const std::vector<v8::Local<v8::Value>>& values) {
+  // Of the receiver's realm, as Blink's sequence conversion makes it with the
+  // receiver's ScriptState, which FormData's getAll() shows.
+  const v8::Context::Scope context_scope(
+      ReceiverRealmScope::CreationContext(isolate));
+  return v8::Array::New(
+      isolate, const_cast<v8::Local<v8::Value>*>(values.data()), values.size());
 }
 
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
@@ -685,7 +697,7 @@ bool IterateRecord(
     v8::Local<v8::Value> value,
     ExceptionState& exception_state,
     std::string_view type_name,
-    base::FunctionRef<bool(v8::Local<v8::Value>, v8::Local<v8::Value>)> each) {
+    base::FunctionRef<bool(v8::Local<v8::Value>, RecordValueGetter)> each) {
   if (!value->IsObject()) {
     exception_state.ThrowTypeError(
         "Only objects can be converted to record<K,V> types");
@@ -725,8 +737,10 @@ bool IterateRecord(
     if (!enumerable->BooleanValue(isolate)) {
       continue;
     }
-    v8::Local<v8::Value> item;
-    if (!object->Get(context, key).ToLocal(&item) || !each(key, item)) {
+    const auto get = [&](v8::Local<v8::Value>* item) {
+      return object->Get(context, key).ToLocal(item);
+    };
+    if (!each(key, get)) {
       return false;
     }
   }

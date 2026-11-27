@@ -15,7 +15,10 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/performance_timing.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -237,6 +240,13 @@ void CompleteInstallState(ChromeObjectData* data,
   }
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = context_handle.Get(isolate);
+  if (ExecutionContext* const frozen = FrozenContext(isolate, context)) {
+    frozen->HoldTask(
+        TaskType::kMiscPlatformAPI,
+        base::BindOnce(&CompleteInstallState, base::Unretained(data), isolate,
+                       std::move(context_handle), std::move(callback)));
+    return;
+  }
   const v8::Context::Scope context_scope(context);
   const v8::MicrotasksScope microtasks_scope(
       context, v8::MicrotasksScope::kRunMicrotasks);

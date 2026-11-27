@@ -75,8 +75,9 @@ jobs:
             echo "upload-url=$upload_url"
           } >> "$GITHUB_OUTPUT"
           echo "Publishes mitto $version to $index."
-      # They hold the version's entry in CHANGELOG.md, and stop the run if it has none. The run's summary shows them, so
-      # that a dry run shows the notes of the release it comes before.
+      # They hold the version's entry in CHANGELOG.md, and stop the run if it has none, or if changelog.d holds a file
+      # that the release's pull request has not gathered into it. The run's summary shows them, so that a dry run shows
+      # the notes of the release it comes before.
       - name: Write the release notes
         env:
           VERSION: ${{ steps.version.outputs.version }}

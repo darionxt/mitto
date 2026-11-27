@@ -73,6 +73,49 @@ source_set("mime_types") {
   deps = [ "//base" ]
 }
 
+# The files that define the bytes of each message between a Page and its
+# Session. A file that writes or reads a payload belongs here, so that a change
+# to it changes the version below.
+_page_message_sources = [
+  "cache_storage_messages.cc",
+  "cache_storage_messages.h",
+  "indexed_db_key.cc",
+  "indexed_db_key.h",
+  "indexed_db_messages.cc",
+  "indexed_db_messages.h",
+  "message_coding.h",
+  "page_messages.cc",
+  "page_messages.h",
+  "policy_allowlist.h",
+  "storage_bucket_messages.cc",
+  "storage_bucket_messages.h",
+]
+
+# The files that each end builds on its own but that must agree byte for byte
+# with the other end's, because what one writes into a message the other
+# compares with what it works out itself: the storage key that the library puts
+# into each broadcast for a Page, which a Page matches against its contexts'
+# own.
+_page_message_counterparts = [
+  "dom/storage_key.cc",
+  "dom/storage_key.h",
+  "storage/storage_key.cc",
+  "storage/storage_key.h",
+]
+
+# The version of the messages that both ends speak in their hello: a fingerprint
+# of the files above, so that a Page and a library built from trees whose
+# messages differ refuse each other, and no one keeps the number by hand.
+action("page_protocol_version") {
+  script = "page_protocol_version.py"
+  inputs = _page_message_sources + _page_message_counterparts
+  outputs = [ "$target_gen_dir/page_protocol_version.h" ]
+  args = [
+           rebase_path(".", root_build_dir),
+           rebase_path(outputs[0], root_build_dir),
+         ] + inputs
+}
+
 # The allowlists of permissions policies, which the Page reads and the library
 # for what it decides by them.
 source_set("policy_allowlist") {
@@ -85,20 +128,7 @@ source_set("policy_allowlist") {
 }
 
 source_set("page_channel") {
-  sources = [
-    "cache_storage_messages.cc",
-    "cache_storage_messages.h",
-    "indexed_db_key.cc",
-    "indexed_db_key.h",
-    "indexed_db_messages.cc",
-    "indexed_db_messages.h",
-    "message_coding.h",
-    "page_channel.h",
-    "page_messages.cc",
-    "page_messages.h",
-    "storage_bucket_messages.cc",
-    "storage_bucket_messages.h",
-  ]
+  sources = _page_message_sources + [ "page_channel.h" ]
   if (is_win) {
     sources += [ "page_channel_win.cc" ]
   } else {
@@ -109,6 +139,7 @@ source_set("page_channel") {
     ":policy_allowlist",
   ]
   deps = [
+    ":page_protocol_version",
     "//base",
     "//url",
   ]
@@ -185,6 +216,8 @@ shared_library("mitto_core") {
     "page_launcher.h",
     "preconnect_manager.cc",
     "preconnect_manager.h",
+    "range_after_cache.cc",
+    "range_after_cache.h",
     "ready_requests.cc",
     "ready_requests.h",
     "request_channel.cc",
@@ -192,6 +225,8 @@ shared_library("mitto_core") {
     "request_client.h",
     "request_options.cc",
     "request_options.h",
+    "response_padding.cc",
+    "response_padding.h",
     "sec_header_helpers.cc",
     "sec_header_helpers.h",
     "session_settings.cc",

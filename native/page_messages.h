@@ -31,10 +31,9 @@ class DictValue;
 
 namespace mitto {
 
-// Both ends speak exactly this version and refuse any other, because the Page
-// program ships beside the library, built from the same tree. Increase it with
-// any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 36;
+// What the padding of an opaque response is below, as Chrome's kPaddingRange
+// (response_padding.h).
+inline constexpr int64_t kResponsePaddingRange = 14431 * 1024;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -93,7 +92,7 @@ inline constexpr int kPageExitOutOfMemory = 3;
 // The types of message. Each says which way it goes and what its payload holds.
 enum class PageMessage : uint32_t {
   // Each way, first and only once: the version of these messages that the
-  // sender speaks, as a 32-bit number.
+  // sender speaks, a 32-bit fingerprint of them (EncodeHello()).
   kHello = 1,
   // Each way: why the sender refuses what it got, in UTF-8. The sender closes
   // the channel after it.
@@ -269,6 +268,11 @@ enum class PageMessage : uint32_t {
   // To the Page: how much more of the body of a request whose body streams
   // the Session takes, as PageCredit says, once //net has taken as much.
   kRequestBodyCredit = 162,
+  // To the Session: the number of a deferred request, as a 64-bit number,
+  // which the Session sends now, as Blink's DeferredLoader asks the browser's
+  // FetchLaterLoader to once fetchLater()'s activateAfter has passed. Nothing
+  // of it comes back.
+  kSendDeferredRequest = 220,
   // To the Page: what the Permissions-Policy and Feature-Policy headers of a
   // navigation's response say, as PagePermissionsPolicy says, just before the
   // response starts, for a response that has any.
@@ -280,10 +284,23 @@ enum class PageMessage : uint32_t {
   // To the Session: the IDs of documents whose navigations no entry of the
   // session history holds any more, each a 64-bit number, one at least.
   kRecordsReleased = 281,
+  // To the Session: the ID of the top-level document that the back/forward
+  // cache keeps, a 64-bit number, as the next document takes its place.
+  kDocumentStored = 282,
+  // To the Page: the number of a traversal request to the entry of a
+  // document that the back/forward cache keeps, a 64-bit number, which the
+  // Session answers by restoring that document in place of a response.
+  kRestore = 283,
+  // To the Session: the ID of the document that the back/forward cache kept
+  // and that is the top-level document again, a 64-bit number.
+  kDocumentRestored = 284,
+  // To the Session: the ID of a document that the back/forward cache kept
+  // and that goes, a 64-bit number.
+  kDocumentEvicted = 285,
   // To the Page: whether the document that a navigation's response makes is
-  // cross-origin isolated, as PageIsolation says, just before the response
-  // starts, as Chrome's browser gives the renderer the document's agent
-  // cluster.
+  // cross-origin isolated, and its embedder policy, as PageIsolation says, just
+  // before the response starts, as Chrome's browser gives the renderer the
+  // document's agent cluster and policy container.
   kIsolation = 300,
 };
 
@@ -639,6 +656,26 @@ struct PageEvaluated {
   std::string text;
 };
 
+// The Fetch Standard's cache mode of a request, which gives its load flags,
+// as Blink's WebURLRequest::GetLoadFlagsForWebUrlRequest() does.
+enum class PageCacheMode : uint8_t {
+  kDefault = 0,
+  kNoStore = 1,
+  kReload = 2,
+  kNoCache = 3,
+  kForceCache = 4,
+  kOnlyIfCached = 5,
+};
+
+// The Fetch Standard's redirect mode of a request: a redirect that is not
+// followed is the response, which the Page makes a network error of, or an
+// opaque-redirect filtered response.
+enum class PageRedirectMode : uint8_t {
+  kFollow = 0,
+  kError = 1,
+  kManual = 2,
+};
+
 // A request that a Page asks its Session for. Its Initiator is the document
 // that asks, as the Session loaded it, so the Page names the document and does
 // not say its URL.
@@ -647,10 +684,11 @@ struct PageEvaluated {
 // of flags, 2 for a navigation that the user activated, 4 for a navigation
 // that reloads, 8 for a request that outlives its document, 16 for a
 // synchronous one and 32 for one with no referrer, then a byte each of the
-// mode, the credentials mode, the referrer policy, the priority and whether
-// it is incremental, the target as a 64-bit number, the URL, the method, the
-// header lines and the referrer, each after its size as a 32-bit number, and
-// then a byte that is 1 if a body follows, which is the rest.
+// mode, the credentials mode, the referrer policy, the priority, whether it
+// is incremental, the cache mode and the redirect mode, the target as a
+// 64-bit number, the URL, the method, the header lines and the referrer, each
+// after its size as a 32-bit number, and then a byte that is 1 if a body
+// follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -679,6 +717,10 @@ struct PageRequest {
   // sendBeacon() make one: the Session finishes it after the document or the
   // Page has gone.
   bool keepalive = false;
+  // fetchLater()'s request, which is keepalive too: the Session holds it
+  // until a kSendDeferredRequest, its document goes or its Page ends, and
+  // the Page hears nothing of it.
+  bool deferred = false;
   // A synchronous request, which Blink gives the highest priority.
   bool synchronous = false;
   // A request that sends no Referer at all, as fetch()'s referrer: "" asks.
@@ -694,6 +736,8 @@ struct PageRequest {
   // 0 for the kind's own, 1 for a response that is not used as it arrives,
   // and 2 for one that is.
   uint8_t incremental = 0;
+  PageCacheMode cache_mode = PageCacheMode::kDefault;
+  PageRedirectMode redirect_mode = PageRedirectMode::kFollow;
   // For a frame's navigation, the document that it replaces. 0 otherwise.
   uint64_t target = 0;
   // In UTF-8: a URL of the document's origin that Referer starts from, as
@@ -736,12 +780,22 @@ enum class PageCrossOriginIsolation : uint8_t {
   kCoopAndCoep = 1,
 };
 
+// A document's enforced Cross-Origin-Embedder-Policy.
+enum class PageEmbedderPolicy : uint8_t {
+  kNone = 0,
+  kCredentialless = 1,
+  kRequireCorp = 2,
+};
+
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
-// opened the Page.
+// opened the Page: a top-level document's agent cluster's, and a frame's
+// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated. And its embedder
+// policy, which its frames' documents of no response take from it.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;
+  PageEmbedderPolicy embedder_policy = PageEmbedderPolicy::kNone;
 };
 
 // What the headers of the response of navigation `navigation` say of its
@@ -758,11 +812,11 @@ struct PagePermissionsPolicy {
 // A traversal of the session history to an entry of another document, which
 // repeats the navigation that made document `record`, as Chrome's browser
 // repeats an entry's own navigation, whose Initiator and Referer the Session
-// keeps. Its payload is the number, as a request's, the record, each a 64-bit
-// number, a byte of flags, 1 for an entry that a navigation within that
-// document made, a byte of the referrer policy, as a request's, and then the
-// URL in UTF-8, which is the rest: the record's URL for an entry of its
-// navigation, or one that a navigation within it gave it.
+// keeps. Its payload is the number, as a request's, the record and the stored
+// document, each a 64-bit number, a byte of flags, 1 for an entry that a
+// navigation within that document made, a byte of the referrer policy, as a
+// request's, and then the URL in UTF-8, which is the rest: the record's URL for
+// an entry of its navigation, or one that a navigation within it gave it.
 struct PageTraversalRequest {
   uint64_t number = 0;
   uint64_t record = kNoDocument;
@@ -772,6 +826,10 @@ struct PageTraversalRequest {
   // within the document made, the document's policy when it made it, as
   // Chrome's FrameNavigationEntry keeps the referrer of each commit.
   PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument;
+  // The document that was at the entry when the back/forward cache took it,
+  // which the Session may answer with a restore, and which is not always the
+  // record's: kNoDocument for none.
+  uint64_t stored_document = kNoDocument;
   std::string url;
 };
 
@@ -944,6 +1002,9 @@ struct PageResponseStarted {
   int64_t first_request_start = 0;
   int64_t last_redirect_end = 0;
   int64_t critical_ch_restart = 0;
+  // an opaque response's padding, which the Cache API counts beside its size
+  // (response_padding.h), 0 for any other.
+  int64_t padding = 0;
 };
 
 // Bytes of a response's body.
@@ -1212,6 +1273,8 @@ struct FrameFromPage {
   std::string cookie_line;
   // kCancel.
   uint64_t cancelled = 0;
+  // kSendDeferredRequest.
+  uint64_t deferred_to_send = 0;
   // kCookieStoreGet.
   PageCookieStoreGet cookie_store_get;
   // kCookieStoreSet.
@@ -1258,6 +1321,8 @@ struct FrameFromPage {
   PageTraversalRequest traversal;
   // kRecordsReleased.
   std::vector<uint64_t> released_records;
+  // kDocumentStored, kDocumentRestored and kDocumentEvicted.
+  uint64_t cached_document = kNoDocument;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -1307,6 +1372,8 @@ struct FrameFromSession {
   PageCredit request_body_credit;
   // kIsolation.
   PageIsolation isolation;
+  // kRestore: the number of the traversal request.
+  uint64_t restore = 0;
   // kPermissionsPolicy.
   PagePermissionsPolicy permissions_policy;
   // kStorageEntries.
@@ -1322,7 +1389,19 @@ struct FrameFromSession {
 // kMaxPayloadSize bytes.
 std::string EncodeFrame(PageMessage type, std::string_view payload);
 
+// Both ends speak exactly one version of the messages, kPageProtocolVersion,
+// and refuse any other, because the Page program ships beside the library,
+// built from the same tree. The build works it out as a fingerprint of the
+// files that define the bytes of a message (page_protocol_version.py), into a
+// header that only page_messages.cc reads, so a change to the messages needs no
+// change to it.
 std::string EncodeHello();
+// Why an end refuses the other's hello of `version`, naming both versions, or
+// nothing if it speaks that version too. `sender` and `receiver` name the two
+// ends, as "the Page" and "the library".
+std::optional<std::string> HelloRefusal(uint32_t version,
+                                        std::string_view sender,
+                                        std::string_view receiver);
 // With the start's connection.
 std::string EncodeStart(const PageStart& start);
 
@@ -1345,6 +1424,7 @@ std::string EncodeKnownGap(std::string_view name);
 // first.
 std::string EncodeRequest(uint64_t document, const PageRequest& request);
 std::string EncodeCancel(uint64_t number);
+std::string EncodeSendDeferredRequest(uint64_t number);
 std::string EncodeCredit(const PageCredit& credit);
 // `part`'s bytes are at most kBodyWindow bytes.
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part);
@@ -1403,6 +1483,10 @@ std::string EncodeTraversalRequest(uint64_t document,
                                    const PageTraversalRequest& traversal);
 // `records` holds one at least, and at most kMaxPayloadSize / 8.
 std::string EncodeRecordsReleased(const std::vector<uint64_t>& records);
+std::string EncodeDocumentStored(uint64_t document);
+std::string EncodeRestore(uint64_t number);
+std::string EncodeDocumentRestored(uint64_t document);
+std::string EncodeDocumentEvicted(uint64_t document);
 std::string EncodeAboutBlankNavigation(uint64_t document,
                                        uint64_t initiator,
                                        PageLocalNavigationKind kind);

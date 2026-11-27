@@ -21,9 +21,11 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/types/expected.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/cache_storage_messages.h"
+#include "mitto/dom/response.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/cppgc/prefinalizer.h"
@@ -40,7 +42,6 @@ class ExceptionState;
 class AbortController;
 class CacheStorageHost;
 class Request;
-class Response;
 class ExecutionContext;
 
 class Cache final : public bindings::ScriptWrappable {
@@ -122,9 +123,10 @@ class Cache final : public bindings::ScriptWrappable {
                   size_t index,
                   Response* response,
                   bool require_ok);
-  void CompletedResponse(uint64_t barrier,
-                         size_t index,
-                         std::optional<std::string> body);
+  void CompletedResponse(
+      uint64_t barrier,
+      size_t index,
+      base::expected<std::string, Response::ReadAllError> body);
   // Rejects the barrier's promise with `exception` and stops it.
   void FailBarrier(uint64_t barrier, v8::Local<v8::Value> exception);
   // PutImpl() and BarrierCallbackForPutComplete: one batch of the entries.

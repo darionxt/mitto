@@ -160,6 +160,7 @@ class AbortSignal : public EventTarget {
   // A timeout signal's timer, its context, and the signal itself, which the
   // timer keeps until it fires, as Blink's posted task holds the signal.
   std::unique_ptr<base::DeadlineTimer> timeout_timer_;
+  bool timeout_is_delayed_ = false;
   v8::Global<v8::Context> timeout_context_;
   cppgc::Persistent<AbortSignal> kept_by_timeout_;
   // The ID of the window's callback that cancels the timer.
