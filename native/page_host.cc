@@ -1680,17 +1680,6 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
                          " requests at once"}));
     return;
   }
-  // One that would take the deferred requests past what the Session holds
-  // fails, as one past the keepalive limits does, since a long method, which
-  // no quota counts, may take it there.
-  if (asked.deferred &&
-      deferred_bytes_ + DeferredBytes(asked) > kMaxDeferredBytesPerPage) {
-    PageResponseEnded ended;
-    ended.number = asked.number;
-    ended.net_error = net::ERR_INSUFFICIENT_RESOURCES;
-    channel_->Send(EncodeResponseEnded(ended));
-    return;
-  }
   const Context& context = contexts_.at(context_id);
   // fetchLater() is a window's, to a potentially trustworthy URL, as Blink's
   // FetchLaterManager checks before it queues a request.
@@ -1963,6 +1952,20 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .parent_origin = std::move(parent_origin)};
   if (asked.deferred) {
     const size_t bytes = DeferredBytes(asked);
+    // One that would take what the Session holds past its cap, as a long
+    // method, which no quota counts, may, is dropped without a word, as if it
+    // went: the Page may have sent or forgotten it before an answer came. Its
+    // number answers a later send, cancel or end of its document.
+    if (deferred_bytes_ + bytes > kMaxDeferredBytesPerPage) {
+      if (dropped_deferred_requests_.size() >= kMaxPageRequests) {
+        Refuse(
+            base::StrCat({"more than ", base::NumberToString(kMaxPageRequests),
+                          " deferred requests past what the Session holds"}));
+        return;
+      }
+      dropped_deferred_requests_[asked.number] = context_id;
+      return;
+    }
     deferred_bytes_ += bytes;
     DeferredRequest& deferred = deferred_requests_[asked.number];
     deferred.bytes = bytes;
@@ -1990,6 +1993,9 @@ PageHost::DeferredRequest& PageHost::DeferredRequest::operator=(
 PageHost::DeferredRequest::~DeferredRequest() = default;
 
 void PageHost::OnSendDeferredRequest(uint64_t number) {
+  if (dropped_deferred_requests_.erase(number)) {
+    return;
+  }
   if (!deferred_requests_.contains(number)) {
     // It may have been cancelled since the Page asked for it to go.
     if (number > last_request_number_) {
@@ -2037,6 +2043,9 @@ void PageHost::SendDeferredRequest(uint64_t number) {
 }
 
 void PageHost::SendDeferredRequests(const std::set<uint64_t>* ids) {
+  std::erase_if(dropped_deferred_requests_, [ids](const auto& entry) {
+    return !ids || ids->contains(entry.second);
+  });
   std::vector<uint64_t> numbers;
   for (const auto& [number, deferred] : deferred_requests_) {
     if (!ids || ids->contains(deferred.context_id)) {
@@ -2061,9 +2070,12 @@ void PageHost::OnCancel(uint64_t number) {
   }
   // fetchLater()'s request, whose signal aborted before it went.
   if (const auto deferred = deferred_requests_.find(number);
-      deferred != deferred_requests_.end()) {
-    deferred_bytes_ -= deferred->second.bytes;
-    deferred_requests_.erase(deferred);
+      deferred != deferred_requests_.end() ||
+      dropped_deferred_requests_.erase(number)) {
+    if (deferred != deferred_requests_.end()) {
+      deferred_bytes_ -= deferred->second.bytes;
+      deferred_requests_.erase(deferred);
+    }
     PageResponseEnded ended;
     ended.number = number;
     ended.net_error = net::ERR_ABORTED;
@@ -3282,6 +3294,7 @@ void PageHost::EndWithSession() {
   // Nothing sends the deferred requests of a Page whose Session goes.
   deferred_requests_.clear();
   deferred_bytes_ = 0;
+  dropped_deferred_requests_.clear();
   AbandonRequests();
   ReleaseStorage();
   channel_.reset();

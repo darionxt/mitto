@@ -135,8 +135,8 @@ inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
 // and bodies: three times what Blink's quotas let the control documents of a
 // frame tree queue, the top-level document's 512 KiB and the 128 KiB of its
 // frames' minimal quotas, since a string body counts there by its UTF-16
-// length and comes as UTF-8, of up to three bytes for each unit. One more
-// fails with ERR_INSUFFICIENT_RESOURCES.
+// length and comes as UTF-8, of up to three bytes for each unit. One more is
+// dropped.
 // Upstream: third_party/blink/renderer/core/fetch/fetch_later_util.h
 inline constexpr size_t kMaxDeferredBytesPerPage = 3 * 640 * 1024;
 
@@ -905,6 +905,9 @@ class PageHost final : public PageChannel::Delegate {
   std::map<uint64_t, DeferredRequest> deferred_requests_;
   // The bytes that they hold.
   size_t deferred_bytes_ = 0;
+  // Those dropped past kMaxDeferredBytesPerPage, by number, with the ID of
+  // the context that asked.
+  std::map<uint64_t, uint64_t> dropped_deferred_requests_;
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.
   const scoped_refptr<KeepaliveInFlight> keepalive_in_flight_ =

@@ -863,6 +863,24 @@ def test_a_borrowed_send_beacon_and_fetch_later_go_as_their_receivers_window(
     assert [server.headers_of(path) for path in ("/log/beacon", "/log/later", "/sub/log/detached")] == [[], [], []]
 
 
+def test_a_deferred_request_past_what_the_session_holds_is_dropped_and_the_page_lives_on(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The Session holds no more than three times what Blink's quotas let a frame tree queue, and a method, which no quota
+    # counts, can take one past that. Such a request goes nowhere, but the Page, which may have let it go already, as a
+    # frame that goes at once does, hears nothing of it and goes on. Chrome has no such bound of its own.
+    url = _fetch_later_page(server)
+    server.text("/long-method", "x")
+    with _open_page(session, url) as page:
+        page.evaluate(
+            "(async () => { const a = await frame(F);"
+            " a.contentWindow.fetchLater('/long-method', {method: 'A'.repeat(2 * 1024 * 1024)}); a.remove(); })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert page.evaluate("new Promise((r) => setTimeout(() => r(1 + 1), 300))", timeout=_TIMEOUT_SECONDS) == 2
+    assert server.headers_of("/long-method") == []
+
+
 def test_fetch_later_counts_a_cloned_requests_body(session: mitto.Session, server: _Server) -> None:
     # A clone keeps its body's length, as Blink's FetchRequestData::Clone() does, so Chrome 157 refused this one.
     url = server.page("/", "<p>later</p>")

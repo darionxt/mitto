@@ -169,14 +169,14 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
 )
 
 # A top-level document that asks the Session to hold two deferred requests of 1,000 KiB, past three times what Blink's
-# quotas let a frame tree queue, and answers the Session's call with the net error that the second ends with.
+# quotas let a frame tree queue, and then to send both.
 _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
-    def deferred(number):
+    def deferred(number, url):
         return (
             struct.pack("<QQBB", 2, number, 2, 136)
             + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, 0)
-            + sized("{url}".encode()) + sized(b"POST") + sized(b"") + sized(b"")
+            + sized(url.encode()) + sized(b"POST") + sized(b"") + sized(b"")
             + b"\\x01" + b"a" * (1000 * 1024)
         )
 
@@ -190,14 +190,11 @@ _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
         if message_type == 4:
             call = struct.unpack_from("<Q", payload)[0]
             break
-    send(8, deferred(1))
-    send(8, deferred(2))
-    while True:
-        message_type, payload = receive()
-        if message_type == 15 and struct.unpack_from("<Q", payload)[0] == 2:
-            error = struct.unpack_from("<i", payload, 8)[0]
-            break
-    send(5, struct.pack("<QB", call, 0) + str(error).encode())
+    send(8, deferred(1, "{first}"))
+    send(8, deferred(2, "{second}"))
+    send(220, struct.pack("<Q", 2))
+    send(220, struct.pack("<Q", 1))
+    send(5, struct.pack("<QB", call, 0) + b"0")
     while channel.recv(65536):
         pass
     """
@@ -508,15 +505,18 @@ def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: 
     assert printed == "the library refused a message from the Page: a same-document navigation to another origin"
 
 
-def test_a_deferred_request_past_what_the_session_holds_fails(tmp_path: Path, top: _Server) -> None:
+def test_a_deferred_request_past_what_the_session_holds_goes_nowhere(tmp_path: Path, top: _Server) -> None:
     # A Page queues no more than the 640 KiB that Blink's quotas give the control documents of a frame tree, counted as
     # FetchLaterUtil counts each request, a string body by its UTF-16 length, so the Session holds no more than three
-    # times that, as UTF-8 may take, and one more fails as one past the keepalive limits does.
-    program = _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES.format(python=sys.executable, url=top.url("/later"))
+    # times that, as UTF-8 may take, and drops one more without a word: a send of it sends nothing.
+    program = _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES.format(
+        python=sys.executable, first=top.url("/later-first"), second=top.url("/later-second")
+    )
 
-    printed = _run_fake_page(tmp_path, program, _SESSION, top.url("/page"), top.url("/set"))
+    printed = _run_fake_page(tmp_path, program, _SESSION_THAT_WAITS, top.url("/page"), top.url("/wait-post"))
 
-    assert printed == "-12"
+    assert printed == "posted"
+    assert [path for path, _ in top.posted] == ["/later-first"]
 
 
 @pytest.mark.parametrize(
