@@ -133,6 +133,31 @@
     const keptPolicy = child.contentDocument.featurePolicy;
     child.remove();
     results['of a removed frame'] = [keptPolicy.allowsFeature('removed'), keptPolicy.allowsFeature('camera')];
+    // A detached element's URL leaves the container policy as its allow made it, with 'src' of its URL then: Blink makes
+    // the policy again as a navigation starts, and a detached element starts none.
+    let detached = document.createElement('iframe');
+    detached.allow = 'camera';
+    detached.src = `${OTHER}/child`;
+    results['detached, allow then src'] = [detached.featurePolicy.allowsFeature('camera'), detached.featurePolicy.allowsFeature('camera', OTHER),
+      detached.featurePolicy.allowsFeature('camera', location.origin)];
+    detached = document.createElement('iframe');
+    detached.allow = 'camera';
+    const before = detached.featurePolicy;
+    detached.src = `${OTHER}/child`;
+    results['detached, the object before src'] = [before.allowsFeature('camera'), before.allowsFeature('camera', OTHER), before.allowedFeatures().includes('camera'),
+      before === detached.featurePolicy];
+    detached = document.createElement('iframe');
+    detached.src = `${OTHER}/child`;
+    detached.allow = 'camera';
+    results['detached, src then allow'] = [detached.featurePolicy.allowsFeature('camera'), detached.featurePolicy.allowsFeature('camera', OTHER)];
+    detached = document.createElement('iframe');
+    detached.allow = 'camera';
+    detached.src = `${OTHER}/child`;
+    said = heard(detached);
+    document.body.append(detached);
+    results['detached, then connected'] = [detached.featurePolicy.allowsFeature('camera'), detached.featurePolicy.allowsFeature('camera', OTHER)];
+    await said;
+    detached.remove();
     const about = document.createElement('iframe');
     about.src = 'about:other';
     results['another about: URL'] = ofElement(about);

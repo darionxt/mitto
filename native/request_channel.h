@@ -57,6 +57,10 @@ struct RequestEvent {
   net::LoadTimingInfo load_timing;
   int64_t received_bytes = 0;
   bool validated = false;
+  // When the response came, which a response from the cache keeps, and the
+  // method that its request started with, before any redirect.
+  base::Time response_time;
+  std::string method;
   // When the request's first hop started, and, for a navigation that
   // restarted for Critical-CH, when it did, null once a redirect has come
   // since, and whether it did at all.

@@ -30,6 +30,7 @@
 #include "mitto/dom/time_clamper.h"
 #include "mitto/dom/visibility_state_entry.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
@@ -40,6 +41,8 @@ namespace {
 
 // Blink's kDefaultResourceTimingBufferSize.
 constexpr uint32_t kDefaultResourceTimingBufferSize = 250;
+// Its kDefaultVisibilityStateEntrySize.
+constexpr size_t kMaxVisibilityStateEntries = 50;
 
 // PerformanceTimelineEntryIdInfo's kMinId and kMaxIdForReset.
 constexpr int kMinNavigationId = 100;
@@ -530,25 +533,35 @@ void Performance::AddResourceTiming(ResourceTimingInfo info,
     task_runner->PostTask(
         FROM_HERE,
         base::BindOnce(
-            [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,
-               cppgc::Persistent<Performance> performance) {
-              const v8::HandleScope handle_scope(isolate);
-              const v8::Local<v8::Context> context =
-                  context_handle.Get(isolate);
-              const v8::Context::Scope context_scope(context);
-              // A context that has gone fires nothing.
-              const ExecutionContext* const execution_context =
-                  ExecutionContext::From(isolate, context);
-              if (!execution_context || !execution_context->HasContext()) {
-                return;
-              }
-              performance->FireResourceTimingBufferFull();
-            },
-            base::Unretained(isolate),
+            &RunResourceTimingBufferFull, base::Unretained(isolate),
             v8::Global<v8::Context>(isolate, isolate->GetCurrentContext()),
             cppgc::Persistent<Performance>(this)));
   }
   resource_timing_secondary_buffer_.push_back(entry);
+}
+
+// static
+void Performance::RunResourceTimingBufferFull(
+    v8::Isolate* isolate,
+    v8::Global<v8::Context> context_handle,
+    cppgc::Persistent<Performance> performance) {
+  const v8::HandleScope handle_scope(isolate);
+  const v8::Local<v8::Context> context = context_handle.Get(isolate);
+  if (ExecutionContext* const frozen = FrozenContext(isolate, context)) {
+    frozen->HoldTask(
+        TaskType::kPerformanceTimeline,
+        base::BindOnce(&RunResourceTimingBufferFull, base::Unretained(isolate),
+                       std::move(context_handle), std::move(performance)));
+    return;
+  }
+  const v8::Context::Scope context_scope(context);
+  // A context that has gone fires nothing.
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  if (!execution_context || !execution_context->HasContext()) {
+    return;
+  }
+  performance->FireResourceTimingBufferFull();
 }
 
 void Performance::FireResourceTimingBufferFull() {
@@ -585,6 +598,19 @@ double Performance::ClampTimeResolution(base::TimeDelta time,
   static const base::NoDestructor<TimeClamper> clamper;
   return clamper->ClampTimeResolution(time, cross_origin_isolated_capability)
       .InMillisecondsF();
+}
+
+void Performance::AddVisibilityStateEntry(bool visible) {
+  if (visibility_state_buffer_.size() >= kMaxVisibilityStateEntries) {
+    return;
+  }
+  visibility_state_buffer_.push_back(
+      bindings::MakeGarbageCollected<VisibilityStateEntry>(
+          visible ? u"visible" : u"hidden",
+          MonotonicTimeToDOMHighResTimeStamp(time_origin_,
+                                             base::TimeTicks::Now(),
+                                             cross_origin_isolated_capability_),
+          navigation_id_));
 }
 
 // static

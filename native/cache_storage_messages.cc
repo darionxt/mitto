@@ -114,6 +114,7 @@ void WriteResponse(MessageWriter& writer, const PageCacheResponse& response) {
     writer.Sized(name);
   }
   writer.I64(response.response_time);
+  writer.I64(response.padding);
   writer.U64(response.body_size);
   writer.U64(response.body);
 }
@@ -144,7 +145,8 @@ bool ReadResponse(MessageReader& reader, PageCacheResponse& response) {
     }
     response.cors_exposed_header_names.push_back(std::move(name));
   }
-  return reader.I64(response.response_time) &&
+  return reader.I64(response.response_time) && reader.I64(response.padding) &&
+         response.padding >= 0 && response.padding < kResponsePaddingRange &&
          reader.U64(response.body_size) && reader.U64(response.body) &&
          // A body has a number exactly when it has bytes.
          (response.body_size == 0) == (response.body == 0);

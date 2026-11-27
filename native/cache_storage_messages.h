@@ -125,6 +125,8 @@ struct PageCacheResponse {
   std::vector<std::string> cors_exposed_header_names;
   // base::Time in microseconds since the Windows epoch.
   int64_t response_time = 0;
+  // An opaque response's, below kResponsePaddingRange (response_padding.h).
+  int64_t padding = 0;
   // The body: its size, and its number, which a put's sender gives and a
   // match's names for kReadBody, 0 for none.
   uint64_t body_size = 0;

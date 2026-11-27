@@ -1,6 +1,7 @@
 #include "mitto/dom/cookie_store.h"
 
 #include <memory>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -18,7 +19,10 @@
 #include "mitto/dom/cookie_change_event.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
 #include "url/url_canon.h"
@@ -100,6 +104,74 @@ v8::Local<v8::Value> CookieToV8(v8::Isolate* isolate,
                                 const PageCookie& cookie) {
   return CookieChangeEvent::ToV8Object(
       isolate, CookieChangeEvent::ToCookieListItem(cookie, false));
+}
+
+// Settles the promise of get() or getAll() with the Session's answer.
+void SettleRead(v8::Isolate* isolate,
+                v8::Global<v8::Context> context_handle,
+                v8::Global<v8::Promise::Resolver> resolver_handle,
+                bool get_all,
+                std::vector<PageCookie> cookies) {
+  {
+    const v8::HandleScope handle_scope(isolate);
+    if (ExecutionContext* const frozen =
+            FrozenContext(isolate, context_handle.Get(isolate))) {
+      frozen->HoldTask(
+          TaskType::kDOMManipulation,
+          base::BindOnce(&SettleRead, base::Unretained(isolate),
+                         std::move(context_handle), std::move(resolver_handle),
+                         get_all, std::move(cookies)));
+      return;
+    }
+  }
+  RunInContext(isolate, context_handle, [&](v8::Local<v8::Context> context) {
+    v8::Local<v8::Value> result;
+    if (get_all) {
+      std::vector<v8::Local<v8::Value>> items;
+      items.reserve(cookies.size());
+      for (const PageCookie& cookie : cookies) {
+        items.push_back(CookieToV8(isolate, cookie));
+      }
+      result = v8::Array::New(isolate, items.data(), items.size());
+    } else if (cookies.empty()) {
+      result = v8::Null(isolate);
+    } else {
+      result = CookieToV8(isolate, cookies.front());
+    }
+    std::ignore = resolver_handle.Get(isolate)->Resolve(context, result);
+  });
+}
+
+// Settles the promise of set() or delete() with the Session's answer, or
+// rejects it with `message`.
+void SettleWrite(v8::Isolate* isolate,
+                 v8::Global<v8::Context> context_handle,
+                 v8::Global<v8::Promise::Resolver> resolver_handle,
+                 std::string message,
+                 bool stored) {
+  {
+    const v8::HandleScope handle_scope(isolate);
+    if (ExecutionContext* const frozen =
+            FrozenContext(isolate, context_handle.Get(isolate))) {
+      frozen->HoldTask(
+          TaskType::kDOMManipulation,
+          base::BindOnce(&SettleWrite, base::Unretained(isolate),
+                         std::move(context_handle), std::move(resolver_handle),
+                         std::move(message), stored));
+      return;
+    }
+  }
+  RunInContext(isolate, context_handle, [&](v8::Local<v8::Context> context) {
+    const v8::Local<v8::Promise::Resolver> resolver =
+        resolver_handle.Get(isolate);
+    if (stored) {
+      std::ignore = resolver->Resolve(context, v8::Undefined(isolate));
+      return;
+    }
+    std::ignore = resolver->Reject(
+        context, v8::Exception::TypeError(
+                     bindings::ToV8StringFromUtf8(isolate, message)));
+  });
 }
 
 }  // namespace
@@ -305,32 +377,10 @@ v8::Local<v8::Promise> CookieStore::DoRead(
   }
   jar->GetForCookieStore(
       std::move(get),
-      base::BindOnce(
-          [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,
-             v8::Global<v8::Promise::Resolver> resolver_handle, bool get_all,
-             std::vector<PageCookie> cookies) {
-            RunInContext(
-                isolate, context_handle, [&](v8::Local<v8::Context> context) {
-                  v8::Local<v8::Value> result;
-                  if (get_all) {
-                    std::vector<v8::Local<v8::Value>> items;
-                    items.reserve(cookies.size());
-                    for (const PageCookie& cookie : cookies) {
-                      items.push_back(CookieToV8(isolate, cookie));
-                    }
-                    result =
-                        v8::Array::New(isolate, items.data(), items.size());
-                  } else if (cookies.empty()) {
-                    result = v8::Null(isolate);
-                  } else {
-                    result = CookieToV8(isolate, cookies.front());
-                  }
-                  std::ignore =
-                      resolver_handle.Get(isolate)->Resolve(context, result);
-                });
-          },
-          isolate, v8::Global<v8::Context>(isolate, context),
-          v8::Global<v8::Promise::Resolver>(isolate, resolver), get_all));
+      base::BindOnce(&SettleRead, base::Unretained(isolate),
+                     v8::Global<v8::Context>(isolate, context),
+                     v8::Global<v8::Promise::Resolver>(isolate, resolver),
+                     get_all));
   return resolver->GetPromise();
 }
 
@@ -363,25 +413,8 @@ v8::Local<v8::Promise> CookieStore::DoWrite(
   jar->SetForCookieStore(
       *std::move(set),
       base::BindOnce(
-          [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,
-             v8::Global<v8::Promise::Resolver> resolver_handle,
-             const std::string& message, bool stored) {
-            RunInContext(
-                isolate, context_handle, [&](v8::Local<v8::Context> context) {
-                  const v8::Local<v8::Promise::Resolver> resolver =
-                      resolver_handle.Get(isolate);
-                  if (stored) {
-                    std::ignore =
-                        resolver->Resolve(context, v8::Undefined(isolate));
-                    return;
-                  }
-                  std::ignore = resolver->Reject(
-                      context,
-                      v8::Exception::TypeError(
-                          bindings::ToV8StringFromUtf8(isolate, message)));
-                });
-          },
-          isolate, v8::Global<v8::Context>(isolate, context),
+          &SettleWrite, base::Unretained(isolate),
+          v8::Global<v8::Context>(isolate, context),
           v8::Global<v8::Promise::Resolver>(isolate, resolver),
           // ScriptPromiseResolver::RejectWithTypeError() puts the message in
           // the context of the call that made the resolver.

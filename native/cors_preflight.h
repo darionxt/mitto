@@ -161,7 +161,8 @@ struct PreflightRequest {
 };
 
 // Whether `cache` holds a result that lets `request` go without a preflight.
-// A tainted request never reads it.
+// A tainted request never reads it, nor one that a fetch()'s cache mode or a
+// reload sends past the caches.
 bool CanSkipPreflight(PreflightCache& cache, const PreflightRequest& request);
 
 // The preflight of one request: CreatePreflightRequest() and

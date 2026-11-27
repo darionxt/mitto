@@ -7,8 +7,11 @@
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
@@ -19,10 +22,13 @@
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetch_data_loader.h"
+#include "mitto/dom/form_data.h"
+#include "mitto/dom/parsed_content_type.h"
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/stream_chunks.h"
 #include "mitto/dom/text_decoder_transformer.h"
 #include "mitto/dom/transform_stream.h"
+#include "mitto/dom/url_search_params.h"
 #include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
@@ -37,9 +43,19 @@
 namespace mitto {
 namespace {
 
-// Blink's BodyConsumerBase with its subclasses for arrayBuffer(), json() and
-// text(): what a read of the whole body settles once its loader has all of
-// it.
+// A header's value as Blink's String has it: each byte a character.
+std::u16string Latin1ToUtf16(std::string_view bytes) {
+  std::u16string text;
+  text.reserve(bytes.size());
+  for (const char c : bytes) {
+    text.push_back(static_cast<unsigned char>(c));
+  }
+  return text;
+}
+
+// Blink's BodyConsumerBase with its subclasses for arrayBuffer(), blob(),
+// bytes(), formData(), json() and text(): what a read of the whole body
+// settles once its loader has all of it.
 class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
                            public FetchDataLoader::Client {
  public:
@@ -47,6 +63,7 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
     kArrayBuffer,
     kBlob,
     kBytes,
+    kFormData,
     kJson,
     kText,
   };
@@ -91,6 +108,7 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
             },
             std::move(bytes), mime_type_));
         return;
+      case Kind::kFormData:
       case Kind::kJson:
       case Kind::kText:
         break;
@@ -98,8 +116,32 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
     NOTREACHED();
   }
 
+  void DidFetchDataLoadedFormData(FormData* form_data) override {
+    CHECK_EQ(kind_, Kind::kFormData);
+    ResolveLater(base::BindOnce(
+        [](cppgc::Persistent<FormData> form_data,
+           v8::Isolate* isolate) -> v8::Local<v8::Value> {
+          return bindings::ToV8(isolate, form_data.Get());
+        },
+        cppgc::Persistent<FormData>(form_data)));
+  }
+
   void DidFetchDataLoadedString(std::u16string string) override {
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    if (kind_ == Kind::kFormData) {
+      // An application/x-www-form-urlencoded body, as the URL Standard
+      // parses it.
+      // The URLSearchParams stays alive while its entries are copied, as
+      // Blink's BodyFormDataConsumer holds it: Append() may collect garbage.
+      FormData* const form_data = FormData::Create();
+      const cppgc::Persistent<URLSearchParams> params =
+          URLSearchParams::Create(string, /*url_object=*/nullptr);
+      for (const auto& [name, value] : params->params()) {
+        form_data->Append(name, value);
+      }
+      DidFetchDataLoadedFormData(form_data);
+      return;
+    }
     if (kind_ == Kind::kText) {
       ResolveLater(base::BindOnce(
           [](std::u16string string, v8::Isolate* isolate) {
@@ -109,27 +151,33 @@ class BodyConsumer final : public cppgc::GarbageCollected<BodyConsumer>,
       return;
     }
     CHECK_EQ(kind_, Kind::kJson);
-    const v8::TryCatch try_catch(isolate);
-    v8::Local<v8::Value> parsed;
-    if (!v8::JSON::Parse(isolate->GetCurrentContext(),
-                         bindings::ToV8String(isolate, string))
-             .ToLocal(&parsed)) {
-      if (try_catch.HasCaught()) {
-        resolver_->Reject(isolate, try_catch.Exception());
+    // The loader of a stream's body ends in the stream's realm.
+    RunInContext(context_.Get(), [&] {
+      const v8::TryCatch try_catch(isolate);
+      v8::Local<v8::Value> parsed;
+      if (!v8::JSON::Parse(isolate->GetCurrentContext(),
+                           bindings::ToV8String(isolate, string))
+               .ToLocal(&parsed)) {
+        if (try_catch.HasCaught()) {
+          resolver_->Reject(isolate, try_catch.Exception());
+        }
+        return;
       }
-      return;
-    }
-    ResolveLater(
-        base::BindOnce([](v8::Global<v8::Value> parsed,
-                          v8::Isolate* isolate) { return parsed.Get(isolate); },
-                       v8::Global<v8::Value>(isolate, parsed)));
+      ResolveLater(base::BindOnce(
+          [](v8::Global<v8::Value> parsed, v8::Isolate* isolate) {
+            return parsed.Get(isolate);
+          },
+          v8::Global<v8::Value>(isolate, parsed)));
+    });
   }
 
   void DidFetchDataLoadFailed() override {
-    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-    resolver_->Reject(isolate,
-                      v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                          isolate, "Failed to fetch")));
+    RunInContext(context_.Get(), [&] {
+      v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+      resolver_->Reject(isolate,
+                        v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                            isolate, "Failed to fetch")));
+    });
   }
 
   void Abort(v8::Local<v8::Value> reason) override {
@@ -194,6 +242,25 @@ v8::Local<v8::Promise> BodyMixin::Bytes(
   return LoadAndConvertBody(ReadAs::kBytes, exception_state);
 }
 
+v8::Local<v8::Promise> BodyMixin::FormData(
+    bindings::ExceptionState& exception_state) {
+  const ParsedContentType parsed_type(Latin1ToUtf16(ContentType()));
+  const std::u16string type = base::ToLowerASCII(parsed_type.MimeType());
+  if (type == u"multipart/form-data") {
+    const std::optional<std::u16string> boundary =
+        parsed_type.ParameterValueForName(u"boundary");
+    if (boundary && !boundary->empty()) {
+      return LoadAndConvertBody(ReadAs::kFormData, exception_state,
+                                base::UTF16ToUTF8(*boundary));
+    }
+    return LoadAndConvertBody(ReadAs::kNothing, exception_state);
+  }
+  if (type == u"application/x-www-form-urlencoded") {
+    return LoadAndConvertBody(ReadAs::kUrlEncodedFormData, exception_state);
+  }
+  return LoadAndConvertBody(ReadAs::kFailure, exception_state);
+}
+
 v8::Local<v8::Promise> BodyMixin::Json(
     bindings::ExceptionState& exception_state) {
   return LoadAndConvertBody(ReadAs::kJson, exception_state);
@@ -204,21 +271,34 @@ v8::Local<v8::Promise> BodyMixin::Text(
   return LoadAndConvertBody(ReadAs::kText, exception_state);
 }
 
+std::string BodyMixin::MimeType() const {
+  return base::ToLowerASCII(ContentType());
+}
+
 v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
     ReadAs read_as,
-    bindings::ExceptionState& exception_state) {
+    bindings::ExceptionState& exception_state,
+    std::string boundary) {
   RejectInvalidConsumption(exception_state);
   if (exception_state.HadException()) {
     return v8::Local<v8::Promise>();
   }
+  // The promise and what the body becomes are of the receiver's realm, whose
+  // ScriptState Blink's resolver has; the error of a null body is of the
+  // current one.
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::Local<v8::Context> current = isolate->GetCurrentContext();
+  const v8::Local<v8::Context> realm =
+      bindings::ReceiverRealmScope::CreationContext(isolate);
+  const v8::Context::Scope realm_scope(realm);
   auto* const resolver =
       bindings::MakeGarbageCollected<bindings::ScriptPromiseResolver>(isolate);
   const v8::Local<v8::Promise> promise = resolver->Promise(isolate);
-  if (BodyStreamBuffer* const body_buffer = BodyBuffer()) {
-    const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-    ExecutionContext* const execution_context =
-        ExecutionContext::From(isolate, context);
+  ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, realm);
+  const bool has_context = execution_context && execution_context->HasContext();
+  if (BodyStreamBuffer* const body_buffer =
+          read_as == ReadAs::kNothing ? nullptr : BodyBuffer()) {
     BodyConsumer::Kind kind = BodyConsumer::Kind::kText;
     FetchDataLoader* loader = nullptr;
     switch (read_as) {
@@ -234,6 +314,21 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
         kind = BodyConsumer::Kind::kBytes;
         loader = FetchDataLoader::CreateLoaderAsArrayBuffer();
         break;
+      case ReadAs::kFormData:
+        kind = BodyConsumer::Kind::kFormData;
+        loader = FetchDataLoader::CreateLoaderAsFormData(std::move(boundary));
+        break;
+      case ReadAs::kUrlEncodedFormData:
+        // The URL Standard's parser, which takes a byte order mark as it is.
+        kind = BodyConsumer::Kind::kFormData;
+        loader = FetchDataLoader::CreateLoaderAsStringKeepingByteOrderMark();
+        break;
+      case ReadAs::kFailure:
+        kind = BodyConsumer::Kind::kFormData;
+        loader = FetchDataLoader::CreateLoaderAsFailure();
+        break;
+      case ReadAs::kNothing:
+        NOTREACHED();
       case ReadAs::kJson:
         kind = BodyConsumer::Kind::kJson;
         loader = FetchDataLoader::CreateLoaderAsString();
@@ -254,7 +349,10 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
     }
     return promise;
   }
-  // A null body.
+  // A null body, whose promise a frame that has gone leaves as it is.
+  if (!has_context) {
+    return promise;
+  }
   switch (read_as) {
     case ReadAs::kArrayBuffer:
       resolver->Resolve(isolate, v8::ArrayBuffer::New(isolate, 0));
@@ -269,11 +367,26 @@ v8::Local<v8::Promise> BodyMixin::LoadAndConvertBody(
       resolver->Resolve(isolate,
                         NewUint8Array(isolate, base::span<const uint8_t>()));
       break;
-    case ReadAs::kJson:
+    case ReadAs::kFormData:
+    case ReadAs::kFailure:
+    case ReadAs::kNothing: {
+      const v8::Context::Scope error_scope(current);
+      resolver->Reject(isolate,
+                       v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                           isolate, "Invalid MIME type")));
+      break;
+    }
+    case ReadAs::kUrlEncodedFormData:
+      resolver->Resolve(isolate,
+                        bindings::ToV8(isolate, mitto::FormData::Create()));
+      break;
+    case ReadAs::kJson: {
+      const v8::Context::Scope error_scope(current);
       resolver->Reject(
           isolate, v8::Exception::SyntaxError(v8::String::NewFromUtf8Literal(
                        isolate, "Unexpected end of input")));
       break;
+    }
     case ReadAs::kText:
       resolver->Resolve(isolate, v8::String::Empty(isolate));
       break;

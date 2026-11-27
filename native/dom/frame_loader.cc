@@ -443,6 +443,8 @@ void StartNavigation(Window& window,
       origin_window.GetDocument().IsInSandboxedProcess();
   navigation.initiator_has_header_csp =
       origin_window.GetDocument().HasHeaderDeliveredContentSecurityPolicy();
+  navigation.initiator_embedder_policy_isolates =
+      origin_window.GetDocument().EmbedderPolicyIsolates();
   client->BeginNavigation(navigation);
 }
 

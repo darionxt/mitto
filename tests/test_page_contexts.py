@@ -31,7 +31,6 @@ pytestmark = [
 _TIMEOUT_SECONDS = 60
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 36
 
 _FAKE_PAGE = textwrap.dedent(
     """\
@@ -59,13 +58,19 @@ _FAKE_PAGE = textwrap.dedent(
         pending = pending[8 + size :]
         return message_type, payload
 
+    def hello():
+        # The library's hello comes first: speak its version back, as a Page of the same tree does.
+        message_type, payload = receive()
+        assert message_type == 1, message_type
+        send(1, payload)
+
     def sized(data):
         return struct.pack("<I", len(data)) + data
 
     def request(document, number, kind, url, target=0):
         return (
             struct.pack("<QQBB", document, number, kind, 0)
-            + struct.pack("<BBBBBQ", 0, 0, 0, 0, 0, target)
+            + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, target)
             + sized(url.encode()) + sized(b"GET") + sized(b"") + sized(b"") + b"\\x00"
         )
 
@@ -75,7 +80,7 @@ _FAKE_PAGE = textwrap.dedent(
             if message_type == 15 and struct.unpack_from("<Q", payload)[0] == number:
                 return
 
-    send(1, struct.pack("<I", {version}))
+    hello()
     send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
@@ -127,13 +132,47 @@ _FAKE_PAGE = textwrap.dedent(
 )
 
 # The helpers of the fake Page above, before its first message.
-_FAKE_PAGE_HELPERS = _FAKE_PAGE[: _FAKE_PAGE.index('send(1, struct.pack("<I", {version}))')]
+_FAKE_PAGE_HELPERS = _FAKE_PAGE[: _FAKE_PAGE.index("\nhello()\n") + 1]
+
+# A worker that posts as it ends: its request and its end go in one write, so the library reads both at once, as it
+# can on a busy machine.
+_FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    hello()
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    while True:
+        message_type, payload = receive()
+        if message_type == 4:
+            call = struct.unpack_from("<Q", payload)[0]
+            break
+    send(8, request(2, 1, 9, "{worker}"))
+    wait_for_end(1)
+    send(100, struct.pack("<QQBBQ", 3, 2, 1, 0, 1))
+    post = (
+        struct.pack("<QQBB", 3, 2, 2, 0)
+        + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, 0)
+        + sized("{beacon}".encode())
+        + sized(b"POST")
+        + sized(b"Content-Type: text/plain;charset=UTF-8\\n")
+        + sized(b"")
+        + b"\\x01kept"
+    )
+    gone = struct.pack("<Q", 3)
+    channel.sendall(struct.pack("<II", len(post), 8) + post + struct.pack("<II", len(gone), 101) + gone)
+    send(5, struct.pack("<QB", call, 0) + b"0")
+    while channel.recv(65536):
+        pass
+    """
+)
 
 # A frame's about:blank, of the top-level document's HTTP origin, that says a navigation within it gave it an HTTP URL of
 # that origin, which no about:blank may take.
 _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
-    send(1, struct.pack("<I", {version}))
+    hello()
     send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
@@ -144,11 +183,32 @@ _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """
 )
 
+# A frame with an embedder policy, under a top-level document with none, and a frame under it whose document, of `source`,
+# the top-level document starts, with no policy to take.
+_FAKE_PAGE_OF_A_BLOCKED_DOCUMENT = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    hello()
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    send(70, struct.pack("<QBBQ", 3, 0, 0, 2))
+    send(8, request(2, 1, 11, "{frame}", target=3))
+    wait_for_end(1)
+    send(70, struct.pack("<QBBQQ", 4, 1, 0, 2, 1))
+    send(70, struct.pack("<QBBQ", 5, 0, 0, 4))
+    send(72, struct.pack("<QQB", 5, {initiator}, {kind}))
+    send(70, struct.pack("<QBBQQQ", 6, {source}, 0, 4, {initiator}, 5) + b"{url}")
+    while channel.recv(65536):
+        pass
+    """
+)
+
 # A frame in a sandbox without allow-same-origin, whose document of the top-level document's URL's origin fetches, asks for
 # its cookies, and then for storage, which it has none of.
 _FAKE_PAGE_OF_A_SANDBOX = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
-    send(1, struct.pack("<I", {version}))
+    hello()
     send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
@@ -196,6 +256,20 @@ _SESSION_OF_AN_ENDED_PAGE = textwrap.dedent(
     """
 )
 
+# Opens a Page at the URL in argv[1], asks it for something, and then, while the Page is open, waits at the URL in argv[2]
+# for the server's word.
+_SESSION_THAT_WAITS = textwrap.dedent(
+    """\
+    import sys
+
+    import mitto
+
+    with mitto.Session() as session, session._open_page(sys.argv[1], timeout=60) as page:
+        page.evaluate("1", timeout=60)
+        print(session.get(sys.argv[2]).text)
+    """
+)
+
 # Opens a Page at the URL in argv[1] in a Session that has the frame site's cookie, and asks it for something.
 _SESSION = textwrap.dedent(
     """\
@@ -217,6 +291,9 @@ class _Server:
     def __init__(self, host: str) -> None:
         self.host = host
         self.requests: list[tuple[str, list[tuple[str, str]]]] = []
+        # The path and body of each POST, and whether one has come.
+        self.posted: list[tuple[str, bytes]] = []
+        self.post_came = threading.Event()
         self.lock = threading.Lock()
         server = self
 
@@ -227,13 +304,26 @@ class _Server:
                 with server.lock:
                     server.requests.append((self.path, list(self.headers.items())))
                 body = b"<p>page</p>"
+                if self.path == "/wait-post":
+                    body = b"posted" if server.post_came.wait(_TIMEOUT_SECONDS) else b"nothing"
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html" if self.path.endswith("page") else "text/javascript")
                 if self.path == "/set":
                     self.send_header("Set-Cookie", "f=1")
+                if self.path == "/coep-page":
+                    self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+
+            def do_POST(self) -> None:
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                with server.lock:
+                    server.posted.append((self.path, body))
+                server.post_came.set()
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def log_message(self, format: str, *args: Any) -> None:
                 pass
@@ -278,7 +368,6 @@ def _run_page(tmp_path: Path, top: _Server, frame_site: _Server) -> str:
     """Run the fake Page in a Session of its own, and return what its call gave, as Python prints it."""
     program = _FAKE_PAGE.format(
         python=sys.executable,
-        version=_PROTOCOL_VERSION,
         frame=frame_site.url("/frame-page"),
         frame_fetch=frame_site.url("/frame-fetch"),
         worker=top.url("/worker.js"),
@@ -334,6 +423,19 @@ def test_a_frames_requests_have_its_place_in_the_frame_tree(tmp_path: Path, top:
     assert _value(frame_site.headers_of("/frame-fetch")[-1], "Cookie") == "f=1"
 
 
+def test_a_request_that_a_worker_sends_as_it_ends_goes_out(tmp_path: Path, top: _Server) -> None:
+    # Chrome ends a worker's loaders with it, but that end reaches its network service only after the worker's thread has
+    # gone, when a request that has started is on the wire: Chrome 157 sent a POST that a worker made as it closed each
+    # time. The worker's end, read with the request, ends it only once //net has sent it.
+    program = _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS.format(
+        python=sys.executable, worker=top.url("/worker.js"), beacon=top.url("/beacon")
+    )
+    printed = _run_fake_page(tmp_path, program, _SESSION_THAT_WAITS, top.url("/page"), top.url("/wait-post"))
+
+    assert printed == "posted"
+    assert top.posted == [("/beacon", b"kept")]
+
+
 def test_a_workers_requests_send_no_client_hints_and_its_script_as_referrer(
     tmp_path: Path, top: _Server, frame_site: _Server
 ) -> None:
@@ -364,19 +466,39 @@ def test_each_documents_cookie_store_listens_on_its_own_and_a_blob_worker_speaks
 def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: Path, top: _Server) -> None:
     # Its origin is the top-level document's, but its URL may only change to another about:blank one, as the
     # renderer's own check has it.
-    program = _FAKE_PAGE_OF_A_LOCAL_URL.format(
-        python=sys.executable, version=_PROTOCOL_VERSION, other=top.url("/other-page")
-    )
+    program = _FAKE_PAGE_OF_A_LOCAL_URL.format(python=sys.executable, other=top.url("/other-page"))
 
     printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
 
     assert printed == "the library refused a message from the Page: a same-document navigation to another origin"
 
 
+@pytest.mark.parametrize(
+    ("kind", "source", "url"),
+    [pytest.param(0, 2, "", id="about-blank"), pytest.param(1, 5, "data:,a", id="data-url")],
+)
+def test_a_frames_local_document_with_no_embedder_policy_is_refused_under_a_parent_that_has_one(
+    tmp_path: Path, top: _Server, kind: int, source: int, url: str
+) -> None:
+    # The Page commits Chrome's error page in place of a document that NavigationRequest::CheckResponseAdherenceToCoep()
+    # blocks, so a Page that commits it all the same is refused.
+    program = _FAKE_PAGE_OF_A_BLOCKED_DOCUMENT.format(
+        python=sys.executable,
+        frame=top.url("/coep-page"),
+        initiator=2,
+        kind=kind,
+        source=source,
+        url=url,
+    )
+
+    printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
+
+    assert printed == "the library refused a message from the Page: a document that its parent's embedder policy blocks"
+
+
 def test_a_sandboxed_documents_requests_and_cookies_are_an_opaque_origins(tmp_path: Path, top: _Server) -> None:
     program = _FAKE_PAGE_OF_A_SANDBOX.format(
         python=sys.executable,
-        version=_PROTOCOL_VERSION,
         frame=top.url("/frame-page"),
         fetch=top.url("/frame-fetch"),
         bind=False,
@@ -396,7 +518,6 @@ def test_a_sandboxed_documents_requests_and_cookies_are_an_opaque_origins(tmp_pa
 def test_a_sandboxed_document_binds_no_storage(tmp_path: Path, top: _Server) -> None:
     program = _FAKE_PAGE_OF_A_SANDBOX.format(
         python=sys.executable,
-        version=_PROTOCOL_VERSION,
         frame=top.url("/frame-page"),
         fetch=top.url("/frame-fetch"),
         bind=True,

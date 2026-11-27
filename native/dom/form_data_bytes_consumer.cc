@@ -4,6 +4,7 @@
 
 #include "base/check.h"
 #include "base/check_op.h"
+#include "mitto/dom/blob_data.h"
 
 namespace mitto {
 
@@ -44,6 +45,17 @@ std::optional<std::string> FormDataBytesConsumer::DrainAsBytes() {
   std::string bytes;
   bytes.swap(bytes_);
   return bytes;
+}
+
+scoped_refptr<BlobDataHandle> FormDataBytesConsumer::DrainAsBlobDataHandle() {
+  if (flattened_ || state_ != PublicState::kReadableOrWaiting) {
+    return nullptr;
+  }
+  state_ = PublicState::kClosed;
+  flattened_ = true;
+  std::string bytes;
+  bytes.swap(bytes_);
+  return BlobDataHandle::Create(std::move(bytes), std::string());
 }
 
 void FormDataBytesConsumer::SetClient(BytesConsumer::Client* client) {

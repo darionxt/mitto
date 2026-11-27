@@ -415,7 +415,11 @@ PreflightRequest& PreflightRequest::operator=(const PreflightRequest&) =
 PreflightRequest::~PreflightRequest() = default;
 
 bool CanSkipPreflight(PreflightCache& cache, const PreflightRequest& request) {
-  return !request.tainted &&
+  // RetrieveCacheFlags().
+  return !(request.load_flags &
+           (net::LOAD_VALIDATE_CACHE | net::LOAD_BYPASS_CACHE |
+            net::LOAD_DISABLE_CACHE)) &&
+         !request.tainted &&
          cache.CheckIfRequestCanSkipPreflight(
              request.initiator, request.url,
              request.isolation_info.network_isolation_key(),

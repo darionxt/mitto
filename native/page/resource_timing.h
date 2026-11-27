@@ -37,6 +37,9 @@ std::string FilteredContentEncoding(std::string_view headers);
 // base::TimeTicks of a time that a message carries, null for 0.
 base::TimeTicks TicksOf(int64_t microseconds);
 
+// Whether `response` is a redirect that //net would follow.
+bool IsRedirect(const PageResponseStarted& response);
+
 // CreateResourceTimingInfo() for the request that started at `start_time` at
 // `initial_url`, with `response`, or none for one that failed before it had
 // one, which ended at `response_end`.

@@ -75,6 +75,23 @@ enum class FetchPriority {
   kVeryHigh,
 };
 
+// The Fetch Standard's cache mode.
+enum class FetchCacheMode {
+  kDefault,
+  kNoStore,
+  kReload,
+  kNoCache,
+  kForceCache,
+  kOnlyIfCached,
+};
+
+// The Fetch Standard's redirect mode.
+enum class FetchRedirectMode {
+  kFollow,
+  kError,
+  kManual,
+};
+
 // A fetch priority hint, as fetch()'s priority or an element's fetchpriority
 // gives it.
 enum class FetchPriorityHint {
@@ -112,7 +129,7 @@ bool IsContentTypeOptionsNosniff(std::string_view headers);
 
 // The referrer policy that a Referrer-Policy header names: the last of its
 // comma-separated tokens that names one, without white space around it, and
-// kDefault where none does.
+// kDefault where none does, or where one is not letters and hyphens.
 // Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
 FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value);
 
@@ -172,6 +189,9 @@ struct FetchRequestData {
   std::optional<FetchPriority> priority;
   // Whether it outlives its document.
   bool keepalive = false;
+  // A fetch()'s cache and redirect modes.
+  FetchCacheMode cache_mode = FetchCacheMode::kDefault;
+  FetchRedirectMode redirect_mode = FetchRedirectMode::kFollow;
   FetchDestination destination = FetchDestination::kEmpty;
   // Whether it fetches a module script, or what one imports, which the
   // Session sends as a module.
@@ -206,6 +226,8 @@ struct FetchResponseHead {
   bool opaque = false;
   // Each "name: value" and a line feed, without Set-Cookie.
   std::string headers;
+  // An opaque response's padding, which the Cache API counts beside its size.
+  int64_t padding = 0;
 };
 
 // What a request can be told while it runs.
@@ -214,8 +236,9 @@ class FetchController {
   // The client has taken `bytes` more of the body, which lets the Session
   // send as many more.
   virtual void TookBody(size_t bytes) = 0;
-  // Ends the request, and destroys its client before it returns, so the
-  // client must touch nothing of itself after calling it.
+  // Ends the request, and destroys its client before it returns, or, under a
+  // call to the client, once that call has returned. So the client must touch
+  // nothing of itself after calling it, and hears nothing more.
   virtual void Cancel() = 0;
 
   // For a body that streams: how many more bytes of it the Session takes now,

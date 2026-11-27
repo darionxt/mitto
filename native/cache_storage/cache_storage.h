@@ -25,6 +25,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/timer/timer.h"
 #include "mitto/cache_storage/cache_storage_cache.h"
 #include "mitto/cache_storage/cache_storage_scheduler.h"
 #include "mitto/cache_storage/cache_storage_types.h"
@@ -124,6 +125,8 @@ class CacheStorage final : public CacheStorageCache::Observer {
   std::map<std::u16string, std::unique_ptr<CacheStorageCache>> caches_;
   // Deleted, but still used through a handle.
   std::map<CacheStorageCache*, std::unique_ptr<CacheStorageCache>> doomed_;
+  // Runs while the index waits to be written with a cache's new padding.
+  base::OneShotTimer write_index_timer_;
   base::WeakPtrFactory<CacheStorage> weak_factory_{this};
 };
 

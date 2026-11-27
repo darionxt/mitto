@@ -13,6 +13,7 @@
 
 #include "base/base64.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_window.h"
@@ -21,16 +22,20 @@
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/local_scheme_fetch.h"
+#include "mitto/dom/pending_script.h"
 #include "mitto/dom/preloaded_fetch.h"
 #include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/resource.h"
 #include "mitto/dom/resource_fetcher.h"
+#include "mitto/dom/script_forbidden_scope.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "mitto/dom/worker_global_scope.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -99,6 +104,33 @@ void ExecutionContext::BindToContext(v8::Isolate* isolate,
   context->SetEmbedderDataV2(
       kBoundExecutionContextIndex,
       v8::External::New(isolate, this, v8::kExternalPointerTypeTagDefault));
+}
+
+ExecutionContext::HeldTask::HeldTask() = default;
+ExecutionContext::HeldTask::HeldTask(HeldTask&&) = default;
+ExecutionContext::HeldTask& ExecutionContext::HeldTask::operator=(HeldTask&&) =
+    default;
+ExecutionContext::HeldTask::~HeldTask() = default;
+
+void ExecutionContext::HoldTask(TaskType type,
+                                base::OnceClosure task,
+                                bool delayed) {
+  HeldTask held;
+  held.type = type;
+  held.task = std::move(task);
+  held.delayed = delayed;
+  held_tasks_.push_back(std::move(held));
+}
+
+void ExecutionContext::HoldTaskOf(
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
+    base::OnceClosure task,
+    bool delayed) {
+  HeldTask held;
+  held.runner = std::move(runner);
+  held.task = std::move(task);
+  held.delayed = delayed;
+  held_tasks_.push_back(std::move(held));
 }
 
 ExecutionContext::ExecutionContext() = default;
@@ -189,7 +221,9 @@ void ExecutionContext::SetTimers(DOMTimerCoordinator* timers) {
     return;
   }
   // The context goes, and with it the signals' timers and what else goes
-  // with it.
+  // with it, which run no script, as what Blink's NotifyContextDestroyed()
+  // tells runs none.
+  const ScriptForbiddenScope forbid_script;
   std::map<uint64_t, base::OnceClosure> signal_timers;
   signal_timers.swap(signal_timers_);
   for (auto& [id, cancel] : signal_timers) {
@@ -303,9 +337,29 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     std::ignore = resolver->Reject(context, signal->Reason());
     return resolver->GetPromise();
   }
+  const GURL& url = request->url();
+  // A request that the document refuses as it freezes fails from a task, which
+  // waits for the document to come back.
+  if (IsWindow() && !request->keepalive() &&
+      static_cast<Window*>(this)->GetDocument().RefusesRequestWhileFreezing(
+          url)) {
+    PostTaskInContext(
+        this, TaskType::kNetworking,
+        base::BindOnce(
+            [](v8::Isolate* isolate,
+               v8::Global<v8::Promise::Resolver> resolver) {
+              const v8::HandleScope handle_scope(isolate);
+              std::ignore = resolver.Get(isolate)->Reject(
+                  isolate->GetCurrentContext(),
+                  v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                      isolate, "Failed to fetch")));
+            },
+            base::Unretained(isolate),
+            v8::Global<v8::Promise::Resolver>(isolate, resolver)));
+    return resolver->GetPromise();
+  }
   // A data: or a blob: URL, which Chrome answers without its network service,
   // as Blink's FetchManager::Loader::PerformSchemeFetch() fetches it.
-  const GURL& url = request->url();
   if (url.SchemeIs(url::kDataScheme) || url.SchemeIs(url::kBlobScheme)) {
     const bool readable = url.SchemeIs(url::kDataScheme) ||
                           request->blob_url_origin()
@@ -315,7 +369,12 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     // error at once in mode same-origin, and in mode cors, whose scheme does
     // not support the Fetch API, so an abort after fetch() returns changes
     // nothing.
-    if (!readable && request->mode() != FetchMode::kNoCors) {
+    const bool not_followed =
+        request->redirect_mode() != FetchRedirectMode::kFollow;
+    if (!readable && request->mode() == FetchMode::kNoCors && not_followed) {
+      AddRedirectModeError(request->url());
+    }
+    if (!readable && (request->mode() != FetchMode::kNoCors || not_followed)) {
       std::ignore = resolver->Reject(
           context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
                        isolate, "Failed to fetch")));
@@ -336,6 +395,8 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     auto loader = std::make_unique<FetchLoader>(isolate, context, resolver,
                                                 /*credentials=*/false, signal,
                                                 upload_body, stream);
+    loader->SetModes(request->redirect_mode(), request->integrity(),
+                     request->url());
     if (Resource* const preload = MatchFetchPreload(*request)) {
       PreloadedFetch::Start(*preload, std::move(loader), *this);
       return resolver->GetPromise();
@@ -369,6 +430,17 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
                      isolate, "Failed to fetch")));
     return resolver->GetPromise();
   }
+  // The Fetch Standard's main fetch: a cross-origin request of mode no-cors
+  // that would not follow a redirect is a network error before anything
+  // goes, as Blink's FetchLoaderBase::Start() makes it.
+  if (cross_origin && request->mode() == FetchMode::kNoCors &&
+      request->redirect_mode() != FetchRedirectMode::kFollow) {
+    AddRedirectModeError(request->url());
+    std::ignore = resolver->Reject(
+        context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                     isolate, "Failed to fetch")));
+    return resolver->GetPromise();
+  }
   FetchRequestData data;
   // A body of bytes that a script gave whole goes as they are. A stream's
   // goes as the Session reads it, through a reader of its own that locks it
@@ -386,6 +458,15 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
       data.streams_body = true;
     }
   }
+  // One of only the cache whose stream body made its mode cors fails, with
+  // the stream locked, and the Session takes it from no page.
+  if (request->cache_mode() == FetchCacheMode::kOnlyIfCached &&
+      request->mode() != FetchMode::kSameOrigin) {
+    std::ignore = resolver->Reject(
+        context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                     isolate, "Failed to fetch")));
+    return resolver->GetPromise();
+  }
   data.method = request->Method();
   data.url = request->url().spec();
   data.headers = request->GetHeaders()->ToLines();
@@ -396,27 +477,42 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
   if (request->credentials() != FetchCredentialsMode::kSameOrigin) {
     data.credentials = request->credentials();
   }
+  // A referrer that is no HTTP or HTTPS URL, such as a blob: URL, sends none,
+  // as SecurityPolicy::GenerateReferrer() has it.
   data.referrer = request->referrer();
-  // A request whose policy is the empty string goes with the document's. A
-  // worker's would go with the policy of its script's response, which it does
-  // not have: a Known Gap.
+  if (data.referrer != kClientReferrer &&
+      !GURL(data.referrer).SchemeIsHTTPOrHTTPS()) {
+    data.referrer = kNoReferrer;
+  }
   data.referrer_policy =
-      request->referrer_policy() == FetchReferrerPolicy::kDefault && IsWindow()
-          ? static_cast<Window*>(this)->GetDocument().GetReferrerPolicy()
+      request->referrer_policy() == FetchReferrerPolicy::kDefault
+          ? GetReferrerPolicy()
           : request->referrer_policy();
   data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
                                        /*render_blocking=*/false);
   data.keepalive = request->keepalive();
+  data.cache_mode = request->cache_mode();
+  data.redirect_mode = request->redirect_mode();
   auto loader = std::make_unique<FetchLoader>(
       isolate, context, resolver,
       /*credentials=*/request->credentials() == FetchCredentialsMode::kInclude,
       signal, upload_body, upload_body ? body->Stream() : nullptr);
+  loader->SetModes(request->redirect_mode(), request->integrity(),
+                   request->url());
   if (Resource* const preload = MatchFetchPreload(*request)) {
     PreloadedFetch::Start(*preload, std::move(loader), *this);
     return resolver->GetPromise();
   }
   fetcher->Fetch(std::move(data), std::move(loader));
   return resolver->GetPromise();
+}
+
+void ExecutionContext::AddRedirectModeError(const GURL& url) {
+  AddConsoleMessage(
+      ConsoleLevel::kError,
+      base::StrCat({"Fetch API cannot load ", ElidedUrl(url),
+                    ". Request mode is \"no-cors\" but the redirect mode "
+                    "is not \"follow\"."}));
 }
 
 Resource* ExecutionContext::MatchFetchPreload(const Request& request) {
@@ -426,10 +522,14 @@ Resource* ExecutionContext::MatchFetchPreload(const Request& request) {
   // mode and credentials mode: no keepalive, and no header of a conditional
   // request. A data: or a blob: URL's too, which Blink fetches through the
   // same, so a preload of a blob: URL serves a fetch after the URL is
-  // revoked.
+  // revoked. Only for the default cache and redirect modes and no integrity,
+  // where Blink's MatchPreload() and DetermineRevalidationPolicy() also reuse
+  // it.
   const Headers& headers = *request.GetHeaders();
   if (!IsWindow() || !GetTasks() || request.Method() != "GET" ||
-      request.keepalive() ||
+      request.keepalive() || request.cache_mode() != FetchCacheMode::kDefault ||
+      request.redirect_mode() != FetchRedirectMode::kFollow ||
+      !request.integrity().empty() ||
       std::ranges::any_of(std::to_array<std::string_view>(
                               {"if-match", "if-modified-since", "if-none-match",
                                "if-range", "if-unmodified-since"}),

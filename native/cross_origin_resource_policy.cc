@@ -63,9 +63,10 @@ std::optional<BlockedByResourcePolicy> IsBlockedByResourcePolicy(
     const GURL& request_url,
     const std::optional<url::Origin>& request_initiator,
     const std::optional<std::string>& corp_header_value,
+    ResourcePolicyMode mode,
     bool request_include_credentials,
     const CrossOriginEmbedderPolicy& embedder_policy) {
-  // IsBlockedInternal(), for mode no-cors and no Document-Isolation-Policy.
+  // IsBlockedInternal(), with no Document-Isolation-Policy.
   if (!request_initiator) {
     return std::nullopt;
   }
@@ -75,7 +76,8 @@ std::optional<BlockedByResourcePolicy> IsBlockedByResourcePolicy(
     case CrossOriginEmbedderPolicyValue::kNone:
       break;
     case CrossOriginEmbedderPolicyValue::kCredentialless:
-      require_corp_due_to_coep = request_include_credentials;
+      require_corp_due_to_coep =
+          mode == ResourcePolicyMode::kNavigate || request_include_credentials;
       break;
     case CrossOriginEmbedderPolicyValue::kRequireCorp:
       require_corp_due_to_coep = true;

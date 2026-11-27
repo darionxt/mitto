@@ -15,12 +15,15 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "mitto/dom/body_loader_bytes_consumer.h"
 #include "mitto/dom/fetcher.h"
+#include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-promise.h"
@@ -52,6 +55,12 @@ class FetchLoader final : public FetchClient, public BodyLoader {
   ~FetchLoader() override;
 
   // FetchClient:
+  // A fetch()'s redirect mode and integrity metadata, and its URL, which a
+  // failed integrity check names.
+  void SetModes(FetchRedirectMode redirect_mode,
+                std::u16string integrity,
+                GURL url);
+
   void OnStarted(FetchController& controller) override;
   void OnResponseStarted(const FetchResponseHead& head) override;
   void OnResponseBody(std::string bytes) override;
@@ -82,6 +91,10 @@ class FetchLoader final : public FetchClient, public BodyLoader {
   cppgc::Persistent<BytesConsumer> upload_body_;
   cppgc::Persistent<BytesUploader> uploader_;
   cppgc::Persistent<ReadableStream> upload_stream_;
+  FetchRedirectMode redirect_mode_ = FetchRedirectMode::kFollow;
+  std::u16string integrity_;
+  GURL url_;
+
   base::WeakPtrFactory<FetchLoader> weak_factory_{this};
 };
 

@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/circular_deque.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
@@ -61,7 +62,7 @@ class PageChannelPosix final : public PageChannel,
     if (!writable_) {
       return;
     }
-    unwritten_.append(frame);
+    unwritten_.push_back(std::move(frame));
     Flush();
   }
 
@@ -122,9 +123,10 @@ class PageChannelPosix final : public PageChannel,
 
   void Flush() {
     while (!unwritten_.empty()) {
-      const ssize_t written =
-          HANDLE_EINTR(send(socket_.get(), unwritten_.data(),
-                            unwritten_.size(), kSendFlags));
+      const std::string_view rest =
+          std::string_view(unwritten_.front()).substr(written_of_front_);
+      const ssize_t written = HANDLE_EINTR(
+          send(socket_.get(), rest.data(), rest.size(), kSendFlags));
       if (written < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
           if (!watching_write_) {
@@ -142,7 +144,11 @@ class PageChannelPosix final : public PageChannel,
         RunWrittenIfDone();
         return;
       }
-      unwritten_.erase(0, static_cast<size_t>(written));
+      written_of_front_ += static_cast<size_t>(written);
+      if (written_of_front_ == unwritten_.front().size()) {
+        unwritten_.pop_front();
+        written_of_front_ = 0;
+      }
     }
     StopWatchingWrite();
     RunWrittenIfDone();
@@ -182,7 +188,10 @@ class PageChannelPosix final : public PageChannel,
   bool watching_write_ = false;
   std::vector<uint8_t> read_buffer_ = std::vector<uint8_t>(kReadSize);
   FrameReader reader_;
-  std::string unwritten_;
+  // The frames that the system has yet to take, and how much of the first it
+  // has.
+  base::circular_deque<std::string> unwritten_;
+  size_t written_of_front_ = 0;
   base::OnceClosure written_;
   base::WeakPtrFactory<PageChannelPosix> weak_factory_{this};
 };

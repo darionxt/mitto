@@ -37,7 +37,9 @@
 # class's MaplikeEntries() or SetlikeValues(). A value async iterable has its
 # behaviour unless the entry names it as missing or names only other members:
 # the bindings write values(), whose iterator takes its source from the
-# class's CreateAsyncIterationSource().
+# class's CreateAsyncIterationSource(). So has a pair iterable, whose
+# entries(), keys(), values() and forEach() take theirs from the class's
+# CreateIterationSource() (pair_iterable.h).
 mitto_bindings_interfaces = [
   {
     name = "AbortController"
@@ -577,6 +579,11 @@ mitto_bindings_interfaces = [
     file = "font_face_set"
     made_by_known_gaps = true
     implemented = [ "status" ]
+  },
+  {
+    name = "FormData"
+    file = "form_data"
+    made_by_known_gaps = true
   },
   {
     name = "Geolocation"
@@ -1280,8 +1287,6 @@ mitto_bindings_interfaces = [
   {
     name = "Headers"
     file = "headers"
-
-    # Iterating over it is a Known Gap until the Runtime has iterators.
     implemented = [
       "append",
       "delete",
@@ -1289,6 +1294,7 @@ mitto_bindings_interfaces = [
       "getSetCookie",
       "has",
       "set",
+      "iterable",
     ]
   },
   {
@@ -1919,6 +1925,20 @@ mitto_bindings_interfaces = [
       "textStream",
       "blob",
       "bytes",
+      "formData",
+      "destination",
+      "referrer",
+      "referrerPolicy",
+      "mode",
+      "credentials",
+      "cache",
+      "redirect",
+      "integrity",
+      "keepalive",
+      "targetAddressSpace",
+      "isHistoryNavigation",
+      "isReloadNavigation",
+      "clone",
     ]
   },
   {
@@ -1940,6 +1960,10 @@ mitto_bindings_interfaces = [
       "textStream",
       "blob",
       "bytes",
+      "formData",
+      "error",
+      "redirect",
+      "clone",
     ]
   },
   {
@@ -3014,8 +3038,6 @@ mitto_bindings_interfaces = [
   {
     name = "URLSearchParams"
     file = "url_search_params"
-
-    # Iterating over it is a Known Gap until the Runtime has pair iterators.
     implemented = [
       "size",
       "append",
@@ -3025,6 +3047,7 @@ mitto_bindings_interfaces = [
       "has",
       "set",
       "sort",
+      "iterable",
     ]
   },
   {

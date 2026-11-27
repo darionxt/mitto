@@ -39,6 +39,7 @@ class BlobBytesConsumer final : public BytesConsumer {
   Result BeginRead(base::span<const char>& buffer) override;
   Result EndRead(size_t read_size) override;
   std::optional<std::string> DrainAsBytes() override;
+  scoped_refptr<BlobDataHandle> DrainAsBlobDataHandle() override;
   void SetClient(BytesConsumer::Client* client) override;
   void ClearClient() override;
   void Cancel() override;

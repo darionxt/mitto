@@ -18,6 +18,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/types/expected.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -41,8 +42,16 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
     kDefault,
     // A fetch's of mode no-cors from another origin: status 0, no URL, no
     // header lines and a null body, as the Fetch Standard's opaque filtered
-    // response.
+    // response, with the response it filters behind it.
     kOpaque,
+    // Response.error()'s, a network error: status 0, no URL, no header lines
+    // and a null body.
+    kError,
+    // A redirect that a fetch of redirect mode manual did not follow: status
+    // 0, no header lines and a null body, but its URL, as the Fetch
+    // Standard's opaque-redirect filtered response, with the redirect behind
+    // it.
+    kOpaqueRedirect,
   };
 
   // `new Response(body, init)`.
@@ -53,10 +62,17 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
   static Response* StaticJson(v8::Local<v8::Value> data,
                               const bindings::ResponseInit& init,
                               bindings::ExceptionState& exception_state);
+  // `Response.error()`.
+  static Response* Error();
+  // `Response.redirect(url, status)`.
+  static Response* Redirect(const std::u16string& url,
+                            uint16_t status,
+                            bindings::ExceptionState& exception_state);
   // One that fetch() got, or that the Cache API stored, whose body is `body`,
-  // or none for a null body. An opaque one's body is null, and `body` is
-  // that of its internal response, which no script reads, as Blink's opaque
-  // filtered response holds it.
+  // or none for a null body. An opaque one shows status 0, no URL, no header
+  // lines and a null body, and keeps the others, `body` among them, in its
+  // internal response, which no script reads, as Blink's opaque filtered
+  // response holds it.
   static Response* CreateFetched(ResponseType type,
                                  int32_t status,
                                  std::string status_text,
@@ -80,31 +96,56 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
   std::string StatusText() const { return status_text_; }
   mitto::Headers* Headers() const { return headers_.Get(); }
   ReadableStream* Body() const { return BodyStream(); }
+  // A copy with a tee of its body, as Blink's clone() makes it.
+  Response* Clone(bindings::ExceptionState& exception_state);
 
   // What the Runtime reads of it itself, as Blink's FetchDataLoader reads a
   // body, such as Cache.put() does.
   //
-  // Whether its body is null, as an opaque response's is.
-  bool HasNullBody() const { return !body_buffer_; }
-  // Uses the body, as a read by a script does, and calls `done` with all of it
-  // once it has come, or with nullopt if it failed. A null body reads as
-  // empty. Its body must be neither locked nor used.
-  void ReadAll(base::OnceCallback<void(std::optional<std::string> body)> done);
+  // Whether its body is null, of an opaque response its internal body, as
+  // Blink's HasBody() reads it.
+  bool HasNullBody() const { return !InternalBodyBuffer(); }
+  // The response that an opaque one filters, with its status, URL and header
+  // lines, as Blink's FetchResponseData keeps it, or null for any other.
+  const Response* InternalResponse() const { return internal_response_.Get(); }
+  // An opaque one's padding, which the Cache API counts beside its size, or 0.
+  int64_t Padding() const { return padding_; }
+  void SetPadding(int64_t padding) { padding_ = padding; }
+  // Why ReadAll() gives no body: it failed, its signal aborted it, or its
+  // context went while it was read, which settles nothing.
+  enum class ReadAllError { kFailed, kAborted, kStopped };
+  using ReadAllCallback =
+      base::OnceCallback<void(base::expected<std::string, ReadAllError>)>;
+  // Uses the body, of an opaque response its internal body, as a read by a
+  // script does, and calls `done` with all of it once it has come. A null body
+  // reads as empty. Its body must be neither locked nor used. A body that
+  // cannot be read, such as one whose frame has gone, throws, and `done` hears
+  // of nothing.
+  void ReadAll(ReadAllCallback done, bindings::ExceptionState& exception_state);
+
+  // BodyMixin:
+  // An opaque response's says whether its internal body was read, as
+  // Cache.put() reads it.
+  bool IsBodyUsed() const override;
 
  private:
+  // The body, or an opaque response's internal one, or null for a null body.
+  BodyStreamBuffer* InternalBodyBuffer() const;
+
   // BodyMixin:
   BodyStreamBuffer* BodyBuffer() const override;
-  std::string MimeType() const override;
+  std::string ContentType() const override;
 
   ResponseType type_ = ResponseType::kDefault;
   int32_t status_ = 200;
   std::string status_text_;
   std::u16string url_;
   bool redirected_ = false;
+  int64_t padding_ = 0;
   cppgc::Member<mitto::Headers> headers_;
   cppgc::Member<BodyStreamBuffer> body_buffer_;
-  // An opaque response's internal body, which goes on loading.
-  cppgc::Member<BodyStreamBuffer> internal_body_buffer_;
+  // An opaque response's internal response, whose body goes on loading.
+  cppgc::Member<Response> internal_response_;
 };
 
 }  // namespace mitto

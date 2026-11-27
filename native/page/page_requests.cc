@@ -1,7 +1,9 @@
 #include "mitto/page/page_requests.h"
 
+#include <algorithm>
 #include <deque>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check.h"
@@ -22,6 +24,7 @@
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
+#include "mitto/header_rules.h"
 #include "mitto/page/resource_timing.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
@@ -30,6 +33,9 @@
 namespace mitto {
 
 namespace {
+
+// BackForwardCacheBufferLimitTracker's kDefaultMaxBufferedBodyBytesPerProcess.
+constexpr size_t kMaxHeldBytes = 1024 * 1000;
 
 // Enters the context that a request of the Page's was made in, so that its
 // client hears of it there, as Blink's ResourceFetcher runs a resource's
@@ -119,6 +125,7 @@ uint64_t PageRequests::Start(PageRequest request,
   timed.initiator_type = std::move(initiator_type);
   timed.url = base::UTF8ToUTF16(request.url);
   timed.render_blocking = render_blocking;
+  timed.follows_redirects = request.redirect_mode == PageRedirectMode::kFollow;
   ExecutionContext& context = ExecutionContext::Current();
   timed.execution_context = &context;
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
@@ -129,6 +136,10 @@ uint64_t PageRequests::Start(PageRequest request,
   open.client = &client;
   open.streams_body = request.streams_body;
   open.timed = std::move(timed);
+  // The favicon that Chrome's renderer fetches for the browser, which a
+  // ThreadableLoader loads as a script's request. A fetch() marks its
+  // context itself (FetchLoader), as one that a link preloaded does not.
+  open.script_request = request.kind == PageRequestKind::kFavicon;
   return number;
 }
 
@@ -159,9 +170,10 @@ uint64_t PageRequests::StartTraversal(PageTraversalRequest traversal,
       },
       route_);
   // A navigation, whose response the Session says the cross-origin isolation
-  // of first, as of any navigation.
+  // of first, as of any navigation, or which it answers with a restore.
   open_[number].client = &client;
   open_[number].navigation = true;
+  open_[number].may_restore = traversal.stored_document != kNoDocument;
   return number;
 }
 
@@ -276,6 +288,8 @@ void PageRequests::Cancel(uint64_t number) {
   // meanwhile still counts against its credit.
   found->second.client = nullptr;
   sender_->SendForRequest(number, EncodeCancel(number));
+  // What waited of it goes nowhere, but for its end, if that came.
+  DeliverHeld(number);
 }
 
 void PageRequests::CancelAll() {
@@ -306,6 +320,7 @@ void PageRequests::LetGo(uint64_t number) {
   }
   found->second.client = nullptr;
   found->second.timed.reset();
+  DeliverHeld(number);
 }
 
 // static
@@ -369,8 +384,18 @@ void PageRequests::TookBody(uint64_t number, size_t bytes) {
   if (found == open_.end() || bytes == 0) {
     return;
   }
-  CHECK_LE(bytes, found->second.untaken);
-  found->second.untaken -= bytes;
+  Open& open = found->second;
+  CHECK_LE(bytes, open.untaken + open.credited);
+  const size_t credited = std::min(bytes, open.credited);
+  open.credited -= credited;
+  bytes -= credited;
+  open.untaken -= bytes;
+  if (bytes > 0) {
+    SendCredit(number, bytes);
+  }
+}
+
+void PageRequests::SendCredit(uint64_t number, size_t bytes) {
   PageCredit credit;
   credit.number = number;
   credit.bytes = base::checked_cast<uint32_t>(bytes);
@@ -416,6 +441,127 @@ void PageRequests::EndBody(uint64_t number, bool errored) {
   sender_->SendForRequest(number, EncodeRequestBodyEnded(ended));
 }
 
+std::vector<uint64_t> PageRequests::HeldRequestsOf(
+    const ExecutionContext& context) const {
+  std::vector<uint64_t> numbers;
+  for (const auto& [number, messages] : held_) {
+    const auto found = open_.find(number);
+    if (found != open_.end() && found->second.timed &&
+        found->second.timed->execution_context == &context) {
+      numbers.push_back(number);
+    }
+  }
+  return numbers;
+}
+
+void PageRequests::DeliverHeld(uint64_t number) {
+  // What a client does may hold more, as a nested run loop of a synchronous
+  // request takes messages meanwhile, so this goes on until nothing waits.
+  while (true) {
+    const auto held = held_.find(number);
+    if (held == held_.end()) {
+      return;
+    }
+    const auto found = open_.find(number);
+    if (found != open_.end() && IsFrozen(found->second)) {
+      return;
+    }
+    Held message = std::move(held->second.front());
+    held->second.pop_front();
+    if (held->second.empty()) {
+      held_.erase(held);
+    }
+    if (auto* const started = std::get_if<PageResponseStarted>(&message)) {
+      ProcessResponseStarted(*started);
+    } else if (auto* const body = std::get_if<PageResponseBody>(&message)) {
+      held_bytes_ -= body->bytes.size();
+      ProcessResponseBody(std::move(*body), /*held=*/true);
+    } else if (auto* const ended = std::get_if<PageResponseEnded>(&message)) {
+      ProcessResponseEnded(*ended);
+    } else {
+      ProcessRequestBodyCredit(std::get<PageCredit>(message));
+    }
+  }
+}
+
+bool PageRequests::IsLoading(const ExecutionContext& context) const {
+  return std::ranges::any_of(open_, [&](const auto& entry) {
+    const auto& [number, open] = entry;
+    if (!open.client || !open.timed ||
+        open.timed->execution_context != &context) {
+      return false;
+    }
+    const auto held = held_.find(number);
+    return held == held_.end() ||
+           !std::holds_alternative<PageResponseEnded>(held->second.back());
+  });
+}
+
+void PageRequests::CancelAllOf(const ExecutionContext& context) {
+  std::vector<uint64_t> numbers;
+  for (const auto& [number, open] : open_) {
+    if (open.client && open.timed &&
+        open.timed->execution_context == &context) {
+      numbers.push_back(number);
+    }
+  }
+  for (const uint64_t number : numbers) {
+    Cancel(number);
+  }
+}
+
+bool PageRequests::IsFrozen(const Open& open) {
+  return open.timed && open.timed->execution_context &&
+         open.timed->execution_context->IsInBackForwardCache();
+}
+
+bool PageRequests::ShouldHold(uint64_t number) const {
+  // What comes after a message that waits waits too, in order.
+  if (held_.contains(number)) {
+    return true;
+  }
+  const auto found = open_.find(number);
+  return found != open_.end() && IsFrozen(found->second);
+}
+
+void PageRequests::HoldMessage(uint64_t number, Held message) {
+  held_[number].push_back(std::move(message));
+}
+
+void PageRequests::HoldBody(PageResponseBody body) {
+  Open* const open = Find(body.number, "a body");
+  if (!open) {
+    return;
+  }
+  const uint64_t number = body.number;
+  const size_t size = body.bytes.size();
+  if (size > kBodyWindow - open->untaken) {
+    refuse_.Run(base::StrCat({"more of the body of request ",
+                              base::NumberToString(number),
+                              " than the Page has given credit for"}));
+    return;
+  }
+  if (!open->client) {
+    return;
+  }
+  // ResponseBodyLoader reads on while its page is frozen, so that the
+  // connection does not wait for it, up to the limit, past which the page
+  // goes: kNetworkExceedsBufferLimit. One that a traversal may restore stays,
+  // and its connections wait then.
+  held_bytes_ += size;
+  HoldMessage(number, std::move(body));
+  if (held_bytes_ <= kMaxHeldBytes) {
+    open->credited += size;
+    SendCredit(number, size);
+    return;
+  }
+  open->untaken += size;
+  if (IsFrozen(*open) && open->timed->execution_context->IsWindow()) {
+    static_cast<Window*>(open->timed->execution_context.Get())
+        ->EvictFromBackForwardCache();
+  }
+}
+
 PageRequests::Open* PageRequests::Find(uint64_t number,
                                        std::string_view message) {
   if (number == kNavigationRequest && !navigation_seen_ && navigation_client_) {
@@ -434,6 +580,27 @@ PageRequests::Open* PageRequests::Find(uint64_t number,
   return &found->second;
 }
 
+void PageRequests::OnRestore(uint64_t number) {
+  Open* const open = Find(number, "a restore");
+  if (!open) {
+    return;
+  }
+  if (!open->may_restore || open->started || open->isolation_said ||
+      open->policy_said) {
+    refuse_.Run(base::StrCat(
+        {"a restore of request ", base::NumberToString(number),
+         ", which is no traversal to a document that the back/forward cache "
+         "keeps"}));
+    return;
+  }
+  // Nothing more comes of it, and one that the Page let go hears nothing.
+  Client* const client = open->client;
+  open_.erase(number);
+  if (client) {
+    client->OnRestore();
+  }
+}
+
 void PageRequests::OnIsolation(const PageIsolation& isolation) {
   Open* const open = Find(isolation.navigation, "a cross-origin isolation");
   if (!open) {
@@ -448,7 +615,7 @@ void PageRequests::OnIsolation(const PageIsolation& isolation) {
   }
   open->isolation_said = true;
   if (open->client) {
-    open->client->OnIsolation(isolation.isolation);
+    open->client->OnIsolation(isolation);
   }
 }
 
@@ -471,6 +638,14 @@ void PageRequests::OnPermissionsPolicy(PagePermissionsPolicy policy) {
 }
 
 void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
+  if (ShouldHold(response.number)) {
+    HoldMessage(response.number, response);
+    return;
+  }
+  ProcessResponseStarted(response);
+}
+
+void PageRequests::ProcessResponseStarted(const PageResponseStarted& response) {
   Open* const open = Find(response.number, "a response");
   if (!open) {
     return;
@@ -481,8 +656,20 @@ void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
     return;
   }
   open->started = true;
+  // ThreadableLoader::ResponseReceived(): a script's request that gets a
+  // response with Cache-Control: no-store keeps a no-store page of its
+  // context out of the back/forward cache.
+  if (open->script_request && open->timed && open->timed->execution_context &&
+      CacheControlContainsNoStore(
+          HeaderField(response.headers, "cache-control"))) {
+    open->timed->execution_context->DidReceiveNoStoreForScriptRequest();
+  }
   if (open->timed) {
-    open->timed->response = response;
+    // A redirect that is not followed ends the load, as Blink's
+    // WillFollowRedirect() cancels it, so its entry tells nothing of it.
+    if (open->timed->follows_redirects || !IsRedirect(response)) {
+      open->timed->response = response;
+    }
     // WorkerMainScriptLoader starts once the browser hands the response over.
     // Chrome's starts once the worker's thread has, which often puts a small
     // script's end before its start: a Known Gap.
@@ -500,11 +687,20 @@ void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
 }
 
 void PageRequests::OnResponseBody(PageResponseBody body) {
+  if (ShouldHold(body.number)) {
+    HoldBody(std::move(body));
+    return;
+  }
+  ProcessResponseBody(std::move(body), /*held=*/false);
+}
+
+void PageRequests::ProcessResponseBody(PageResponseBody body, bool held) {
   Open* const open = Find(body.number, "a body");
   if (!open) {
     return;
   }
-  if (!open->started || body.bytes.size() > kBodyWindow - open->untaken) {
+  if (!open->started ||
+      (!held && body.bytes.size() > kBodyWindow - open->untaken)) {
     refuse_.Run(base::StrCat({"more of the body of request ",
                               base::NumberToString(body.number),
                               " than the Page has given credit for"}));
@@ -517,7 +713,9 @@ void PageRequests::OnResponseBody(PageResponseBody body) {
   if (open->timed) {
     open->timed->decoded_body_size += body.bytes.size();
   }
-  open->untaken += body.bytes.size();
+  if (!held) {
+    open->untaken += body.bytes.size();
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
   const RequestContextScope context_scope(
@@ -527,6 +725,14 @@ void PageRequests::OnResponseBody(PageResponseBody body) {
 }
 
 void PageRequests::OnRequestBodyCredit(const PageCredit& credit) {
+  if (ShouldHold(credit.number)) {
+    HoldMessage(credit.number, credit);
+    return;
+  }
+  ProcessRequestBodyCredit(credit);
+}
+
+void PageRequests::ProcessRequestBodyCredit(const PageCredit& credit) {
   Open* const open = Find(credit.number, "credit for the body");
   if (!open) {
     return;
@@ -551,6 +757,14 @@ void PageRequests::OnRequestBodyCredit(const PageCredit& credit) {
 }
 
 void PageRequests::OnResponseEnded(const PageResponseEnded& ended) {
+  if (ShouldHold(ended.number)) {
+    HoldMessage(ended.number, ended);
+    return;
+  }
+  ProcessResponseEnded(ended);
+}
+
+void PageRequests::ProcessResponseEnded(const PageResponseEnded& ended) {
   Open* const open = Find(ended.number, "the end");
   if (!open) {
     return;
