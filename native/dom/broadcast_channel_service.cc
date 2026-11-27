@@ -34,12 +34,14 @@ BroadcastChannelService::Connection::Connection(
     uint64_t id,
     std::string key,
     bool opaque,
+    bool isolated_by_document_policy,
     scoped_refptr<base::SingleThreadTaskRunner> runner,
     std::string name,
     BroadcastChannel* channel)
     : id(id),
       key(std::move(key)),
       opaque(opaque),
+      isolated_by_document_policy(isolated_by_document_policy),
       runner(std::move(runner)),
       name(std::move(name)),
       channel(channel) {}
@@ -75,7 +77,8 @@ uint64_t BroadcastChannelService::Connect(BroadcastChannel* channel,
   const uint64_t id = ++next_connection_;
   // Mojo carries the name as UTF-8, with a lone surrogate as U+FFFD.
   connections_.emplace_back(id, context.StorageKey(),
-                            context.GetSecurityOrigin().opaque(), runner,
+                            context.GetSecurityOrigin().opaque(),
+                            context.IsolatedByDocumentPolicy(), runner,
                             base::UTF16ToUTF8(name), channel);
   return id;
 }
@@ -92,9 +95,15 @@ void BroadcastChannelService::Post(uint64_t connection,
                                    const SerializedScriptValue& message) {
   const bool locked = message.IsLockedToAgentCluster();
   // The connections that the message finds once it reaches the service, which
-  // are those that connected before it was posted.
-  std::vector<std::pair<uint64_t, scoped_refptr<base::SingleThreadTaskRunner>>>
-      recipients;
+  // are those that connected before it was posted, and whether each is of the
+  // sender's agent cluster: of one key, which holds the origin, and of the
+  // same isolation by Document-Isolation-Policy.
+  struct Recipient {
+    uint64_t id;
+    scoped_refptr<base::SingleThreadTaskRunner> runner;
+    bool same_agent_cluster;
+  };
+  std::vector<Recipient> recipients;
   {
     const base::AutoLock lock(lock_);
     const auto from = std::find_if(
@@ -105,7 +114,9 @@ void BroadcastChannelService::Post(uint64_t connection,
     }
     for (const Connection& c : connections_) {
       if (c.id != from->id && c.key == from->key && c.name == from->name) {
-        recipients.emplace_back(c.id, c.runner);
+        recipients.push_back({c.id, c.runner,
+                              c.isolated_by_document_policy ==
+                                  from->isolated_by_document_policy});
       }
     }
     if (session_sender_ && !from->opaque) {
@@ -115,20 +126,21 @@ void BroadcastChannelService::Post(uint64_t connection,
   // The hop to the service and the one back, each a task of the recipient's
   // thread, so that a sender that closes in the same task loses none, as a
   // message that has gone into Blink's pipe stays there.
-  for (auto& [recipient, runner] : recipients) {
-    runner->PostTask(
-        FROM_HERE, base::BindOnce(
-                       [](BroadcastChannelService* service, uint64_t recipient,
-                          scoped_refptr<base::SingleThreadTaskRunner> runner,
-                          bool locked, std::vector<uint8_t> data,
-                          BlobDataHandleMap blob_data_handles) {
-                         service->Deliver(recipient, std::move(runner), locked,
-                                          /*same_agent_cluster=*/true,
-                                          std::move(data),
-                                          std::move(blob_data_handles));
-                       },
-                       base::Unretained(this), recipient, runner, locked,
-                       message.wire_data(), message.blob_data_handles()));
+  for (Recipient& recipient : recipients) {
+    recipient.runner->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](BroadcastChannelService* service, uint64_t recipient,
+               scoped_refptr<base::SingleThreadTaskRunner> runner, bool locked,
+               bool same_agent_cluster, std::vector<uint8_t> data,
+               BlobDataHandleMap blob_data_handles) {
+              service->Deliver(recipient, std::move(runner), locked,
+                               same_agent_cluster, std::move(data),
+                               std::move(blob_data_handles));
+            },
+            base::Unretained(this), recipient.id, recipient.runner, locked,
+            recipient.same_agent_cluster, message.wire_data(),
+            message.blob_data_handles()));
   }
 }
 

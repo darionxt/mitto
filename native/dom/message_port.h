@@ -36,6 +36,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "mitto/bindings/dictionaries.h"
+#include "mitto/dom/agent_cluster_key.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/serialized_script_value.h"
 #include "url/origin.h"
@@ -74,9 +75,9 @@ struct TransferableMessage {
   SerializedScriptValue message;
   std::vector<MessagePortChannel> ports;
   // For a value that some contexts may not read, the origin of the context
-  // that sent it, and the one that keys that context's agent cluster.
+  // that sent it, and that context's agent cluster.
   url::Origin sender_origin;
-  url::Origin sender_agent_cluster;
+  AgentClusterKey sender_agent_cluster;
   // Whether the message carries a snapshot of the sender's user activation.
   bool user_activation = false;
   // The scheduler's state of the task that posted it, which a port that is

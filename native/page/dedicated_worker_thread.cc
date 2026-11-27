@@ -329,6 +329,7 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetOutsideReferrerPolicy(params_.referrer_policy);
   scope_->SetOutsideOrigin(params_.outside_origin);
   scope_->SetAgentClusterOrigin(params_.agent_cluster_origin);
+  scope_->SetIsolatedByDocumentPolicy(params_.isolated_by_document_policy);
   scope_->SetStorageKey(params_.storage_key);
   scope_->SetAllowsHighEntropyValues(params_.allows_high_entropy_values);
   scope_->SetImportedScriptLoader(this);

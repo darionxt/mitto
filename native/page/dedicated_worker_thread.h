@@ -79,8 +79,10 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     // Its creator's origin, that of the outside settings that its top-level
     // module graph is fetched with, even for a worker of an opaque origin.
     url::Origin outside_origin;
-    // The origin that keys its agent cluster, its creator's.
+    // The origin that keys its agent cluster, its creator's, and whether
+    // Document-Isolation-Policy isolates that cluster, as its creator's.
     url::Origin agent_cluster_origin;
+    bool isolated_by_document_policy = false;
     // What its storage is keyed by: its creator's key, or its own opaque
     // origin's.
     std::string storage_key;

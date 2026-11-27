@@ -1767,8 +1767,8 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
         ),
         pytest.param(
             _ISOLATION,
-            struct.pack("<QBB", 5, 2, 0),
-            "an isolation of the unknown kind 2",
+            struct.pack("<QBB", 5, 4, 0),
+            "an isolation of the unknown kind 4",
             id="isolation-of-unknown-kind",
         ),
         pytest.param(

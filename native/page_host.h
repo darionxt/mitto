@@ -383,6 +383,15 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
+    // Its document isolation policy, which the same policy container holds: a
+    // document's from its navigation's response, a frame's initial
+    // about:blank's and a srcdoc's from its parent, an about:blank's and a
+    // data: URL's from the document that started its navigation, and a
+    // dedicated worker's from its creator, whatever its script's response
+    // says, as DedicatedWorkerHost takes it. A document of one that isolates
+    // is in an agent cluster of its own, which the Page makes cross-origin
+    // isolated.
+    DocumentIsolationPolicy dip;
     // Whether a document's agent cluster is cross-origin isolated: the
     // top-level document's, which Chrome's browser isolates for each frame of
     // its page (AgentIsCrossOriginIsolated()). The Page has the document's
@@ -618,9 +627,11 @@ class PageHost final : public PageChannel::Delegate {
     // worker's has to be compatible with, as DedicatedWorkerHost::CheckCOEP()
     // holds it.
     std::optional<CrossOriginEmbedderPolicy> creator_embedder_policy;
-    // The embedder policy of the document or worker that asks, which the
-    // Cross-Origin-Resource-Policy check of a request of mode no-cors reads.
+    // The embedder policy and the document isolation policy of the document
+    // or worker that asks, which the Cross-Origin-Resource-Policy check of a
+    // request of mode no-cors reads.
     CrossOriginEmbedderPolicy embedder_policy;
+    DocumentIsolationPolicy document_isolation_policy;
     // A frame's navigation: the URLs of the frame's ancestors' documents, from
     // its parent's up, as they were when it started.
     std::vector<GURL> frame_ancestor_urls;
@@ -789,10 +800,14 @@ class PageHost final : public PageChannel::Delegate {
     GURL url;
     uint64_t parent = kNoDocument;
     uint64_t target = kNoDocument;
-    // The embedder policy and the isolation of the document that the response
-    // makes.
+    // The embedder policy, the document isolation policy and the isolation of
+    // the document that the response makes, and whether Chrome's browser
+    // ignored the response's Document-Isolation-Policy, saying so on the
+    // document's console.
     CrossOriginEmbedderPolicy coep;
+    DocumentIsolationPolicy dip;
     bool cross_origin_isolated = false;
+    bool dip_ignored = false;
     // Whether the document is credentialless, as the navigation started.
     bool credentialless = false;
     PermissionsPolicyHeaders policy_headers;
@@ -807,6 +822,7 @@ class PageHost final : public PageChannel::Delegate {
     uint64_t initiator = kNoDocument;
     url::Origin origin;
     CrossOriginEmbedderPolicy coep;
+    DocumentIsolationPolicy dip;
     GURL cookie_url;
     // Whether its document is credentialless, as it started.
     bool credentialless = false;
@@ -822,15 +838,19 @@ class PageHost final : public PageChannel::Delegate {
   };
   std::map<uint64_t, WorkerScript> worker_scripts_;
   // The navigations whose responses the Page has and has not made a document
-  // of yet, by number: the final URL, the status, the embedder policy that
-  // it gives the document, and how many of its responses had a COOP that
-  // Chrome's browser ignored, saying so on the document's console.
+  // of yet, by number: the final URL, the status, the embedder policy and the
+  // document isolation policy that it gives the document, how many of its
+  // responses had a COOP that Chrome's browser ignored, and whether it ignored
+  // the last one's Document-Isolation-Policy, saying so on the document's
+  // console.
   struct NavigationResponse {
     GURL url;
     int32_t status = 0;
     CrossOriginEmbedderPolicy coep;
+    DocumentIsolationPolicy dip;
     bool cross_origin_isolated = false;
     int coop_ignored = 0;
+    bool dip_ignored = false;
     // What the navigation went as, and the Referer it sent last, which a
     // traversal to its document repeats.
     FetchParams fetch;

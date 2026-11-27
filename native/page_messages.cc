@@ -1477,7 +1477,9 @@ base::expected<PageIsolation, std::string> ReadIsolation(
   PageIsolation isolation;
   isolation.navigation = DecodeUint64(payload.substr(0, 8));
   const uint8_t value = static_cast<uint8_t>(payload[8]);
-  if (value > static_cast<uint8_t>(PageCrossOriginIsolation::kCoopAndCoep)) {
+  if (value >
+      static_cast<uint8_t>(
+          PageCrossOriginIsolation::kCoopAndCoepAndDocumentIsolationPolicy)) {
     return base::unexpected(base::StrCat(
         {"an isolation of the unknown kind ", base::NumberToString(value)}));
   }

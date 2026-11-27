@@ -13,6 +13,7 @@ source_set("dom") {
     "abort_signal.h",
     "abstract_range.cc",
     "abstract_range.h",
+    "agent_cluster_key.h",
     "animation_frame_controller.cc",
     "animation_frame_controller.h",
     "attached_traversals.cc",

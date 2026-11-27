@@ -669,6 +669,9 @@ PolicyHeaders PolicyHeadersOf(std::string_view lines) {
   headers.coop = HeaderValue(lines, "Cross-Origin-Opener-Policy");
   headers.coop_report_only =
       HeaderValue(lines, "Cross-Origin-Opener-Policy-Report-Only");
+  headers.dip = HeaderValue(lines, "Document-Isolation-Policy");
+  headers.dip_report_only =
+      HeaderValue(lines, "Document-Isolation-Policy-Report-Only");
   return headers;
 }
 
@@ -685,15 +688,24 @@ PageEmbedderPolicy ToPageEmbedderPolicy(CrossOriginEmbedderPolicyValue value) {
 }
 
 // What the Page hears of the document that the response of navigation
-// `navigation` makes.
+// `navigation` makes: whether its page's agent cluster is isolated, and
+// whether a document isolation policy gives it an agent cluster of its own,
+// which NavigationRequest's commit takes in place of its page's.
 PageIsolation IsolationOf(uint64_t navigation,
                           bool cross_origin_isolated,
-                          const CrossOriginEmbedderPolicy& coep) {
+                          const CrossOriginEmbedderPolicy& coep,
+                          const DocumentIsolationPolicy& dip) {
   PageIsolation isolation;
   isolation.navigation = navigation;
-  isolation.isolation = cross_origin_isolated
-                            ? PageCrossOriginIsolation::kCoopAndCoep
-                            : PageCrossOriginIsolation::kNone;
+  const bool by_dip = IsolatesByDocumentIsolationPolicy(dip.value);
+  if (cross_origin_isolated && by_dip) {
+    isolation.isolation =
+        PageCrossOriginIsolation::kCoopAndCoepAndDocumentIsolationPolicy;
+  } else if (by_dip) {
+    isolation.isolation = PageCrossOriginIsolation::kDocumentIsolationPolicy;
+  } else if (cross_origin_isolated) {
+    isolation.isolation = PageCrossOriginIsolation::kCoopAndCoep;
+  }
   isolation.embedder_policy = ToPageEmbedderPolicy(coep.value);
   return isolation;
 }
@@ -966,14 +978,14 @@ class PageHost::ResponseChecks {
     }
     // URLLoader::OnReceivedRedirect() and OnResponseStarted(): each response
     // of a request of mode no-cors is held to its
-    // Cross-Origin-Resource-Policy, with the embedder policy of the context
-    // that asked.
+    // Cross-Origin-Resource-Policy, with the embedder policy and the document
+    // isolation policy of the context that asked.
     if (checks_.no_cors &&
         IsBlockedByResourcePolicy(
             GURL(event.url), document_origin_,
             HeaderValue(event.headers, "Cross-Origin-Resource-Policy"),
             ResourcePolicyMode::kNoCors, event.included_credentials,
-            checks_.embedder_policy)) {
+            checks_.embedder_policy, checks_.document_isolation_policy)) {
       return net::ERR_BLOCKED_BY_RESPONSE;
     }
     // DedicatedWorkerHost::DidStartScriptLoad(): a worker's script whose
@@ -994,7 +1006,8 @@ class PageHost::ResponseChecks {
   // policy, blocks a frame navigation's redirect or response that `event`
   // describes. A parent whose policy is none blocks nothing, as
   // IsBlockedInternalWithReporting() returns early for a navigation, and a
-  // blob: or data: URL is never held to it.
+  // blob: or data: URL is never held to it. A document isolation policy holds
+  // no navigation, as IsNavigationBlocked() passes none.
   bool BlockedByParentResourcePolicy(const RequestEvent& event) const {
     if (!checks_.parent_embedder_policy ||
         checks_.parent_embedder_policy->value ==
@@ -1007,7 +1020,7 @@ class PageHost::ResponseChecks {
                url, checks_.parent_origin,
                HeaderValue(event.headers, "Cross-Origin-Resource-Policy"),
                ResourcePolicyMode::kNavigate, event.included_credentials,
-               *checks_.parent_embedder_policy)
+               *checks_.parent_embedder_policy, DocumentIsolationPolicy())
                .has_value();
   }
 
@@ -1976,6 +1989,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .top_level = top_level,
       .creator_embedder_policy = std::move(creator_embedder_policy),
       .embedder_policy = contexts_.at(settings_id).coep,
+      .document_isolation_policy = contexts_.at(settings_id).dip,
       .frame_ancestor_urls = std::move(frame_ancestor_urls),
       .parent_embedder_policy = std::move(parent_embedder_policy),
       .parent_origin = std::move(parent_origin)};
@@ -2309,15 +2323,19 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
     const GURL url(event.url);
     const PolicyHeaders headers = PolicyHeadersOf(event.headers);
     policies = TopLevelDocumentPoliciesOf(url, headers);
+    const NavigationDocumentIsolationPolicy dip =
+        NavigationDocumentIsolationPolicyOf(url, headers);
     // The document that the Page makes of it, which it tells the library of,
     // and the caller hears of then.
     navigation_responses_[request.number()] = {
         .url = url,
         .status = event.status,
         .coep = policies->coep,
+        .dip = dip.dip,
         .cross_origin_isolated = policies->cross_origin_isolated,
         .coop_ignored =
             request.coop_ignored() + (IgnoresCoop(url, headers) ? 1 : 0),
+        .dip_ignored = dip.ignored,
         .fetch = request.navigation_fetch(),
         .referrer = event.referrer,
         .no_store = CacheControlContainsNoStore(
@@ -2331,7 +2349,8 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
   std::optional<PageIsolation> isolation;
   if (policies) {
     isolation = IsolationOf(request.number(), policies->cross_origin_isolated,
-                            policies->coep);
+                            policies->coep,
+                            navigation_responses_.at(request.number()).dip);
   }
   if (const auto frame = frame_navigation_responses_.find(request.number());
       frame != frame_navigation_responses_.end()) {
@@ -2343,16 +2362,25 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
     }
     frame->second.url = GURL(event.url);
     frame->second.coep = coep;
+    // A frame's document takes its own response's document isolation policy,
+    // never its parent's.
+    const NavigationDocumentIsolationPolicy dip =
+        NavigationDocumentIsolationPolicyOf(frame->second.url,
+                                            PolicyHeadersOf(event.headers));
+    frame->second.dip = dip.dip;
+    frame->second.dip_ignored = dip.ignored;
     frame->second.cross_origin_isolated =
         AgentIsCrossOriginIsolated(frame->second.parent);
     // The Page ANDs the document's cross-origin-isolated feature. It cannot
     // see a response whose Content-Security-Policy sandboxes its origin, which
     // then has none, and hears not isolated for it, as for each document
-    // under it.
+    // under it. A document isolation policy isolates it whatever its
+    // permissions policy says, in an agent cluster of the origin that it
+    // commits.
     isolation = IsolationOf(
         request.number(),
         frame->second.cross_origin_isolated && !SandboxesOrigin(event.headers),
-        coep);
+        coep, dip.dip);
   }
   if (const auto script = worker_scripts_.find(request.number());
       script != worker_scripts_.end()) {
@@ -2953,7 +2981,8 @@ void PageHost::OnCacheStorage(PageCacheStorageCall call,
         next_cache_storage_number_);
   }
   const Context& context = contexts_.at(context_id);
-  cache_storage_->SetContextPolicy(context_id, context.origin, context.coep);
+  cache_storage_->SetContextPolicy(context_id, context.origin, context.coep,
+                                   context.dip);
   std::optional<std::string> storage_key =
       SecureContextStorageKey(context_id, document_url);
   bool bucket_live = true;
@@ -3414,8 +3443,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   context.credentialless = committed.credentialless;
   std::optional<int32_t> navigated_status;
   bool navigated_no_store = false;
-  // How many of its navigation's responses had a COOP that was ignored.
+  // How many of its navigation's responses had a COOP that was ignored, and
+  // whether the last one's Document-Isolation-Policy was.
   int coop_ignored = 0;
+  bool dip_ignored = false;
   // What a traversal to the document repeats.
   std::optional<NavigationRecord> record;
   // The frame's document that the new one replaces, if any.
@@ -3431,10 +3462,12 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         }
       } else {
         // A frame's first document, which has its parent's origin,
-        // embedder policy, cookie URL and isolation.
+        // embedder policy, document isolation policy, cookie URL and
+        // isolation.
         const Context& parent = contexts_.at(committed.parent);
         context.origin = parent.origin;
         context.coep = parent.coep;
+        context.dip = parent.dip;
         context.cookie_url = CookieUrlOf(parent);
         context.cross_origin_isolated = parent.cross_origin_isolated;
         // And its parent's policy container, which RenderFrameHostImpl makes
@@ -3468,11 +3501,13 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         record->referrer = std::move(found->second.referrer);
         context.url = std::move(found->second.url);
         context.coep = found->second.coep;
+        context.dip = found->second.dip;
         context.cross_origin_isolated = found->second.cross_origin_isolated;
         context.policy_headers = std::move(found->second.policy_headers);
         navigated_status = found->second.status;
         navigated_no_store = found->second.no_store;
         coop_ignored = found->second.coop_ignored;
+        dip_ignored = found->second.dip_ignored;
         navigation_responses_.erase(found);
       } else {
         const auto found =
@@ -3490,6 +3525,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         }
         context.url = std::move(found->second.url);
         context.coep = found->second.coep;
+        context.dip = found->second.dip;
+        dip_ignored = found->second.dip_ignored;
         context.cross_origin_isolated = found->second.cross_origin_isolated;
         context.credentialless = found->second.credentialless;
         context.policy_headers = std::move(found->second.policy_headers);
@@ -3529,8 +3566,9 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         // RenderFrameHostImpl::SetOriginDependentStateOfNewFrame() and
         // NavigationRequest::GetOriginToCommit(): about:blank takes the origin
         // of the document that started its navigation, and its policy
-        // container, with its embedder policy, and its cookie URL, as they
-        // were when the navigation started.
+        // container, with its embedder policy and its document isolation
+        // policy, and its cookie URL, as they were when the navigation
+        // started.
         const auto started = about_blank_navigations_.find(committed.replaces);
         if (started == about_blank_navigations_.end() ||
             started->second.kind != PageLocalNavigationKind::kAboutBlank ||
@@ -3544,6 +3582,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         }
         context.origin = started->second.origin;
         context.coep = started->second.coep;
+        context.dip = started->second.dip;
         context.cookie_url = started->second.cookie_url;
         about_blank_navigations_.erase(started);
         context.url = GURL(url::kAboutBlankURL);
@@ -3552,6 +3591,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         const Context& parent = contexts_.at(committed.parent);
         context.origin = parent.origin;
         context.coep = parent.coep;
+        context.dip = parent.dip;
         context.cookie_url = CookieUrlOf(parent);
         context.url = GURL(url::kAboutSrcdocURL);
       } else if (committed.source == PageDocumentSource::kErrorPage) {
@@ -3563,7 +3603,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         // Referer and no cookies. It takes the policy container, with the
         // embedder policy, of the document that started its navigation, as it
         // was when the navigation started, as a local URL's document does, and
-        // keeps its URL, which a navigation to a fragment then changes.
+        // keeps its URL, which a navigation to a fragment then changes. Its
+        // document isolation policy is that document's too.
         const auto started = about_blank_navigations_.find(committed.replaces);
         const GURL url(committed.url);
         if (started == about_blank_navigations_.end() ||
@@ -3579,6 +3620,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         }
         context.origin = url::Origin::Resolve(url, started->second.origin);
         context.coep = started->second.coep;
+        context.dip = started->second.dip;
         about_blank_navigations_.erase(started);
         context.url = url;
       }
@@ -3682,6 +3724,13 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     event.type = MITTO_PAGE_EVENT_CONSOLE;
     event.level = static_cast<int32_t>(ConsoleLevel::kError);
     event.message = std::string(kCoopIgnoredOnUntrustworthyOrigin);
+    PushReport(std::move(event));
+  }
+  if (dip_ignored) {
+    PageEvent event;
+    event.type = MITTO_PAGE_EVENT_CONSOLE;
+    event.level = static_cast<int32_t>(ConsoleLevel::kError);
+    event.message = std::string(kDipIgnoredOnUntrustworthyOrigin);
     PushReport(std::move(event));
   }
 }
@@ -3793,6 +3842,7 @@ void PageHost::OnAboutBlankNavigation(uint64_t document,
   started.initiator = initiator_id;
   started.origin = initiator->second.origin;
   started.coep = initiator->second.coep;
+  started.dip = initiator->second.dip;
   started.cookie_url = CookieUrlOf(initiator->second);
   // IsDocumentToCommitAnonymous(), as the navigation starts.
   const Context& frame = contexts_.at(document);
@@ -4233,7 +4283,9 @@ void PageHost::FillContextFetch(uint64_t id,
   }
   fetch.from_worker = context.is_worker;
   fetch.credentialless_client =
-      context.coep.value == CrossOriginEmbedderPolicyValue::kCredentialless;
+      context.coep.value == CrossOriginEmbedderPolicyValue::kCredentialless ||
+      context.dip.value ==
+          DocumentIsolationPolicyValue::kIsolateAndCredentialless;
 }
 
 GURL PageHost::TopDocumentUrl() const {
@@ -4295,8 +4347,11 @@ void PageHost::OnWorkerStarted(const PageWorkerStarted& started) {
   Context worker;
   worker.parent = started.creator;
   worker.is_worker = true;
-  // It is in its creator's frame, with its partition.
+  // It is in its creator's frame, with its partition, and has its creator's
+  // document isolation policy, whatever its script's response says, as
+  // DedicatedWorkerHost takes it.
   worker.credentialless = creator->credentialless;
+  worker.dip = creator->dip;
   switch (started.source) {
     case PageWorkerSource::kScriptResponse: {
       // The script that its creator asked for, in mode same-origin, at the

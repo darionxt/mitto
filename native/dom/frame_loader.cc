@@ -461,6 +461,8 @@ void StartNavigation(Window& window,
       origin_window.GetDocument().HasHeaderDeliveredContentSecurityPolicy();
   navigation.initiator_embedder_policy_isolates =
       origin_window.GetDocument().EmbedderPolicyIsolates();
+  navigation.initiator_isolated_by_document_policy =
+      origin_window.IsolatedByDocumentPolicy();
   client->BeginNavigation(navigation);
 }
 

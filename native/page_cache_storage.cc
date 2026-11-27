@@ -228,8 +228,10 @@ uint64_t PageCacheStorage::NextNumber() const {
 void PageCacheStorage::SetContextPolicy(
     uint64_t context,
     url::Origin origin,
-    CrossOriginEmbedderPolicy embedder_policy) {
-  context_policies_[context] = {std::move(origin), std::move(embedder_policy)};
+    CrossOriginEmbedderPolicy embedder_policy,
+    DocumentIsolationPolicy document_isolation_policy) {
+  context_policies_[context] = {std::move(origin), std::move(embedder_policy),
+                                std::move(document_isolation_policy)};
 }
 
 void PageCacheStorage::ForgetContexts(const std::set<uint64_t>& contexts) {
@@ -749,11 +751,12 @@ void PageCacheStorage::AnswerResponses(
   // ResponseBlockedByCrossOriginResourcePolicy() of Chrome's
   // CacheStorageDispatcherHost, for Cache.match() and matchAll() and
   // CacheStorage.match(): under an embedder policy of require-corp or
-  // credentialless, an opaque response is held to its
-  // Cross-Origin-Resource-Policy against the context's origin, and one that
-  // fails fails the whole call. A context whose policy is a report-only one
-  // alone holds a response to the policy that its header names, as the check
-  // runs for it too. Its request counts as one that sent
+  // credentialless, or a document isolation policy that isolates, an opaque
+  // response is held to its Cross-Origin-Resource-Policy against the
+  // context's origin, and one that fails fails the whole call. A context whose
+  // policy is a report-only one alone holds a response to the policy that its
+  // header names, as the check runs for it too. Its request counts as one that
+  // sent
   // credentials, as kCacheStorageOpaqueResponseCredentialedForCorp, on in
   // Chrome 157, has CacheStorageCache take any opaque response that it reads.
   // Upstream: content/browser/cache_storage/cache_storage_dispatcher_host.cc
@@ -763,7 +766,11 @@ void PageCacheStorage::AnswerResponses(
       (policy->second.embedder_policy.value !=
            CrossOriginEmbedderPolicyValue::kNone ||
        policy->second.embedder_policy.report_only_value !=
-           CrossOriginEmbedderPolicyValue::kNone) &&
+           CrossOriginEmbedderPolicyValue::kNone ||
+       policy->second.document_isolation_policy.value !=
+           DocumentIsolationPolicyValue::kNone ||
+       policy->second.document_isolation_policy.report_only_value !=
+           DocumentIsolationPolicyValue::kNone) &&
       std::ranges::any_of(
           matches, [&policy](const CacheStorageCache::MatchResult& match) {
             const CacheResponse& response = match.response;
@@ -773,10 +780,12 @@ void PageCacheStorage::AnswerResponses(
             // One that an older storage directory holds of before an opaque
             // response kept its URL and header lines has neither, and so no
             // policy that would let a context with an enforced embedder policy
-            // have it.
+            // or document isolation policy have it.
             if (response.url_list.empty()) {
               return policy->second.embedder_policy.value !=
-                     CrossOriginEmbedderPolicyValue::kNone;
+                         CrossOriginEmbedderPolicyValue::kNone ||
+                     policy->second.document_isolation_policy.value !=
+                         DocumentIsolationPolicyValue::kNone;
             }
             const auto corp =
                 response.headers.find("cross-origin-resource-policy");
@@ -787,7 +796,8 @@ void PageCacheStorage::AnswerResponses(
                            : std::optional<std::string>(corp->second),
                        ResourcePolicyMode::kNoCors,
                        /*request_include_credentials=*/true,
-                       policy->second.embedder_policy)
+                       policy->second.embedder_policy,
+                       policy->second.document_isolation_policy)
                 .has_value();
           })) {
     answer.error = static_cast<uint8_t>(

@@ -101,12 +101,19 @@ class Window final : public WindowProperties, public ExecutionContext {
   static Window* Incumbent();
   // Whether `accessing_context` may access the window that `accessed_object`,
   // a global proxy, gives, as bind_gen's AccessCheckCallback() of Window asks
-  // BindingSecurity::ShouldAllowAccessTo(): for a window of the same origin.
-  // V8 asks for contexts of different security tokens, such as that of a
-  // window that its frame navigated away from, which loses its token.
+  // BindingSecurity::ShouldAllowAccessTo(): for a window of the same origin and
+  // agent cluster (CanAccess()). V8 asks for contexts of different security
+  // tokens, such as that of a window that its frame navigated away from, which
+  // loses its token.
   static bool AccessCheckCallback(v8::Local<v8::Context> accessing_context,
                                   v8::Local<v8::Object> accessed_object,
                                   v8::Local<v8::Value> data);
+  // BindingSecurity::CanAccessWindow(): whether a script of `accessing` may
+  // reach `target`, which needs its origin and its agent cluster, as
+  // SecurityOrigin::CanAccess() compares their agent cluster IDs, and Chrome
+  // has a window of another one in another process. Without document.domain
+  // (#286), the same origin is all that an origin needs.
+  static bool CanAccess(const Window& accessing, const Window& target);
 
   Window();
   ~Window() override;

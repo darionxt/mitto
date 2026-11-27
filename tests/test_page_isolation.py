@@ -1191,3 +1191,317 @@ def test_a_data_url_that_would_download_keeps_the_frame_under_an_embedder_policy
     script = _start_local(server, "require-corp", "unsafe-none", "page", url, download=True)
 
     assert _evaluate(session, server.page("/", _BLANK), script) == server.url("/inner")
+
+
+# Document-Isolation-Policy, which isolates a document in an agent cluster of its own, of its origin, without COOP, and
+# whatever its permissions policy says, as Chrome 157 has it on (Chrome for Testing 157 gave each value below).
+_DIP: _Header = ("Document-Isolation-Policy", "isolate-and-require-corp")
+_DIP_CREDENTIALLESS: _Header = ("Document-Isolation-Policy", "isolate-and-credentialless")
+_DIP_IGNORED = (
+    "The Document-Isolation-Policy header has been ignored because the URL's origin was untrustworthy. Please deliver"
+    " the response using the HTTPS protocol. You can also use the 'localhost' origin instead. See"
+    " https://www.w3.org/TR/powerful-features/#potentially-trustworthy-origin."
+)
+# What a page reads of its isolation by the policy, with what COOP and COEP do not change.
+_DIP_ISOLATION = (
+    "[crossOriginIsolated, typeof SharedArrayBuffer, typeof performance.measureUserAgentSpecificMemory,"
+    " originAgentCluster]"
+)
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        pytest.param([_DIP], id="require-corp"),
+        pytest.param([_DIP_CREDENTIALLESS], id="credentialless"),
+        pytest.param([("Document-Isolation-Policy", 'isolate-and-require-corp;report-to="r"')], id="report-to"),
+        pytest.param([_DIP, ("Permissions-Policy", "cross-origin-isolated=()")], id="policy-takes-the-feature"),
+        pytest.param(
+            [_DIP, *_ISOLATING, ("Permissions-Policy", "cross-origin-isolated=()")], id="with-coop-coep-without-feature"
+        ),
+        pytest.param([_DIP_CREDENTIALLESS, _COEP], id="with-coep"),
+    ],
+)
+def test_document_isolation_policy_isolates_a_page_by_itself(
+    session: mitto.Session, server: RecordingServer, headers: list[_Header]
+) -> None:
+    url = server.page("/", _BLANK, headers)
+
+    assert _evaluate(session, url, _DIP_ISOLATION) == [True, "function", "function", True]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("none", id="none"),
+        pytest.param("isolate", id="unknown"),
+        pytest.param('"isolate-and-require-corp"', id="string"),
+        pytest.param("isolate-and-require-corp, isolate-and-require-corp", id="twice"),
+        pytest.param("Isolate-And-Require-Corp", id="case"),
+    ],
+)
+def test_a_document_isolation_policy_that_chrome_does_not_know_does_not_isolate(
+    session: mitto.Session, server: RecordingServer, value: str
+) -> None:
+    url = server.page("/", _BLANK, [("Document-Isolation-Policy", value)])
+
+    assert _evaluate(session, url, _ISOLATION) == _NOT_ISOLATED
+
+
+def test_a_report_only_document_isolation_policy_does_not_isolate(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", _BLANK, [("Document-Isolation-Policy-Report-Only", "isolate-and-require-corp")])
+
+    assert _evaluate(session, url, _ISOLATION) == _NOT_ISOLATED
+
+
+def test_document_isolation_policy_at_an_untrustworthy_origin_is_ignored_with_chromes_console_error(
+    page_program: None, server: RecordingServer
+) -> None:
+    # Ignored whole, so the page's requests are not held to it either.
+    server.page("/", _BLANK, [_DIP])
+    server.route("/none", b"none", "text/plain")
+    port = server.origin.rsplit(":", 1)[1]
+    script = f"fetch('http://127.0.0.1:{port}/none', {{mode: 'no-cors'}}).then((r) => r.type, (e) => String(e))"
+
+    with (
+        mitto.Session(_settings=PrivateSettings(host_resolver_rules=f"MAP {_UNTRUSTWORTHY_HOST} 127.0.0.1")) as session,
+        _open_page(session, f"http://{_UNTRUSTWORTHY_HOST}:{port}/") as page,
+    ):
+        assert page.evaluate(_ISOLATION, timeout=TIMEOUT_SECONDS) == _NOT_ISOLATED
+        assert page.evaluate(script, timeout=TIMEOUT_SECONDS) == "opaque"
+        assert [(message.level, message.text) for message in page.console_messages] == [("error", _DIP_IGNORED)]
+
+
+# A frame that says, in a request, whether it is isolated and whether it has SharedArrayBuffer.
+_DIP_FRAME = (
+    b"<!doctype html><title>f</title><script>"
+    b"fetch(`/seen/LABEL/${crossOriginIsolated}/${typeof SharedArrayBuffer}`).catch(() => 0);</script>"
+)
+
+
+def _route_dip_frames(server: RecordingServer, frames: dict[str, list[_Header]]) -> None:
+    for label, headers in frames.items():
+        server.route(f"/{label}", _DIP_FRAME.replace(b"LABEL", label.encode()), "text/html", headers)
+
+
+# Makes each frame of `frames`, a label's path on `origin` (the page's own for "", localhost's for "x") with its allow,
+# waits for each to load, and gives whether the page can reach each one's document.
+_MAKE_DIP_FRAMES = """(async (frames) => {
+    const reach = {};
+    await Promise.all(frames.map(([label, origin, allow]) => new Promise((resolve) => {
+        const frame = document.createElement('iframe');
+        if (allow) frame.allow = allow;
+        frame.onload = () => { reach[label] = frame.contentDocument !== null; resolve(); };
+        frame.src = (origin === 'x' ? 'http://localhost:' + location.port : '') + '/' + label;
+        document.documentElement.appendChild(frame);
+    })));
+    return reach;
+})"""
+
+
+def _dip_frames(page: Page, server: RecordingServer, frames: list[tuple[str, str, str]]) -> Any:
+    reach = page.evaluate(f"{_MAKE_DIP_FRAMES}({json.dumps(frames)})", timeout=TIMEOUT_SECONDS)
+    labels = [label for label, _, _ in frames]
+    with server.requested:
+        assert server.requested.wait_for(
+            lambda: all(any(path.startswith(f"/seen/{label}/") for path, _ in server.requests) for label in labels),
+            TIMEOUT_SECONDS,
+        ), server.requests
+    return reach
+
+
+def test_a_frame_is_isolated_by_its_own_document_isolation_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame takes its own response's policy, never its parent's, and its policy isolates it whatever its parent and
+    # its allow, in an agent cluster of its origin of its own: its parent of the same origin without the policy cannot
+    # reach its document, as Chrome has it in another process, while two documents that the policy isolates, whichever
+    # value, can (Chrome for Testing 157, localhost being another origin here).
+    _route_dip_frames(
+        server,
+        {
+            "same": [],
+            "same-dip": [_DIP],
+            "same-cl": [_DIP_CREDENTIALLESS],
+            "same-none": [_DIP],
+            "other": [],
+            "other-dip": [_DIP],
+            "under-plain": [_DIP],
+            "under-plain-x": [_DIP],
+        },
+    )
+    isolated = ["true", "function"]
+    not_isolated = ["false", "undefined"]
+
+    with _open_page(session, server.page("/", _BLANK, [_DIP])) as page:
+        reach = _dip_frames(
+            page,
+            server,
+            [
+                ("same", "", ""),
+                ("same-dip", "", ""),
+                ("same-cl", "", ""),
+                ("same-none", "", "cross-origin-isolated 'none'"),
+                ("other", "x", ""),
+                ("other-dip", "x", ""),
+            ],
+        )
+    with _open_page(session, server.page("/plain", _BLANK)) as page:
+        reach_plain = _dip_frames(page, server, [("under-plain", "", ""), ("under-plain-x", "x", "")])
+
+    assert reach == {
+        "same": False,
+        "same-dip": True,
+        "same-cl": True,
+        "same-none": True,
+        "other": False,
+        "other-dip": False,
+    }
+    assert reach_plain == {"under-plain": False, "under-plain-x": False}
+    expected = {
+        "same": not_isolated,
+        "same-dip": isolated,
+        "same-cl": isolated,
+        "same-none": isolated,
+        "other": not_isolated,
+        "other-dip": isolated,
+        "under-plain": isolated,
+        "under-plain-x": isolated,
+    }
+    assert {path for path in server.paths() if path.startswith("/seen/")} == {
+        f"/seen/{label}/{'/'.join(values)}" for label, values in expected.items()
+    }
+
+
+def test_a_frame_of_a_page_that_coop_and_coep_isolate_keeps_its_own_agent_cluster(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # The policy gives its document an agent cluster of its own in a page that COOP and COEP isolate, and a document of
+    # such a page that it isolates keeps one of the same origin without it apart, though that one is isolated by its
+    # page (Chrome for Testing 157).
+    _route_dip_frames(server, {"coep-dip": [_COEP, _DIP], "coep": [_COEP]})
+
+    with _open_page(session, server.page("/", _BLANK, _ISOLATING)) as page:
+        reach = _dip_frames(page, server, [("coep-dip", "", "")])
+    with _open_page(session, server.page("/both", _BLANK, [*_ISOLATING, _DIP])) as page:
+        reach_both = _dip_frames(page, server, [("coep", "", "")])
+
+    assert [reach, reach_both] == [{"coep-dip": False}, {"coep": False}]
+    assert {path for path in server.paths() if path.startswith("/seen/")} == {
+        "/seen/coep-dip/true/function",
+        "/seen/coep/true/function",
+    }
+
+
+def test_frames_made_without_the_network_take_their_parent_s_document_isolation_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame's initial about:blank and a srcdoc take their parent's policy, and an about:blank and a data: URL's
+    # document that it starts take it as their initiator's, also in a frame that showed a document without it, each in
+    # its agent cluster, which the page reaches (Chrome for Testing 157).
+    server.page("/same", _BLANK)
+    server.route("/seen/data/true/function", b"", "text/plain")
+    script = f"""(async () => {{
+        const isolation = (frame) => [frame.contentWindow.crossOriginIsolated,
+                                      typeof frame.contentWindow.SharedArrayBuffer];
+        const blank = document.createElement('iframe');
+        document.documentElement.appendChild(blank);
+        const srcdoc = document.createElement('iframe');
+        srcdoc.srcdoc = '<p>x';
+        let loaded = new Promise((resolve) => srcdoc.onload = resolve);
+        document.documentElement.appendChild(srcdoc);
+        await loaded;
+        const navigated = document.createElement('iframe');
+        navigated.src = '/same';
+        loaded = new Promise((resolve) => navigated.onload = resolve);
+        document.documentElement.appendChild(navigated);
+        await loaded;
+        loaded = new Promise((resolve) => navigated.onload = resolve);
+        navigated.src = 'about:blank';
+        await loaded;
+        const data = document.createElement('iframe');
+        data.src = "data:text/html,<script>fetch('{server.url("/seen/data/")}' + crossOriginIsolated + '/' +"
+            + " typeof SharedArrayBuffer, {{mode: 'no-cors'}}).catch(() => 0);</" + "script>";
+        loaded = new Promise((resolve) => data.onload = resolve);
+        document.documentElement.appendChild(data);
+        await loaded;
+        return [isolation(blank), isolation(srcdoc), isolation(navigated)];
+    }})()"""
+
+    with _open_page(session, server.page("/", _BLANK, [_DIP])) as page:
+        assert page.evaluate(script, timeout=TIMEOUT_SECONDS) == [[True, "function"]] * 3
+        assert server.wait_for_path("/seen/data/true/function")
+
+
+def test_a_shared_array_buffer_reaches_only_a_frame_of_the_same_document_isolation(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A frame of the page's origin that the policy does not isolate is in another agent cluster, which gets a
+    # messageerror, and one that it does shares the memory (Chrome for Testing 157). Each window posts with its own
+    # postMessage, as a window of another agent cluster gives no member yet (#286).
+    child = (
+        b"<!doctype html><script>const say = (data) => postMessage.call(parent, data, '*');"
+        b" onmessage = (e) => { if (e.data instanceof SharedArrayBuffer) { new Int32Array(e.data)[0] = 7; }"
+        b" say(['message', Object.prototype.toString.call(e.data)]); };"
+        b" onmessageerror = () => say(['messageerror']); say('ready');</script>"
+    )
+    server.route("/plain-child", child, "text/html")
+    server.route("/dip-child", child, "text/html", [_DIP])
+    script = """Promise.all(['/plain-child', '/dip-child'].map((src) => new Promise((resolve) => {
+        const frame = document.createElement('iframe');
+        const memory = new SharedArrayBuffer(4);
+        addEventListener('message', function listen(e) {
+            if (e.source !== frame.contentWindow) return;
+            if (e.data === 'ready') {
+                postMessage.call(frame.contentWindow, memory, '*');
+            } else {
+                removeEventListener('message', listen);
+                resolve([...e.data, new Int32Array(memory)[0]]);
+            }
+        });
+        frame.src = src;
+        document.documentElement.appendChild(frame);
+    })))"""
+
+    assert _evaluate(session, server.page("/", _BLANK, [_DIP]), script) == [
+        ["messageerror", 0],
+        ["message", "[object SharedArrayBuffer]", 7],
+    ]
+
+
+def test_a_worker_takes_its_creator_s_document_isolation_policy(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A dedicated worker is isolated where its creator is, but one of a data: URL, and its script's own policy counts
+    # for nothing (Chrome for Testing 157).
+    server.route("/bare.js", b"postMessage([crossOriginIsolated, typeof SharedArrayBuffer]);", _JS)
+    server.route("/dip.js", b"postMessage([crossOriginIsolated, typeof SharedArrayBuffer]);", _JS, [_DIP])
+    script = """(srcs) => Promise.all(srcs.map((src) => new Promise((resolve) => {
+        const worker = new Worker(src === 'blob' ? URL.createObjectURL(new Blob(
+            ['postMessage([crossOriginIsolated, typeof SharedArrayBuffer])'], {type: 'text/javascript'})) : src);
+        worker.onmessage = (e) => resolve(e.data);
+        worker.onerror = () => resolve('error');
+    })))"""
+    data = "data:text/javascript,postMessage([crossOriginIsolated, typeof SharedArrayBuffer])"
+
+    isolated_page = _evaluate(
+        session, server.page("/", _BLANK, [_DIP]), f"({script})({json.dumps(['/bare.js', 'blob', data])})"
+    )
+    plain_page = _evaluate(session, server.page("/plain", _BLANK), f"({script})(['/dip.js'])")
+
+    assert isolated_page == [[True, "function"], [True, "function"], [False, "undefined"]]
+    assert plain_page == [[False, "undefined"]]
+
+
+def test_a_window_that_document_isolation_policy_isolates_reads_clocks_of_5_microseconds(
+    sixty_hertz_session: mitto.Session, server: RecordingServer
+) -> None:
+    url = server.page("/", _BLANK, [_DIP])
+
+    clocks = _evaluate(sixty_hertz_session, url, _CLOCKS)
+
+    assert _all_fine(clocks), clocks
+    assert clocks["nowOffCoarse"] or clocks["hostCoarse"], clocks
+    assert [clocks["eventsFollowNow"], clocks["framesOffCoarse"], clocks["measure"]] == [True, True, "function"]

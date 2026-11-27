@@ -12,6 +12,10 @@ namespace mitto {
 bool IsInSameProcess(const RendererProcess& a, const RendererProcess& b) {
   const url::SchemeHostPort& of_a = a.origin.GetTupleOrPrecursorTupleIfOpaque();
   const url::SchemeHostPort& of_b = b.origin.GetTupleOrPrecursorTupleIfOpaque();
+  if (a.isolated_by_document_policy || b.isolated_by_document_policy) {
+    return a.isolated_by_document_policy == b.isolated_by_document_policy &&
+           a.sandboxed == b.sandboxed && of_a == of_b;
+  }
   if (a.sandboxed || b.sandboxed) {
     return a.sandboxed == b.sandboxed && of_a == of_b;
   }

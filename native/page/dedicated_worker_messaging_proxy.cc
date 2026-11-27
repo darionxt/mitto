@@ -156,6 +156,7 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   params_.origin = context.GetSecurityOrigin();
   params_.outside_origin = context.GetSecurityOrigin();
   params_.agent_cluster_origin = context.AgentClusterOrigin();
+  params_.isolated_by_document_policy = context.IsolatedByDocumentPolicy();
   params_.storage_key = context.StorageKey();
   params_.name = options.name;
   params_.script_url = url;
