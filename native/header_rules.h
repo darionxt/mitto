@@ -55,6 +55,13 @@ bool IsPrivilegedNoCorsHeaderName(std::string_view name);
 // Upstream: services/network/public/cpp/cors/cors.cc
 bool IsNoCorsSafelistedHeader(std::string_view name, std::string_view value);
 
+// Whether `media_type` is a CORS-safelisted type, whatever its length:
+// application/x-www-form-urlencoded, multipart/form-data or text/plain, with
+// no byte that a CORS-safelisted line may not hold, as a beacon's Blob type is
+// checked.
+// Upstream: services/network/public/cpp/cors/cors.cc
+bool IsCorsSafelistedContentType(std::string_view media_type);
+
 // The response header names that a script reads of a cross-origin response
 // beside those that Access-Control-Expose-Headers names.
 // Upstream: services/network/public/cpp/cors/cors.cc

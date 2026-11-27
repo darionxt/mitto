@@ -1,5 +1,13 @@
 #include "mitto/dom/navigator.h"
 
+#include <limits>
+#include <memory>
+#include <utility>
+#include <variant>
+
+#include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -7,7 +15,13 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator.h"
 #include "mitto/dom/battery_manager.h"
+#include "mitto/dom/blob.h"
+#include "mitto/dom/blob_data.h"
 #include "mitto/dom/credentials_container.h"
+#include "mitto/dom/document.h"
+#include "mitto/dom/fetcher.h"
+#include "mitto/dom/file.h"
+#include "mitto/dom/form_data.h"
 #include "mitto/dom/geolocation.h"
 #include "mitto/dom/keyboard.h"
 #include "mitto/dom/lock_manager.h"
@@ -15,13 +29,21 @@
 #include "mitto/dom/mime_type_array.h"
 #include "mitto/dom/navigator_ua_data.h"
 #include "mitto/dom/network_information.h"
+#include "mitto/dom/parsed_content_type.h"
 #include "mitto/dom/permissions.h"
 #include "mitto/dom/plugin_array.h"
+#include "mitto/dom/readable_stream.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/storage_bucket_manager.h"
 #include "mitto/dom/storage_manager.h"
+#include "mitto/dom/url_search_params.h"
 #include "mitto/dom/window.h"
+#include "mitto/header_rules.h"
+#include "url/gurl.h"
+#include "v8/include/v8-array-buffer.h"
+#include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
+#include "v8/include/v8-object.h"
 
 namespace mitto {
 namespace {
@@ -49,6 +71,139 @@ std::vector<std::u16string> ParseAndSanitize(
   }
   return languages;
 }
+
+// A beacon's body, as Blink's BeaconData subclasses serialize theirs into the
+// request: its bytes, its Content-Type if it has one, and whether it goes in
+// mode cors, which only a Blob of a type that is not CORS-safelisted does.
+struct BeaconBody {
+  std::string bytes;
+  std::optional<std::string> content_type;
+  bool cors = false;
+  // A Blob or buffer larger than the keepalive quota, which never fits in it,
+  // whose bytes are not copied.
+  bool past_quota = false;
+};
+
+// The size that Blink's beacons of a buffer cannot pass.
+constexpr char kBeaconTooLong[] =
+    "The data provided to sendBeacon() exceeds the maximally possible length, "
+    "which is 4294967295.";
+
+using BeaconData = bindings::
+    ReadableStreamOrBlobOrArrayBufferOrArrayBufferViewOrFormDataOrURLSearchParamsOrUSVString;
+
+// Serializes `data`, or nothing for none, which goes as an empty body with no
+// Content-Type, as Blink's BeaconString of a null string.
+std::optional<BeaconBody> SerializeBeacon(
+    const std::optional<BeaconData>& data,
+    bindings::ExceptionState& exception_state) {
+  BeaconBody body;
+  if (!data) {
+    return body;
+  }
+  if (std::holds_alternative<ReadableStream*>(*data)) {
+    exception_state.ThrowTypeError(
+        "sendBeacon cannot have a ReadableStream body.");
+    return std::nullopt;
+  }
+  if (Blob* const* const blob = std::get_if<Blob*>(&*data)) {
+    const BlobDataHandle& handle = *(*blob)->GetBlobDataHandle();
+    body.past_quota = handle.size() > kKeepaliveInflightBytesQuota;
+    if (!body.past_quota) {
+      const base::span<const uint8_t> bytes = handle.Bytes();
+      body.bytes.assign(bytes.begin(), bytes.end());
+    }
+    const std::string& type = handle.GetType();
+    if (!type.empty() && ParsedContentType(base::UTF8ToUTF16(type)).IsValid()) {
+      // BeaconBlob::Serialize(): a type of any length that is safelisted.
+      body.cors = !IsCorsSafelistedContentType(type);
+      body.content_type = type;
+    }
+    return body;
+  }
+  if (FormData* const* const form_data = std::get_if<FormData*>(&*data)) {
+    // Its files alone past the keepalive quota, which the multipart body only
+    // adds to, are not copied into it.
+    uint64_t file_bytes = 0;
+    for (size_t index = 0; index < (*form_data)->size(); ++index) {
+      if (const File* const file = (*form_data)->EntryAt(index)->file()) {
+        file_bytes += file->GetBlobDataHandle()->size();
+      }
+    }
+    if (file_bytes > kKeepaliveInflightBytesQuota) {
+      body.past_quota = true;
+      return body;
+    }
+    FormData::MultipartBody multipart = (*form_data)->EncodeMultiPartFormData();
+    body.content_type = multipart.ContentType();
+    body.bytes = std::move(multipart.bytes);
+    return body;
+  }
+  if (URLSearchParams* const* const params =
+          std::get_if<URLSearchParams*>(&*data)) {
+    body.bytes = base::UTF16ToUTF8((*params)->ToString());
+    body.content_type = "application/x-www-form-urlencoded;charset=UTF-8";
+    return body;
+  }
+  if (const auto* const buffer =
+          std::get_if<v8::Local<v8::ArrayBuffer>>(&*data)) {
+    const std::shared_ptr<v8::BackingStore> store =
+        (*buffer)->GetBackingStore();
+    if (store->ByteLength() > std::numeric_limits<uint32_t>::max()) {
+      exception_state.ThrowRangeError(kBeaconTooLong);
+      return std::nullopt;
+    }
+    body.past_quota = store->ByteLength() > kKeepaliveInflightBytesQuota;
+    if (!body.past_quota) {
+      body.bytes.assign(static_cast<const char*>(store->Data()),
+                        store->ByteLength());
+    }
+    return body;
+  }
+  if (const auto* const view =
+          std::get_if<v8::Local<v8::ArrayBufferView>>(&*data)) {
+    if ((*view)->ByteLength() > std::numeric_limits<uint32_t>::max()) {
+      exception_state.ThrowRangeError(kBeaconTooLong);
+      return std::nullopt;
+    }
+    body.past_quota = (*view)->ByteLength() > kKeepaliveInflightBytesQuota;
+    if (!body.past_quota) {
+      body.bytes.resize((*view)->ByteLength());
+      (*view)->CopyContents(body.bytes.data(), body.bytes.size());
+    }
+    return body;
+  }
+  body.bytes = base::UTF16ToUTF8(std::get<std::u16string>(*data));
+  body.content_type = "text/plain;charset=UTF-8";
+  return body;
+}
+
+// What a beacon's request tells, of which a script sees nothing: its body is
+// taken as it comes, so that the Session reads it all, and a request that
+// fails before Fetch() returns, as one past the keepalive quota does, sets
+// `failed`.
+class BeaconClient final : public FetchClient {
+ public:
+  explicit BeaconClient(scoped_refptr<base::RefCountedData<bool>> failed)
+      : failed_(std::move(failed)) {}
+
+  void OnStarted(FetchController& controller) override {
+    controller_ = &controller;
+  }
+  void OnResponseStarted(const FetchResponseHead& head) override {}
+  void OnResponseBody(std::string bytes) override {
+    controller_->TookBody(bytes.size());
+  }
+  void OnResponseEnded(int net_error) override {
+    if (net_error != 0) {
+      failed_->data = true;
+    }
+  }
+
+ private:
+  raw_ptr<FetchController> controller_ = nullptr;
+  const scoped_refptr<base::RefCountedData<bool>> failed_;
+};
 
 }  // namespace
 
@@ -327,6 +482,69 @@ std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(
   // that a Session opens, so nothing throws.
   constexpr size_t kItemsLengthCap = 8;
   return std::vector<bindings::ScriptWrappable*>(kItemsLengthCap, nullptr);
+}
+
+bool Navigator::SendBeacon(const std::u16string& url_string,
+                           const std::optional<BeaconData>& data,
+                           bindings::ExceptionState& exception_state) {
+  // The navigator's window, in whose realm it runs, as Blink's bindings give
+  // a non-static operation its receiver's ScriptState, so that a sendBeacon()
+  // that another window borrows resolves, checks and goes as this one's.
+  if (!window_) {
+    return false;
+  }
+  Window& window = *window_;
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Context> context;
+  std::optional<v8::Context::Scope> context_scope;
+  if (window.HasContext() &&
+      window.ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context)) {
+    context_scope.emplace(context);
+  }
+  const GURL url = window.CompleteUrl(url_string);
+  if (!url.is_valid()) {
+    exception_state.ThrowTypeError(
+        "The URL argument is ill-formed or unsupported.");
+    return false;
+  }
+  if (!url.SchemeIsHTTPOrHTTPS()) {
+    exception_state.ThrowTypeError("Beacons are only supported over HTTP(S).");
+    return false;
+  }
+  // CanSendBeacon(): a detached window sends none, before its data is read.
+  Fetcher* const fetcher = window.GetFetcher();
+  if (!fetcher) {
+    return false;
+  }
+  std::optional<BeaconBody> body = SerializeBeacon(data, exception_state);
+  if (!body) {
+    return false;
+  }
+  // One that never fits in the keepalive quota fails as Fetch() fails it.
+  if (body->past_quota) {
+    return false;
+  }
+  // PingLoader's SendBeaconCommon(): a keepalive POST, of request context
+  // BEACON and initiator type "beacon", with credentials, in mode no-cors
+  // but for the Blob that BeaconBlob puts in mode cors, through the
+  // document's ResourceFetcher, which fails one past its keepalive quota.
+  FetchRequestData request;
+  request.method = "POST";
+  request.url = url.spec();
+  if (body->content_type) {
+    request.headers =
+        base::StrCat({"Content-Type: ", *body->content_type, "\n"});
+  }
+  request.body = std::move(body->bytes);
+  request.mode = body->cors ? FetchMode::kCors : FetchMode::kNoCors;
+  request.credentials = FetchCredentialsMode::kInclude;
+  request.referrer_policy = window.GetDocument().GetReferrerPolicy();
+  request.keepalive = true;
+  request.is_beacon = true;
+  request.initiator_type = u"beacon";
+  auto failed = base::MakeRefCounted<base::RefCountedData<bool>>(false);
+  fetcher->Fetch(std::move(request), std::make_unique<BeaconClient>(failed));
+  return !failed->data;
 }
 
 }  // namespace mitto

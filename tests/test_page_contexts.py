@@ -168,6 +168,38 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
     """
 )
 
+# A top-level document that asks the Session to hold two deferred requests of 1,000 KiB, past three times what Blink's
+# quotas let a document queue, and then to send both.
+_FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    def deferred(number, url):
+        return (
+            struct.pack("<QQBB", 2, number, 2, 136)
+            + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, 0)
+            + sized(url.encode()) + sized(b"POST") + sized(b"") + sized(b"")
+            + b"\\x01" + b"a" * (1000 * 1024)
+        )
+
+    hello()
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    while True:
+        message_type, payload = receive()
+        if message_type == 4:
+            call = struct.unpack_from("<Q", payload)[0]
+            break
+    send(8, deferred(1, "{first}"))
+    send(8, deferred(2, "{second}"))
+    send(220, struct.pack("<Q", 2))
+    send(220, struct.pack("<Q", 1))
+    send(5, struct.pack("<QB", call, 0) + b"0")
+    while channel.recv(65536):
+        pass
+    """
+)
+
 # A frame's about:blank, of the top-level document's HTTP origin, that says a navigation within it gave it an HTTP URL of
 # that origin, which no about:blank may take.
 _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
@@ -506,6 +538,20 @@ def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: 
     printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
 
     assert printed == "the library refused a message from the Page: a same-document navigation to another origin"
+
+
+def test_a_deferred_request_past_what_the_session_holds_goes_nowhere(tmp_path: Path, top: _Server) -> None:
+    # A document queues no more than the 512 KiB that Blink's quota gives a top-level control document, counted as
+    # FetchLaterUtil counts each request, a string body by its UTF-16 length, so the Session holds no more than three
+    # times that for it, as UTF-8 may take, and drops one more without a word: a send of it sends nothing.
+    program = _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES.format(
+        python=sys.executable, first=top.url("/later-first"), second=top.url("/later-second")
+    )
+
+    printed = _run_fake_page(tmp_path, program, _SESSION_THAT_WAITS, top.url("/page"), top.url("/wait-post"))
+
+    assert printed == "posted"
+    assert [path for path, _ in top.posted] == ["/later-first"]
 
 
 @pytest.mark.parametrize(

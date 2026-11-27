@@ -188,20 +188,24 @@ bool IsNoCorsSafelistedHeader(std::string_view name, std::string_view value) {
     return !std::ranges::any_of(value, IsCorsUnsafeRequestHeaderByte);
   }
   if (base::EqualsCaseInsensitiveASCII(name, "content-type")) {
-    if (std::ranges::any_of(value, IsCorsUnsafeRequestHeaderByte)) {
-      return false;
-    }
-    const std::optional<std::string> mime_type =
-        ExtractMimeType(base::ToLowerASCII(value));
-    return mime_type &&
-           (*mime_type == "application/x-www-form-urlencoded" ||
-            *mime_type == "multipart/form-data" || *mime_type == "text/plain");
+    return IsCorsSafelistedContentType(value);
   }
   // Accept-Language and Content-Language.
   return std::ranges::all_of(value, [](char c) {
     return base::IsAsciiAlphaNumeric(c) || c == ' ' || c == '*' || c == ',' ||
            c == '-' || c == '.' || c == ';' || c == '=';
   });
+}
+
+bool IsCorsSafelistedContentType(std::string_view media_type) {
+  if (std::ranges::any_of(media_type, IsCorsUnsafeRequestHeaderByte)) {
+    return false;
+  }
+  const std::optional<std::string> mime_type =
+      ExtractMimeType(base::ToLowerASCII(media_type));
+  return mime_type &&
+         (*mime_type == "application/x-www-form-urlencoded" ||
+          *mime_type == "multipart/form-data" || *mime_type == "text/plain");
 }
 
 bool IsCorsSafelistedResponseHeaderName(std::string_view name) {
