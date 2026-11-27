@@ -26,6 +26,7 @@
 #include "mitto/dom/frame.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/quota_exceeded_error.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/window.h"
@@ -58,19 +59,17 @@ bool AreSameOrigin(const Frame& a, const Frame& b) {
              window_b->GetSecurityOrigin());
 }
 
-// Whether "deferred-fetch", whose default allowlist is 'self', is enabled in
-// the document of `frame`. A Page takes neither a Permissions-Policy header
-// nor an allow attribute, so it is in the top-level document and, as
-// PermissionsPolicy::InheritedValueForFeature() gives it, in each frame's
-// document of its parent's origin where it is in the parent's.
-// "deferred-fetch-minimal", whose default allowlist is *, is in each.
-bool IsDeferredFetchAllowed(const Frame& frame) {
-  for (const Frame* child = &frame; child->Parent(); child = child->Parent()) {
-    if (!AreSameOrigin(*child, *child->Parent())) {
-      return false;
-    }
-  }
-  return true;
+// The policy-controlled features that decide a document's quota.
+constexpr char kDeferredFetch[] = "deferred-fetch";
+constexpr char kDeferredFetchMinimal[] = "deferred-fetch-minimal";
+
+// IsFeatureEnabledForFrame(): whether the permissions policy of the document
+// of `frame` enables `feature`, as its parent's and its element's allow pass
+// it on.
+bool IsFeatureEnabledForFrame(const Frame& frame, const char* feature) {
+  Window* const window = frame.DomWindow();
+  return window && window->HasDocument() &&
+         window->GetDocument().IsFeatureEnabled(feature);
 }
 
 // FetchLaterUtil::GetDeferredFetchControlFrame(): the frame itself, if it is
@@ -107,11 +106,17 @@ void ForEachDescendant(const Frame& frame, const Visit& visit) {
 }
 
 // FetchLaterUtil::GetReservedDeferredFetchQuota() of a control frame: 512 KiB
-// for a top-level one, and otherwise what its element reserves, if the
-// document may use it.
+// for a top-level one whose policy enables both features, and otherwise what
+// its element reserves, if its policy enables the feature of that quota.
 uint64_t ReservedDeferredFetchQuota(const Frame& frame) {
+  const bool deferred_fetch = IsFeatureEnabledForFrame(frame, kDeferredFetch);
+  const bool deferred_fetch_minimal =
+      IsFeatureEnabledForFrame(frame, kDeferredFetchMinimal);
   if (!frame.Parent()) {
-    return kMaxScheduledDeferredBytes - kQuotaReservedForDeferredFetchMinimal;
+    return deferred_fetch && deferred_fetch_minimal
+               ? kMaxScheduledDeferredBytes -
+                     kQuotaReservedForDeferredFetchMinimal
+               : 0;
   }
   const HTMLFrameOwnerElement* const owner = frame.Owner();
   if (!owner) {
@@ -119,11 +124,14 @@ uint64_t ReservedDeferredFetchQuota(const Frame& frame) {
   }
   const uint64_t reserved =
       ToReservedDeferredFetchQuota(owner->GetDeferredFetchPolicy());
-  if (reserved == kNormalReservedDeferredFetchQuota &&
-      IsDeferredFetchAllowed(frame)) {
+  if (deferred_fetch && reserved == kNormalReservedDeferredFetchQuota) {
     return reserved;
   }
-  return reserved == kMinimalReservedDeferredFetchQuota ? reserved : 0;
+  if (deferred_fetch_minimal &&
+      reserved == kMinimalReservedDeferredFetchQuota) {
+    return reserved;
+  }
+  return 0;
 }
 
 // FetchLaterUtil::GetAvailableDeferredFetchQuota(): what is left of the quota
@@ -359,19 +367,27 @@ DeferredFetchPolicy DeferredFetchPolicyOnNavigation(
     const Frame& frame,
     const url::Origin& to_origin) {
   const Frame* const parent = frame.Parent();
-  CHECK(parent);
-  // The normal quota, for a document of the parent's origin where the parent
-  // may use deferred-fetch.
-  const Window* const parent_window = parent->DomWindow();
-  if (parent_window && IsDeferredFetchAllowed(*parent) &&
-      to_origin.IsSameOriginWith(parent_window->GetSecurityOrigin())) {
+  const HTMLFrameOwnerElement* const owner = frame.Owner();
+  CHECK(parent && owner);
+  Window* const parent_window = parent->DomWindow();
+  if (!parent_window || !parent_window->HasDocument()) {
+    return DeferredFetchPolicy::kDisabled;
+  }
+  // The "inherited policy" of each feature for the element and `to_origin`,
+  // as the parent's policy and the element's allow pass it on.
+  const PermissionsPolicyState inherited(
+      &parent_window->GetDocument().GetPermissionsPolicyState(),
+      owner->GetContainerPolicy(), to_origin, /*unload_deprecated=*/false);
+  // The normal quota, where deferred-fetch is inherited.
+  if (inherited.IsEnabled(PolicyFeatureNamed(kDeferredFetch))) {
     return DeferredFetchPolicy::kDeferredFetch;
   }
-  // Otherwise the minimal quota, under a top-level control document that has
-  // given fewer than 16 elements the minimal quota, the element's own
-  // included.
+  // Otherwise the minimal quota, where deferred-fetch-minimal is inherited,
+  // under a top-level control document that has given fewer than 16 elements
+  // the minimal quota, the element's own included.
   const Frame& control = DeferredFetchControlFrame(*parent);
-  if (control.Parent()) {
+  if (control.Parent() ||
+      !inherited.IsEnabled(PolicyFeatureNamed(kDeferredFetchMinimal))) {
     return DeferredFetchPolicy::kDisabled;
   }
   uint64_t minimal = 0;

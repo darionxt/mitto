@@ -739,6 +739,34 @@ _FETCH_LATER_QUOTAS: dict[str, tuple[str, Any]] = {
         "}); return ask(a, \"return avail('/x');\");",
         8192,
     ),
+    "a frame of another origin allowed deferred-fetch": (
+        "const b = await frame(B + F, {allow: 'deferred-fetch'}); return ask(b, \"return avail('/x');\");",
+        65536,
+    ),
+    "a top-level document's quota beside a frame of another origin allowed deferred-fetch": (
+        "await frame(B + F, {allow: 'deferred-fetch'}); for (const u of fillers.slice(0, 6)) fill(u, "
+        "65536); return avail('/x');",
+        65536,
+    ),
+    "a frame of another origin denied deferred-fetch-minimal": (
+        'const b = await frame(B + F, {allow: "deferred-fetch-minimal \'none\'"}); return ask(b, "return '
+        "avail('/x');\");",
+        0,
+    ),
+    "a frame of the page's origin denied deferred-fetch": (
+        "const a = await frame(F, {allow: \"deferred-fetch 'none'\"}); return ask(a, \"return avail('/x');\");",
+        65536,
+    ),
+    "a frame of another origin in one allowed deferred-fetch": (
+        "const b = await frame(B + F, {allow: 'deferred-fetch'}); return ask(b, \"const c = await frame(C "
+        '+ F); return ask(c, \\"return avail(\'/x\');\\");");',
+        0,
+    ),
+    "a frame of another origin allowed deferred-fetch for all in one allowed it": (
+        "const b = await frame(B + F, {allow: 'deferred-fetch *'}); return ask(b, \"const c = await "
+        "frame(C + F, {allow: 'deferred-fetch *'}); return ask(c, \\\"return avail('/x');\\\");\");",
+        65536,
+    ),
 }
 
 
@@ -757,7 +785,8 @@ def test_fetch_later_takes_the_quota_of_its_frames_deferred_fetch_control_docume
     session: mitto.Session, server: _Server
 ) -> None:
     # A frame of the page's origin shares the top-level document's quota, one of another site has the 8 KiB that its
-    # element reserved of the top-level document's, as at most 16 elements do, and one under that has none.
+    # element reserved of the top-level document's, as at most 16 elements do, and one under that has none, unless its
+    # element's allow gives it deferred-fetch, and the 64 KiB of that, or takes deferred-fetch-minimal away.
     url = _fetch_later_page(server)
     gave: dict[str, Any] = {}
     for name, (script, _) in _FETCH_LATER_QUOTAS.items():
