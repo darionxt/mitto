@@ -21,6 +21,7 @@
 // Upstream: third_party/blink/renderer/modules/credentialmanagement/authentication_credentials_container.cc
 // Upstream: third_party/blink/renderer/modules/credentialmanagement/digital_identity_credential.cc
 // Upstream: third_party/blink/renderer/modules/credentialmanagement/credential_utils.cc
+// Upstream: components/credential_management/content_credential_manager.cc
 // Upstream: components/password_manager/core/browser/credential_manager_impl.cc
 // Upstream: content/browser/webauth/authenticator_common_impl.cc
 // Upstream: components/webauthn/core/browser/webauthn_security_utils.cc

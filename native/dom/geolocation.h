@@ -24,6 +24,7 @@
 namespace mitto {
 
 class GeoNotifier;
+class Window;
 
 class Geolocation final : public bindings::ScriptWrappable {
  public:
@@ -53,15 +54,18 @@ class Geolocation final : public bindings::ScriptWrappable {
   void Fire(GeoNotifier* notifier);
 
  private:
-  void StartRequest(GeoNotifier* notifier);
+  void StartRequest(Window& window, GeoNotifier* notifier);
   // Whether the request of `notifier` has not ended.
   bool Has(const GeoNotifier& notifier) const;
+  // Its requests go with its window's context.
+  void ContextDestroyed();
   void Remove(GeoNotifier* notifier);
 
   // The requests, one-shots and watches alike, in a list on the heap, as
   // EventTarget keeps its listeners.
   cppgc::Member<GeoNotifier> first_;
   int32_t last_watch_id_ = 0;
+  bool observes_context_ = false;
 };
 
 }  // namespace mitto

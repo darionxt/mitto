@@ -82,6 +82,13 @@ Window& Window::Current() {
 }
 
 // static
+Window& Window::OfReceiver() {
+  ExecutionContext& context = ExecutionContext::OfReceiver();
+  CHECK(context.IsWindow());
+  return static_cast<Window&>(context);
+}
+
+// static
 Window* Window::From(v8::Isolate* isolate, v8::Local<v8::Context> context) {
   ExecutionContext* const execution_context =
       ExecutionContext::From(isolate, context);
@@ -578,6 +585,32 @@ RendererProcess Window::Process() const {
 
 bool Window::IsInFrame() const {
   return frame_ && frame_->Parent();
+}
+
+bool Window::AllowsHighEntropyValues() {
+  return GetDocument().IsFeatureEnabledOrReport(
+      "ch-ua-high-entropy-values",
+      "Collection of high-entropy user-agent client hints is disabled for this "
+      "document.");
+}
+
+size_t Window::OriginChangesToTop() const {
+  size_t changes = 0;
+  url::Origin origin = GetSecurityOrigin();
+  for (mitto::Frame* frame = frame_ ? frame_->Parent() : nullptr; frame;
+       frame = frame->Parent()) {
+    const url::Origin parent = frame->DomWindow()->GetSecurityOrigin();
+    if (!origin.IsSameOriginWith(parent)) {
+      ++changes;
+      origin = parent;
+    }
+  }
+  return changes;
+}
+
+bool Window::IsCrossOriginToTop() const {
+  return frame_ && !GetSecurityOrigin().IsSameOriginWith(
+                       frame_->Top().DomWindow()->GetSecurityOrigin());
 }
 
 bool Window::CanExecuteScripts(bool about_to_execute) {

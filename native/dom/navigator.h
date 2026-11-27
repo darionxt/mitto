@@ -114,7 +114,8 @@ class Navigator final : public bindings::ScriptWrappable {
   bool HasPublicKeyRequest() const;
   // How many of navigator.geolocation's requests wait on a timer.
   size_t GeolocationTimerCount() const;
-  // A new array each time, of kItemsLengthCap nulls: no gamepad is there.
+  // A new array each time, of kItemsLengthCap nulls: no gamepad is there. It
+  // throws where the document's permissions policy withholds them.
   std::vector<bindings::ScriptWrappable*> GetGamepads(
       bindings::ExceptionState& exception_state) const;
   // The same promise each time, which resolves from a task of its own with

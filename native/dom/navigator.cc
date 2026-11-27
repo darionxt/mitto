@@ -478,8 +478,16 @@ uint16_t Navigator::CpuPerformance() const {
 
 std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(
     bindings::ExceptionState& exception_state) const {
-  // device::Gamepads::kItemsLengthCap. The "gamepad" policy allows any page
-  // that a Session opens, so nothing throws.
+  // NavigatorGamepad::getGamepads(), which asks no policy once its window's
+  // frame has gone.
+  Window& window = Window::OfReceiver();
+  if (window.GetFrame() && !window.GetDocument().IsFeatureEnabled("gamepad")) {
+    exception_state.ThrowDOMException("SecurityError",
+                                      "Access to the feature \"gamepad\" is "
+                                      "disallowed by permissions policy.");
+    return {};
+  }
+  // device::Gamepads::kItemsLengthCap.
   constexpr size_t kItemsLengthCap = 8;
   return std::vector<bindings::ScriptWrappable*>(kItemsLengthCap, nullptr);
 }

@@ -88,6 +88,8 @@ class Window final : public WindowProperties, public ExecutionContext {
   static Window* Create();
   // The Window of the isolate's current context.
   static Window& Current();
+  // ExecutionContext::OfReceiver(), of a member that windows alone have.
+  static Window& OfReceiver();
   // The window of `context`, as ExecutionContext::From() finds it, or null
   // for a context of none or of a worker.
   static Window* From(v8::Isolate* isolate, v8::Local<v8::Context> context);
@@ -174,6 +176,7 @@ class Window final : public WindowProperties, public ExecutionContext {
                             bindings::ExceptionState& exception_state);
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
+  bool AllowsHighEntropyValues() override;
   // WindowOrWorkerGlobalScope::crossOriginIsolated().
   bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
   // Chrome keys agent clusters by origin by default.
@@ -330,6 +333,11 @@ class Window final : public WindowProperties, public ExecutionContext {
                         bool discard_duplicate);
   // Whether its frame is under another.
   bool IsInFrame() const;
+  // How many times the origin changes from its document's up to the top-level
+  // frame's, through each frame between.
+  size_t OriginChangesToTop() const;
+  // Frame::IsCrossOriginToOutermostMainFrame().
+  bool IsCrossOriginToTop() const;
   // The process that Chrome has its document in.
   RendererProcess Process() const;
   // What a navigation of the window's frame to another document asks the
