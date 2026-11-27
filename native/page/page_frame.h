@@ -348,9 +348,6 @@ class PageFrame final : public NavigationClient, public Frame {
   // the frame, CreateFromParentPolicy() of its parent's, with
   // `container_policy` and `declared`, has the cross-origin-isolated feature,
   // whose default allowlist is 'self'.
-  // Gives the frame's window, which its initial about:blank leaves to a
-  // document of its origin, that document's isolation.
-  void TakeIsolationFromWindow(bool isolated);
   bool AllowsIsolation(const url::Origin& origin,
                        const ParsedPolicy& container_policy,
                        const ParsedPolicy& declared,
