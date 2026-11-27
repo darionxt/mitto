@@ -25,6 +25,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
@@ -590,6 +591,27 @@ class Document : public Node {
   void SetEmbedderPolicyIsolates(bool isolates) {
     embedder_policy_isolates_ = isolates;
   }
+  // Whether the document is credentialless, as its policy container's
+  // is_credentialless says, which Chrome's browser fixes as its navigation
+  // starts: its frame's element is credentialless, or its parent's document
+  // is. window.credentialless says so.
+  bool IsCredentialless() const { return credentialless_; }
+  void SetCredentialless(bool credentialless) {
+    credentialless_ = credentialless;
+  }
+  // Whether the nonce of the top-level document's credentialless frames keys
+  // its storage and requests, as Chrome's browser has
+  // RenderFrameHostImpl::IsCredentialless(): as credentialless, but for a
+  // frame's initial about:blank, which keeps its parent's, as the browser hears
+  // of the frame's element only after the frame is made.
+  bool InCredentiallessPartition() const { return credentialless_partition_; }
+  void SetInCredentiallessPartition(bool in_partition) {
+    credentialless_partition_ = in_partition;
+  }
+  // For a top-level document: the nonce of the credentialless frames under
+  // it, as Chrome's PageImpl keeps one for each main document, made at the
+  // first ask.
+  const base::UnguessableToken& CredentiallessNonce() const;
   // Whether a new entry of the document in the session history keeps its URL
   // from other documents' Navigation API entries, as Chrome's browser takes
   // it from the policy container: for a policy of no-referrer or origin that
@@ -978,6 +1000,9 @@ class Document : public Node {
   FetchReferrerPolicy policy_container_referrer_policy_ =
       FetchReferrerPolicy::kDefault;
   bool embedder_policy_isolates_ = false;
+  bool credentialless_ = false;
+  bool credentialless_partition_ = false;
+  mutable std::optional<base::UnguessableToken> credentialless_nonce_;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;

@@ -76,10 +76,10 @@ CacheStorageContext::~CacheStorageContext() = default;
 CacheStorage& CacheStorageContext::ForKey(const std::string& storage_key) {
   std::unique_ptr<Key>& key = keys_[storage_key];
   if (!key) {
-    // A key under a top-level document of an opaque origin, which no later
-    // document has, stays in memory.
+    // A key that only the frames under one top-level document have, of an
+    // opaque origin or a credentialless frame's, stays in memory.
     base::FilePath directory;
-    if (directory_ && !IsSerializedUnderOpaqueTop(storage_key)) {
+    if (directory_ && !IsSerializedForOneTopDocument(storage_key)) {
       directory = directory_->AppendASCII(kCacheStorageDirectoryName)
                       .AppendASCII(KeyDirectoryName(storage_key));
     }
@@ -106,7 +106,7 @@ void CacheStorageContext::DeleteBucketData(const std::string& bucket_key,
                                            base::OnceClosure done) {
   const auto found = keys_.find(bucket_key);
   base::FilePath directory;
-  if (directory_ && !IsSerializedUnderOpaqueTop(bucket_key)) {
+  if (directory_ && !IsSerializedForOneTopDocument(bucket_key)) {
     directory = directory_->AppendASCII(kCacheStorageDirectoryName)
                     .AppendASCII(KeyDirectoryName(bucket_key));
   }

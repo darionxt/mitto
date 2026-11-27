@@ -340,6 +340,10 @@ bool Window::IsSecureContextForBindings() const {
   return IsSecureContext();
 }
 
+bool Window::Credentialless() const {
+  return GetDocument().IsCredentialless();
+}
+
 CrashReportContext* Window::CrashReport() {
   if (!crash_report_) {
     crash_report_ = CrashReportContext::Create();
@@ -634,11 +638,19 @@ url::Origin Window::AgentClusterOrigin() const {
 
 std::string Window::StorageKey() const {
   std::vector<url::Origin> ancestors;
+  const Window* top = this;
   for (const mitto::Frame* ancestor = frame_ ? frame_->Parent() : nullptr;
        ancestor; ancestor = ancestor->Parent()) {
     if (const Window* const window = ancestor->DomWindow()) {
       ancestors.push_back(window->GetSecurityOrigin());
+      top = window;
     }
+  }
+  // A credentialless document's has the nonce of its top-level document's
+  // credentialless frames, as the Session keys its storage.
+  if (GetDocument().InCredentiallessPartition() && top != this) {
+    return SerializeStorageKeyWithNonce(
+        GetSecurityOrigin(), top->GetDocument().CredentiallessNonce());
   }
   return SerializeStorageKey(GetSecurityOrigin(), ancestors);
 }

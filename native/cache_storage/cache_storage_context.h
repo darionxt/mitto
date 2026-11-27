@@ -3,9 +3,9 @@
 // profile's. Each bucket goes by the key that BucketKey() gives it, which is
 // the serialized storage key for a key's default bucket. In a directory, each
 // bucket's caches go into CacheStorage/ there, in a directory named after a
-// hash of its key; without one, and for a frame under
-// a top-level document of an opaque origin, they are kept in memory until the
-// Session goes.
+// hash of its key; without one, and for a frame under a top-level document of
+// an opaque origin or a credentialless frame, they are kept in memory until
+// the Session goes.
 //
 // Upstream: content/browser/cache_storage/cache_storage_manager.cc
 

@@ -148,7 +148,8 @@ void SetSecFetchDestHeader(net::URLRequest& request,
 // Upstream asks CookieSettingsBase::GetStorageAccessStatus(), which is nullopt
 // for a URL that is not third-party. Otherwise it is "active" wherever the
 // settings allow full cookie access, as a Chrome with no such settings does,
-// and a Session has none.
+// and a Session has none, and "none" for a credentialless document's request,
+// whose nonce partition forbids unpartitioned cookie access.
 // Upstream: components/content_settings/core/common/cookie_settings_base.cc
 void SetSecFetchStorageAccessHeader(
     net::URLRequest& request,
@@ -169,8 +170,8 @@ void SetSecFetchStorageAccessHeader(
     RemoveHeader(request, params, kSecFetchStorageAccess);
     return;
   }
-  SetHeader(request, params, kSecFetchStorageAccess, "active",
-            /*overwrite=*/true);
+  SetHeader(request, params, kSecFetchStorageAccess,
+            params.nonce ? "none" : "active", /*overwrite=*/true);
 }
 
 }  // namespace

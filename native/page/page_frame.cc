@@ -243,6 +243,14 @@ void PageFrame::Start(const PageConnection& connection) {
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
   const url::Origin origin = SandboxedOrigin(parent_origin, sandbox);
   origin_sandboxed_ = IsOriginSandboxed(sandbox);
+  // WebLocalFrameImpl::CreateChildFrame(): credentialless where its element is
+  // as the frame is made, or its parent's document is, though the browser
+  // keys its storage and requests as its parent's.
+  const bool credentialless =
+      parent_ && (OwnerCredentialless() ||
+                  parent_->window_->GetDocument().IsCredentialless());
+  const bool in_partition =
+      parent_ && parent_->window_->GetDocument().InCredentiallessPartition();
   // It is as trustworthy as its parent's, whose context is a secure one only
   // if that is.
   context_.Reset(isolate,
@@ -270,6 +278,8 @@ void PageFrame::Start(const PageConnection& connection) {
     Document& document = window_->GetDocument();
     document.SetOrigin(origin);
     document.SetSandboxFlags(sandbox);
+    document.SetCredentialless(credentialless);
+    document.SetInCredentiallessPartition(in_partition);
     document.SetInSandboxedProcess(
         parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
     ApplyPermissionsPolicy(document, GURL(), PendingContainerPolicy());
@@ -292,7 +302,13 @@ void PageFrame::Start(const PageConnection& connection) {
   }
   PageDocumentCommitted committed;
   committed.sandboxed_origin = IsOriginSandboxed(sandbox);
+  committed.credentialless = credentialless;
   AttachWindow(connection, committed);
+  // HTMLFrameOwnerElement::LoadOrRedirectSubframe() tells the browser of the
+  // element's attributes once the frame is made.
+  if (OwnerCredentialless()) {
+    DidChangeCredentialless();
+  }
 }
 
 v8::Local<v8::Context> PageFrame::context() const {
@@ -402,6 +418,8 @@ void PageFrame::CommitWithoutNetworkSoon(LocalNavigation navigation) {
 
 void PageFrame::CommitErrorPageSoon(SandboxFlags sandbox,
                                     ParsedPolicy container_policy) {
+  // ComputePoliciesForError() gives it default policies, which are not
+  // credentialless.
   LocalNavigation navigation;
   navigation.url = GURL(kErrorPageUrl);
   navigation.committed.source = PageDocumentSource::kErrorPage;
@@ -412,9 +430,32 @@ void PageFrame::CommitErrorPageSoon(SandboxFlags sandbox,
   CommitWithoutNetworkSoon(std::move(navigation));
 }
 
-bool PageFrame::IsBlockedByEmbedderPolicy(bool embedder_policy_isolates) const {
-  return parent_ && !embedder_policy_isolates &&
+bool PageFrame::IsBlockedByEmbedderPolicy(bool embedder_policy_isolates,
+                                          bool credentialless) const {
+  return parent_ && !credentialless && !embedder_policy_isolates &&
          parent_->window_->GetDocument().EmbedderPolicyIsolates();
+}
+
+bool PageFrame::OwnerCredentialless() const {
+  const HTMLFrameOwnerElement* const owner = owner_.Get();
+  return owner && owner->IsCredentialless();
+}
+
+bool PageFrame::PendingCredentialless() const {
+  return parent_ &&
+         (OwnerCredentialless() ||
+          parent_->window_->GetDocument().InCredentiallessPartition());
+}
+
+void PageFrame::DidChangeCredentialless() {
+  // RenderFrameHostImpl::DidChangeIframeAttributes(), which the frame's next
+  // navigation takes, not its document now.
+  if (!window_ || !parent_ || detaching_) {
+    return;
+  }
+  runner_->sender()->SendFromContext(
+      window_->DocumentId(),
+      EncodeFrameAttributes(window_->DocumentId(), OwnerCredentialless()));
 }
 
 void PageFrame::CommitWithoutNetwork(uint64_t number) {
@@ -434,12 +475,16 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin, as DocumentLoader::CommitNavigation() reuses it, and makes a
   // new one for any other, or for one of another isolation, as Chrome's
-  // origin then differs, an opaque one under a sandbox.
+  // origin then differs, an opaque one under a sandbox, or of another
+  // credentialless, as ShouldReuseDOMWindow() has it, which compares no
+  // storage key: a Storage that an initial about:blank of its parent's
+  // partition made stays bound to that area, as DOMWindowStorage keeps it.
   const bool isolated = IsolatedLikeParent(origin, navigation.origin_sandboxed);
   const bool reuse_window =
       old_document.IsInitialEmptyDocument() &&
       old_document.GetOrigin().IsSameOriginWith(origin) &&
-      window_->CrossOriginIsolatedCapability() == isolated;
+      window_->CrossOriginIsolatedCapability() == isolated &&
+      old_document.IsCredentialless() == navigation.credentialless;
   {
     // DocumentLoader::CommitNavigation(): no script of the old document or
     // of its frames starts a navigation of this frame meanwhile.
@@ -509,6 +554,8 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   }
   document->SetOrigin(origin);
   document->SetSandboxFlags(navigation.sandbox);
+  document->SetCredentialless(navigation.credentialless);
+  document->SetInCredentiallessPartition(navigation.credentialless);
   document->SetInSandboxedProcess(navigation.sandboxed_process);
   ApplyPermissionsPolicy(*document, url, navigation.container_policy);
   DidShowDocument(*window_);
@@ -680,6 +727,11 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetCookieUrl(old_document.CookieUrl());
   document->SetReferrerPolicy(old_document.GetReferrerPolicy());
   document->SetEmbedderPolicyIsolates(old_document.EmbedderPolicyIsolates());
+  // IsDocumentToCommitAnonymous(): it keeps the initial document's
+  // credentialless, as the Session does with no new document.
+  document->SetCredentialless(old_document.IsCredentialless());
+  document->SetInCredentiallessPartition(
+      old_document.InCredentiallessPartition());
   // The referrer is the full URL of the document that started it, its
   // parent's, as RenderFrameImpl takes it from the initiator frame.
   if (parent_ && parent_->window_ && parent_->window_->HasDocument()) {
@@ -789,9 +841,12 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     navigation.origin = SandboxedOrigin(navigation.origin, navigation.sandbox);
     navigation.committed.sandboxed_origin =
         IsOriginSandboxed(navigation.sandbox);
+    navigation.credentialless = PendingCredentialless();
+    navigation.committed.credentialless = navigation.credentialless;
     StopAllLoaders();
     // A srcdoc takes its parent's policy, which is compatible with itself.
-    if (IsBlockedByEmbedderPolicy(navigation.embedder_policy_isolates)) {
+    if (IsBlockedByEmbedderPolicy(navigation.embedder_policy_isolates,
+                                  navigation.credentialless)) {
       CommitErrorPageSoon(navigation.sandbox, navigation.container_policy);
       return;
     }
@@ -857,6 +912,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   provisional_container_policy_ = PendingContainerPolicy();
   provisional_start_ = now;
   provisional_origin_sandboxed_ = IsOriginSandboxed(sandbox);
+  provisional_credentialless_ = parent_ && PendingCredentialless();
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
   PageRequest page_request;
   // A frame's navigation names the frame's document that the new one takes
@@ -908,6 +964,7 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
   ++provisional_request_serial_;
   provisional_sandbox_ = PendingSandboxFlags();
   provisional_container_policy_ = PendingContainerPolicy();
+  provisional_credentialless_ = PendingCredentialless();
   provisional_start_ = base::TimeTicks::Now();
   auto answer = std::make_unique<DataUrlAnswer>();
   answer->number = ++last_data_url_answer_;
@@ -952,7 +1009,8 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
     LetParentCheckCompleted();
     return;
   }
-  if (IsBlockedByEmbedderPolicy(request.initiator_embedder_policy_isolates)) {
+  if (IsBlockedByEmbedderPolicy(request.initiator_embedder_policy_isolates,
+                                provisional_credentialless_)) {
     EndLocalNavigation();
     forget_request();
     CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_);
@@ -2095,9 +2153,13 @@ Document& PageFrame::CommitDocument(
                          ? PageDocumentSource::kDataUrl
                          : PageDocumentSource::kNavigationResponse;
   committed.navigation = navigation;
+  // A frame's document is credentialless as its navigation started, which the
+  // Session works out itself for a response, and hears of for a data: URL's.
+  const bool credentialless = parent_ && provisional_credentialless_;
   if (committed.source == PageDocumentSource::kDataUrl) {
     committed.initiator = provisional_request_.initiator;
     committed.url = url.spec();
+    committed.credentialless = credentialless;
   }
   if (parent_) {
     committed.replaces = window_->DocumentId();
@@ -2131,7 +2193,8 @@ Document& PageFrame::CommitDocument(
   const bool reuse_window =
       window_ && window_->GetDocument().IsInitialEmptyDocument() &&
       window_->GetDocument().GetOrigin().IsSameOriginWith(origin) &&
-      window_->CrossOriginIsolatedCapability() == isolated;
+      window_->CrossOriginIsolatedCapability() == isolated &&
+      window_->GetDocument().IsCredentialless() == credentialless;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
   if (reuse_window) {
@@ -2192,6 +2255,8 @@ Document& PageFrame::CommitDocument(
   // about:blank frame that opens the document gives it, as Blink's does.
   document->SetOrigin(origin);
   document->SetSandboxFlags(sandbox);
+  document->SetCredentialless(credentialless);
+  document->SetInCredentiallessPartition(credentialless);
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
   std::vector<PolicyMessage> policy_messages;
   ApplyPermissionsPolicy(

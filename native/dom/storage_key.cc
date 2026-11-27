@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
 
@@ -53,6 +54,17 @@ std::string SerializeStorageKey(const url::Origin& origin,
   }
   return site == top_site ? base::StrCat({url, "^31"})
                           : base::StrCat({url, "^0", top_site});
+}
+
+std::string SerializeStorageKeyWithNonce(const url::Origin& origin,
+                                         const base::UnguessableToken& nonce) {
+  // One of an opaque origin keeps the nonce too, apart from that origin's
+  // documents that are not credentialless.
+  return base::StrCat(
+      {origin.opaque() ? base::StrCat({"^1", NonceOf(origin)})
+                       : origin.GetURL().spec(),
+       "^1", base::NumberToString(nonce.GetHighForSerialization()), "^2",
+       base::NumberToString(nonce.GetLowForSerialization())});
 }
 
 }  // namespace mitto
