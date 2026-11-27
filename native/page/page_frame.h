@@ -44,6 +44,7 @@
 #include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/navigation_rate_limiter.h"
+#include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/sandbox_flags.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
@@ -337,6 +338,11 @@ class PageFrame final : public NavigationClient, public Frame {
   // nothing.
   bool IsolatedLikeParent(const url::Origin& origin,
                           bool origin_sandboxed) const;
+  // What the frame's element lets a document that it navigates to now inherit
+  // of its parent's permissions policy, and gives `document` that.
+  ContainerPolicy PendingContainerPolicy() const;
+  void InheritPermissionsPolicy(Document& document,
+                                ContainerPolicy container_policy);
   // Warns of a sandbox that its frame's document can take away.
   void WarnIfSandboxIneffective();
   // Gives the current context's window its timers, what its fetch() goes
@@ -439,6 +445,7 @@ class PageFrame final : public NavigationClient, public Frame {
     SandboxFlags sandbox = SandboxFlags::kNone;
     bool trustworthy = false;
     bool sandboxed_process = false;
+    ContainerPolicy container_policy;
     std::u16string referrer;
     // Its document's about base URL, the parent document's base URL for a
     // srcdoc and the initiator's for an about:blank, and its cookie URL, the
@@ -463,9 +470,11 @@ class PageFrame final : public NavigationClient, public Frame {
   // unless a newer navigation of the frame takes its place first.
   void CommitWithoutNetworkSoon(LocalNavigation navigation);
   // The same with Chrome's error page, as a navigation that started under
-  // `sandbox` has failed: the latest one that asked the network or went to a
-  // data: URL, or a local one that the parent's embedder policy blocks.
-  void CommitErrorPageSoon(SandboxFlags sandbox);
+  // `sandbox` and `container_policy` has failed: the latest one that asked the
+  // network or went to a data: URL, or a local one that the parent's embedder
+  // policy blocks.
+  void CommitErrorPageSoon(SandboxFlags sandbox,
+                           ContainerPolicy container_policy);
   // NavigationRequest::CheckResponseAdherenceToCoep(): whether the frame's
   // parent has an embedder policy that is compatible with cross-origin
   // isolation and a document that the frame makes without the network would
@@ -549,8 +558,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // Counts the requests that have waited, so that a data: URL's navigation
   // lets its request go only while it is still the one that waits.
   uint64_t provisional_request_serial_ = 0;
-  // What the sandbox withheld as the navigation started.
+  // What the sandbox withheld, and the element's container policy, as the
+  // navigation started.
   SandboxFlags provisional_sandbox_ = SandboxFlags::kNone;
+  ContainerPolicy provisional_container_policy_;
   base::TimeTicks provisional_start_;
   // Whether the frame's sandbox gave an opaque origin as the network navigation
   // started.

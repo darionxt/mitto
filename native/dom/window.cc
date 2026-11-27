@@ -563,6 +563,14 @@ url::Origin Window::GetSecurityOrigin() const {
   return GetDocument().GetOrigin();
 }
 
+void Window::AddPolicyMessage(ConsoleLevel level,
+                              std::string text,
+                              bool discard_duplicate) {
+  if (frame_ && frame_->Top().AddPolicyMessage(text, discard_duplicate)) {
+    AddConsoleMessage(level, std::move(text));
+  }
+}
+
 RendererProcess Window::Process() const {
   return {GetSecurityOrigin(),
           HasDocument() && GetDocument().IsInSandboxedProcess()};

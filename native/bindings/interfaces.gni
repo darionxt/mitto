@@ -873,6 +873,7 @@ mitto_bindings_interfaces = [
       "srcdoc",
       "contentDocument",
       "contentWindow",
+      "featurePolicy",
     ]
   },
   {

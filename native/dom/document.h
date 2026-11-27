@@ -31,6 +31,7 @@
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
+#include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/sandbox_flags.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -184,6 +185,11 @@ class Document : public Node {
   void SetBody(HTMLElement* body, bindings::ExceptionState& exception_state);
   HTMLHeadElement* Head() const;
   Window* DefaultView() const { return window_.Get(); }
+  // The window of its execution context, which for a document of no window is
+  // the one that made it, or null if none did.
+  Window* ContextWindow() const {
+    return window_ ? window_.Get() : creator_.Get();
+  }
   // The tasks that the document's elements queue theirs in, as Blink's
   // GetTaskRunner(): its window's, or for a document of no window, such as
   // one that createHTMLDocument() made, the current window's, as such a
@@ -236,11 +242,12 @@ class Document : public Node {
     return Hidden() ? u"hidden" : u"visible";
   }
   std::u16string VisibilityStateAsString() const { return VisibilityState(); }
-  // What a top-level page that permissions policy allows them reads, and a
-  // document of no window does not. It is never in full screen or in
-  // picture-in-picture.
-  bool FullscreenEnabled() const { return window_; }
-  bool PictureInPictureEnabled() const { return window_; }
+  // What a document that permissions policy allows them reads, and one of no
+  // window does not. It is never in full screen or in picture-in-picture.
+  bool FullscreenEnabled() { return IsFeatureEnabled("fullscreen"); }
+  bool PictureInPictureEnabled() {
+    return IsFeatureEnabledOrReport("picture-in-picture");
+  }
   Element* FullscreenElement() const { return nullptr; }
   // The window's custom elements, and none for a document of no window.
   mitto::CustomElementRegistry* CustomElementRegistry() const;
@@ -272,6 +279,16 @@ class Document : public Node {
   // a document without a window, as Blink has no execution context to make it
   // from.
   PermissionsPolicy* FeaturePolicy();
+  // What its permissions policy allows, which a frame's document inherits of
+  // its parent's with its frame's element's.
+  const PermissionsPolicyState& GetPermissionsPolicyState();
+  void InheritPermissionsPolicy(mitto::Document& parent,
+                                const ContainerPolicy& container_policy,
+                                const DeprecatedUnload& deprecated_unload);
+  // ExecutionContext::IsFeatureEnabled().
+  bool IsFeatureEnabled(std::string_view feature);
+  // The same, and the console reports the violation if not.
+  bool IsFeatureEnabledOrReport(std::string_view feature);
   // The document's own, the same object on every read.
   DOMImplementation* Implementation();
   Attr* CreateAttribute(const std::u16string& local_name,
@@ -414,7 +431,13 @@ class Document : public Node {
     return compat_mode_ == CompatibilityMode::kQuirks;
   }
   // The window whose document this is, which defaultView gives.
-  void SetWindow(Window* window) { window_ = window; }
+  void SetWindow(Window* window) {
+    window_ = window;
+    creator_ = nullptr;
+  }
+  // The window of the execution context that a document of no window is made
+  // in, which by default is that of the script that makes it.
+  void SetCreator(Window* window) { creator_ = window; }
   // The URL of the document, serialized, which URL and documentURI give.
   void SetUrl(std::u16string url);
   // The same for a URL that document.open() or a navigation within it gives
@@ -920,6 +943,7 @@ class Document : public Node {
   raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   raw_ptr<StorageBucketHost> storage_bucket_host_ = nullptr;
   cppgc::Member<Window> window_;
+  cppgc::Member<Window> creator_;
   cppgc::Member<Element> css_target_;
   cppgc::Member<HTMLCollection> images_;
   cppgc::Member<HTMLCollection> embeds_;
@@ -930,6 +954,7 @@ class Document : public Node {
   cppgc::Member<HTMLCollection> applets_;
   cppgc::Member<HTMLAllCollection> all_;
   cppgc::Member<PermissionsPolicy> feature_policy_;
+  std::unique_ptr<PermissionsPolicyState> permissions_policy_state_;
   cppgc::Member<DOMImplementation> implementation_;
   cppgc::Member<AttachedTraversals> traversals_;
   cppgc::Member<Document> template_document_;

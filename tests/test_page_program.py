@@ -2003,6 +2003,37 @@ def test_the_seed_takes_unload_out_of_the_policy_of_the_pages_it_covers(
 
 @pytest.mark.parametrize(
     ("unload", "deprecated"),
+    [({"enabled": True, "allow_list": ["www.example.test"], "by_bucket": None}, True), ({"enabled": False}, False)],
+    ids=str,
+)
+def test_the_seed_takes_unload_out_of_the_policy_of_a_covered_pages_frames(
+    session: _Session, unload: dict[str, object], deprecated: bool
+) -> None:
+    session.start(_with_features(deprecated_unload={"allow_list": None, "by_bucket": None, **unload}))
+    _load_policy_page(session, "http://www.example.test:8722/")
+    # The listeners of the frame's window, of its nodes and of an EventTarget of its, which the page's methods add.
+    script = """((allow) => {
+      const frame = document.createElement('iframe');
+      frame.allow = allow;
+      document.documentElement.append(frame);
+      const {contentWindow, contentDocument, featurePolicy} = frame;
+      const listens = (target) => {
+        let ran = false;
+        EventTarget.prototype.addEventListener.call(target, 'unload', () => { ran = true; });
+        target.dispatchEvent(new Event('unload'));
+        return ran;
+      };
+      contentWindow.onunload = () => {};
+      return [featurePolicy.allowsFeature('unload'), contentDocument.featurePolicy.allowsFeature('unload'), contentWindow.onunload !== null,
+        listens(new contentWindow.EventTarget()), listens(contentDocument), listens(contentDocument.createElement('p'))];
+    })"""
+
+    assert json.loads(session.evaluate(f"{script}('')")[1]) == [not deprecated] * 6
+    assert json.loads(session.evaluate(f"{script}(`unload 'none'`)", call=2)[1]) == [False] * 6
+
+
+@pytest.mark.parametrize(
+    ("unload", "deprecated"),
     [
         ({"enabled": True, "allow_list": None, "by_bucket": None}, True),
         # Either list limits it to pages of http and https.

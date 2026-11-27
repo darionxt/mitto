@@ -1,9 +1,8 @@
-// Permissions Policy's PermissionsPolicy, document.featurePolicy, for a
-// top-level document whose response has no Permissions-Policy header: the
-// policy-controlled features of the Page's runtime-enabled features, in the
-// order of Blink's hash map of their names, each allowed by its default
-// allowlist, but "unload", which the Persona's variations seed may deprecate
-// for the document's host.
+// Permissions Policy's PermissionsPolicy, document.featurePolicy and
+// iframe.featurePolicy: the policy-controlled features of the Page's
+// runtime-enabled features, in the order of Blink's hash map of their names,
+// each allowed as its document's permissions policy allows it, but "unload",
+// which the Persona's variations seed may deprecate for the document's host.
 //
 // Upstream: third_party/blink/renderer/core/permissions_policy/dom_feature_policy.cc
 // Upstream: third_party/blink/renderer/core/permissions_policy/permissions_policy_parser.cc
@@ -18,53 +17,62 @@
 #ifndef MITTO_DOM_PERMISSIONS_POLICY_H_
 #define MITTO_DOM_PERMISSIONS_POLICY_H_
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mitto/bindings/script_wrappable.h"
-#include "mitto/page_messages.h"
-#include "url/gurl.h"
-#include "url/origin.h"
+#include "mitto/dom/permissions_policy_state.h"
+#include "v8/include/cppgc/member.h"
+#include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
 
-struct PolicyFeature;
-
-// Whether the seed's kDeprecateUnload takes unload away from a document at
-// `url`, as Chrome's network service decides it for the document's origin.
-bool IsUnloadDeprecated(const DeprecatedUnload& seed, const GURL& url);
+class Window;
 
 class PermissionsPolicy final : public bindings::ScriptWrappable {
  public:
-  // Of a document of `origin`, which `unload_deprecated` says whether the seed
-  // deprecates unload for.
-  static PermissionsPolicy* Create(const url::Origin& origin,
-                                   bool unload_deprecated);
+  // document.featurePolicy, DocumentPolicy, which says what the window's
+  // document has now.
+  static PermissionsPolicy* Create(Window& window);
+  // iframe.featurePolicy of an iframe in a document of `window`, IFramePolicy,
+  // which says what a document at its URL would have.
+  static PermissionsPolicy* Create(
+      Window& window,
+      std::unique_ptr<PermissionsPolicyState> state);
 
-  PermissionsPolicy(const url::Origin& origin, bool unload_deprecated);
+  PermissionsPolicy(Window& window,
+                    std::unique_ptr<PermissionsPolicyState> state);
   ~PermissionsPolicy() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  void Trace(cppgc::Visitor* visitor) const override;
+
+  // IFramePolicy::UpdateContainerPolicy().
+  void SetFrameState(std::unique_ptr<PermissionsPolicyState> state) {
+    frame_state_ = std::move(state);
+  }
 
   // The members of the interface.
   bool AllowsFeature(const std::u16string& feature,
-                     const std::optional<std::u16string>& origin) const;
+                     const std::optional<std::u16string>& origin);
   std::vector<std::u16string> Features() const;
   std::vector<std::u16string> AllowedFeatures() const;
   std::vector<std::u16string> GetAllowlistForFeature(
-      const std::u16string& feature) const;
+      const std::u16string& feature);
 
  private:
-  // The feature that a page names, if a page can see it.
-  const PolicyFeature* Find(const std::u16string& name) const;
-  // Whether no origin has the feature, as unload once deprecated.
-  bool IsDisabled(const PolicyFeature& feature) const;
-  bool IsEnabledForOrigin(const PolicyFeature& feature,
-                          const url::Origin& origin) const;
+  const PermissionsPolicyState& State() const;
+  // The feature that a page names, if a page can see it; the console says if
+  // not.
+  const PolicyFeature* FindOrWarn(const std::u16string& name);
+  void Warn(std::string message);
 
-  const url::Origin origin_;
-  const bool unload_deprecated_;
+  const cppgc::Member<Window> window_;
+  // An iframe's.
+  std::unique_ptr<PermissionsPolicyState> frame_state_;
   // What a page sees of the window's name map, in its order.
   std::vector<const PolicyFeature*> available_;
 };
