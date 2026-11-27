@@ -402,6 +402,20 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             id="script-kept-alive",
         ),
         pytest.param(
+            "deferred-without-keepalive",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=128)})",
+            "the library refused a message from the Page: a deferred request that is not a keepalive fetch of a known "
+            "body",
+            id="deferred-without-keepalive",
+        ),
+        pytest.param(
+            "unasked-deferred-send",
+            f"{_HELLO}\nsend(220, struct.pack('<Q', 7))",
+            "the library refused a message from the Page: a send of deferred request 7, which the Page has not asked "
+            "for",
+            id="unasked-deferred-send",
+        ),
+        pytest.param(
             "fetch-with-a-target",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', target=5)})",
             "the library refused a message from the Page: a target that only a frame's navigation names, and always names",

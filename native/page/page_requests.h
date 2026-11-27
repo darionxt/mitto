@@ -139,6 +139,11 @@ class PageRequests {
   // entry of it. The Session lets it outlive the document, and ends it for
   // the Page, once it hears of the next document.
   void LetGo(uint64_t number);
+  // Has the Session send deferred request `number` now, or forgets one whose
+  // document is going, which the Session sends then, and of which neither
+  // ends for the Page.
+  void SendDeferred(uint64_t number);
+  void ForgetDeferred(uint64_t number);
 
   // Sends the Session a network hint of the current window's document.
   void Hint(const PageNetworkHint& hint);

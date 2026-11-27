@@ -1863,8 +1863,9 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     options.fetch->fixed_headers.insert(base::ToLowerASCII(name));
     options.fetch->script_headers.push_back(base::ToLowerASCII(name));
   }
-  // One keepalive request too many, or too large, fails as in Chrome.
-  if (asked.keepalive) {
+  // One keepalive request too many, or too large, fails as in Chrome. A
+  // deferred one counts once it goes, as its FetchLaterLoader waits apart.
+  if (asked.keepalive && !asked.deferred) {
     const KeepaliveInFlight& in_session = *network_->keepalive_in_flight();
     if (in_session.requests >= kMaxKeepaliveRequests ||
         keepalive_in_flight_->requests >= kMaxKeepaliveRequestsPerPage ||
@@ -1913,23 +1914,81 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     worker_scripts_[asked.number] = {.creator = context_id};
     creator_embedder_policy = context.coep;
   }
-  StartRequest(
-      asked.number, context_id, document_origin, std::move(url),
-      std::move(headers), std::move(options), std::move(body),
-      std::move(body_channel),
-      FetchChecks{
-          .cors = options_mode == RequestMode::kCors,
-          .same_origin = options_mode == RequestMode::kSameOrigin,
-          .no_cors = options_mode == RequestMode::kNoCors,
-          .credentials = options_credentials == CredentialsMode::kInclude,
-          .keepalive = asked.keepalive,
-          .is_navigation = is_navigation,
-          .top_level = top_level,
-          .creator_embedder_policy = std::move(creator_embedder_policy),
-          .embedder_policy = contexts_.at(settings_id).coep,
-          .frame_ancestor_urls = std::move(frame_ancestor_urls),
-          .parent_embedder_policy = std::move(parent_embedder_policy),
-          .parent_origin = std::move(parent_origin)});
+  FetchChecks checks{
+      .cors = options_mode == RequestMode::kCors,
+      .same_origin = options_mode == RequestMode::kSameOrigin,
+      .no_cors = options_mode == RequestMode::kNoCors,
+      .credentials = options_credentials == CredentialsMode::kInclude,
+      .keepalive = asked.keepalive,
+      .is_navigation = is_navigation,
+      .top_level = top_level,
+      .creator_embedder_policy = std::move(creator_embedder_policy),
+      .embedder_policy = contexts_.at(settings_id).coep,
+      .frame_ancestor_urls = std::move(frame_ancestor_urls),
+      .parent_embedder_policy = std::move(parent_embedder_policy),
+      .parent_origin = std::move(parent_origin)};
+  if (asked.deferred) {
+    DeferredRequest& deferred = deferred_requests_[asked.number];
+    deferred.context_id = context_id;
+    deferred.document_origin = document_origin;
+    deferred.url = std::move(url);
+    deferred.headers = std::move(headers);
+    deferred.options = std::move(options);
+    deferred.body = std::move(body);
+    deferred.checks = std::move(checks);
+    return;
+  }
+  StartRequest(asked.number, context_id, document_origin, std::move(url),
+               std::move(headers), std::move(options), std::move(body),
+               std::move(body_channel), std::move(checks));
+}
+
+PageHost::DeferredRequest::DeferredRequest() = default;
+PageHost::DeferredRequest::DeferredRequest(DeferredRequest&&) = default;
+PageHost::DeferredRequest& PageHost::DeferredRequest::operator=(
+    DeferredRequest&&) = default;
+PageHost::DeferredRequest::~DeferredRequest() = default;
+
+void PageHost::OnSendDeferredRequest(uint64_t number) {
+  if (!deferred_requests_.contains(number)) {
+    // It may have been cancelled since the Page asked for it to go.
+    if (number > last_request_number_) {
+      Refuse(base::StrCat({"a send of deferred request ",
+                           base::NumberToString(number),
+                           ", which the Page has not asked for"}));
+    }
+    return;
+  }
+  SendDeferredRequest(number);
+}
+
+void PageHost::SendDeferredRequest(uint64_t number) {
+  auto node = deferred_requests_.extract(number);
+  if (node.empty()) {
+    return;
+  }
+  DeferredRequest& deferred = node.mapped();
+  StartRequest(number, deferred.context_id, deferred.document_origin,
+               std::move(deferred.url), std::move(deferred.headers),
+               std::move(deferred.options), std::move(deferred.body),
+               /*body_channel=*/nullptr, deferred.checks);
+  // It may have ended as it started.
+  if (const auto found = requests_.find(number); found != requests_.end()) {
+    found->second->DetachJob();
+    requests_.erase(found);
+  }
+}
+
+void PageHost::SendDeferredRequests(const std::set<uint64_t>* ids) {
+  std::vector<uint64_t> numbers;
+  for (const auto& [number, deferred] : deferred_requests_) {
+    if (!ids || ids->contains(deferred.context_id)) {
+      numbers.push_back(number);
+    }
+  }
+  for (const uint64_t number : numbers) {
+    SendDeferredRequest(number);
+  }
 }
 
 void PageHost::OnCancel(uint64_t number) {
@@ -1941,6 +2000,14 @@ void PageHost::OnCancel(uint64_t number) {
     if (stored != stored_documents_.end()) {
       PushNavigated(stored->second.context.url.spec(), 0, net::ERR_ABORTED);
     }
+    return;
+  }
+  // fetchLater()'s request, whose signal aborted before it went.
+  if (deferred_requests_.erase(number)) {
+    PageResponseEnded ended;
+    ended.number = number;
+    ended.net_error = net::ERR_ABORTED;
+    channel_->Send(EncodeResponseEnded(ended));
     return;
   }
   // A navigation that the Page let go after its response came, before it
@@ -2356,6 +2423,9 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
 }
 
 void PageHost::AbandonRequests() {
+  // The Page's deferred requests go as it ends, as the browser sends a
+  // FetchLaterLoader's when its renderer's pipe closes.
+  SendDeferredRequests(nullptr);
   // A document's keepalive request goes on without its Page, and the Session
   // finishes it. Each other Request abandons its job as it goes, and so does a
   // gone worker's that //net has yet to send.
@@ -3149,6 +3219,8 @@ void PageHost::EndWithSession() {
   if (ended_) {
     return;
   }
+  // Nothing sends the deferred requests of a Page whose Session goes.
+  deferred_requests_.clear();
   AbandonRequests();
   ReleaseStorage();
   channel_.reset();
@@ -3848,6 +3920,9 @@ bool PageHost::IsOfWorker(const Request& request) const {
 }
 
 void PageHost::LetKeepaliveRequestsGo(const std::set<uint64_t>* ids) {
+  // A context's deferred requests go as it goes, as Blink's FetchLaterManager
+  // processes them when its context is destroyed.
+  SendDeferredRequests(ids);
   for (auto it = requests_.begin(); it != requests_.end();) {
     Request& request = *it->second;
     const bool of_worker = IsOfWorker(request);
@@ -4197,6 +4272,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     }
     case PageMessage::kCancel:
       OnCancel(frame->cancelled);
+      return;
+    case PageMessage::kSendDeferredRequest:
+      OnSendDeferredRequest(frame->deferred_to_send);
       return;
     case PageMessage::kRequestBodyPart:
       OnRequestBodyPart(frame->request_body_part);

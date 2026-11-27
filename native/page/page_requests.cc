@@ -131,11 +131,16 @@ uint64_t PageRequests::Start(PageRequest request,
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timed.context.Reset(isolate, isolate->GetCurrentContext());
   // The Session works out the Initiator from the context that asks.
+  const bool deferred = request.deferred;
   const uint64_t number = Send(context.ContextId(), request);
   Open& open = open_[number];
   open.client = &client;
   open.streams_body = request.streams_body;
-  open.timed = std::move(timed);
+  // fetchLater()'s request goes around the document's ResourceFetcher, so the
+  // Performance Timeline has no entry of it, as in Chrome.
+  if (!deferred) {
+    open.timed = std::move(timed);
+  }
   // The favicon that Chrome's renderer fetches for the browser, which a
   // ThreadableLoader loads as a script's request. A fetch() marks its
   // context itself (FetchLoader), as one that a link preloaded does not.
@@ -321,6 +326,16 @@ void PageRequests::LetGo(uint64_t number) {
   found->second.client = nullptr;
   found->second.timed.reset();
   DeliverHeld(number);
+}
+
+void PageRequests::SendDeferred(uint64_t number) {
+  if (open_.erase(number)) {
+    sender_->SendForRequest(number, EncodeSendDeferredRequest(number));
+  }
+}
+
+void PageRequests::ForgetDeferred(uint64_t number) {
+  open_.erase(number);
 }
 
 // static

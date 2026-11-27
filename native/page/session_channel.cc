@@ -373,6 +373,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kSetCookie:
       case PageMessage::kLoaded:
       case PageMessage::kCancel:
+      case PageMessage::kSendDeferredRequest:
       case PageMessage::kKnownGap:
       case PageMessage::kCookieStoreGet:
       case PageMessage::kCookieStoreSet:

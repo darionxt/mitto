@@ -9,6 +9,7 @@ the Page program beside it.
 """
 
 import http.server
+import json
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -355,6 +356,381 @@ def test_keepalive_bodies_in_flight_stay_within_their_quota(session: mitto.Sessi
 
     assert (over, within, first) == ("TypeError: Failed to fetch", ["basic", 200], "first")
     assert server.headers_of("/second") == []
+
+
+def _without_boundary(lines: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return header lines with a multipart body's boundary and length left out, which each body has its own of."""
+    return [
+        (name, value.split(";")[0] if name.lower() == "content-type" else value)
+        for name, value in lines
+        if name.lower() != "content-length"
+    ]
+
+
+def test_a_beacon_goes_as_a_callers_beacon_of_the_same_body(session: mitto.Session, server: _Server) -> None:
+    for path in ("/text", "/blob", "/form", "/params", "/none"):
+        server.text(path, "beacon")
+    url = server.page("/", "<p>beacon</p>")
+
+    with _open_page(session, url) as page:
+        sent = page.evaluate(
+            """
+            const form = new FormData();
+            form.append('name', 'mitto');
+            [
+              navigator.sendBeacon('/text', 'text body'),
+              navigator.sendBeacon('/blob', new Blob(['blob body'])),
+              navigator.sendBeacon('/form', form),
+              navigator.sendBeacon('/params', new URLSearchParams('a=1')),
+              navigator.sendBeacon('/none'),
+            ]
+            """
+        )
+        for path in ("/text", "/blob", "/form", "/params", "/none"):
+            assert server.wait_for(path)
+
+    assert sent == [True, True, True, True, True]
+    session.post(server.url("/text"), kind="beacon", initiator=url, data="text body")
+    session.post(server.url("/blob"), kind="beacon", initiator=url, data=b"blob body")
+    session.post(server.url("/form"), kind="beacon", initiator=url, data={"name": "mitto"}, files={})
+    session.post(server.url("/none"), kind="beacon", initiator=url, data=b"")
+    for path in ("/text", "/blob", "/none"):
+        page_lines, caller_lines = server.headers_of(path)
+        assert page_lines == caller_lines, path
+    page_lines, caller_lines = server.headers_of("/form")
+    assert _without_boundary(page_lines) == _without_boundary(caller_lines)
+    (params,) = server.headers_of("/params")
+    assert _value(params, "Content-Type") == "application/x-www-form-urlencoded;charset=UTF-8"
+    assert _value(server.headers_of("/none")[0], "Content-Length") == "0"
+
+
+def test_a_beacon_of_a_blob_of_a_type_that_is_not_safelisted_is_a_cors_request(
+    session: mitto.Session, server: _Server, other: _Server
+) -> None:
+    # BeaconBlob puts it in mode cors, so it waits for a preflight at another origin, which allows nothing here.
+    url = server.page("/", "<p>beacon</p>")
+    server.text("/json", "json")
+
+    with _open_page(session, url) as page:
+        sent = page.evaluate(
+            f"""
+            const json = new Blob(['{{}}'], {{type: 'application/json'}});
+            [navigator.sendBeacon('/json', json), navigator.sendBeacon('{other.url("/json")}', json)]
+            """
+        )
+        assert server.wait_for("/json")
+        assert other.wait_for("OPTIONS /json")
+
+    assert sent == [True, True]
+    assert _value(server.headers_of("/json")[0], "Content-Type") == "application/json"
+    assert other.headers_of("/json") == []
+
+
+def test_a_beacon_stays_within_the_keepalive_quota_and_refuses_what_it_cannot_send(
+    session: mitto.Session, server: _Server
+) -> None:
+    held = threading.Event()
+    server.routes["/first"] = _Route(b"first", headers=[("Content-Type", "text/plain")], hold=held)
+    server.text("/third", "third")
+    url = server.page("/", "<p>quota</p>")
+
+    with _open_page(session, url) as page:
+        # 40 KiB in flight leaves room for 24 KiB more of a document's 64 KiB.
+        sent = page.evaluate(
+            """
+            [
+              navigator.sendBeacon('/first', 'x'.repeat(40 * 1024)),
+              navigator.sendBeacon('/second', 'x'.repeat(30 * 1024)),
+              navigator.sendBeacon('/third', 'x'.repeat(20 * 1024)),
+            ]
+            """
+        )
+        errors = page.evaluate(
+            """
+            [() => navigator.sendBeacon('ftp://example.test/'), () => navigator.sendBeacon('http://['),
+             () => navigator.sendBeacon('/stream', new ReadableStream())].map(call => {
+              try { return call(); } catch (error) { return String(error); }
+            })
+            """
+        )
+        assert server.wait_for("/third")
+        held.set()
+
+    assert sent == [True, False, True]
+    assert server.headers_of("/second") == []
+    assert errors == [
+        "TypeError: Failed to execute 'sendBeacon' on 'Navigator': Beacons are only supported over HTTP(S).",
+        "TypeError: Failed to execute 'sendBeacon' on 'Navigator': The URL argument is ill-formed or unsupported.",
+        "TypeError: Failed to execute 'sendBeacon' on 'Navigator': sendBeacon cannot have a ReadableStream body.",
+    ]
+    assert server.headers_of("/stream") == []
+
+
+def test_a_fetch_later_goes_when_its_page_closes_as_a_callers_fetch(session: mitto.Session, server: _Server) -> None:
+    server.text("/later", "later")
+    url = server.page("/", "<p>later</p>")
+
+    with _open_page(session, url) as page:
+        page.evaluate("window.result = fetchLater('/later'); null")
+        assert not server.wait_for("/later", timeout=1.0)
+        activated = page.evaluate("result.activated")
+    assert server.wait_for("/later")
+
+    assert activated is False
+    session.get(server.url("/later"), kind="fetch", initiator=url)
+    page_lines, caller_lines = server.headers_of("/later")
+    assert page_lines == caller_lines
+
+
+def test_a_fetch_later_goes_after_its_activate_after_or_with_its_document_and_never_once_aborted(
+    session: mitto.Session, server: _Server
+) -> None:
+    for path in ("/soon", "/next", "/aborted"):
+        server.text(path, path)
+    url = server.page("/", "<p>later</p>")
+    second = server.page("/second", "<p>second</p>")
+
+    with _open_page(session, url) as page:
+        page.evaluate(
+            """
+            window.soon = fetchLater('/soon', {activateAfter: 100});
+            window.next = fetchLater('/next');
+            const controller = new AbortController();
+            window.aborted = fetchLater('/aborted', {signal: controller.signal});
+            controller.abort();
+            null
+            """
+        )
+        assert server.wait_for("/soon")
+        activated = page.evaluate("[soon.activated, next.activated, aborted.activated]")
+        assert server.headers_of("/next") == []
+        page.evaluate("location.href = '/second'; null")
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS) == PageNavigation(url=second, status=200)
+        assert server.wait_for("/next")
+
+    assert activated == [True, False, False]
+    assert server.headers_of("/aborted") == []
+
+
+def test_fetch_later_throws_chromes_errors_and_holds_its_quota(session: mitto.Session, server: _Server) -> None:
+    url = server.page("/", "<p>later</p>")
+    # The URL without its fragment, the referrer "about:client", the Content-Type line of a string and the body.
+    line = len("Content-Type") + len("text/plain;charset=UTF-8")
+    size = len(server.url("/x")) + len("about:client") + line + 64 * 1024
+
+    with _open_page(session, url) as page:
+        errors = page.evaluate(
+            """
+            [() => fetchLater('/x', {method: 'POST', body: 'x'.repeat(64 * 1024)}),
+             () => fetchLater('/x', {activateAfter: -1}),
+             () => fetchLater('ftp://example.test/'),
+             () => fetchLater('http://example.test/'),
+             () => fetchLater('/x', {signal: AbortSignal.abort()}),
+             () => fetchLater('/x', {method: 'POST', body: new ReadableStream(), duplex: 'half'})
+            ].map(call => { try { call(); return 'none'; } catch (error) { return String(error); } })
+            """
+        )
+        # A request that waits takes from the quota of its origin until its signal aborts.
+        quota = page.evaluate(
+            """
+            const controller = new AbortController();
+            fetchLater('/a', {method: 'POST', body: 'x'.repeat(60 * 1024), signal: controller.signal});
+            const outcome = () => {
+              try { fetchLater('/b', {method: 'POST', body: 'x'.repeat(10 * 1024)}); return 'queued'; }
+              catch (error) { return error.name; }
+            };
+            const before = outcome();
+            controller.abort();
+            [before, outcome()]
+            """
+        )
+
+    prefix = "Failed to execute 'fetchLater' on 'Window': "
+    assert errors == [
+        f"QuotaExceededError: {prefix}fetchLater exceeds its quota for the origin: got {size} bytes, expected less "
+        "than 65536 bytes.",
+        f"RangeError: {prefix}fetchLater's activateAfter cannot be negative.",
+        f"TypeError: {prefix}fetchLater is only supported over HTTP(S).",
+        f"SecurityError: {prefix}fetchLater was passed an insecure URL.",
+        f"AbortError: {prefix}The user aborted a fetchLater request.",
+        f"TypeError: {prefix}fetchLater doesn't support body with unknown length.",
+    ]
+    assert quota == ["QuotaExceededError", "queued"]
+
+
+# What each page and frame of the fetchLater() quota cases has: avail(url) reads what is left of the quota for a request to
+# the origin of `url` from the QuotaExceededError of a 1 MiB body, fill(url, n) queues a deferred request of n bytes as
+# Blink counts them, fillers are seven origins of other sites to fill, frame(src) appends an iframe and waits for its load,
+# and ask(frame, script) runs a script in a frame of any origin and gives back its result, through the page's own
+# postMessage(), as a page reaches a window of another origin only so until #286.
+_FETCH_LATER_HELPERS = r"""
+const BIG = new Uint8Array(1 << 20);
+const fillers = [1, 2, 3, 4, 5, 6, 7].map((i) => `http://f${i}.localhost:${location.port}/fill`);
+function avail(url) {
+  try { fetchLater(url, {method: 'POST', body: BIG}); return 'no throw'; }
+  catch (e) { const m = /expected less than (\d+) bytes/.exec(e.message); return m ? Number(m[1]) : e.name + ': ' + e.message; }
+}
+function fill(url, n) {
+  const length = new URL(url, location.href).href.split('#')[0].length + 'about:client'.length;
+  return fetchLater(url, {method: 'POST', body: new Uint8Array(n - length)});
+}
+function frame(src, attributes = {}) {
+  return new Promise((resolve) => {
+    const f = document.createElement('iframe');
+    for (const [k, v] of Object.entries(attributes)) f.setAttribute(k, v);
+    if (src !== null) f.src = src;
+    f.onload = () => resolve(f);
+    document.body.append(f);
+  });
+}
+let asked = 0;
+function ask(f, script) {
+  const id = ++asked + ':' + Math.random();
+  return new Promise((resolve) => {
+    addEventListener('message', function listener(e) {
+      if (e.data && e.data.id === id) { removeEventListener('message', listener); resolve(e.data.result); }
+    });
+    postMessage.call(f.contentWindow, {id, script}, '*');
+  });
+}
+addEventListener('message', async (e) => {
+  if (!e.data || !e.data.script) return;
+  let result;
+  try { result = await (0, eval)('(async () => {' + e.data.script + '})()'); } catch (error) { result = 'threw: ' + error; }
+  postMessage.call(e.source, {id: e.data.id, result}, '*');
+});
+"""
+
+# Each case's script at the top level of a page of its own, with B and C the origins of two other sites and F the path of
+# the frame page, and what Chrome for Testing 157.0.8103.79 gave for it.
+_FETCH_LATER_QUOTAS: dict[str, tuple[str, Any]] = {
+    "a top-level document's quota": (
+        "return avail('/x');",
+        65536,
+    ),
+    "a top-level document's quota after seven other origins": (
+        "for (const u of fillers) fill(u, 65536); return avail('/x');",
+        65536,
+    ),
+    "a top-level document's quota beside a frame of another origin": (
+        "await frame(B + F); for (const u of fillers) fill(u, 65536); return avail('/x');",
+        57344,
+    ),
+    "a top-level document's quota beside a frame of its origin": (
+        "await frame(F); for (const u of fillers) fill(u, 65536); return avail('/x');",
+        65536,
+    ),
+    "a top-level document's quota beside a frame of another origin in a frame of its origin": (
+        "const a = await frame(F); await ask(a, 'await frame(B + F); return 1;'); for (const u of "
+        "fillers) fill(u, 65536); return avail('/x');",
+        49152,
+    ),
+    "a frame of another origin": (
+        "const b = await frame(B + F); return ask(b, \"return avail('/x');\");",
+        8192,
+    ),
+    "a frame of the page's origin": (
+        "const a = await frame(F); return ask(a, \"return avail('/x');\");",
+        65536,
+    ),
+    "a frame of the page's origin shares its quota": (
+        "fill('/x', 30000); const a = await frame(F); return ask(a, \"return avail('/y');\");",
+        35536,
+    ),
+    "a frame of another origin takes what it queued": (
+        "const b = await frame(B + F); return ask(b, \"fill('/x', 5000); return avail('/y');\");",
+        3192,
+    ),
+    "a frame of another origin in one of another origin": (
+        'const b = await frame(B + F); return ask(b, "const c = await frame(C + F); return ask(c, '
+        '\\"return avail(\'/x\');\\");");',
+        0,
+    ),
+    "a frame of the origin of the frame of another origin it is in": (
+        'const b = await frame(B + F); return ask(b, "const d = await frame(F); return ask(d, \\"return '
+        "avail('/x');\\\");\");",
+        8192,
+    ),
+    "a frame of another origin in a frame of the page's origin": (
+        'const a = await frame(F); return ask(a, "const b = await frame(B + F); return ask(b, \\"return '
+        "avail('/x');\\\");\");",
+        8192,
+    ),
+    "the sixteenth and seventeenth frames of other origins": (
+        "const frames = []; for (let i = 0; i < 17; i++) frames.push(await frame(B + F)); return [await "
+        "ask(frames[15], \"return avail('/x');\"), await ask(frames[16], \"return avail('/x');\")];",
+        [8192, 0],
+    ),
+    "a frame that goes gives its quota back": (
+        "const frames = []; for (let i = 0; i < 17; i++) frames.push(await frame(B + F)); "
+        "frames[0].remove(); const again = await frame(B + F); return ask(again, \"return avail('/x');\");",
+        8192,
+    ),
+    "a sandboxed frame of the page's URL": (
+        "const s = await frame(F, {sandbox: 'allow-scripts'}); return ask(s, \"return avail('/x');\");",
+        8192,
+    ),
+    "a srcdoc frame": (
+        "fill('/x', 30000); const s = await frame(null, {srcdoc: '<script>' + HELPERS_SOURCE + "
+        "'<\\/script>'}); return ask(s, \"return avail('/y');\");",
+        35536,
+    ),
+    "a frame of another origin that navigates itself to the page's origin": (
+        "const b = await frame(B + F); await new Promise((resolve) => { b.onload = resolve; ask(b, "
+        '"location.href = A + F; return 1;"); }); return ask(b, "return avail(\'/x\');");',
+        65536,
+    ),
+    "a frame of the page's origin that its parent navigates to another origin": (
+        "const a = await frame(F); await new Promise((resolve) => { a.onload = resolve; a.src = B + F; "
+        "}); return ask(a, \"return avail('/x');\");",
+        8192,
+    ),
+}
+
+
+def _fetch_later_page(server: _Server) -> str:
+    """Serve the page and the frame page of the fetchLater() quota cases, with the helpers, and return the page's URL."""
+    port = server.origin.rsplit(":", 1)[1]
+    origins = f"const A = 'http://127.0.0.1:{port}', B = 'http://localhost:{port}', C = 'http://c.localhost:{port}', F = '/f';"
+    helpers = origins + _FETCH_LATER_HELPERS
+    for path in ("/x", "/y", "/fill"):
+        server.text(path, "x", [("Access-Control-Allow-Origin", "*")])
+    server.page("/f", f"<body><script>{helpers}</script>")
+    return server.page("/", f"<body><script>const HELPERS_SOURCE = {json.dumps(helpers)}; {helpers}</script>")
+
+
+def test_fetch_later_takes_the_quota_of_its_frames_deferred_fetch_control_document(
+    session: mitto.Session, server: _Server
+) -> None:
+    # A frame of the page's origin shares the top-level document's quota, one of another site has the 8 KiB that its
+    # element reserved of the top-level document's, as at most 16 elements do, and one under that has none.
+    url = _fetch_later_page(server)
+    gave: dict[str, Any] = {}
+    for name, (script, _) in _FETCH_LATER_QUOTAS.items():
+        with _open_page(session, url) as page:
+            gave[name] = page.evaluate(f"(async () => {{ {script} }})()", timeout=_TIMEOUT_SECONDS)
+    assert gave == {name: expected for name, (_, expected) in _FETCH_LATER_QUOTAS.items()}
+
+
+def test_a_frames_deferred_requests_go_as_its_document_does(session: mitto.Session, server: _Server) -> None:
+    # As Chrome 157 sends them: those of a frame of the page's origin and of another site as the frame goes, and those of
+    # a document that a navigation of its frame leaves.
+    url = _fetch_later_page(server)
+    with _open_page(session, url) as page:
+        page.evaluate(
+            "(async () => {"
+            " const a = await frame(F); await ask(a, \"fetchLater('/log/gone-a', {activateAfter: 600000}); return 1;\");"
+            " const b = await frame(B + F); await ask(b, \"fetchLater('/log/gone-b', {activateAfter: 600000}); return 1;\");"
+            " const n = await frame(B + F);"
+            " await ask(n, \"fetchLater('/log/navigated', {activateAfter: 600000}); return 1;\");"
+            " a.remove(); b.remove();"
+            " await new Promise((resolve) => { n.onload = resolve; n.src = C + F; });"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert server.wait_for("/log/gone-a")
+        assert server.wait_for("/log/gone-b")
+        assert server.wait_for("/log/navigated")
 
 
 def test_a_scripts_crossorigin_attribute_makes_its_request_a_cors_one(

@@ -196,6 +196,13 @@ struct FetchRequestData {
   // Whether it fetches a module script, or what one imports, which the
   // Session sends as a module.
   bool is_module = false;
+  // Whether it is navigator.sendBeacon()'s, which the Session sends as a
+  // beacon, as Blink's request context BEACON says.
+  bool is_beacon = false;
+  // Whether it is fetchLater()'s, keepalive too, which the Session holds
+  // until FetchController::SendDeferred(), its document goes or its Page
+  // ends, and whose client hears nothing of its response.
+  bool deferred = false;
   // Whether it blocks rendering, which its entry of the Performance Timeline
   // says.
   bool render_blocking = false;
@@ -240,6 +247,9 @@ class FetchController {
   // call to the client, once that call has returned. So the client must touch
   // nothing of itself after calling it, and hears nothing more.
   virtual void Cancel() = 0;
+  // For a deferred request: has the Session send it now, and destroys the
+  // client before it returns, as Cancel() does.
+  virtual void SendDeferred() {}
 
   // For a body that streams: how many more bytes of it the Session takes now,
   // none until it starts reading the body. A request whose body does not

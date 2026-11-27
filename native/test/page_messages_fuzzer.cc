@@ -133,6 +133,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_EQ(payload.size(), 8u);
           break;
         case mitto::PageMessage::kCancel:
+        case mitto::PageMessage::kSendDeferredRequest:
           CHECK_EQ(payload.size(), 8u);
           break;
         case mitto::PageMessage::kKnownGap:

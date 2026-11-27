@@ -267,6 +267,11 @@ enum class PageMessage : uint32_t {
   // To the Page: how much more of the body of a request whose body streams
   // the Session takes, as PageCredit says, once //net has taken as much.
   kRequestBodyCredit = 162,
+  // To the Session: the number of a deferred request, as a 64-bit number,
+  // which the Session sends now, as Blink's DeferredLoader asks the browser's
+  // FetchLaterLoader to once fetchLater()'s activateAfter has passed. Nothing
+  // of it comes back.
+  kSendDeferredRequest = 220,
   // To the Session: the ID of the frame's document that a traversal of the
   // session history leaves, and the navigation that repeats the navigation of
   // a document that the entry holds, as PageTraversalRequest says.
@@ -707,6 +712,10 @@ struct PageRequest {
   // sendBeacon() make one: the Session finishes it after the document or the
   // Page has gone.
   bool keepalive = false;
+  // fetchLater()'s request, which is keepalive too: the Session holds it
+  // until a kSendDeferredRequest, its document goes or its Page ends, and
+  // the Page hears nothing of it.
+  bool deferred = false;
   // A synchronous request, which Blink gives the highest priority.
   bool synchronous = false;
   // A request that sends no Referer at all, as fetch()'s referrer: "" asks.
@@ -1248,6 +1257,8 @@ struct FrameFromPage {
   std::string cookie_line;
   // kCancel.
   uint64_t cancelled = 0;
+  // kSendDeferredRequest.
+  uint64_t deferred_to_send = 0;
   // kCookieStoreGet.
   PageCookieStoreGet cookie_store_get;
   // kCookieStoreSet.
@@ -1395,6 +1406,7 @@ std::string EncodeKnownGap(std::string_view name);
 // first.
 std::string EncodeRequest(uint64_t document, const PageRequest& request);
 std::string EncodeCancel(uint64_t number);
+std::string EncodeSendDeferredRequest(uint64_t number);
 std::string EncodeCredit(const PageCredit& credit);
 // `part`'s bytes are at most kBodyWindow bytes.
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part);

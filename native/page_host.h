@@ -404,6 +404,7 @@ class PageHost final : public PageChannel::Delegate {
   void OnGetCookies(uint64_t question, const CookieContext& context);
   void OnSetCookie(const std::string& line, const CookieContext& context);
   void OnCancel(uint64_t number);
+  void OnSendDeferredRequest(uint64_t number);
   // A fetch()'s body that streams from the Page, which a request of
   // `options.stream_body` reads.
   void OnRequestBodyPart(const PageRequestBodyPart& part);
@@ -615,6 +616,30 @@ class PageHost final : public PageChannel::Delegate {
                     std::optional<std::vector<char>> body,
                     scoped_refptr<RequestChannel> body_channel,
                     FetchChecks checks);
+
+  // fetchLater()'s request, which waits until the Page asks for it, its
+  // document goes or the Page ends, as Chrome's FetchLaterLoader waits in the
+  // browser, with what StartRequest() then takes.
+  struct DeferredRequest {
+    DeferredRequest();
+    DeferredRequest(DeferredRequest&&);
+    DeferredRequest& operator=(DeferredRequest&&);
+    ~DeferredRequest();
+
+    uint64_t context_id = 0;
+    url::Origin document_origin;
+    GURL url;
+    net::HttpRequestHeaders headers;
+    RequestOptions options;
+    std::optional<std::vector<char>> body;
+    FetchChecks checks;
+  };
+  // Starts the deferred request numbered `number`, if one waits, and lets it
+  // go on without the Page, which hears nothing of it, as the browser answers
+  // a FetchLaterLoader's request to nobody.
+  void SendDeferredRequest(uint64_t number);
+  // Sends the deferred requests of the contexts `ids`, or of every context.
+  void SendDeferredRequests(const std::set<uint64_t>* ids);
 
   // What a Request hears of its job.
   void OnResponseStarted(Request& request, RequestEvent event);
@@ -860,6 +885,8 @@ class PageHost final : public PageChannel::Delegate {
   // once it has, or with the Page.
   std::vector<base::WeakPtr<RunningRequest>> sending_jobs_;
   uint64_t last_request_number_ = kNavigationRequest;
+  // The deferred requests that wait, by number.
+  std::map<uint64_t, DeferredRequest> deferred_requests_;
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.
   const scoped_refptr<KeepaliveInFlight> keepalive_in_flight_ =

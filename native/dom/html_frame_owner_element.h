@@ -23,6 +23,15 @@ class Document;
 class Frame;
 class Window;
 
+// Blink's mojom::DeferredFetchPolicy: the quota of fetchLater() that a frame's
+// element reserves for its documents, none, the normal 64 KiB or the minimal
+// 8 KiB.
+enum class DeferredFetchPolicy {
+  kDisabled,
+  kDeferredFetch,
+  kDeferredFetchMinimal
+};
+
 class HTMLFrameOwnerElement : public HTMLElement {
  public:
   ~HTMLFrameOwnerElement() override;
@@ -43,6 +52,15 @@ class HTMLFrameOwnerElement : public HTMLElement {
   SandboxFlags GetSandboxFlags() const { return sandbox_flags_; }
   // The frame goes, as its documents have unloaded: the element holds none.
   void ClearContentFrame() { content_frame_ = nullptr; }
+  // The quota of fetchLater() that the element reserves, as its FramePolicy's
+  // deferred_fetch_policy holds it, which a navigation that its frame's
+  // parent starts sets and a document of the parent's origin clears.
+  DeferredFetchPolicy GetDeferredFetchPolicy() const {
+    return deferred_fetch_policy_;
+  }
+  void SetDeferredFetchPolicy(DeferredFetchPolicy policy) {
+    deferred_fetch_policy_ = policy;
+  }
   // HTMLFrameOwnerElement::DispatchLoad(): load at the element, once its
   // frame's window's load event has been dispatched.
   void DispatchLoad();
@@ -86,6 +104,7 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // The name the frame gets when the element makes it: its name, or its ID.
   std::u16string frame_name_;
   SandboxFlags sandbox_flags_ = SandboxFlags::kNone;
+  DeferredFetchPolicy deferred_fetch_policy_ = DeferredFetchPolicy::kDisabled;
 };
 
 }  // namespace mitto

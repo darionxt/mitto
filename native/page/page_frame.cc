@@ -27,6 +27,7 @@
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/fetch_later.h"
 #include "mitto/dom/frame_loader.h"
 #include "mitto/dom/history_item.h"
 #include "mitto/dom/html_frame_owner_element.h"
@@ -1855,6 +1856,11 @@ void PageFrame::StoreDocument(std::unique_ptr<DocumentLoader> loader) {
     window.SetFrame(nullptr);
     window.SetNavigationClient(nullptr);
     window.SetIsInBackForwardCache(true);
+    // Its deferred requests go now, as FetchLaterManager's
+    // ContextEnteredBackForwardCache() has them.
+    if (window.FindDeferredFetches()) {
+      window.GetDeferredFetches()->SendAll();
+    }
     window.SetBackForwardCacheEviction(base::BindRepeating(
         [](base::WeakPtr<PageFrame> frame, uint64_t document) {
           // From a task, as the script that tried to run is on the stack.
