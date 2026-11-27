@@ -426,6 +426,27 @@ def test_a_beacon_of_a_blob_of_a_type_that_is_not_safelisted_is_a_cors_request(
     assert other.headers_of("/json") == []
 
 
+def test_a_beacon_of_a_blob_of_a_long_safelisted_type_goes_without_a_preflight(
+    session: mitto.Session, server: _Server, other: _Server
+) -> None:
+    # BeaconBlob checks a Blob's type as a safelisted type of any length, so Chrome 157 sent this one in mode no-cors, with
+    # its type, where a script's line of more than 128 bytes would need a preflight.
+    url = server.page("/", "<p>beacon</p>")
+    other.text("/long", "long")
+    content_type = "text/plain;a=" + "x" * 200
+
+    with _open_page(session, url) as page:
+        sent = page.evaluate(
+            f"navigator.sendBeacon('{other.url('/long')}', new Blob(['x'], {{type: '{content_type}'}}))"
+        )
+        assert other.wait_for("/long")
+
+    assert sent is True
+    assert other.headers_of("OPTIONS /long") == []
+    (lines,) = other.headers_of("/long")
+    assert (_value(lines, "Content-Type"), _value(lines, "Sec-Fetch-Mode")) == (content_type, "no-cors")
+
+
 def test_a_beacon_stays_within_the_keepalive_quota_and_refuses_what_it_cannot_send(
     session: mitto.Session, server: _Server
 ) -> None:
@@ -731,6 +752,73 @@ def test_a_frames_deferred_requests_go_as_its_document_does(session: mitto.Sessi
         assert server.wait_for("/log/gone-a")
         assert server.wait_for("/log/gone-b")
         assert server.wait_for("/log/navigated")
+
+
+def test_a_frames_fetch_later_results_say_activated_as_the_frame_goes(session: mitto.Session, server: _Server) -> None:
+    # FetchLaterManager::ContextDestroyed() sends each deferred request as the frame goes, before any script runs again, so
+    # Chrome 157 said both had been activated right after the removal, the one whose signal then aborted too.
+    url = _fetch_later_page(server)
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "(async () => {"
+            " const a = await frame(F); const controller = new AbortController();"
+            " const kept = a.contentWindow.fetchLater('/log/kept', {activateAfter: 600000});"
+            " const aborted = a.contentWindow.fetchLater('/log/aborted', {activateAfter: 600000, signal: controller.signal});"
+            " const before = kept.activated; a.remove(); controller.abort();"
+            " return [before, kept.activated, aborted.activated];"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert server.wait_for("/log/kept")
+        assert server.wait_for("/log/aborted")
+    assert gave == [False, True, True]
+
+
+def test_a_detached_frames_fetch_later_throws_before_it_takes_its_input(
+    session: mitto.Session, server: _Server
+) -> None:
+    # GlobalFetch's ScopedFetcher refuses a context that has gone before it makes the Request, so the body stays unused.
+    url = _fetch_later_page(server)
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "(async () => {"
+            " const a = await frame(F); const kept = a.contentWindow.fetchLater; a.remove();"
+            " const request = new Request('/x', {method: 'POST', body: 'a'}); let error = 'no throw';"
+            " try { kept(request); } catch (e) { error = String(e); }"
+            " return [error, request.bodyUsed];"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    assert gave == ["TypeError: Failed to execute 'fetchLater' on 'Window': The global scope is shutting down.", False]
+
+
+def test_a_deferred_request_past_the_keepalive_requests_in_flight_never_goes(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The network service counts a deferred request as the browser starts it, past 256 keepalive requests of the page in
+    # flight, so Chrome 157 never sent the one that went then, but sent the next once they had ended.
+    url = server.page("/", "<p>held</p>")
+    held = threading.Event()
+    for index in range(257):
+        server.routes[f"/hold{index}"] = _Route(b"held", headers=[("Content-Type", "text/plain")], hold=held)
+    server.text("/over", "over")
+    server.text("/after", "after")
+
+    with _open_page(session, url) as page:
+        one_more = page.evaluate(
+            "(async () => {"
+            " window.held = []; for (let i = 0; i < 256; i++) held.push(fetch('/hold' + i, {keepalive: true}).catch(() => 0));"
+            " const one_more = await fetch('/hold256', {keepalive: true}).then(() => 'ok', (e) => String(e));"
+            " fetchLater('/over', {activateAfter: 0}); await new Promise((r) => setTimeout(r, 500)); return one_more;"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        held.set()
+        page.evaluate("Promise.all(held).then(() => 0)", timeout=_TIMEOUT_SECONDS)
+        page.evaluate("fetchLater('/after', {activateAfter: 0}); 0", timeout=_TIMEOUT_SECONDS)
+        assert server.wait_for("/after")
+    assert one_more == "TypeError: Failed to fetch"
+    assert server.headers_of("/over") == []
 
 
 def test_a_scripts_crossorigin_attribute_makes_its_request_a_cors_one(

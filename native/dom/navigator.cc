@@ -106,7 +106,8 @@ std::optional<BeaconBody> SerializeBeacon(
     body.bytes.assign(bytes.begin(), bytes.end());
     const std::string& type = handle.GetType();
     if (!type.empty() && ParsedContentType(base::UTF8ToUTF16(type)).IsValid()) {
-      body.cors = !IsNoCorsSafelistedHeader("content-type", type);
+      // BeaconBlob::Serialize(): a type of any length that is safelisted.
+      body.cors = !IsCorsSafelistedContentType(type);
       body.content_type = type;
     }
     return body;

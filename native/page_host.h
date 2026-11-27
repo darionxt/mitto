@@ -130,6 +130,14 @@ inline constexpr size_t kMaxKeepaliveRequests = 2048;
 inline constexpr size_t kMaxKeepaliveRequestsPerPage = 256;
 inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
 
+// How many bytes of fetchLater() requests one Page may hold at once, counted
+// by their URLs without the fragment, their header lines and their bodies:
+// what Blink's quotas let the control documents of a frame tree queue, the
+// top-level document's 512 KiB and the 128 KiB of its frames' minimal quotas.
+// One that asks for more is refused.
+// Upstream: third_party/blink/renderer/core/fetch/fetch_later_util.h
+inline constexpr size_t kMaxDeferredBytesPerPage = 640 * 1024;
+
 // What a Page's Session gives it, on the network thread: its requests and its
 // cookies.
 class PageNetwork {
@@ -633,7 +641,13 @@ class PageHost final : public PageChannel::Delegate {
     RequestOptions options;
     std::optional<std::vector<char>> body;
     FetchChecks checks;
+    // What it holds against kMaxDeferredBytesPerPage.
+    size_t bytes = 0;
   };
+  // Whether one more keepalive request of `url` and `headers` is past what
+  // the network service allows in flight, of the Session or of the Page.
+  bool IsPastKeepaliveLimits(const GURL& url,
+                             const net::HttpRequestHeaders& headers) const;
   // Starts the deferred request numbered `number`, if one waits, and lets it
   // go on without the Page, which hears nothing of it, as the browser answers
   // a FetchLaterLoader's request to nobody.
@@ -887,6 +901,8 @@ class PageHost final : public PageChannel::Delegate {
   uint64_t last_request_number_ = kNavigationRequest;
   // The deferred requests that wait, by number.
   std::map<uint64_t, DeferredRequest> deferred_requests_;
+  // The bytes that they hold.
+  size_t deferred_bytes_ = 0;
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.
   const scoped_refptr<KeepaliveInFlight> keepalive_in_flight_ =

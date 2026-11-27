@@ -312,6 +312,7 @@ void PageFetcher::Stop() {
     // FetchLaterManager sends each when its context is destroyed.
     if (request->deferred()) {
       requests_->ForgetDeferred(number);
+      request->client().OnDocumentGone();
     } else if (request->keepalive() || kind_ == Kind::kWorker) {
       requests_->LetGo(number);
     } else {

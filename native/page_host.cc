@@ -867,6 +867,21 @@ size_t KeepaliveBytes(const GURL& url, const net::HttpRequestHeaders& headers) {
   return bytes;
 }
 
+// What a deferred request holds against kMaxDeferredBytesPerPage, as
+// FetchLaterUtil::CalculateRequestSize() counts it, but for its referrer: its
+// URL without the fragment, each header line's name and value, and its body.
+size_t DeferredBytes(const PageRequest& asked) {
+  size_t bytes =
+      std::string_view(asked.url).substr(0, asked.url.find('#')).size();
+  for (const std::string_view line :
+       base::SplitStringPiece(asked.headers, "\n", base::KEEP_WHITESPACE,
+                              base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(": ");
+    bytes += colon == std::string_view::npos ? line.size() : line.size() - 2;
+  }
+  return bytes + (asked.body ? asked.body->size() : 0);
+}
+
 // A keepalive request's place among those in flight of its Session and of its
 // Page, which it gives back when it ends.
 class KeepaliveShare {
@@ -1663,6 +1678,13 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
                          " requests at once"}));
     return;
   }
+  if (asked.deferred &&
+      deferred_bytes_ + DeferredBytes(asked) > kMaxDeferredBytesPerPage) {
+    Refuse(base::StrCat({"more than ",
+                         base::NumberToString(kMaxDeferredBytesPerPage),
+                         " bytes of deferred requests at once"}));
+    return;
+  }
   const Context& context = contexts_.at(context_id);
   // Only a document navigates, and a frame's navigation names the frame's
   // document that the new one replaces, whose parent the frame tree counts
@@ -1866,11 +1888,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   // One keepalive request too many, or too large, fails as in Chrome. A
   // deferred one counts once it goes, as its FetchLaterLoader waits apart.
   if (asked.keepalive && !asked.deferred) {
-    const KeepaliveInFlight& in_session = *network_->keepalive_in_flight();
-    if (in_session.requests >= kMaxKeepaliveRequests ||
-        keepalive_in_flight_->requests >= kMaxKeepaliveRequestsPerPage ||
-        keepalive_in_flight_->bytes + KeepaliveBytes(url, headers) >
-            kMaxKeepaliveBytesPerPage) {
+    if (IsPastKeepaliveLimits(url, headers)) {
       PageResponseEnded ended;
       ended.number = asked.number;
       ended.net_error = net::ERR_INSUFFICIENT_RESOURCES;
@@ -1928,7 +1946,10 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .parent_embedder_policy = std::move(parent_embedder_policy),
       .parent_origin = std::move(parent_origin)};
   if (asked.deferred) {
+    const size_t bytes = DeferredBytes(asked);
+    deferred_bytes_ += bytes;
     DeferredRequest& deferred = deferred_requests_[asked.number];
+    deferred.bytes = bytes;
     deferred.context_id = context_id;
     deferred.document_origin = document_origin;
     deferred.url = std::move(url);
@@ -1962,12 +1983,29 @@ void PageHost::OnSendDeferredRequest(uint64_t number) {
   SendDeferredRequest(number);
 }
 
+bool PageHost::IsPastKeepaliveLimits(
+    const GURL& url,
+    const net::HttpRequestHeaders& headers) const {
+  const KeepaliveInFlight& in_session = *network_->keepalive_in_flight();
+  return in_session.requests >= kMaxKeepaliveRequests ||
+         keepalive_in_flight_->requests >= kMaxKeepaliveRequestsPerPage ||
+         keepalive_in_flight_->bytes + KeepaliveBytes(url, headers) >
+             kMaxKeepaliveBytesPerPage;
+}
+
 void PageHost::SendDeferredRequest(uint64_t number) {
   auto node = deferred_requests_.extract(number);
   if (node.empty()) {
     return;
   }
   DeferredRequest& deferred = node.mapped();
+  deferred_bytes_ -= deferred.bytes;
+  // The network service fails one past its keepalive limits as the browser's
+  // FetchLaterLoader starts it, which no renderer hears of.
+  // Upstream: services/network/url_loader_factory.cc
+  if (IsPastKeepaliveLimits(deferred.url, deferred.headers)) {
+    return;
+  }
   StartRequest(number, deferred.context_id, deferred.document_origin,
                std::move(deferred.url), std::move(deferred.headers),
                std::move(deferred.options), std::move(deferred.body),
@@ -2003,7 +2041,10 @@ void PageHost::OnCancel(uint64_t number) {
     return;
   }
   // fetchLater()'s request, whose signal aborted before it went.
-  if (deferred_requests_.erase(number)) {
+  if (const auto deferred = deferred_requests_.find(number);
+      deferred != deferred_requests_.end()) {
+    deferred_bytes_ -= deferred->second.bytes;
+    deferred_requests_.erase(deferred);
     PageResponseEnded ended;
     ended.number = number;
     ended.net_error = net::ERR_ABORTED;
@@ -3221,6 +3262,7 @@ void PageHost::EndWithSession() {
   }
   // Nothing sends the deferred requests of a Page whose Session goes.
   deferred_requests_.clear();
+  deferred_bytes_ = 0;
   AbandonRequests();
   ReleaseStorage();
   channel_.reset();

@@ -281,6 +281,10 @@ class FetchClient {
   virtual void OnResponseEnded(int net_error) = 0;
   // For a request whose body streams: the Session takes more of it.
   virtual void OnBodyRoom() {}
+  // For a deferred request: its document has gone, and the Session sends it
+  // then, as FetchLaterManager::ContextDestroyed() processes each loader
+  // before any script runs again.
+  virtual void OnDocumentGone() {}
 };
 
 class Fetcher {

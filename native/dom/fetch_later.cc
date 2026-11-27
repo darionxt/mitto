@@ -15,6 +15,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/body_stream_buffer.h"
@@ -204,13 +205,11 @@ class DeferredClient final : public FetchClient {
   DeferredClient(FetchLaterResult* result,
                  scoped_refptr<DeferredFetches> records,
                  AbortSignal* signal,
-                 std::optional<base::TimeDelta> activate_after,
-                 WindowTasks* tasks)
+                 std::optional<base::TimeDelta> activate_after)
       : result_(result),
         records_(std::move(records)),
         signal_(signal),
-        activate_after_(activate_after),
-        tasks_(tasks) {}
+        activate_after_(activate_after) {}
 
   DeferredClient(const DeferredClient&) = delete;
   DeferredClient& operator=(const DeferredClient&) = delete;
@@ -219,8 +218,8 @@ class DeferredClient final : public FetchClient {
     if (record_) {
       records_->Remove(record_);
     }
-    // Its document went, which sent it, as FetchLaterManager's
-    // ContextDestroyed() processes each DeferredLoader.
+    // Its document went, or its Page ends, which sends it, as
+    // FetchLaterManager's ContextDestroyed() processes each DeferredLoader.
     if (state_ == State::kPending) {
       result_->SetActivated();
     }
@@ -250,11 +249,13 @@ class DeferredClient final : public FetchClient {
     signal_->AddAlgorithm(
         bindings::MakeGarbageCollected<AbortDeferredAlgorithm>(
             weak_factory_.GetWeakPtr()));
+    // DeferredLoader's timer, which stops as the request ends.
     if (activate_after_) {
-      tasks_->PostDelayedTask(
-          TaskType::kNetworkingUnfreezable,
-          base::BindOnce(&DeferredClient::Send, weak_factory_.GetWeakPtr()),
-          *activate_after_);
+      timer_.SetTaskRunner(
+          EventLoop::Get()->TaskRunner(TaskType::kNetworkingUnfreezable));
+      timer_.Start(
+          FROM_HERE, *activate_after_,
+          base::BindOnce(&DeferredClient::Send, weak_factory_.GetWeakPtr()));
     }
   }
   void OnResponseStarted(const FetchResponseHead& head) override {}
@@ -264,6 +265,14 @@ class DeferredClient final : public FetchClient {
   void OnResponseEnded(int net_error) override {
     if (state_ == State::kPending) {
       state_ = State::kFailed;
+      timer_.Stop();
+    }
+  }
+  void OnDocumentGone() override {
+    if (state_ == State::kPending) {
+      state_ = State::kSent;
+      timer_.Stop();
+      result_->SetActivated();
     }
   }
 
@@ -272,6 +281,7 @@ class DeferredClient final : public FetchClient {
       return;
     }
     state_ = State::kAborted;
+    timer_.Stop();
     // Destroys this.
     controller_->Cancel();
   }
@@ -284,8 +294,8 @@ class DeferredClient final : public FetchClient {
   uint64_t record_ = 0;
   cppgc::Persistent<AbortSignal> signal_;
   const std::optional<base::TimeDelta> activate_after_;
-  const raw_ptr<WindowTasks> tasks_;
   raw_ptr<FetchController> controller_ = nullptr;
+  base::OneShotTimer timer_;
   State state_ = State::kPending;
   base::WeakPtrFactory<DeferredClient> weak_factory_{this};
 };
@@ -381,6 +391,13 @@ FetchLaterResult* FetchLater(Window& window,
                              const bindings::RequestOrUSVString& input,
                              const bindings::DeferredRequestInit& init,
                              bindings::ExceptionState& exception_state) {
+  // GlobalFetch's ScopedFetcher: a window that the Page has let go, such as a
+  // detached frame's, whose fetchLater() a script kept, before the Request
+  // takes its input.
+  if (!window.HasContext()) {
+    exception_state.ThrowTypeError("The global scope is shutting down.");
+    return nullptr;
+  }
   Request* const request = Request::Create(input, init, exception_state);
   if (!request) {
     return nullptr;
@@ -493,8 +510,8 @@ FetchLaterResult* FetchLater(Window& window,
   data.cache_mode = request->cache_mode();
   data.redirect_mode = request->redirect_mode();
   const scoped_refptr<DeferredFetches>& records = window.GetDeferredFetches();
-  auto client = std::make_unique<DeferredClient>(result, records, signal,
-                                                 activate_after, tasks);
+  auto client =
+      std::make_unique<DeferredClient>(result, records, signal, activate_after);
   client->SetRecord(records->Add(
       origin, size,
       base::BindOnce(&DeferredClient::Send, client->GetWeakPtr())));
