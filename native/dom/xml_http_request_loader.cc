@@ -205,8 +205,8 @@ void XMLHttpRequestLoader::StartTimer(base::TimeDelta delay) {
   timer_.Start(
       FROM_HERE, delay,
       base::BindOnce(
-          [](cppgc::WeakPersistent<XMLHttpRequestLoader> loader,
-             uint64_t timer) {
+          [](cppgc::WeakPersistent<XMLHttpRequestLoader> loader, uint64_t timer,
+             bool delayed) {
             if (!loader) {
               return;
             }
@@ -219,18 +219,19 @@ void XMLHttpRequestLoader::StartTimer(base::TimeDelta delay) {
                 },
                 loader, timer);
             // While the back/forward cache keeps the window, the timeout
-            // waits, as a delayed task of Blink's frozen frame does, and
-            // fires once the window has come back, unless what came of the
-            // request meanwhile has ended it.
+            // waits, as a task of Blink's frozen frame does, and fires once
+            // the window has come back, unless what came of the request
+            // meanwhile has ended it.
             ExecutionContext* const context = loader->context_.Get();
             if (context && context->IsInBackForwardCache()) {
               context->HoldTask(TaskType::kNetworking, std::move(fire),
-                                /*delayed=*/true);
+                                delayed);
               return;
             }
             RunInContext(context, [&] { std::move(fire).Run(); });
           },
-          cppgc::WeakPersistent<XMLHttpRequestLoader>(this), ++timer_number_));
+          cppgc::WeakPersistent<XMLHttpRequestLoader>(this), ++timer_number_,
+          /*delayed=*/delay.is_positive()));
 }
 
 void XMLHttpRequestLoader::Clear() {

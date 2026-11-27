@@ -943,6 +943,14 @@ def test_a_freeze_listener_s_xml_http_requests_fail_once_its_page_comes_back(
     assert without_favicon(server.paths()) == ["/a", "/b"]
 
 
+# What sets the timeout of the request `x` as its page freezes, which falls due 300 ms later, as the timeout counts from
+# send(), so that how long the navigation takes before decides nothing.
+_TIMEOUT_AS_IT_FREEZES = (
+    "const sent = performance.now();"
+    " document.addEventListener('freeze', () => { x.timeout = Math.ceil(performance.now() - sent) + 300; });"
+)
+
+
 def test_an_xml_http_request_s_timeout_waits_while_its_page_is_kept(
     session: mitto.Session, server: RecordingServer
 ) -> None:
@@ -956,10 +964,10 @@ def test_an_xml_http_request_s_timeout_waits_while_its_page_is_kept(
             page.evaluate(
                 "const x = new XMLHttpRequest(); for (const type of ['readystatechange', 'timeout', 'loadend'])"
                 " x.addEventListener(type, () => log.push(`${type} ${x.readyState}`)); x.open('GET', '/held');"
-                " x.timeout = 300; x.send(); window.marker = 1; location.href = '/b'; 0"
+                f" x.send(); {_TIMEOUT_AS_IT_FREEZES} window.marker = 1; location.href = '/b'; 0"
             )
             assert _next_document(page).url == second
-            # Its time comes while the cache keeps the page, which it fires at once it shows again.
+            # Its time comes while the cache keeps the page, and it fires once the page shows again.
             _wait(page, 700)
             page.evaluate("history.back()")
             assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
@@ -993,7 +1001,7 @@ def test_a_response_that_came_while_its_page_was_kept_ends_its_request_before_a_
                 "const x = new XMLHttpRequest();"
                 " for (const type of ['readystatechange', 'load', 'timeout', 'loadend'])"
                 " x.addEventListener(type, () => log.push(`${type} ${x.readyState}`)); x.open('GET', '/held');"
-                " x.timeout = 600; x.send(); setTimeout(() => { window.marker = 1; location.href = '/b'; }, 50); 0"
+                f" x.send(); {_TIMEOUT_AS_IT_FREEZES} window.marker = 1; location.href = '/b'; 0"
             )
             assert _next_document(page).url == second
             # The response comes while the cache keeps the page, and the timeout's time after it.
