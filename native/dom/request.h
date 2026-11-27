@@ -71,10 +71,9 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   std::u16string GetReferrerPolicy() const;
   std::u16string Mode() const;
   std::u16string Credentials() const;
-  // The defaults, which RequestInit cannot change yet.
-  std::u16string Cache() const { return u"default"; }
-  std::u16string Redirect() const { return u"follow"; }
-  std::u16string Integrity() const { return std::u16string(); }
+  std::u16string Cache() const;
+  std::u16string Redirect() const;
+  std::u16string Integrity() const;
   bool Keepalive() const { return keepalive_; }
   // Its target address space, which only the default can set yet.
   std::u16string TargetAddressSpace() const { return u"unknown"; }
@@ -93,6 +92,9 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   FetchReferrerPolicy referrer_policy() const { return referrer_policy_; }
   FetchPriorityHint priority() const { return priority_; }
   bool keepalive() const { return keepalive_; }
+  FetchCacheMode cache_mode() const { return cache_mode_; }
+  FetchRedirectMode redirect_mode() const { return redirect_mode_; }
+  const std::u16string& integrity() const { return integrity_; }
   // For a blob: URL, the blob that it named when the Request was made, as
   // Blink resolves it then, so that a fetch works after the URL is revoked,
   // and the origin of the context that made it; null and nullopt when it
@@ -123,6 +125,10 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   FetchPriorityHint priority_ = FetchPriorityHint::kAuto;
   bool keepalive_ = false;
+  FetchCacheMode cache_mode_ = FetchCacheMode::kDefault;
+  FetchRedirectMode redirect_mode_ = FetchRedirectMode::kFollow;
+  // Its integrity metadata.
+  std::u16string integrity_;
   scoped_refptr<BlobDataHandle> blob_url_handle_;
   std::optional<url::Origin> blob_url_origin_;
   cppgc::Member<AbortSignal> signal_;

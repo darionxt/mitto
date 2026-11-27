@@ -238,6 +238,13 @@ base::TimeTicks TicksOf(int64_t microseconds) {
              : base::TimeTicks() + base::Microseconds(microseconds);
 }
 
+bool IsRedirect(const PageResponseStarted& response) {
+  return (response.status == 301 || response.status == 302 ||
+          response.status == 303 || response.status == 307 ||
+          response.status == 308) &&
+         HasLocation(response.headers);
+}
+
 ResourceTimingInfo CreateResourceTimingInfo(base::TimeTicks start_time,
                                             std::u16string initial_url,
                                             const PageResponseStarted* response,

@@ -170,6 +170,8 @@ Response* ResponseFromCache(CacheStorageHost& host,
     return Response::Error();
   } else if (response.type == 4) {
     type = Response::ResponseType::kOpaque;
+  } else if (response.type == 5) {
+    type = Response::ResponseType::kOpaqueRedirect;
   }
   // The filtered response of its type: no Set-Cookie for a basic one, and of
   // a CORS one only the safelisted names and the exposed ones.

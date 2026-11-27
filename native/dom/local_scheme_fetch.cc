@@ -240,10 +240,7 @@ void LocalSchemeFetch::Respond() {
     answer_ = DecodeDataUrl(*answer_.data_url, answer_.method);
   }
   if (answer_.net_error) {
-    const std::unique_ptr<FetchClient> client = std::move(client_);
-    const int net_error = answer_.net_error;
-    delete this;
-    client->OnResponseEnded(net_error);
+    End(answer_.net_error);
     return;
   }
   const base::WeakPtr<LocalSchemeFetch> weak = weak_factory_.GetWeakPtr();
@@ -296,10 +293,15 @@ void LocalSchemeFetch::SendResponseBody() {
       return;
     }
   }
-  // The client goes after its end, as a Fetcher's does.
-  const std::unique_ptr<FetchClient> client = std::move(client_);
+  End(0);
+}
+
+void LocalSchemeFetch::End(int net_error) {
+  // The client goes after its end, as a Fetcher's does, and this after it,
+  // since page code that the end runs may abort the fetch.
+  calling_client_ = true;
+  client_->OnResponseEnded(net_error);
   delete this;
-  client->OnResponseEnded(0);
 }
 
 }  // namespace mitto
