@@ -1545,13 +1545,10 @@ Document* PageFrame::CommitNavigation(
     }
   }
   const GURL old_url(old_document.UrlForBinding());
-  // RenderFrameHostManager::ShouldProactivelySwapBrowsingInstance(): a page is
-  // in another browsing context group than one that it leaves for the
-  // back/forward cache, so nothing in it opened it.
-  if (!parent_ && old_url.SchemeIsHTTPOrHTTPS() &&
-      (type == FrameLoadType::kBackForward ||
-       (type == FrameLoadType::kStandard &&
-        old_url.GetWithoutRef() != url.GetWithoutRef()))) {
+  // A page of another browsing instance than the one it leaves, as
+  // RenderFrameHostManager::ShouldProactivelySwapBrowsingInstance() swaps
+  // it for the back/forward cache, has nothing of that one open it.
+  if (!parent_ && next_browsing_instance != browsing_instance_) {
     SetOpener(nullptr);
   }
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();

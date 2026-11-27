@@ -175,7 +175,7 @@ def test_what_a_frame_navigates_is_chrome_s(server: _Server, actor: str) -> None
 
 
 class _Pages(QuietServer):
-    """Serves `pages` by path, with their own origins for A and B, and keeps the paths asked for and their Referer lines."""
+    """Serves `pages` by path, /missing as a 404, with their own origins for A and B, and keeps the paths asked for and their Referer lines."""
 
     def __init__(self, pages: dict[str, str]) -> None:
         super().__init__(("127.0.0.1", 0), _PagesHandler)
@@ -197,7 +197,7 @@ class _PagesHandler(http.server.BaseHTTPRequestHandler):
             self.server.paths.append(self.path)
             self.server.referrers.append(self.headers["Referer"])
         body = ("<!doctype html>" + self.server.pages.get(self.path.partition("?")[0], "")).encode()
-        self.send_response(200)
+        self.send_response(404 if self.path.startswith("/missing") else 200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -297,6 +297,23 @@ def test_a_page_keeps_itself_as_its_opener_until_a_navigation_adds_an_entry() ->
             ("location.href = location.href", True),
             ("location.replace('/own?y')", True),
             ("location.href = '/own?x'", False),
+        ):
+            assert page.evaluate("opener === window", timeout=_TIMEOUT_SECONDS)
+            page.evaluate(f"window.before = true; {navigation}", timeout=_TIMEOUT_SECONDS)
+            _until(page, "!window.before && document.readyState === 'complete'")
+            assert page.evaluate("opener === window", timeout=_TIMEOUT_SECONDS) is kept
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_page_that_the_back_forward_cache_would_not_keep_keeps_its_opener() -> None:
+    # As in Chrome 157: a 404 swaps no browsing instance as it goes, nor does a traversal back to it.
+    with _page_of({}, "/missing") as (page, _):
+        page.evaluate("name = 'roof'; open('', 'roof'); 0", timeout=_TIMEOUT_SECONDS)
+        for navigation, kept in (
+            ("location.href = '/own?x'", True),
+            ("history.back()", True),
+            ("location.href = '/own?y'", True),
+            ("location.href = '/own?z'", False),
         ):
             assert page.evaluate("opener === window", timeout=_TIMEOUT_SECONDS)
             page.evaluate(f"window.before = true; {navigation}", timeout=_TIMEOUT_SECONDS)
