@@ -3,11 +3,10 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <iterator>
 #include <utility>
 
 #include "base/strings/strcat.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 
@@ -21,12 +20,6 @@ const PolicyFeature* Find(std::string_view name) {
   const base::span<const PolicyFeature> features = PolicyFeatures();
   const auto found = std::ranges::find(features, name, &PolicyFeature::name);
   return found == features.end() ? nullptr : &*found;
-}
-
-bool IsDeclared(const PolicyFeature& feature, const ContainerPolicy& policy) {
-  return std::ranges::any_of(policy, [&](const PolicyDeclaration& declaration) {
-    return &*declaration.feature == &feature;
-  });
 }
 
 // ParseFeatureName().
@@ -51,111 +44,101 @@ const PolicyFeature* ParseFeature(std::string_view name,
   return feature;
 }
 
-// FromOrigin().
-void AddOrigin(const url::Origin& origin, PolicyDeclaration& declaration) {
-  if (std::optional<PolicyOrigin> parsed =
-          PolicyOrigin::Parse(origin.Serialize())) {
-    declaration.origins.push_back(*std::move(parsed));
-  }
-}
-
-// ParseAllowlist().
-PolicyDeclaration ParseAllowlist(const PolicyFeature& feature,
-                                 base::span<const std::string_view> tokens,
-                                 const url::Origin& self,
-                                 const url::Origin& source,
-                                 std::vector<PolicyMessage>& messages) {
-  PolicyDeclaration declaration{.feature = base::raw_ref(feature)};
-  // 'src', which a feature with no allowlist is for, is the opaque origin that
-  // the frame's document is to have, if its URL gives it one.
-  const auto add_source = [&] {
-    if (source.opaque()) {
-      declaration.opaque_source = true;
-    } else {
-      AddOrigin(source, declaration);
-    }
-  };
-  if (tokens.empty()) {
-    add_source();
-  }
-  for (const std::string_view token : tokens) {
-    if (!base::IsStringASCII(token)) {
-      messages.push_back({.text = "Non-ASCII characters in origin."});
-    } else if (base::EqualsCaseInsensitiveASCII(token, "'self'")) {
-      declaration.self = self;
-    } else if (base::EqualsCaseInsensitiveASCII(token, "'src'")) {
-      add_source();
-    } else if (base::EqualsCaseInsensitiveASCII(token, "'none'")) {
-      continue;
-    } else if (token == "*") {
-      declaration.all_origins = true;
-      declaration.opaque_source = true;
-    } else if (std::optional<PolicyOrigin> origin =
-                   PolicyOrigin::Parse(token)) {
-      declaration.origins.push_back(*std::move(origin));
-    } else {
-      messages.push_back(
-          {.text = base::StrCat({"Unrecognized origin: '", token, "'."})});
-    }
-  }
-  return declaration;
-}
-
-}  // namespace
-
-ContainerPolicy ParseAllowAttribute(std::u16string_view allow,
-                                    const url::Origin& self,
-                                    const url::Origin& source,
-                                    const bindings::RuntimeFeatureSet& features,
-                                    std::vector<PolicyMessage>& messages) {
-  ContainerPolicy policy;
-  if (allow.size() > kMaxLength) {
-    messages.push_back(
-        {ConsoleLevel::kError,
-         base::StrCat({"Feature policy declaration exceeds size limit(",
-                       base::NumberToString(allow.size()), ">",
-                       base::NumberToString(kMaxLength), ")"})});
-    return policy;
-  }
-  const std::string utf8 = base::UTF16ToUTF8(allow);
-  for (const std::string_view entry : base::SplitStringPiece(
-           utf8, ";", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    const std::vector<std::string_view> tokens = base::SplitStringPiece(
-        entry, " \t\n\f\r", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-    if (tokens.empty()) {
-      continue;
-    }
+// ParsePolicyFromNode(), in which only the first declaration of a feature
+// counts.
+ParsedPolicy ParseNode(const PolicyNode& node,
+                       const url::Origin& self,
+                       const url::Origin* source,
+                       bool with_wildcards,
+                       const bindings::RuntimeFeatureSet& features,
+                       std::vector<PolicyMessage>& messages) {
+  std::ranges::copy(node.messages, std::back_inserter(messages));
+  ParsedPolicy policy;
+  for (const PolicyEntry& entry : node.entries) {
     const PolicyFeature* const feature =
-        ParseFeature(tokens[0], features, messages);
+        ParseFeature(entry.feature, features, messages);
     if (!feature) {
       continue;
     }
-    PolicyDeclaration declaration = ParseAllowlist(
-        *feature, base::span(tokens).subspan<1>(), self, source, messages);
-    // Only the first declaration of a feature counts.
-    if (!IsDeclared(*feature, policy)) {
-      policy.push_back(std::move(declaration));
+    PolicyAllowlist allowlist = ParsePolicyAllowlist(entry.tokens, self, source,
+                                                     with_wildcards, messages);
+    if (!FindDeclared(policy, *feature)) {
+      policy.emplace_back(*feature, std::move(allowlist));
     }
   }
   return policy;
 }
 
+}  // namespace
+
+ParsedPolicy ParseAllowAttribute(std::u16string_view allow,
+                                 const url::Origin& self,
+                                 const url::Origin& source,
+                                 const bindings::RuntimeFeatureSet& features,
+                                 std::vector<PolicyMessage>& messages) {
+  // One that is too long is not even copied.
+  const PolicyNode node = ParseFeaturePolicy(
+      allow.size() > kMaxLength ? std::string() : base::UTF16ToUTF8(allow),
+      allow.size(), /*is_header=*/false);
+  return ParseNode(node, self, &source, /*with_wildcards=*/false, features,
+                   messages);
+}
+
+ParsedPolicy ParsePolicyHeaders(const PermissionsPolicyHeaders& headers,
+                                const url::Origin& self,
+                                const bindings::RuntimeFeatureSet& features,
+                                std::vector<PolicyMessage>& messages) {
+  std::vector<PolicyMessage> of_feature_policy;
+  std::vector<PolicyMessage> of_permissions_policy;
+  ParsedPolicy policy =
+      ParseNode(headers.permissions_policy, self, /*source=*/nullptr,
+                /*with_wildcards=*/true, features, of_permissions_policy);
+  std::vector<std::string_view> overlaps;
+  for (PolicyDeclaration& declaration :
+       ParseNode(headers.feature_policy, self, /*source=*/nullptr,
+                 /*with_wildcards=*/false, features, of_feature_policy)) {
+    if (FindDeclared(policy, *declaration.feature)) {
+      overlaps.push_back(declaration.feature->name);
+    } else {
+      policy.push_back(std::move(declaration));
+    }
+  }
+  if (!overlaps.empty()) {
+    of_feature_policy.push_back(
+        {.text = base::StrCat({"Some features are specified in both "
+                               "Feature-Policy and Permissions-Policy header: ",
+                               base::JoinString(overlaps, ", "),
+                               ". Values defined in Permissions-Policy header "
+                               "will be used."})});
+  }
+  for (PolicyMessage& message : of_feature_policy) {
+    message.text =
+        base::StrCat({"Error with Feature-Policy header: ", message.text});
+    messages.push_back(std::move(message));
+  }
+  for (PolicyMessage& message : of_permissions_policy) {
+    message.text =
+        base::StrCat({"Error with Permissions-Policy header: ", message.text});
+    messages.push_back(std::move(message));
+  }
+  return policy;
+}
+
 bool AllowEverywhereIfNotPresent(std::string_view feature,
-                                 ContainerPolicy& policy) {
+                                 ParsedPolicy& policy) {
   const PolicyFeature& named = PolicyFeatureNamed(feature);
-  if (IsDeclared(named, policy)) {
+  if (FindDeclared(policy, named)) {
     return false;
   }
-  policy.push_back({.feature = base::raw_ref(named),
-                    .all_origins = true,
-                    .opaque_source = true});
+  policy.emplace_back(
+      named, PolicyAllowlist{.all_origins = true, .opaque_source = true});
   return true;
 }
 
-void DisallowIfNotPresent(std::string_view feature, ContainerPolicy& policy) {
+void DisallowIfNotPresent(std::string_view feature, ParsedPolicy& policy) {
   const PolicyFeature& named = PolicyFeatureNamed(feature);
-  if (!IsDeclared(named, policy)) {
-    policy.push_back({.feature = base::raw_ref(named)});
+  if (!FindDeclared(policy, named)) {
+    policy.emplace_back(named, PolicyAllowlist());
   }
 }
 

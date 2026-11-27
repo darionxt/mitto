@@ -585,7 +585,8 @@ void PageRequests::OnRestore(uint64_t number) {
   if (!open) {
     return;
   }
-  if (!open->may_restore || open->started || open->isolation_said) {
+  if (!open->may_restore || open->started || open->isolation_said ||
+      open->policy_said) {
     refuse_.Run(base::StrCat(
         {"a restore of request ", base::NumberToString(number),
          ", which is no traversal to a document that the back/forward cache "
@@ -615,6 +616,24 @@ void PageRequests::OnIsolation(const PageIsolation& isolation) {
   open->isolation_said = true;
   if (open->client) {
     open->client->OnIsolation(isolation);
+  }
+}
+
+void PageRequests::OnPermissionsPolicy(PagePermissionsPolicy policy) {
+  Open* const open = Find(policy.navigation, "a permissions policy");
+  if (!open) {
+    return;
+  }
+  if (!open->navigation || open->started || open->policy_said) {
+    refuse_.Run(base::StrCat(
+        {"a permissions policy of request ",
+         base::NumberToString(policy.navigation),
+         ", which is not a navigation whose response has yet to start"}));
+    return;
+  }
+  open->policy_said = true;
+  if (open->client) {
+    open->client->OnPermissionsPolicy(std::move(policy.headers));
   }
 }
 

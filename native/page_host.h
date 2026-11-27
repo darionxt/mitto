@@ -31,6 +31,7 @@
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
 #include "mitto/page_storage_buckets.h"
+#include "mitto/policy_allowlist.h"
 #include "mitto/request_client.h"
 #include "mitto/request_options.h"
 #include "mitto/storage/storage_key.h"
@@ -382,6 +383,9 @@ class PageHost final : public PageChannel::Delegate {
     // as the Page last said with message 250, which the frame's next
     // navigation takes, as Chrome's FrameTreeNode keeps it for the frame.
     bool frame_credentialless = false;
+    // What the headers of a document's response say of its permissions policy,
+    // which PermissionsPolicyHeaders::Allows() answers.
+    PermissionsPolicyHeaders policy_headers;
     // The URL whose cookies a document's cookie calls read and write, as
     // Blink's Document::CookieURL(): for a frame's about:blank or srcdoc its
     // creator's or its initiator's, and empty for a document's own URL, as
@@ -750,6 +754,7 @@ class PageHost final : public PageChannel::Delegate {
     bool cross_origin_isolated = false;
     // Whether the document is credentialless, as the navigation started.
     bool credentialless = false;
+    PermissionsPolicyHeaders policy_headers;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
   // The navigations of frames to about:blank that have started and not
@@ -791,6 +796,7 @@ class PageHost final : public PageChannel::Delegate {
     std::string referrer;
     // Whether its Cache-Control says no-store.
     bool no_store = false;
+    PermissionsPolicyHeaders policy_headers;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
   // The top-level documents that the Page's back/forward cache keeps, by ID:
