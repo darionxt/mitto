@@ -79,6 +79,7 @@ XMLDocument* DOMImplementation::CreateDocument(
   } else {
     document = XMLDocument::Create(u"application/xml");
   }
+  document->SetCreator(document_->ContextWindow());
   // DOMImplementation's document's origin, as Blink's DocumentInit takes it.
   document->SetOrigin(document_->GetOrigin());
   Element* document_element = nullptr;
@@ -101,6 +102,7 @@ XMLDocument* DOMImplementation::CreateDocument(
 Document* DOMImplementation::CreateHTMLDocument(
     const std::optional<std::u16string>& title) {
   HTMLDocument* const document = HTMLDocument::Create();
+  document->SetCreator(document_->ContextWindow());
   document->SetOrigin(document_->GetOrigin());
   bindings::ExceptionState exception_state(v8::Isolate::GetCurrent());
   HTMLElement* const html = CreateHTMLElement(*document, u"html");

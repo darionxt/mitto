@@ -17,6 +17,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
 #include "mitto/bindings/per_context_data.h"
+#include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
@@ -36,6 +37,7 @@
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/page_reveal_event.h"
+#include "mitto/dom/permissions_policy_parser.h"
 #include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
@@ -269,6 +271,7 @@ void PageFrame::Start(const PageConnection& connection) {
     document.SetSandboxFlags(sandbox);
     document.SetInSandboxedProcess(
         parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
+    InheritPermissionsPolicy(document, PendingContainerPolicy());
     // Its about base URL is its creator's base URL, as Blink's
     // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
     // creator's too.
@@ -396,11 +399,13 @@ void PageFrame::CommitWithoutNetworkSoon(LocalNavigation navigation) {
                                            weak_factory_.GetWeakPtr(), number));
 }
 
-void PageFrame::CommitErrorPageSoon(SandboxFlags sandbox) {
+void PageFrame::CommitErrorPageSoon(SandboxFlags sandbox,
+                                    ContainerPolicy container_policy) {
   LocalNavigation navigation;
   navigation.url = GURL(kErrorPageUrl);
   navigation.committed.source = PageDocumentSource::kErrorPage;
   navigation.sandbox = sandbox;
+  navigation.container_policy = std::move(container_policy);
   navigation.sandboxed_process = IsOriginSandboxed(navigation.sandbox);
   navigation.committed.sandboxed_origin = navigation.sandboxed_process;
   CommitWithoutNetworkSoon(std::move(navigation));
@@ -504,6 +509,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(navigation.sandbox);
   document->SetInSandboxedProcess(navigation.sandboxed_process);
+  InheritPermissionsPolicy(*document, navigation.container_policy);
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
   document->SetReferrer(navigation.referrer);
@@ -658,6 +664,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(old_document.GetSandboxFlags());
   document->SetInSandboxedProcess(old_document.IsInSandboxedProcess());
+  InheritPermissionsPolicy(*document, PendingContainerPolicy());
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
     GiveStorage(*document);
@@ -774,6 +781,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     // what the sandbox withholds now, and an opaque origin without
     // allow-same-origin.
     navigation.sandbox = PendingSandboxFlags();
+    navigation.container_policy = PendingContainerPolicy();
     navigation.sandboxed_process = request.url.IsAboutBlank()
                                        ? request.initiator_in_sandboxed_process
                                        : IsOriginSandboxed(navigation.sandbox);
@@ -783,7 +791,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     StopAllLoaders();
     // A srcdoc takes its parent's policy, which is compatible with itself.
     if (IsBlockedByEmbedderPolicy(navigation.embedder_policy_isolates)) {
-      CommitErrorPageSoon(navigation.sandbox);
+      CommitErrorPageSoon(navigation.sandbox, navigation.container_policy);
       return;
     }
     // The Session takes what the about:blank inherits of its initiator now,
@@ -845,6 +853,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   provisional_request_ = request;
   ++provisional_request_serial_;
   provisional_sandbox_ = sandbox;
+  provisional_container_policy_ = PendingContainerPolicy();
   provisional_start_ = now;
   provisional_origin_sandboxed_ = IsOriginSandboxed(sandbox);
   provisional_cookie_writes_ = runner_->cookie_jar().cookie_writes();
@@ -897,6 +906,7 @@ void PageFrame::BeginDataUrlNavigation(const NavigationRequest& request) {
   provisional_request_ = request;
   ++provisional_request_serial_;
   provisional_sandbox_ = PendingSandboxFlags();
+  provisional_container_policy_ = PendingContainerPolicy();
   provisional_start_ = base::TimeTicks::Now();
   auto answer = std::make_unique<DataUrlAnswer>();
   answer->number = ++last_data_url_answer_;
@@ -931,7 +941,7 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (!data) {
     EndLocalNavigation();
     forget_request();
-    CommitErrorPageSoon(provisional_sandbox_);
+    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_);
     return;
   }
   if (!IsSupportedMimeType(data->mime_type) ||
@@ -944,7 +954,7 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (IsBlockedByEmbedderPolicy(request.initiator_embedder_policy_isolates)) {
     EndLocalNavigation();
     forget_request();
-    CommitErrorPageSoon(provisional_sandbox_);
+    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_);
     return;
   }
   // Otherwise a document of an opaque origin, through a DocumentLoader as a
@@ -2031,7 +2041,7 @@ void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
   // another took the place of, ends with ERR_ABORTED, and the frame keeps
   // its document.
   if (parent_ && net_error != kNetErrorAborted && net_error != kNetOk) {
-    CommitErrorPageSoon(provisional_sandbox_);
+    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_);
     return;
   }
   LetParentCheckCompleted();
@@ -2175,6 +2185,7 @@ Document& PageFrame::CommitDocument(
   document->SetOrigin(origin);
   document->SetSandboxFlags(sandbox);
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
+  InheritPermissionsPolicy(*document, provisional_container_policy_);
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);
@@ -2185,6 +2196,9 @@ Document& PageFrame::CommitDocument(
     GiveStorage(*document);
   }
   Window::Current().SetDocument(document);
+  if (!parent_) {
+    ClearPolicyMessages();
+  }
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
   // The reused window's CookieStore listens as its new document.
@@ -2201,6 +2215,30 @@ bool PageFrame::IsolatedLikeParent(const url::Origin& origin,
   return parent_ && !origin_sandboxed &&
          parent_->window_->CrossOriginIsolatedCapability() &&
          parent_->window_->GetDocument().GetOrigin().IsSameOriginWith(origin);
+}
+
+ContainerPolicy PageFrame::PendingContainerPolicy() const {
+  const HTMLFrameOwnerElement* const owner = owner_.Get();
+  return owner ? owner->GetContainerPolicy() : ContainerPolicy();
+}
+
+void PageFrame::InheritPermissionsPolicy(Document& document,
+                                         ContainerPolicy container_policy) {
+  if (!parent_) {
+    return;
+  }
+  // SecurityContextInit::ApplyPermissionsPolicy(): a sandboxed frame has it
+  // only if its element says so.
+  if (document.IsSandboxed(SandboxFlags::kNavigation) &&
+      bindings::PerIsolateData::From(runner_->isolate())
+          ->features()
+          .IsEnabled(
+              bindings::RuntimeFeature::kBlockingFocusWithoutUserActivation)) {
+    DisallowIfNotPresent("focus-without-user-activation", container_policy);
+  }
+  document.InheritPermissionsPolicy(
+      parent_->window_->GetDocument(), container_policy,
+      runner_->start().features.deprecated_unload);
 }
 
 // DocumentLoader::WarnIfSandboxIneffective().

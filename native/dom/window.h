@@ -308,6 +308,12 @@ class Window final : public WindowProperties, public ExecutionContext {
       back_forward_cache_eviction_.Run();
     }
   }
+  // The same as AddConsoleMessage(), of a permissions policy: nothing for a
+  // window of no frame, or for one that has been said so before, if a duplicate
+  // is to be discarded, as FrameConsole discards it.
+  void AddPolicyMessage(ConsoleLevel level,
+                        std::string text,
+                        bool discard_duplicate);
   // Whether its frame is under another.
   bool IsInFrame() const;
   // The process that Chrome has its document in.

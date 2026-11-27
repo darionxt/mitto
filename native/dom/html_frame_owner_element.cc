@@ -1,14 +1,18 @@
 #include "mitto/dom/html_frame_owner_element.h"
 
 #include <utility>
+#include <vector>
 
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
+#include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/html_parser_idioms.h"
+#include "mitto/dom/permissions_policy.h"
+#include "mitto/dom/permissions_policy_parser.h"
 #include "mitto/dom/window.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
@@ -28,6 +32,11 @@ HTMLFrameOwnerElement::HTMLFrameOwnerElement(mitto::Document& document,
     : HTMLElement(document, local_name) {}
 
 HTMLFrameOwnerElement::~HTMLFrameOwnerElement() = default;
+
+void HTMLFrameOwnerElement::Trace(cppgc::Visitor* visitor) const {
+  HTMLElement::Trace(visitor);
+  visitor->Trace(feature_policy_);
+}
 
 Window* HTMLFrameOwnerElement::ContentWindow() const {
   return content_frame_ ? content_frame_->DomWindow() : nullptr;
@@ -140,6 +149,89 @@ void HTMLFrameOwnerElement::ParseFrameAttribute(
                           policy.error_message}));
       }
     }
+    UpdateContainerPolicy();
+  } else if ((name.local_name == u"allow" ||
+              name.local_name == u"allowfullscreen" ||
+              name.local_name == u"allowpaymentrequest") &&
+             HasHTMLTagName(u"iframe")) {
+    UpdateContainerPolicy();
+  }
+}
+
+PermissionsPolicy* HTMLFrameOwnerElement::FeaturePolicy() {
+  Window* const window = GetDocument().ContextWindow();
+  if (!feature_policy_ && window) {
+    feature_policy_ = PermissionsPolicy::Create(*window, FrameState(*window));
+  }
+  return feature_policy_.Get();
+}
+
+std::unique_ptr<PermissionsPolicyState> HTMLFrameOwnerElement::FrameState(
+    Window& window) const {
+  const url::Origin origin = OriginForPermissionsPolicy();
+  return std::make_unique<PermissionsPolicyState>(
+      &window.GetDocument().GetPermissionsPolicyState(), container_policy_,
+      origin,
+      IsUnloadDeprecated(window.Start().features.deprecated_unload, origin));
+}
+
+url::Origin HTMLFrameOwnerElement::OriginForPermissionsPolicy() const {
+  // MakeOriginForPermissionsPolicy(): a sandboxed document's origin is opaque,
+  // and one that inherits its origin has its parent's.
+  if ((sandbox_flags_ & SandboxFlags::kOrigin) != SandboxFlags::kNone) {
+    return url::Origin();
+  }
+  // Document::ShouldInheritSecurityOriginFromOwner(). A URL that does not parse
+  // is no empty one, unless nothing of it is left.
+  const Document& document = GetDocument();
+  const GURL url = document.CompleteUrl(url_);
+  const bool inherits =
+      url_.empty() ||
+      (url.is_valid() ? url.SchemeIs(url::kAboutScheme)
+                      : document.UnresolvedUrlSpec(url_).empty());
+  return inherits ? document.ContextWindow()->GetSecurityOrigin()
+                  : url::Origin::Create(url);
+}
+
+void HTMLFrameOwnerElement::UpdateContainerPolicy() {
+  container_policy_.clear();
+  if (!HasHTMLTagName(u"iframe")) {
+    // GetLegacyFramePolicies(): a frame element's documents have no fullscreen.
+    container_policy_.push_back(
+        {.feature = base::raw_ref(PolicyFeatureNamed("fullscreen"))});
+    return;
+  }
+  // HTMLIFrameElement::ConstructContainerPolicy().
+  Window* const window = GetDocument().ContextWindow();
+  if (!window) {
+    return;
+  }
+  std::vector<PolicyMessage> messages;
+  const std::u16string* const allow = FindAttribute(u"allow");
+  container_policy_ = ParseAllowAttribute(
+      allow ? std::u16string_view(*allow) : std::u16string_view(),
+      window->GetSecurityOrigin(), OriginForPermissionsPolicy(),
+      bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features(),
+      messages);
+  for (const auto& [attribute, feature] :
+       {std::pair(u"allowfullscreen", "fullscreen"),
+        std::pair(u"allowpaymentrequest", "payment")}) {
+    if (FindAttribute(attribute) &&
+        !AllowEverywhereIfNotPresent(feature, container_policy_)) {
+      messages.push_back(
+          {.text = base::StrCat({"Allow attribute will take precedence over '",
+                                 base::UTF16ToUTF8(attribute), "'."})});
+    }
+  }
+  if (feature_policy_) {
+    feature_policy_->SetFrameState(FrameState(*window));
+  }
+  // Document::AddConsoleMessage(): one of no window says nothing.
+  if (Window* const view = GetDocument().DefaultView()) {
+    for (PolicyMessage& message : messages) {
+      view->AddPolicyMessage(message.level, std::move(message.text),
+                             /*discard_duplicate=*/true);
+    }
   }
 }
 
@@ -159,6 +251,7 @@ void HTMLFrameOwnerElement::OpenURL() {
   // An empty URL is about:blank's.
   const GURL url = url_.empty() ? GURL(url::kAboutBlankURL)
                                 : GetDocument().CompleteUrl(url_);
+  UpdateContainerPolicy();
   if (!content_frame_) {
     content_frame_ = parent->CreateChildFrame(*this, frame_name_);
     if (!content_frame_) {

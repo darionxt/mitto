@@ -1,8 +1,10 @@
 #include "mitto/dom/frame.h"
 
+#include <algorithm>
 #include <string_view>
 #include <vector>
 
+#include "base/hash/hash.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -44,6 +46,19 @@ void Frame::DidShowDocument(Window& window) {
                   remote_window->SetCurrentWindow(replaced ? nullptr : &window);
                   return replaced;
                 });
+}
+
+bool Frame::AddPolicyMessage(const std::string& text, bool discard_duplicate) {
+  constexpr size_t kMaxMessages = 1000;
+  const size_t hash = base::FastHash(text);
+  if (discard_duplicate && std::ranges::contains(policy_messages_, hash)) {
+    return false;
+  }
+  if (policy_messages_.size() == kMaxMessages) {
+    policy_messages_.pop_front();
+  }
+  policy_messages_.push_back(hash);
+  return true;
 }
 
 Frame& Frame::Top() {

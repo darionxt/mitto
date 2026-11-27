@@ -191,6 +191,10 @@ Document::Document(bool is_html)
     : Node(nullptr),
       is_html_(is_html),
       content_type_(is_html ? u"text/html" : u"application/xml") {
+  v8::Isolate* const isolate = v8::Isolate::TryGetCurrent();
+  if (isolate && isolate->InContext()) {
+    creator_ = Window::From(isolate, isolate->GetCurrentContext());
+  }
   // An HTMLDocument clears its XML version, as Blink's does.
   if (!is_html) {
     xml_version_ = u"1.0";
@@ -207,6 +211,7 @@ const bindings::WrapperTypeInfo* Document::GetWrapperTypeInfo() const {
 void Document::Trace(cppgc::Visitor* visitor) const {
   Node::Trace(visitor);
   visitor->Trace(window_);
+  visitor->Trace(creator_);
   visitor->Trace(css_target_);
   visitor->Trace(images_);
   visitor->Trace(embeds_);
@@ -452,12 +457,45 @@ v8::Local<v8::Promise> Document::HasStorageAccess() const {
 
 PermissionsPolicy* Document::FeaturePolicy() {
   if (!feature_policy_ && window_) {
-    feature_policy_ = PermissionsPolicy::Create(
-        GetOrigin(),
-        IsUnloadDeprecated(window_->Start().features.deprecated_unload,
-                           GURL(url_)));
+    feature_policy_ = PermissionsPolicy::Create(*window_);
   }
   return feature_policy_.Get();
+}
+
+const PermissionsPolicyState& Document::GetPermissionsPolicyState() {
+  if (!permissions_policy_state_) {
+    permissions_policy_state_ = std::make_unique<PermissionsPolicyState>(
+        /*parent=*/nullptr, ContainerPolicy(), GetOrigin(),
+        window_ &&
+            IsUnloadDeprecated(window_->Start().features.deprecated_unload,
+                               GetOrigin()));
+  }
+  return *permissions_policy_state_;
+}
+
+void Document::InheritPermissionsPolicy(
+    Document& parent,
+    const ContainerPolicy& container_policy,
+    const DeprecatedUnload& deprecated_unload) {
+  permissions_policy_state_ = std::make_unique<PermissionsPolicyState>(
+      &parent.GetPermissionsPolicyState(), container_policy, GetOrigin(),
+      IsUnloadDeprecated(deprecated_unload, GetOrigin()));
+}
+
+bool Document::IsFeatureEnabled(std::string_view feature) {
+  return window_ &&
+         GetPermissionsPolicyState().IsEnabled(PolicyFeatureNamed(feature));
+}
+
+bool Document::IsFeatureEnabledOrReport(std::string_view feature) {
+  const bool enabled = IsFeatureEnabled(feature);
+  if (!enabled && window_) {
+    window_->AddConsoleMessage(
+        ConsoleLevel::kError,
+        base::StrCat({"Permissions policy violation: ", feature,
+                      " is not allowed in this document."}));
+  }
+  return enabled;
 }
 
 void Document::SetReadiness(Readiness readiness) {
