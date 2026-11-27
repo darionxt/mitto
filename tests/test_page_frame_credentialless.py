@@ -137,3 +137,18 @@ def test_a_credentialless_frame_of_another_origin_loads_under_an_embedder_policy
         ("/echo", None),
     ]
     assert not [path for path, referer, _ in server.seen if referer == f"{other}/rep2"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_the_session_neither_lists_nor_deletes_a_credentialless_frames_cookies(server: _Server) -> None:
+    # A credentialless frame's cookies are of its nonce's partition, which the Session's cookies leave out, as the
+    # Session can write no such partition key, and which a deletion of the Session's cookies leaves alone.
+    body = "document.cookie = 'n=top; path=/'; const f = await cl('/page'); f.contentDocument.cookie = 'n=cl; path=/'; window.f = f; return true;"
+    url = f"http://127.0.0.1:{server.server_port}/case/attrs"
+    with mitto.Session() as session, session._open_page(url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        page.evaluate(f"(async () => {{ {_DATA['prelude']}{body} }})()", timeout=_TIMEOUT_SECONDS)
+        listed = [(cookie.name, cookie.value) for cookie in session.cookies]
+        deleted = session.cookies.delete("n")
+        left = page.evaluate("[document.cookie, f.contentDocument.cookie]", timeout=_TIMEOUT_SECONDS)
+
+    assert (listed, deleted, left) == ([("n", "top")], 1, ["", "n=cl"])

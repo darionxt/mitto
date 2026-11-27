@@ -58,13 +58,13 @@ std::string SerializeStorageKey(const url::Origin& origin,
 
 std::string SerializeStorageKeyWithNonce(const url::Origin& origin,
                                          const base::UnguessableToken& nonce) {
-  if (origin.opaque()) {
-    return base::StrCat({"^1", NonceOf(origin)});
-  }
-  return base::StrCat({origin.GetURL().spec(), "^1",
-                       base::NumberToString(nonce.GetHighForSerialization()),
-                       "^2",
-                       base::NumberToString(nonce.GetLowForSerialization())});
+  // One of an opaque origin keeps the nonce too, apart from that origin's
+  // documents that are not credentialless.
+  return base::StrCat(
+      {origin.opaque() ? base::StrCat({"^1", NonceOf(origin)})
+                       : origin.GetURL().spec(),
+       "^1", base::NumberToString(nonce.GetHighForSerialization()), "^2",
+       base::NumberToString(nonce.GetLowForSerialization())});
 }
 
 }  // namespace mitto

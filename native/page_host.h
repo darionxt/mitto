@@ -762,6 +762,8 @@ class PageHost final : public PageChannel::Delegate {
     url::Origin origin;
     CrossOriginEmbedderPolicy coep;
     GURL cookie_url;
+    // Whether its document is credentialless, as it started.
+    bool credentialless = false;
   };
   std::map<uint64_t, AboutBlankNavigation> about_blank_navigations_;
   // The responses of the scripts of workers that the Page has and has not

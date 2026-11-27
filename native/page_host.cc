@@ -2602,8 +2602,14 @@ void PageHost::OnCookieStoreSet(PageCookieStoreSet set,
     answer(false);
     return;
   }
+  // RestrictedCookieManager::SetCanonicalCookie(): a credentialless
+  // document's nonce partition holds each cookie that it sets, partitioned or
+  // not, and so does each that it deletes.
   const std::optional<net::CookiePartitionKey> partition_key =
-      set.partitioned ? context.partition_key : std::nullopt;
+      set.partitioned ||
+              net::CookiePartitionKey::HasNonce(context.partition_key)
+          ? context.partition_key
+          : std::nullopt;
   const base::Time expiry =
       base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(set.expiry));
   net::CookieInclusionStatus status;
@@ -3345,6 +3351,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           Refuse("an about:blank whose navigation did not start");
           return;
         }
+        if (committed.credentialless != started->second.credentialless) {
+          Refuse("a document that is not as credentialless as its navigation");
+          return;
+        }
         context.origin = started->second.origin;
         context.coep = started->second.coep;
         context.cookie_url = started->second.cookie_url;
@@ -3374,6 +3384,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
             started->second.initiator != committed.initiator ||
             !url.is_valid() || !url.SchemeIs(url::kDataScheme)) {
           Refuse("a data: URL's document whose navigation did not start");
+          return;
+        }
+        if (committed.credentialless != started->second.credentialless) {
+          Refuse("a document that is not as credentialless as its navigation");
           return;
         }
         context.origin = url::Origin::Resolve(url, started->second.origin);
@@ -3595,6 +3609,11 @@ void PageHost::OnAboutBlankNavigation(uint64_t document,
   started.origin = initiator->second.origin;
   started.coep = initiator->second.coep;
   started.cookie_url = CookieUrlOf(initiator->second);
+  // IsDocumentToCommitAnonymous(), as the navigation starts.
+  const Context& frame = contexts_.at(document);
+  started.credentialless =
+      frame.frame_credentialless || (frame.parent != kNoDocument &&
+                                     contexts_.at(frame.parent).credentialless);
 }
 
 void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {

@@ -588,6 +588,8 @@ _ATTRIBUTES = 'send(250, struct.pack("<QB", {document}, {attributes}))'
 _NAVIGATE = 'send(8, request(2, 1, 11, "{frame}", target=3))'
 _COMMIT = 'wait_for_end(1); send(70, struct.pack("<QBBQQ", 4, 1, {flags}, 2, 1))'
 _UNDER = 'send(70, struct.pack("<QBBQ", 5, 0, 0, 4))'
+_ABOUT_BLANK = 'send(72, struct.pack("<QQB", 3, 2, 0))'
+_BLANK_COMMIT = 'send(70, struct.pack("<QBBQQQ", 4, 2, {flags}, 2, 2, 3))'
 _CREDENTIALLESS = (
     "the library refused a message from the Page: a document that is not credentialless under a credentialless one"
 )
@@ -633,6 +635,25 @@ _OF_THE_TOP = "the library refused a message from the Page: a frame's attributes
             ],
             _CREDENTIALLESS,
             id="attribute-as-the-navigation-starts",
+        ),
+        pytest.param(
+            0,
+            [_FRAME.format(flags=0), _ABOUT_BLANK, _BLANK_COMMIT.format(flags=2)],
+            "the library refused a message from the Page: a document that is not as credentialless as its navigation",
+            id="about-blank-unlike-its-start",
+        ),
+        pytest.param(
+            0,
+            [
+                _FRAME.format(flags=0),
+                _ATTRIBUTES.format(document=3, attributes=1),
+                _ABOUT_BLANK,
+                _ATTRIBUTES.format(document=3, attributes=0),
+                _BLANK_COMMIT.format(flags=2),
+                _ATTRIBUTES.format(document=2, attributes=0),
+            ],
+            _OF_THE_TOP,
+            id="about-blank-as-it-started",
         ),
         pytest.param(
             0,
