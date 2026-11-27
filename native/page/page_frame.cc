@@ -474,13 +474,17 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin, as DocumentLoader::CommitNavigation() reuses it, and makes a
   // new one for any other, or for one of another isolation, as Chrome's
-  // origin then differs, an opaque one under a sandbox.
+  // origin then differs, an opaque one under a sandbox, or of another
+  // credentialless, as ShouldReuseDOMWindow() has it. A window whose storage
+  // its parent's partition keyed is not reused for one of the nonce's either,
+  // as its Storage and its lock group are bound to that key.
   const bool isolated = IsolatedLikeParent(origin, navigation.origin_sandboxed);
   const bool reuse_window =
       old_document.IsInitialEmptyDocument() &&
       old_document.GetOrigin().IsSameOriginWith(origin) &&
       window_->CrossOriginIsolatedCapability() == isolated &&
-      old_document.IsCredentialless() == navigation.credentialless;
+      old_document.IsCredentialless() == navigation.credentialless &&
+      old_document.InCredentiallessPartition() == navigation.credentialless;
   {
     // DocumentLoader::CommitNavigation(): no script of the old document or
     // of its frames starts a navigation of this frame meanwhile.
@@ -2183,7 +2187,8 @@ Document& PageFrame::CommitDocument(
       window_ && window_->GetDocument().IsInitialEmptyDocument() &&
       window_->GetDocument().GetOrigin().IsSameOriginWith(origin) &&
       window_->CrossOriginIsolatedCapability() == isolated &&
-      window_->GetDocument().IsCredentialless() == credentialless;
+      window_->GetDocument().IsCredentialless() == credentialless &&
+      window_->GetDocument().InCredentiallessPartition() == credentialless;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
   if (reuse_window) {

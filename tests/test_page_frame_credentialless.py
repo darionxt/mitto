@@ -42,7 +42,7 @@ def page_program(native_library: Any) -> None:
 
 
 class _Server(QuietServer):
-    # The path, Referer and Cookie of each request of /echo, as it came.
+    # The path, Referer and Cookie of each request, as it came.
     seen: list[tuple[str, str | None, str | None]]
 
 
@@ -50,8 +50,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:
+        cast(_Server, self.server).seen.append((self.path, self.headers.get("Referer"), self.headers.get("Cookie")))
         if self.path.startswith("/echo"):
-            cast(_Server, self.server).seen.append((self.path, self.headers.get("Referer"), self.headers.get("Cookie")))
             # The Cookie line of the request, to any origin that may read it, and the cookie that its query sets.
             headers = [
                 ("Access-Control-Allow-Origin", self.headers.get("Origin", "*")),
@@ -129,15 +129,20 @@ def test_a_credentialless_iframe_is_chrome_s(server: _Server, name: str) -> None
 @pytest.mark.usefixtures("page_program")
 def test_a_credentialless_frame_of_another_origin_loads_under_an_embedder_policy(server: _Server) -> None:
     # Under a page with COOP and COEP require-corp, a credentialless frame of another origin whose response has no COEP
-    # commits, and its script asks with no cookies, as Chrome 157 has it in the iso case, which reads that from the
-    # frame's message. A plain frame of that origin is blocked, and runs nothing.
+    # commits, and asks with no cookies of that origin, its navigation as its script, as Chrome 157 has it in the iso
+    # case, which reads that from the frame's message. A plain frame of that origin sends the cookie, and is blocked,
+    # so it runs nothing.
     other = f"http://localhost:{server.server_port}"
-    body = (
-        f"document.cookie = 'top=1; path=/'; await cl('{other}/rep'); await plain('{other}/rep2');"
-        " await new Promise((r) => setTimeout(r, 500)); return true;"
-    )
+    body = f"await cl('{other}/rep'); await plain('{other}/rep2'); await new Promise((r) => setTimeout(r, 500)); return true;"
+    script = f"(async () => {{ {_DATA['prelude']}{body} }})()"
+    with mitto.Session() as session:
+        session.cookies.set(mitto.Cookie("lh", "1", domain="localhost", secure=True, same_site="none"))
+        url = f"http://127.0.0.1:{server.server_port}/case/iso"
+        with session._open_page(url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+            assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) is True
 
-    assert _run(server, "iso", body) is True
+    navigations = [(path, cookie) for path, _, cookie in server.seen if path in {"/rep", "/rep2"}]
+    assert navigations == [("/rep", None), ("/rep2", "lh=1")]
     assert [(path, cookie) for path, referer, cookie in server.seen if referer == f"{other}/rep"] == [
         ("/echo", None),
         ("/echo", None),
