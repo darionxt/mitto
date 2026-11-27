@@ -377,7 +377,8 @@ DeferredFetchPolicy DeferredFetchPolicyOnNavigation(
   // as the parent's policy and the element's allow pass it on.
   const PermissionsPolicyState inherited(
       &parent_window->GetDocument().GetPermissionsPolicyState(),
-      owner->GetContainerPolicy(), to_origin, /*unload_deprecated=*/false);
+      owner->GetContainerPolicy(), to_origin, /*unload_deprecated=*/false,
+      /*is_headerless=*/false, ParsedPolicy());
   // The normal quota, where deferred-fetch is inherited.
   if (inherited.IsEnabled(PolicyFeatureNamed(kDeferredFetch))) {
     return DeferredFetchPolicy::kDeferredFetch;

@@ -375,6 +375,11 @@ void ScriptRunner::OnRestore(uint64_t number) {
                          base::Unretained(requests_.get()), number));
 }
 
+void ScriptRunner::OnPermissionsPolicy(PagePermissionsPolicy policy) {
+  RunTask(base::BindOnce(&PageRequests::OnPermissionsPolicy,
+                         base::Unretained(requests_.get()), std::move(policy)));
+}
+
 void ScriptRunner::RunTask(base::OnceClosure task) {
   // Start() failed, and the Page is about to end.
   if (!started_) {

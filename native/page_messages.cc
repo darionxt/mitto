@@ -24,6 +24,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "mitto/header_rules.h"
+#include "mitto/message_coding.h"
 #include "mitto/page_protocol_version.h"
 
 namespace mitto {
@@ -215,6 +216,7 @@ bool IsKnown(uint32_t type) {
          type == static_cast<uint32_t>(PageMessage::kSendDeferredRequest) ||
          (type >= static_cast<uint32_t>(PageMessage::kTraversalRequest) &&
           type <= static_cast<uint32_t>(PageMessage::kDocumentEvicted)) ||
+         type == static_cast<uint32_t>(PageMessage::kPermissionsPolicy) ||
          type == static_cast<uint32_t>(PageMessage::kIsolation);
 }
 
@@ -1483,6 +1485,70 @@ base::expected<PageIsolation, std::string> ReadIsolation(
   return isolation;
 }
 
+bool ReadPolicyNode(MessageReader& reader, PolicyNode& node) {
+  uint32_t count = 0;
+  if (!reader.U32(count)) {
+    return false;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    PolicyMessage message;
+    if (!reader.Bool(message.is_error) || !reader.Sized(message.text) ||
+        !IsText(message.text)) {
+      return false;
+    }
+    node.messages.push_back(std::move(message));
+  }
+  if (!reader.U32(count)) {
+    return false;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    PolicyEntry entry;
+    uint32_t tokens = 0;
+    if (!reader.Sized(entry.feature) || !IsText(entry.feature) ||
+        !reader.U32(tokens)) {
+      return false;
+    }
+    for (uint32_t j = 0; j < tokens; ++j) {
+      std::string token;
+      if (!reader.Sized(token) || !IsText(token)) {
+        return false;
+      }
+      entry.tokens.push_back(std::move(token));
+    }
+    node.entries.push_back(std::move(entry));
+  }
+  return true;
+}
+
+base::expected<PagePermissionsPolicy, std::string> ReadPermissionsPolicy(
+    std::string_view payload) {
+  PagePermissionsPolicy policy;
+  MessageReader reader(payload);
+  if (!reader.U64(policy.navigation) ||
+      !ReadPolicyNode(reader, policy.headers.feature_policy) ||
+      !ReadPolicyNode(reader, policy.headers.permissions_policy) ||
+      !reader.AtEnd()) {
+    return base::unexpected("a permissions policy that is not valid");
+  }
+  return policy;
+}
+
+void WritePolicyNode(const PolicyNode& node, MessageWriter& writer) {
+  writer.U32(static_cast<uint32_t>(node.messages.size()));
+  for (const PolicyMessage& message : node.messages) {
+    writer.Bool(message.is_error);
+    writer.Sized(message.text);
+  }
+  writer.U32(static_cast<uint32_t>(node.entries.size()));
+  for (const PolicyEntry& entry : node.entries) {
+    writer.Sized(entry.feature);
+    writer.U32(static_cast<uint32_t>(entry.tokens.size()));
+    for (const std::string& token : entry.tokens) {
+      writer.Sized(token);
+    }
+  }
+}
+
 base::expected<PageRequestBodyPart, std::string> ReadRequestBodyPart(
     std::string payload) {
   if (payload.size() <= 8 || payload.size() > 8 + kBodyWindow) {
@@ -2011,6 +2077,14 @@ std::string EncodeIsolation(const PageIsolation& isolation) {
       PageMessage::kIsolation,
       base::StrCat({EncodeUint64(isolation.navigation),
                     std::string_view(values.data(), values.size())}));
+}
+
+std::string EncodePermissionsPolicy(const PagePermissionsPolicy& policy) {
+  MessageWriter writer;
+  writer.U64(policy.navigation);
+  WritePolicyNode(policy.headers.feature_policy, writer);
+  WritePolicyNode(policy.headers.permissions_policy, writer);
+  return EncodeFrame(PageMessage::kPermissionsPolicy, writer.Take());
 }
 
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part) {
@@ -2909,6 +2983,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kIndexedDbCallback:
     case PageMessage::kStorageBucketsAnswer:
     case PageMessage::kRequestBodyCredit:
+    case PageMessage::kPermissionsPolicy:
     case PageMessage::kIsolation:
     case PageMessage::kRestore:
       return base::unexpected(WrongWay(type, "a Page"));
@@ -3071,6 +3146,15 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
         return base::unexpected(std::move(credit).error());
       }
       frame.request_body_credit = *credit;
+      return frame;
+    }
+    case PageMessage::kPermissionsPolicy: {
+      base::expected<PagePermissionsPolicy, std::string> policy =
+          ReadPermissionsPolicy(payload);
+      if (!policy.has_value()) {
+        return base::unexpected(std::move(policy).error());
+      }
+      frame.permissions_policy = *std::move(policy);
       return frame;
     }
     case PageMessage::kIsolation: {

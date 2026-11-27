@@ -465,21 +465,24 @@ PermissionsPolicy* Document::FeaturePolicy() {
 const PermissionsPolicyState& Document::GetPermissionsPolicyState() {
   if (!permissions_policy_state_) {
     permissions_policy_state_ = std::make_unique<PermissionsPolicyState>(
-        /*parent=*/nullptr, ContainerPolicy(), GetOrigin(),
+        /*parent=*/nullptr, ParsedPolicy(), GetOrigin(),
         window_ &&
             IsUnloadDeprecated(window_->Start().features.deprecated_unload,
-                               GetOrigin()));
+                               GetOrigin()),
+        /*is_headerless=*/false, ParsedPolicy());
   }
   return *permissions_policy_state_;
 }
 
-void Document::InheritPermissionsPolicy(
-    Document& parent,
-    const ContainerPolicy& container_policy,
-    const DeprecatedUnload& deprecated_unload) {
+void Document::ApplyPermissionsPolicy(Document* parent,
+                                      const ParsedPolicy& container_policy,
+                                      const DeprecatedUnload& deprecated_unload,
+                                      bool is_headerless,
+                                      ParsedPolicy declared) {
   permissions_policy_state_ = std::make_unique<PermissionsPolicyState>(
-      &parent.GetPermissionsPolicyState(), container_policy, GetOrigin(),
-      IsUnloadDeprecated(deprecated_unload, GetOrigin()));
+      parent ? &parent->GetPermissionsPolicyState() : nullptr, container_policy,
+      GetOrigin(), IsUnloadDeprecated(deprecated_unload, GetOrigin()),
+      is_headerless, std::move(declared));
 }
 
 bool Document::IsFeatureEnabled(std::string_view feature) {

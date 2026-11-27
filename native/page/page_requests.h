@@ -62,6 +62,10 @@ class PageRequests {
     // keeps: the Session restores that document, in place of a response.
     // Nothing more comes.
     virtual void OnRestore() {}
+    // For a navigation: what its response's headers say of its document's
+    // permissions policy, which the Session says just before the response
+    // starts.
+    virtual void OnPermissionsPolicy(PermissionsPolicyHeaders headers) {}
 
    protected:
     virtual ~Client() = default;
@@ -190,6 +194,7 @@ class PageRequests {
   void OnRequestBodyCredit(const PageCredit& credit);
   void OnIsolation(const PageIsolation& isolation);
   void OnRestore(uint64_t number);
+  void OnPermissionsPolicy(PagePermissionsPolicy policy);
 
  private:
   // What the entry of a request of the Page's is made of: ResourceFetcher's
@@ -248,6 +253,7 @@ class PageRequests {
     // has said whether its document is cross-origin isolated.
     bool navigation = false;
     bool isolation_said = false;
+    bool policy_said = false;
     // Whether its response counts as a script's request's here: the favicon.
     bool script_request = false;
     // Whether it is a traversal that the Session may answer with a restore.

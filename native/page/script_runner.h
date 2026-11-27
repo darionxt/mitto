@@ -113,6 +113,7 @@ class ScriptRunner final : public base::TaskObserver {
   void OnRequestBodyCredit(PageCredit credit);
   void OnIsolation(PageIsolation isolation);
   void OnRestore(uint64_t number);
+  void OnPermissionsPolicy(PagePermissionsPolicy policy);
 
   // Runs `task` with a handle scope, in no context: what it runs enters the
   // context it belongs to. What Blink does after each task follows once the
