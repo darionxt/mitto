@@ -803,6 +803,21 @@ bool XMLHttpRequest::InitSend(bindings::ExceptionState& exception_state) {
                                       "The object's state must be OPENED.");
     return false;
   }
+  // A window's synchronous request goes only where its document's permissions
+  // policy allows sync-xhr. Its document policy, which Blink also asks, has
+  // sync-xhr only behind DocumentPolicySyncXHR, which Chrome 157 has off.
+  ExecutionContext* const context = GetExecutionContext();
+  if (!async_ && context->IsWindow() &&
+      !static_cast<Window*>(context)->GetDocument().IsFeatureEnabled(
+          "sync-xhr")) {
+    // Upstream: third_party/blink/renderer/core/frame/permissions_policy_violation_report_body.h
+    context->AddConsoleMessage(ConsoleLevel::kError,
+                               "Permissions policy violation: Synchronous "
+                               "requests are disabled by permissions policy.");
+    HandleNetworkError();
+    ThrowForLoadFailureIfNeeded(exception_state, "");
+    return false;
+  }
   error_ = false;
   return true;
 }
@@ -1036,10 +1051,8 @@ void XMLHttpRequest::StartLoader(std::optional<std::string> body,
   if (with_credentials_) {
     data.credentials = FetchCredentialsMode::kInclude;
   }
-  if (context->IsWindow()) {
-    data.referrer_policy =
-        static_cast<Window*>(context)->GetDocument().GetReferrerPolicy();
-  }
+  // The document's policy, or that of the response of the worker's script.
+  data.referrer_policy = context->GetReferrerPolicy();
   data.priority = ComputeFetchPriority(/*lazy=*/false, FetchPriorityHint::kAuto,
                                        /*render_blocking=*/false);
   data.initiator_type = u"xmlhttprequest";

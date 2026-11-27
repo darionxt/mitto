@@ -6471,6 +6471,122 @@
     ]
    ],
    "relative": "SyntaxError: Failed to execute 'open' on 'XMLHttpRequest': Invalid URL"
+  },
+  "the permissions policy sync-xhr": {
+   "allow none": [
+    [
+     "readystatechange 1",
+     "NetworkError: Failed to execute 'send' on 'XMLHttpRequest': Failed to load 'HERE/bytes/1'."
+    ],
+    [
+     4,
+     0,
+     "",
+     "",
+     "ok ",
+     []
+    ]
+   ],
+   "allow none, asynchronous": [
+    [
+     "readystatechange 1",
+     "loadstart false/0/0",
+     "ok",
+     "readystatechange 2",
+     "readystatechange 3",
+     "progress true/1/1",
+     "readystatechange 4",
+     "load true/1/1",
+     "loadend true/1/1"
+    ],
+    [
+     4,
+     200,
+     "OK",
+     "HERE/bytes/1",
+     "ok a",
+     [
+      "content-length: 1",
+      "content-type: text/plain"
+     ]
+    ]
+   ],
+   "header": [
+    [
+     "readystatechange 1",
+     "NetworkError: Failed to execute 'send' on 'XMLHttpRequest': Failed to load 'HERE/bytes/1'."
+    ],
+    [
+     4,
+     0,
+     "",
+     "",
+     "ok ",
+     []
+    ]
+   ],
+   "old header": [
+    [
+     "readystatechange 1",
+     "NetworkError: Failed to execute 'send' on 'XMLHttpRequest': Failed to load 'HERE/bytes/1'."
+    ],
+    [
+     4,
+     0,
+     "",
+     "",
+     "ok ",
+     []
+    ]
+   ],
+   "frame of a frame whose header takes it": [
+    [
+     "readystatechange 1",
+     "NetworkError: Failed to execute 'send' on 'XMLHttpRequest': Failed to load 'HERE/bytes/1'."
+    ],
+    [
+     4,
+     0,
+     "",
+     "",
+     "ok ",
+     []
+    ]
+   ],
+   "allow of a frame whose header takes it": [
+    [
+     "readystatechange 1",
+     "NetworkError: Failed to execute 'send' on 'XMLHttpRequest': Failed to load 'HERE/bytes/1'."
+    ],
+    [
+     4,
+     0,
+     "",
+     "",
+     "ok ",
+     []
+    ]
+   ],
+   "worker of a frame that allow takes it from": "aa"
+  },
+  "referrers by the policy of the context": {
+   "worker-default": [
+    "the worker's URL",
+    "the worker's URL"
+   ],
+   "worker-no-referrer": [
+    "none",
+    "none"
+   ],
+   "worker-origin": [
+    "HERE/",
+    "HERE/"
+   ],
+   "worker-unsafe-url": [
+    "the worker's URL",
+    "the worker's URL"
+   ],
+   "frame of the policy origin": "HERE/"
   }
  }
 }

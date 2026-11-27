@@ -157,6 +157,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             case "never":
                 self._server().stopping.wait(_TIMEOUT_SECONDS)
                 self.close_connection = True
+            case "with":
+                # A response of the type `name`, with the lines, each "name: value" and joined by "|", and the body that
+                # the next two parts give, or the page for no body.
+                lines = [
+                    (key, value)
+                    for key, _, value in (line.partition(": ") for line in urllib.parse.unquote(rest[1]).split("|"))
+                    if key
+                ]
+                answer = urllib.parse.unquote(rest[2]).encode() or _PAGE
+                self._answer(answer, *lines, content_type=urllib.parse.unquote(name))
             case _:
                 self._answer(_PAGE, content_type="text/html")
 

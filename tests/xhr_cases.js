@@ -915,5 +915,84 @@
     relative: await inWorker(`return tried(() => new XMLHttpRequest().open('GET', '/relative'));`),
   }));
 
+  // A response of `type` with `lines` and `body`, or the page, from the server.
+  const withLines = (lines, type = 'text/html', body = '') =>
+    `/with/${encodeURIComponent(type)}/${encodeURIComponent(lines.join('|'))}/${encodeURIComponent(body)}`;
+  // A frame of `src` in `doc`, once it has loaded.
+  const framed = async (src, allow = '', doc = document) => {
+    const frame = doc.createElement('iframe');
+    frame.allow = allow;
+    const loaded = new Promise((resolve) => frame.addEventListener('load', resolve, {once: true}));
+    frame.src = src;
+    doc.body.append(frame);
+    await loaded;
+    return frame;
+  };
+  // What a request of `win` does, and what it has once it has ended.
+  const sendIn = async (win, async) => {
+    const xhr = new win.XMLHttpRequest();
+    const log = watch(xhr);
+    xhr.open('GET', here + '/bytes/1', async);
+    const end = async ? ended(xhr) : null;
+    log.push(tried(() => xhr.send()));
+    await end;
+    return [log, show(xhr)];
+  };
+  // What a worker of `win` from `url` posts first.
+  const posted = (win, url) => new Promise((resolve) => {
+    const worker = new win.Worker(url);
+    worker.onmessage = (e) => resolve(e.data);
+    worker.onerror = () => resolve('error');
+  });
+
+  await caseOf('the permissions policy sync-xhr', async () => {
+    const denied = await framed('/', "sync-xhr 'none'");
+    const byHeader = await framed(withLines(['Permissions-Policy: sync-xhr=()']));
+    const byOldHeader = await framed(withLines(["Feature-Policy: sync-xhr 'none'"]));
+    const inherited = await framed('/', '', byHeader.contentDocument);
+    const allowed = await framed(withLines(['Permissions-Policy: sync-xhr=()']), 'sync-xhr');
+    const workerScript = "const x = new XMLHttpRequest(); x.open('GET', '/bytes/2', false); x.send(); postMessage(x.responseText);";
+    const result = {
+      'allow none': await sendIn(denied.contentWindow, false),
+      'allow none, asynchronous': await sendIn(denied.contentWindow, true),
+      'header': await sendIn(byHeader.contentWindow, false),
+      'old header': await sendIn(byOldHeader.contentWindow, false),
+      'frame of a frame whose header takes it': await sendIn(inherited.contentWindow, false),
+      'allow of a frame whose header takes it': await sendIn(allowed.contentWindow, false),
+      'worker of a frame that allow takes it from': await posted(
+          denied.contentWindow, withLines([], 'text/javascript', workerScript)),
+    };
+    for (const frame of [denied, byHeader, byOldHeader, allowed]) frame.remove();
+    return result;
+  });
+
+  await caseOf('referrers by the policy of the context', async () => {
+    const out = {};
+    const logged = async (name) => (await (await fetch(`/seen/${name}`)).json()).headers.referer || 'none';
+    // The Referers of a synchronous and an asynchronous request of a worker
+    // whose script comes with `policy`.
+    const fromWorker = async (name, policy) => {
+      const url = withLines(
+          policy ? [`Referrer-Policy: ${policy}`] : [], 'text/javascript',
+          `const x = new XMLHttpRequest(); x.open('GET', '/log/${name}', false); x.send();
+           const y = new XMLHttpRequest(); y.open('GET', '/log/${name}-async'); y.onloadend = () => postMessage(1); y.send();`);
+      await posted(window, url);
+      const named = (referer) => referer === here + url ? "the worker's URL" : referer;
+      return [named(await logged(name)), named(await logged(`${name}-async`))];
+    };
+    for (const policy of ['', 'no-referrer', 'origin', 'unsafe-url']) {
+      out[`worker-${policy || 'default'}`] = await fromWorker(`worker-${policy || 'default'}`, policy);
+    }
+    const frame = await framed(withLines(['Referrer-Policy: origin']));
+    const xhr = new frame.contentWindow.XMLHttpRequest();
+    const end = ended(xhr);
+    xhr.open('GET', '/log/frame-origin');
+    xhr.send();
+    await end;
+    out['frame of the policy origin'] = await logged('frame-origin');
+    frame.remove();
+    return out;
+  });
+
   return record;
 })();
