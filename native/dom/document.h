@@ -280,11 +280,14 @@ class Document : public Node {
   // from.
   PermissionsPolicy* FeaturePolicy();
   // What its permissions policy allows, which a frame's document inherits of
-  // its parent's with its frame's element's.
+  // its parent's with its frame's element's, and which its response's headers
+  // declare, as SecurityContextInit::ApplyPermissionsPolicy() makes it.
   const PermissionsPolicyState& GetPermissionsPolicyState();
-  void InheritPermissionsPolicy(mitto::Document& parent,
-                                const ContainerPolicy& container_policy,
-                                const DeprecatedUnload& deprecated_unload);
+  void ApplyPermissionsPolicy(mitto::Document* parent,
+                              const ParsedPolicy& container_policy,
+                              const DeprecatedUnload& deprecated_unload,
+                              bool is_headerless,
+                              ParsedPolicy declared);
   // ExecutionContext::IsFeatureEnabled().
   bool IsFeatureEnabled(std::string_view feature);
   // The same, and the console reports the violation if not.

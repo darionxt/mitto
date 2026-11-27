@@ -172,7 +172,8 @@ std::unique_ptr<PermissionsPolicyState> HTMLFrameOwnerElement::FrameState(
   return std::make_unique<PermissionsPolicyState>(
       &window.GetDocument().GetPermissionsPolicyState(), container_policy_,
       origin,
-      IsUnloadDeprecated(window.Start().features.deprecated_unload, origin));
+      IsUnloadDeprecated(window.Start().features.deprecated_unload, origin),
+      /*is_headerless=*/false, ParsedPolicy());
 }
 
 url::Origin HTMLFrameOwnerElement::OriginForPermissionsPolicy() const {
@@ -197,8 +198,8 @@ void HTMLFrameOwnerElement::UpdateContainerPolicy() {
   container_policy_.clear();
   if (!HasHTMLTagName(u"iframe")) {
     // GetLegacyFramePolicies(): a frame element's documents have no fullscreen.
-    container_policy_.push_back(
-        {.feature = base::raw_ref(PolicyFeatureNamed("fullscreen"))});
+    container_policy_.emplace_back(PolicyFeatureNamed("fullscreen"),
+                                   PolicyAllowlist());
     return;
   }
   // HTMLIFrameElement::ConstructContainerPolicy().
@@ -229,8 +230,10 @@ void HTMLFrameOwnerElement::UpdateContainerPolicy() {
   // Document::AddConsoleMessage(): one of no window says nothing.
   if (Window* const view = GetDocument().DefaultView()) {
     for (PolicyMessage& message : messages) {
-      view->AddPolicyMessage(message.level, std::move(message.text),
-                             /*discard_duplicate=*/true);
+      view->AddPolicyMessage(
+          message.is_error ? ConsoleLevel::kError : ConsoleLevel::kWarning,
+          std::move(message.text),
+          /*discard_duplicate=*/true);
     }
   }
 }

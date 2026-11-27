@@ -86,6 +86,7 @@ _page_message_sources = [
   "message_coding.h",
   "page_messages.cc",
   "page_messages.h",
+  "policy_allowlist.h",
   "storage_bucket_messages.cc",
   "storage_bucket_messages.h",
 ]
@@ -115,6 +116,17 @@ action("page_protocol_version") {
          ] + inputs
 }
 
+# The allowlists of permissions policies, which the Page reads and the library
+# for what it decides by them.
+source_set("policy_allowlist") {
+  sources = [
+    "policy_allowlist.cc",
+    "policy_allowlist.h",
+  ]
+  deps = [ "//base" ]
+  public_deps = [ "//url" ]
+}
+
 source_set("page_channel") {
   sources = _page_message_sources + [ "page_channel.h" ]
   if (is_win) {
@@ -122,7 +134,10 @@ source_set("page_channel") {
   } else {
     sources += [ "page_channel_posix.cc" ]
   }
-  public_deps = [ ":header_rules" ]
+  public_deps = [
+    ":header_rules",
+    ":policy_allowlist",
+  ]
   deps = [
     ":page_protocol_version",
     "//base",
@@ -195,6 +210,8 @@ shared_library("mitto_core") {
     "page_storage_buckets.h",
     "page_host.cc",
     "page_host.h",
+    "permissions_policy_header.cc",
+    "permissions_policy_header.h",
     "page_launcher.cc",
     "page_launcher.h",
     "preconnect_manager.cc",

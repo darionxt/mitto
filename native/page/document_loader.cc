@@ -76,6 +76,10 @@ void DocumentLoader::OnRestore() {
   frame_->RestoreDocument(*this);
 }
 
+void DocumentLoader::OnPermissionsPolicy(PermissionsPolicyHeaders headers) {
+  policy_headers_ = std::move(headers);
+}
+
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   const v8::Context::Scope context_scope(frame_->context());
   response_started_ = true;
@@ -109,11 +113,13 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   const bool xml = document_kind == DocumentKind::kXhtml ||
                    document_kind == DocumentKind::kSvg ||
                    document_kind == DocumentKind::kXml;
+  // The document takes what it has of them.
+  const PermissionsPolicyHeaders policy_headers = std::move(policy_headers_);
   // The Session's base::TimeTicks, which the Page's clock shares.
   Document* const document = frame_->CommitNavigation(
       *this, url_,
       base::TimeTicks() + base::Microseconds(response.navigation_start),
-      response.connection, cross_origin_isolated_,
+      response.connection, cross_origin_isolated_, policy_headers,
       xml ? std::optional<std::u16string>(base::ASCIIToUTF16(mime_type))
           : std::nullopt);
   // The frame went as its old document unloaded, and this goes from a later

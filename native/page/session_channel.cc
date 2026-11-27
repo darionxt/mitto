@@ -250,6 +250,17 @@ class SessionLink final : public PageChannel::Delegate
             base::BindOnce(&SessionLink::ResponseOnMainThread,
                            base::Unretained(this), *std::move(frame)));
         return;
+      case PageMessage::kPermissionsPolicy:
+        if (!started_) {
+          Refuse("a permissions policy came before the start");
+          return;
+        }
+        // As for an isolation.
+        networking_->PostTask(
+            FROM_HERE,
+            base::BindOnce(&SessionLink::ResponseOnMainThread,
+                           base::Unretained(this), *std::move(frame)));
+        return;
       case PageMessage::kIsolation:
         if (!started_) {
           Refuse("a cross-origin isolation came before the start");
@@ -507,6 +518,9 @@ class SessionLink final : public PageChannel::Delegate
         return;
       case PageMessage::kRequestBodyCredit:
         runner_->OnRequestBodyCredit(frame.request_body_credit);
+        return;
+      case PageMessage::kPermissionsPolicy:
+        runner_->OnPermissionsPolicy(std::move(frame.permissions_policy));
         return;
       case PageMessage::kIsolation:
         runner_->OnIsolation(frame.isolation);

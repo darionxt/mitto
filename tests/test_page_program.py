@@ -796,6 +796,7 @@ _COOKIE_STORE_COOKIES = 22
 _COOKIE_STORE_STORED = 23
 _COOKIE_STORE_CHANGE = 24
 _BROADCAST_RECEIVED = 26
+_PERMISSIONS_POLICY = 251
 _ISOLATION = 300
 _BODY_WINDOW = 64 * 1024
 _SCRIPT_KIND = 1
@@ -1716,6 +1717,48 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
             _STORAGE_BIND, struct.pack("<QQBQ", 1, 1, 1, 1), "message type 27 only goes to a Session", id="storage-bind"
         ),
         pytest.param(_REQUEST, struct.pack("<QB", 1, 1) + b"x", "message type 8 only goes to a Session", id="request"),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIIII", 5, 0, 0, 0, 0),
+            "a permissions policy of request 5, which is not in progress",
+            id="permissions-policy-of-no-request",
+        ),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIIII", 5, 0, 0, 0, 1),
+            "a permissions policy that is not valid",
+            id="permissions-policy-too-short",
+        ),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIBIIII", 5, 1, 2, 0, 0, 0, 0),
+            "a permissions policy that is not valid",
+            id="permissions-policy-of-an-unknown-level",
+        ),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIIII", 5, 0, 0, 0, 0) + b"x",
+            "a permissions policy that is not valid",
+            id="permissions-policy-too-long",
+        ),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIBI", 5, 1, 0, 1) + b"\xff" + struct.pack("<III", 0, 0, 0),
+            "a permissions policy that is not valid",
+            id="permissions-policy-of-a-message-not-utf-8",
+        ),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIII", 5, 0, 1, 1) + b"\xff" + struct.pack("<III", 0, 0, 0),
+            "a permissions policy that is not valid",
+            id="permissions-policy-of-a-feature-not-utf-8",
+        ),
+        pytest.param(
+            _PERMISSIONS_POLICY,
+            struct.pack("<QIII", 5, 0, 1, 1) + b"a" + struct.pack("<II", 1, 1) + b"\xff" + struct.pack("<II", 0, 0),
+            "a permissions policy that is not valid",
+            id="permissions-policy-of-a-token-not-utf-8",
+        ),
         pytest.param(
             _ISOLATION,
             struct.pack("<QBB", 5, 1, 2),
