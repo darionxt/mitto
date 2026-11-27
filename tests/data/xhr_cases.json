@@ -6472,6 +6472,83 @@
    ],
    "relative": "SyntaxError: Failed to execute 'open' on 'XMLHttpRequest': Invalid URL"
   },
+  "a response type changed from blob after send": {
+   "text": [
+    [
+     "readystatechange 2 ok 0",
+     "readystatechange 3 ok 0",
+     "progress 10 ok 0",
+     "readystatechange 3 ok 0",
+     "progress 30 ok 0",
+     "readystatechange 4 ok 30"
+    ],
+    "ok 30"
+   ],
+   "": [
+    [
+     "readystatechange 2 ok 0",
+     "readystatechange 3 ok 0",
+     "progress 10 ok 0",
+     "readystatechange 3 ok 0",
+     "progress 30 ok 0",
+     "readystatechange 4 ok 30"
+    ],
+    "ok 30"
+   ],
+   "json": [
+    [
+     "readystatechange 2 ok null",
+     "readystatechange 3 ok null",
+     "progress 10 ok null",
+     "readystatechange 3 ok null",
+     "progress 30 ok null",
+     "readystatechange 4 ok null"
+    ],
+    null
+   ],
+   "document": [
+    [
+     "readystatechange 2 ok null",
+     "readystatechange 3 ok null",
+     "progress 10 ok null",
+     "readystatechange 3 ok null",
+     "progress 30 ok null",
+     "readystatechange 4 ok [object HTMLDocument]"
+    ],
+    ""
+   ],
+   "arraybuffer": [
+    [
+     "readystatechange 2 ok null",
+     "readystatechange 3 ok null",
+     "progress 10 ok null",
+     "readystatechange 3 ok null",
+     "progress 30 ok null",
+     "readystatechange 4 ok [object ArrayBuffer]"
+    ],
+    30
+   ],
+   "data: URL": [
+    [
+     "readystatechange 2 ok 0",
+     "readystatechange 3 ok 3",
+     "progress 3 ok 3",
+     "readystatechange 4 ok 3"
+    ],
+    "ok 3"
+   ],
+   "json of a JSON response": [
+    [
+     "readystatechange 2 ok null",
+     "readystatechange 3 ok null",
+     "progress 3 ok null",
+     "readystatechange 4 ok [object Array]"
+    ],
+    [
+     1
+    ]
+   ]
+  },
   "the permissions policy sync-xhr": {
    "allow none": [
     [

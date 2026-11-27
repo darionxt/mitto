@@ -125,10 +125,9 @@ def test_a_page_replays_its_own_navigations_its_traversal_its_workers_requests_a
         *markup,
     }
     assert all(REPLAYS[name].page is not None and REPLAYS[name].made_by_a_page is None for name in through)
-    # The document's page navigates nowhere, and the start page's script stops at its beacons, so their Pages stay until
-    # the script has asked for all it does.
+    # The document's page navigates nowhere, and the start page's script navigates last, so the Pages of what their
+    # scripts ask for stay until the script has asked for all it does, and the start page's navigation goes by itself.
     assert {name for name in through if REPLAYS[name].until is not None} == {
-        "navigation_location",
         "worker_import_scripts",
         "worker_fetch",
         "worker_blob_fetch",

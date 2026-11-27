@@ -945,6 +945,34 @@
     worker.onerror = () => resolve('error');
   });
 
+  await caseOf('a response type changed from blob after send', async () => {
+    const out = {};
+    // What a request whose responseType becomes `to` once its lines have come shows as its body comes.
+    const changed = async (url, to) => {
+      const xhr = new XMLHttpRequest();
+      const log = [];
+      const body = () => tried(() => (xhr.responseType === '' || xhr.responseType === 'text'
+        ? xhr.responseText.length : xhr.response === null ? 'null' : Object.prototype.toString.call(xhr.response)));
+      xhr.responseType = 'blob';
+      xhr.open('GET', url);
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState === 2) xhr.responseType = to;
+        log.push(`readystatechange ${xhr.readyState} ${body()}`);
+      };
+      xhr.onprogress = (e) => log.push(`progress ${e.loaded} ${body()}`);
+      const end = ended(xhr);
+      xhr.send();
+      await end;
+      const response = xhr.response;
+      return [log, to === 'document' ? response && response.title : to === 'arraybuffer' ? response.byteLength
+        : to === 'json' ? response : body()];
+    };
+    for (const to of ['text', '', 'json', 'document', 'arraybuffer']) out[to] = await changed('/slow', to);
+    out['data: URL'] = await changed('data:text/plain,abc', 'text');
+    out['json of a JSON response'] = await changed(withLines([], 'application/json', '[1]'), 'json');
+    return out;
+  });
+
   await caseOf('the permissions policy sync-xhr', async () => {
     const denied = await framed('/', "sync-xhr 'none'");
     const byHeader = await framed(withLines(['Permissions-Policy: sync-xhr=()']));

@@ -17,6 +17,22 @@
 #include "v8/include/v8-object.h"
 
 namespace mitto {
+namespace {
+
+// Runs `task` in `context`, or, for a window that the back/forward cache keeps,
+// holds it until the window comes back, as Blink's frozen frames hold their
+// tasks.
+void RunOrHoldInContext(cppgc::WeakPersistent<ExecutionContext> context,
+                        TaskType type,
+                        base::OnceClosure task) {
+  if (context && context->IsInBackForwardCache()) {
+    context->HoldTask(type, std::move(task));
+    return;
+  }
+  RunInContext(context.Get(), [&] { std::move(task).Run(); });
+}
+
+}  // namespace
 
 void PostWindowTask(Window* window, TaskType type, base::OnceClosure task) {
   PostTaskInContext(window, type, std::move(task));
@@ -29,18 +45,8 @@ void PostTaskInContext(ExecutionContext* context,
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
   event_loop->TaskRunner(type)->PostTask(
-      FROM_HERE, base::BindOnce(
-                     [](cppgc::WeakPersistent<ExecutionContext> context,
-                        TaskType type, base::OnceClosure task) {
-                       // A task of a window that the back/forward cache keeps
-                       // waits, as those of Blink's frozen frames do.
-                       if (context && context->IsInBackForwardCache()) {
-                         context->HoldTask(type, std::move(task));
-                         return;
-                       }
-                       RunInContext(context.Get(),
-                                    [&] { std::move(task).Run(); });
-                     },
+      FROM_HERE,
+      base::BindOnce(&RunOrHoldInContext,
                      cppgc::WeakPersistent<ExecutionContext>(context), type,
                      std::move(task)));
 }
@@ -62,12 +68,9 @@ void PostDelayedTaskInContext(ExecutionContext* context,
   CHECK(event_loop);
   event_loop->TaskRunner(type)->PostDelayedTask(
       FROM_HERE,
-      base::BindOnce(
-          [](cppgc::WeakPersistent<ExecutionContext> context,
-             base::OnceClosure task) {
-            RunInContext(context.Get(), [&] { std::move(task).Run(); });
-          },
-          cppgc::WeakPersistent<ExecutionContext>(context), std::move(task)),
+      base::BindOnce(&RunOrHoldInContext,
+                     cppgc::WeakPersistent<ExecutionContext>(context), type,
+                     std::move(task)),
       delay);
 }
 

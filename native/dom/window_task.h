@@ -26,7 +26,8 @@ void PostWindowTask(Window* window, TaskType type, base::OnceClosure task);
 void PostTaskInContext(ExecutionContext* context,
                        TaskType type,
                        base::OnceClosure task);
-// The same, once `delay` has passed.
+// The same, once `delay` has passed. A delay that passes while the
+// back/forward cache keeps the window ends as it comes back.
 void PostDelayedTaskInContext(ExecutionContext* context,
                               TaskType type,
                               base::OnceClosure task,

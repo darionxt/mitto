@@ -576,6 +576,8 @@ void PageRequests::DeliverHeld(uint64_t number) {
       ProcessResponseBody(std::move(*body), /*held=*/true);
     } else if (auto* const ended = std::get_if<PageResponseEnded>(&message)) {
       ProcessResponseEnded(*ended);
+    } else if (auto* const upload = std::get_if<PageUploadProgress>(&message)) {
+      ProcessUploadProgress(*upload);
     } else {
       ProcessRequestBodyCredit(std::get<PageCredit>(message));
     }
@@ -865,20 +867,31 @@ void PageRequests::OnUploadProgress(const PageUploadProgress& progress) {
                               ", which hears of none"}));
     return;
   }
+  // MojoURLLoaderClient::OnUploadProgress() acknowledges it at once, and stores
+  // it for a frozen window with what else of the request waits.
+  const bool held = ShouldHold(progress.number);
   if (open->client) {
-    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-    const v8::HandleScope handle_scope(isolate);
-    const RequestContextScope context_scope(
-        isolate, open->timed ? &open->timed->context : nullptr);
-    open->client->OnUploadProgress(progress.position, progress.size);
-  }
-  // MojoURLLoaderClient::OnUploadProgress() acknowledges it then. A script that
-  // heard of it may have let the request go.
-  if (const auto found = open_.find(progress.number);
-      found != open_.end() && found->second.client) {
     sender_->SendForRequest(progress.number,
                             EncodeUploadProgressTaken(progress.number));
   }
+  if (held) {
+    HoldMessage(progress.number, progress);
+    return;
+  }
+  ProcessUploadProgress(progress);
+}
+
+void PageRequests::ProcessUploadProgress(const PageUploadProgress& progress) {
+  const auto found = open_.find(progress.number);
+  if (found == open_.end() || !found->second.client) {
+    return;
+  }
+  Open& open = found->second;
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::HandleScope handle_scope(isolate);
+  const RequestContextScope context_scope(
+      isolate, open.timed ? &open.timed->context : nullptr);
+  open.client->OnUploadProgress(progress.position, progress.size);
 }
 
 void PageRequests::OnResponseEnded(const PageResponseEnded& ended) {

@@ -285,7 +285,8 @@ class PageRequests {
   using Held = std::variant<PageResponseStarted,
                             PageResponseBody,
                             PageResponseEnded,
-                            PageCredit>;
+                            PageCredit,
+                            PageUploadProgress>;
   // Whether what the Session sends of request `number` waits: its window is
   // frozen, or something of it waits already.
   bool ShouldHold(uint64_t number) const;
@@ -303,6 +304,7 @@ class PageRequests {
   void ProcessResponseBody(PageResponseBody body, bool held);
   void ProcessResponseEnded(const PageResponseEnded& ended);
   void ProcessRequestBodyCredit(const PageCredit& credit);
+  void ProcessUploadProgress(const PageUploadProgress& progress);
 
   // Returns the request that the Session names, or null after refusing what
   // it sent. The navigation that the Session makes when the Page opens is

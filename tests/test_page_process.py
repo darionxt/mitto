@@ -428,12 +428,6 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             id="upload-progress-taken-of-no-size",
         ),
         pytest.param(
-            "unknown-flag",
-            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=128)})",
-            "the library refused a message from the Page: a request with flags that are not ones",
-            id="unknown-flag",
-        ),
-        pytest.param(
             "script-kept-alive",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/a.js', kind=1, flags=8)})",
             "the library refused a message from the Page: keepalive on a request that is not a fetch",

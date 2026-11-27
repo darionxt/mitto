@@ -246,9 +246,6 @@ constexpr uint8_t kSynchronousFlag = 16;
 constexpr uint8_t kNoReferrerFlag = 32;
 constexpr uint8_t kStreamsBodyFlag = 64;
 constexpr uint8_t kDeferredFlag = 128;
-constexpr uint8_t kRequestFlags =
-    kForcePreflightFlag | kUserActivationFlag | kReloadFlag | kKeepaliveFlag |
-    kSynchronousFlag | kNoReferrerFlag | kStreamsBodyFlag | kDeferredFlag;
 
 // The last value of each byte of a request's fixed part.
 constexpr uint8_t kLastRequestMode = static_cast<uint8_t>(PageRequestMode::kCors);
@@ -868,9 +865,6 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   }
   request.kind = static_cast<PageRequestKind>(kind);
   const uint8_t flags = static_cast<uint8_t>(bytes[9]);
-  if (flags & ~kRequestFlags) {
-    return base::unexpected("a request with flags that are not ones");
-  }
   request.force_preflight = flags & kForcePreflightFlag;
   request.user_activation = flags & kUserActivationFlag;
   request.reload = flags & kReloadFlag;

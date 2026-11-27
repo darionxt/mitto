@@ -27,6 +27,7 @@
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/file_reader_loader.h"
 #include "mitto/dom/form_data.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/local_scheme_fetch.h"
@@ -208,6 +209,44 @@ std::string NormalizeMethod(std::string_view method) {
 
 }  // namespace
 
+// Reads a response that came as a blob back to its XMLHttpRequest, whose
+// responseType has changed since send(), from tasks of file reading, as
+// Blink's BlobLoader does.
+class XMLHttpRequest::BlobLoader final
+    : public cppgc::GarbageCollected<XMLHttpRequest::BlobLoader>,
+      public FileReaderClient {
+ public:
+  BlobLoader(XMLHttpRequest* xhr, scoped_refptr<BlobDataHandle> blob)
+      : xhr_(xhr),
+        loader_(bindings::MakeGarbageCollected<FileReaderLoader>(
+            this,
+            xhr->GetExecutionContext())) {
+    loader_->Start(std::move(blob));
+  }
+
+  void Cancel() { loader_->Cancel(); }
+
+  // FileReaderClient:
+  FileErrorCode DidStartLoading(uint64_t total_bytes) override {
+    return FileErrorCode::kOK;
+  }
+  FileErrorCode DidReceiveData(base::span<const uint8_t> data) override {
+    xhr_->DidReceiveData(base::as_string_view(data));
+    return FileErrorCode::kOK;
+  }
+  void DidFinishLoading() override { xhr_->DidFinishLoadingFromBlob(); }
+  void DidFail(FileErrorCode code) override { xhr_->DidFailLoadingFromBlob(); }
+
+  void Trace(cppgc::Visitor* visitor) const override {
+    visitor->Trace(xhr_);
+    visitor->Trace(loader_);
+  }
+
+ private:
+  const cppgc::Member<XMLHttpRequest> xhr_;
+  const cppgc::Member<FileReaderLoader> loader_;
+};
+
 // static
 XMLHttpRequest* XMLHttpRequest::Create() {
   return bindings::MakeGarbageCollected<XMLHttpRequest>(
@@ -235,6 +274,7 @@ void XMLHttpRequest::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(progress_event_throttle_);
   visitor->Trace(upload_);
   visitor->Trace(loader_);
+  visitor->Trace(blob_loader_);
   visitor->Trace(response_document_);
   visitor->Trace(response_blob_);
   visitor->Trace(response_array_buffer_);
@@ -992,8 +1032,21 @@ void XMLHttpRequest::StartLoader(std::optional<std::string> body,
   reports_upload_ = async_ && upload_;
   error_code_ = ErrorCode::kNone;
   error_ = false;
+  // Blink downloads the response of a request that asks for a blob to a blob,
+  // but a data: URL's, which the renderer loads itself.
+  downloading_to_blob_ = response_type_ == ResponseTypeCode::kBlob &&
+                         !url_.SchemeIs(url::kDataScheme);
   loader_ = bindings::MakeGarbageCollected<XMLHttpRequestLoader>(this, context);
   loader_->SetTimeout(timeout_);
+  // ResourceFetcher refuses a request while the window's document freezes,
+  // with Chrome's console error, and it fails as a network error, from a task
+  // that waits for the document to come back.
+  if (context->IsWindow() &&
+      static_cast<Window*>(context)->GetDocument().RefusesRequestWhileFreezing(
+          url_)) {
+    FailLoader();
+    return;
+  }
   if (Resource* const preload = MatchPreload()) {
     loader_->Start(*preload);
     return;
@@ -1195,6 +1248,10 @@ void XMLHttpRequest::InternalAbort() {
 }
 
 void XMLHttpRequest::ClearVariablesForLoading() {
+  if (BlobLoader* const blob_loader = blob_loader_.Get()) {
+    blob_loader_ = nullptr;
+    blob_loader->Cancel();
+  }
   decoder_.reset();
 }
 
@@ -1209,6 +1266,7 @@ void XMLHttpRequest::ClearResponse() {
   parsed_response_ = false;
   response_document_ = nullptr;
   response_blob_ = nullptr;
+  downloading_to_blob_ = false;
   binary_response_ = std::string();
   response_array_buffer_.Reset();
   response_array_buffer_failure_ = false;
@@ -1283,6 +1341,14 @@ void XMLHttpRequest::DidSendData(uint64_t bytes_sent,
 }
 
 void XMLHttpRequest::DidReceiveResponse(const FetchResponseHead& head) {
+  // ThreadableLoader::ResponseReceived(): a response with Cache-Control:
+  // no-store keeps a no-store page of the context out of the back/forward
+  // cache.
+  if (CacheControlContainsNoStore(HeaderField(head.headers, "cache-control"))) {
+    if (ExecutionContext* const context = GetExecutionContext()) {
+      context->DidReceiveNoStoreForScriptRequest();
+    }
+  }
   response_ = head;
   response_headers_.clear();
   // Each name once, with its values joined, as HTTPHeaderMap keeps them.
@@ -1333,6 +1399,14 @@ void XMLHttpRequest::DidReceiveData(std::string_view data) {
   if (error_ || data.empty()) {
     return;
   }
+  // What comes as a blob stays bytes until it has all come, whatever
+  // responseType becomes, as Blink's DidDownloadData() counts it.
+  if (downloading_to_blob_) {
+    binary_response_.append(data);
+    ReportMemoryUsageToV8();
+    TrackProgress(data.size());
+    return;
+  }
   switch (response_type_) {
     case ResponseTypeCode::kDefault:
     case ResponseTypeCode::kText:
@@ -1354,6 +1428,10 @@ void XMLHttpRequest::DidReceiveData(std::string_view data) {
       break;
   }
   ReportMemoryUsageToV8();
+  // What a blob's read gives back has had its progress events.
+  if (blob_loader_) {
+    return;
+  }
   TrackProgress(data.size());
 }
 
@@ -1366,6 +1444,30 @@ void XMLHttpRequest::DidFinishLoading() {
   if (state_ < kHeadersReceived) {
     ChangeState(kHeadersReceived);
   }
+  // A response that came as a blob, which responseType no longer asks for, is
+  // read back first.
+  if (downloading_to_blob_ && response_type_ != ResponseTypeCode::kBlob &&
+      !error_) {
+    downloading_to_blob_ = false;
+    blob_loader_ = bindings::MakeGarbageCollected<BlobLoader>(
+        this, BlobDataHandle::Create(std::exchange(binary_response_, {}), ""));
+    return;
+  }
+  DidFinishLoadingInternal();
+}
+
+void XMLHttpRequest::DidFinishLoadingFromBlob() {
+  DidFinishLoadingInternal();
+}
+
+void XMLHttpRequest::DidFailLoadingFromBlob() {
+  if (error_) {
+    return;
+  }
+  HandleNetworkError();
+}
+
+void XMLHttpRequest::DidFinishLoadingInternal() {
   if (decoder_) {
     AppendResponseText(decoder_->Flush());
     ReportMemoryUsageToV8();

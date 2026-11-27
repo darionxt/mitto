@@ -60,6 +60,8 @@ class XMLHttpRequestUpload;
 
 class XMLHttpRequest final : public XMLHttpRequestEventTarget {
  public:
+  class BlobLoader;
+
   enum State {
     kUnsent = 0,
     kOpened = 1,
@@ -136,6 +138,10 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget {
   void DidReceiveResponse(const FetchResponseHead& head);
   void DidReceiveData(std::string_view data);
   void DidFinishLoading();
+  // What the read of a response that came as a blob tells, once responseType
+  // has changed since send().
+  void DidFinishLoadingFromBlob();
+  void DidFailLoadingFromBlob();
   // `net_error` is why the request failed.
   void DidFail(int net_error);
   // Blink's ContextDestroyed(), which the context calls while a request runs.
@@ -185,6 +191,9 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget {
                                    std::string_view charset);
 
   void TrackProgress(size_t length);
+  // The end of a load whose body has all come, and been read back if it came
+  // as a blob.
+  void DidFinishLoadingInternal();
   void ChangeState(State new_state);
   void DispatchReadyStateChangeEvent();
   void DispatchProgressEvent(const std::u16string& type,
@@ -223,6 +232,8 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget {
   const bool made_without_context_;
   cppgc::Member<XMLHttpRequestUpload> upload_;
   cppgc::Member<XMLHttpRequestLoader> loader_;
+  // What reads a response that came as a blob back, once it has all come.
+  cppgc::Member<BlobLoader> blob_loader_;
 
   GURL url_;
   // What a blob: URL named when open() ran.
@@ -269,6 +280,9 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget {
   bool response_array_buffer_failure_ = false;
   bool upload_events_allowed_ = true;
   bool upload_complete_ = false;
+  // Whether the response comes as a blob, which send() asked for, whatever
+  // responseType becomes since, as Blink downloads it to a blob.
+  bool downloading_to_blob_ = false;
   // Whether upload was read before send(), so that the request reports how its
   // body goes.
   bool reports_upload_ = false;

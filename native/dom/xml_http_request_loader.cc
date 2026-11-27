@@ -83,7 +83,7 @@ void XMLHttpRequestLoader::SetTimeout(base::TimeDelta timeout) {
     return;
   }
   // The timer that runs stops, and the time counts from the start.
-  timer_.Stop();
+  ++timer_;
   if (!timeout_.is_zero()) {
     StartTimer(std::max(timeout_ - (base::TimeTicks::Now() - request_started_),
                         base::TimeDelta()));
@@ -197,25 +197,25 @@ void XMLHttpRequestLoader::DidTimeout() {
 }
 
 void XMLHttpRequestLoader::StartTimer(base::TimeDelta delay) {
-  // The Page program always makes one before it runs a script.
-  EventLoop* const event_loop = EventLoop::Get();
-  CHECK(event_loop);
-  timer_.SetTaskRunner(event_loop->TaskRunner(TaskType::kNetworking));
-  timer_.Start(FROM_HERE, delay,
-               base::BindOnce(
-                   [](cppgc::WeakPersistent<XMLHttpRequestLoader> loader) {
-                     if (loader) {
-                       RunInContext(loader->context_.Get(),
-                                    [&] { loader->DidTimeout(); });
-                     }
-                   },
-                   cppgc::WeakPersistent<XMLHttpRequestLoader>(this)));
+  // From a task of the context, which waits while the back/forward cache keeps
+  // its window, as Blink's timer on the context's task runner does.
+  PostDelayedTaskInContext(
+      context_.Get(), TaskType::kNetworking,
+      base::BindOnce(
+          [](cppgc::WeakPersistent<XMLHttpRequestLoader> loader,
+             uint64_t timer) {
+            if (loader && loader->timer_ == timer) {
+              loader->DidTimeout();
+            }
+          },
+          cppgc::WeakPersistent<XMLHttpRequestLoader>(this), ++timer_),
+      delay);
 }
 
 void XMLHttpRequestLoader::Clear() {
   client_ = nullptr;
   request_started_ = base::TimeTicks();
-  timer_.Stop();
+  ++timer_;
 }
 
 }  // namespace mitto

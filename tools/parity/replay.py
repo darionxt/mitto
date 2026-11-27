@@ -6,7 +6,7 @@ gains something a case needs, the replay here passes it on, and those gaps leave
 
 import time
 from dataclasses import dataclass, field
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from mitto import RequestError, RequestKind, Session
 from mitto._errors import PageTimeoutError
@@ -47,8 +47,6 @@ _JSON: BodyOptions = {"json": {"json": "body"}}
 _FORM_FIELDS = {"name": "mitto", "a b&c": "d e&f+g"}
 # Longer than a Page takes to load a case page and navigate from it, even on a busy runner.
 _PAGE_TIMEOUT_SECONDS = 30.0
-# What the start page's script does for its classic worker: it waits until the worker, whose script calls importScripts()
-# and then fetch(), answers once both have ended.
 # What the person recording did on a page that shows a "next" link once it is ready: click it, here with no user's
 # activation.
 _CLICK_NEXT = """new Promise((resolve) => {
@@ -66,9 +64,9 @@ _CLICK_NEXT = """new Promise((resolve) => {
   }).observe(next, {attributes: true});
 })"""
 
-# The start page's script asks for its cases one after another, up to its beacons, which a Page does not queue yet. There
-# it fails, and tells the server so, which is the last that the page asks for.
-_START_LAST_PATH = "/case/failed?" + quote("Error: Chrome did not queue every beacon")
+# The start page's script asks for its cases one after another, and last for the page of navigation_location, where it
+# sets location.
+_START_LAST_PATH = _PATHS["navigation_location"]
 # How long a Page's document stays where it is before a replay takes it that it navigates no further.
 _SETTLED_SECONDS = 3.0
 # How often a replay looks for the request that ends a page that does not navigate.
@@ -279,17 +277,10 @@ def _document_replays() -> dict[str, Replay]:
             credentials="include",
         ),
         "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start, mode="no-cors"),
-        # The start page's script sets location after its beacons, so the Page takes that last step itself, once the
-        # script has got to them, after the module and all else that it waits for. A navigation that commits while a
-        # request is still open cancels it, which over HTTP/3 opens the QPACK decoder stream that Chrome's run never
-        # opened. Each later page navigates on its own: a click, a refresh, location.
-        "navigation_location": Replay(
-            RequestKind.NAVIGATION,
-            page=start,
-            through_page=True,
-            until=_START_LAST_PATH,
-            page_script="location.href = urls.navigation_location; 0",
-        ),
+        # The start page's script sets location once each request before has ended, after the module and all else
+        # that it waits for, so the navigation cancels none, which over HTTP/3 would open the QPACK decoder stream that
+        # Chrome's run never opened. Each later page navigates on its own too: a click, a refresh, location.
+        "navigation_location": Replay(RequestKind.NAVIGATION, page=start, through_page=True),
         "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"], through_page=True),
         "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"], through_page=True),
         "redirect_location_1": Replay(
