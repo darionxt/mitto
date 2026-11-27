@@ -240,6 +240,41 @@ _FAKE_PAGE_OF_A_SANDBOX = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """
 )
 
+# The top-level document opens a cache of the Cache API, whose keys a frame's initial about:blank of its origin then asks.
+_FAKE_PAGE_OF_ANOTHER_CONTEXTS_CACHE = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    hello()
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    send(70, struct.pack("<QBBQ", 3, 0, 0, 2))
+    calls = []
+
+    def wait_for_answer():
+        while True:
+            message_type, payload = receive()
+            if message_type == 41:
+                return
+            if message_type == 4:
+                calls.append(struct.unpack_from("<Q", payload)[0])
+
+    name = "c".encode("utf-16-le")
+    send(40, struct.pack("<QBQQI", 2, 1, 1, 0, 1) + name)
+    wait_for_answer()
+    send(40, {call})
+    # The keys come back to the opener, and the Page then answers the caller's script.
+    wait_for_answer()
+    while not calls:
+        message_type, payload = receive()
+        if message_type == 4:
+            calls.append(struct.unpack_from("<Q", payload)[0])
+    send(5, struct.pack("<QB", calls[0], 0) + b"1")
+    while channel.recv(65536):
+        pass
+    """
+)
+
 # Opens a Page at the URL in argv[1] and prints why it ended.
 _SESSION_OF_AN_ENDED_PAGE = textwrap.dedent(
     """\
@@ -531,3 +566,26 @@ def test_a_sandboxed_document_binds_no_storage(tmp_path: Path, top: _Server) -> 
     assert (
         printed == "the library refused a message from the Page: a storage area of a document that has no storage key"
     )
+
+
+_KEYS = 'struct.pack("<QBQQBB", {document}, 8, 2, 1, 0, 0)'
+_RELEASE = 'struct.pack("<QBQ", {document}, 14, 1)'
+_REFUSED = "the library refused a message from the Page: a Cache API call of cache 1, which another context opened"
+
+
+@pytest.mark.parametrize(
+    ("call", "printed"),
+    [
+        pytest.param(_KEYS.format(document=3), _REFUSED, id="keys-of-another-context"),
+        pytest.param(_RELEASE.format(document=3), _REFUSED, id="release-of-another-context"),
+        pytest.param(_KEYS.format(document=2), "", id="keys-of-its-opener"),
+    ],
+)
+def test_a_cache_answers_the_context_that_opened_it_alone(
+    tmp_path: Path, top: _Server, call: str, printed: str
+) -> None:
+    # Chrome's CacheImpl is bound to the pipe of the context that opened it, whose embedder policy its matches are held
+    # to, so a Page that calls or releases a cache from another context is refused.
+    program = _FAKE_PAGE_OF_ANOTHER_CONTEXTS_CACHE.format(python=sys.executable, call=call)
+
+    assert _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page")) == printed
