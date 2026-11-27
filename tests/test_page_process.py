@@ -249,16 +249,18 @@ def _fetch_request(
     *,
     fixed: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0),
     target: int = 0,
+    referrer: str = "",
 ) -> str:
     """The Python expression of a Request's payload, with no body, from `document`, which a fake Page program sends.
 
     `fixed` holds its mode, credentials mode, referrer policy, priority and whether it is incremental, 0 each for the
-    kind's own, and it has no referrer."""
+    kind's own, and `referrer` the referrer that it names, none for the document's own."""
     return (
         f"struct.pack('<QQBB', {document}, {number}, {kind}, {flags}) "
         f"+ struct.pack('<BBBBBQ', *{fixed}, {target}) "
         f"+ struct.pack('<I', {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
-        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + struct.pack('<I', 0) + b'\\x00'"
+        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} "
+        f"+ struct.pack('<I', {len(referrer)}) + b'{referrer}' + b'\\x00'"
     )
 
 
@@ -616,6 +618,13 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             "the library refused a message from the Page: message type 101 of context 2, which is not one of the"
             " Page's",
             id="gone-twice",
+        ),
+        pytest.param(
+            "module-referrer-of-no-precursor",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/m.js', kind=7, referrer='data:,a')})",
+            "the library refused a message from the Page: a request whose referrer is neither a URL of its document's origin "
+            "nor that of a response it has had",
+            id="module-referrer-of-no-precursor",
         ),
         pytest.param(
             "storage-of-opaque-origin",

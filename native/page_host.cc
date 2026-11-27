@@ -1706,12 +1706,15 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     referrer = GURL(asked.referrer);
     // A module's base URL may be one of the origin that its document's opaque
     // origin, which a sandbox or a data: URL gives it, is made for.
+    // Only an HTTP or HTTPS one, of a precursor that there is.
+    const url::SchemeHostPort& precursor =
+        document_origin.GetTupleOrPrecursorTupleIfOpaque();
     const bool own = document_origin.IsSameOriginWith(referrer) ||
                      (!context.is_worker && document_origin.opaque() &&
                       (asked.kind == PageRequestKind::kModule ||
                        asked.kind == PageRequestKind::kModuleJson) &&
-                      document_origin.GetTupleOrPrecursorTupleIfOpaque() ==
-                          url::SchemeHostPort(referrer));
+                      precursor.IsValid() && referrer.SchemeIsHTTPOrHTTPS() &&
+                      precursor == url::SchemeHostPort(referrer));
     if (!referrer.is_valid() ||
         (!own && !context.response_urls.contains(referrer))) {
       Refuse(

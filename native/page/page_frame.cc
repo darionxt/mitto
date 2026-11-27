@@ -396,11 +396,11 @@ void PageFrame::CommitWithoutNetworkSoon(LocalNavigation navigation) {
                                            weak_factory_.GetWeakPtr(), number));
 }
 
-void PageFrame::CommitErrorPageSoon() {
+void PageFrame::CommitErrorPageSoon(SandboxFlags sandbox) {
   LocalNavigation navigation;
   navigation.url = GURL(kErrorPageUrl);
   navigation.committed.source = PageDocumentSource::kErrorPage;
-  navigation.sandbox = provisional_sandbox_;
+  navigation.sandbox = sandbox;
   navigation.sandboxed_process = IsOriginSandboxed(navigation.sandbox);
   navigation.committed.sandboxed_origin = navigation.sandboxed_process;
   CommitWithoutNetworkSoon(std::move(navigation));
@@ -783,7 +783,7 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     StopAllLoaders();
     // A srcdoc takes its parent's policy, which is compatible with itself.
     if (IsBlockedByEmbedderPolicy(navigation.embedder_policy_isolates)) {
-      CommitErrorPageSoon();
+      CommitErrorPageSoon(navigation.sandbox);
       return;
     }
     // The Session takes what the about:blank inherits of its initiator now,
@@ -931,7 +931,7 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (!data) {
     EndLocalNavigation();
     forget_request();
-    CommitErrorPageSoon();
+    CommitErrorPageSoon(provisional_sandbox_);
     return;
   }
   if (!IsSupportedMimeType(data->mime_type) ||
@@ -944,7 +944,7 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   if (IsBlockedByEmbedderPolicy(request.initiator_embedder_policy_isolates)) {
     EndLocalNavigation();
     forget_request();
-    CommitErrorPageSoon();
+    CommitErrorPageSoon(provisional_sandbox_);
     return;
   }
   // Otherwise a document of an opaque origin, through a DocumentLoader as a
@@ -2031,7 +2031,7 @@ void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader,
   // another took the place of, ends with ERR_ABORTED, and the frame keeps
   // its document.
   if (parent_ && net_error != kNetErrorAborted && net_error != kNetOk) {
-    CommitErrorPageSoon();
+    CommitErrorPageSoon(provisional_sandbox_);
     return;
   }
   LetParentCheckCompleted();

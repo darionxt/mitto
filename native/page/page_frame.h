@@ -462,9 +462,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // Commits `navigation` from a later task, as Chrome's browser commits it,
   // unless a newer navigation of the frame takes its place first.
   void CommitWithoutNetworkSoon(LocalNavigation navigation);
-  // The same with Chrome's error page, as the latest navigation that asked the
-  // network, or that went to a data: URL, has failed.
-  void CommitErrorPageSoon();
+  // The same with Chrome's error page, as a navigation that started under
+  // `sandbox` has failed: the latest one that asked the network or went to a
+  // data: URL, or a local one that the parent's embedder policy blocks.
+  void CommitErrorPageSoon(SandboxFlags sandbox);
   // NavigationRequest::CheckResponseAdherenceToCoep(): whether the frame's
   // parent has an embedder policy that is compatible with cross-origin
   // isolation and a document that the frame makes without the network would
