@@ -223,7 +223,7 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
     request.set_site_for_cookies(site_for_cookies);
     request.set_isolation_info(net::IsolationInfo::Create(
         net::IsolationInfo::RequestType::kSubFrame, TopFrameOrigin(),
-        url::Origin::Create(url), site_for_cookies));
+        url::Origin::Create(url), site_for_cookies, params_.nonce));
   } else if (params_.mode == RequestMode::kNavigate) {
     SetUpTopLevelNavigation(request);
   } else {
@@ -234,8 +234,9 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
     const net::SiteForCookies site_for_cookies = FrameSiteForCookies();
     request.set_site_for_cookies(site_for_cookies);
     request.set_isolation_info(net::IsolationInfo::Create(
-        net::IsolationInfo::RequestType::kOther, TopFrameOrigin(), *initiator_,
-        site_for_cookies));
+        net::IsolationInfo::RequestType::kOther, TopFrameOrigin(),
+        params_.isolation_frame_origin.value_or(*initiator_), site_for_cookies,
+        params_.nonce));
   }
   request.set_initiator(initiator_);
   SetRequestCredentials(request, url);
@@ -567,8 +568,9 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
   const url::Origin origin = url::Origin::Create(request.url());
 
   // SiteDataClearer: the store is only read in first-party contexts, so a
-  // third-party context cannot clear it.
-  if (parsed.clears_client_hints &&
+  // third-party context cannot clear it, nor a credentialless document, whose
+  // storage key's nonce makes it third-party (ClearSiteDataHandler).
+  if (parsed.clears_client_hints && !params_.nonce &&
       (params_.mode == RequestMode::kNavigate ||
        net::SchemefulSite(TopFrameOrigin()) == net::SchemefulSite(origin))) {
     client_hints_store_->ClearClientHints(origin);

@@ -179,6 +179,14 @@ class Window final : public WindowProperties, public ExecutionContext {
   bool AllowsHighEntropyValues() override;
   // WindowOrWorkerGlobalScope::crossOriginIsolated().
   bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
+  // Whether its agent cluster is cross-origin isolated, its page's, which its
+  // capability ANDs with its document's cross-origin-isolated feature.
+  bool AgentCrossOriginIsolated() const { return agent_cross_origin_isolated_; }
+  void SetAgentCrossOriginIsolated(bool isolated) {
+    agent_cross_origin_isolated_ = isolated;
+  }
+  // LocalDOMWindow::credentialless(): its document's policy container's.
+  bool Credentialless() const;
   // Chrome keys agent clusters by origin by default.
   bool OriginAgentCluster() const { return true; }
   bool OffscreenBuffering() const { return true; }
@@ -428,6 +436,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   cppgc::Member<mitto::CookieStore> cookie_store_;
   cppgc::Member<mitto::CacheStorage> caches_;
   cppgc::Member<IDBFactory> indexed_db_;
+  bool agent_cross_origin_isolated_ = false;
   cppgc::Member<mitto::Storage> local_storage_;
   cppgc::Member<mitto::Storage> session_storage_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;

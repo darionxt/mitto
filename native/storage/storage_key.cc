@@ -13,6 +13,8 @@ namespace {
 
 // Blink's EncodedAttribute, which a serialized key writes after a "^".
 constexpr char kTopLevelSiteSeparator[] = "^0";
+constexpr char kNonceHighSeparator[] = "^1";
+constexpr char kNonceLowSeparator[] = "^2";
 constexpr char kAncestorChainBitSeparator[] = "^3";
 constexpr char kTopLevelSiteOpaqueNonceHighSeparator[] = "^4";
 constexpr char kTopLevelSiteOpaqueNonceLowSeparator[] = "^5";
@@ -90,9 +92,18 @@ std::string SerializeUnderOpaqueTop(const url::Origin& origin,
        base::NumberToString(top_nonce.GetLowForSerialization())});
 }
 
-bool IsSerializedUnderOpaqueTop(std::string_view serialized) {
+std::string SerializeWithNonce(const url::Origin& origin,
+                               const base::UnguessableToken& nonce) {
+  return base::StrCat({origin.GetURL().spec(), kNonceHighSeparator,
+                       base::NumberToString(nonce.GetHighForSerialization()),
+                       kNonceLowSeparator,
+                       base::NumberToString(nonce.GetLowForSerialization())});
+}
+
+bool IsSerializedForOneTopDocument(std::string_view serialized) {
   return serialized.find(kTopLevelSiteOpaqueNonceHighSeparator) !=
-         std::string_view::npos;
+             std::string_view::npos ||
+         serialized.find(kNonceHighSeparator) != std::string_view::npos;
 }
 
 }  // namespace mitto

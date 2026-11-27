@@ -156,6 +156,17 @@ void HTMLFrameOwnerElement::ParseFrameAttribute(
               name.local_name == u"allowpaymentrequest") &&
              HasHTMLTagName(u"iframe")) {
     UpdateContainerPolicy();
+  } else if (name.local_name == u"credentialless" &&
+             HasHTMLTagName(u"iframe")) {
+    // HTMLIFrameElement::ParseAttribute(): its frame tells the browser of a
+    // change, for its next navigation.
+    const bool credentialless = new_value != nullptr;
+    if (credentialless != credentialless_) {
+      credentialless_ = credentialless;
+      if (content_frame_) {
+        content_frame_->DidChangeCredentialless();
+      }
+    }
   }
 }
 

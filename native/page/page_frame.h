@@ -126,6 +126,7 @@ class PageFrame final : public NavigationClient, public Frame {
   void NavigateFromOwner(const GURL& url) override;
   void Detach() override;
   NavigationRateLimiter& GetNavigationRateLimiter() override;
+  void DidChangeCredentialless() override;
 
   // NavigationClient:
   void BeginNavigation(const NavigationRequest& request) override;
@@ -331,16 +332,27 @@ class PageFrame final : public NavigationClient, public Frame {
   // `origin`, an opaque one, or an empty handle if no frame's document has it.
   v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
   // Whether a document of `origin` that the frame makes is cross-origin
-  // isolated, as the library works it out: the parent's document is, and of
-  // the same origin, the default allowlist 'self' of the
-  // cross-origin-isolated feature, which the opaque origin of a data: URL's
-  // document or an error page never is. The top-level frame's initial
-  // about:blank is not.
-  // `origin_sandboxed` is whether the frame's sandbox, as its navigation
-  // started, gives the document an opaque origin in Chrome, which isolates
-  // nothing.
-  bool IsolatedLikeParent(const url::Origin& origin,
-                          bool origin_sandboxed) const;
+  // isolated, CrossOriginIsolatedCapability(): its agent cluster is, as
+  // `agent_isolated` says, and its permissions policy, of `container_policy`
+  // and `declared` (AllowsIsolation()), has the cross-origin-isolated feature.
+  // `response_sandboxed` is whether its response's Content-Security-Policy
+  // sandboxes its origin, as the Session says, which the Page does not apply:
+  // that opaque origin would have the feature only where the frame's allow
+  // lists every origin, a Known Gap, and no document under it would.
+  bool IsolatesDocument(bool agent_isolated,
+                        const url::Origin& origin,
+                        const ParsedPolicy& container_policy,
+                        const ParsedPolicy& declared,
+                        bool headerless,
+                        bool response_sandboxed) const;
+  // Whether the permissions policy that a document of `origin` would have in
+  // the frame, CreateFromParentPolicy() of its parent's, with
+  // `container_policy` and `declared`, has the cross-origin-isolated feature,
+  // whose default allowlist is 'self'.
+  bool AllowsIsolation(const url::Origin& origin,
+                       const ParsedPolicy& container_policy,
+                       const ParsedPolicy& declared,
+                       bool headerless) const;
   // What the frame's element lets a document that it navigates to now inherit
   // of its parent's permissions policy, and gives `document` that, with what
   // its response's headers declare: one that a navigation to `url` makes, or a
@@ -475,8 +487,11 @@ class PageFrame final : public NavigationClient, public Frame {
     bool embedder_policy_isolates = false;
     // Whether the frame's sandbox gave it an opaque origin as it started, or
     // the document that started it had one of its response's sandbox, whose
-    // origin an about:blank takes.
+    // origin an about:blank takes, and whether that was its response's.
     bool origin_sandboxed = false;
+    bool response_sandboxed = false;
+    // Whether its document is credentialless, as it started.
+    bool credentialless = false;
     // A srcdoc's markup.
     std::u16string body;
     // Whether it reloads the frame's document, as location.reload() does.
@@ -494,8 +509,15 @@ class PageFrame final : public NavigationClient, public Frame {
   // NavigationRequest::CheckResponseAdherenceToCoep(): whether the frame's
   // parent has an embedder policy that is compatible with cross-origin
   // isolation and a document that the frame makes without the network would
-  // take one that is not.
-  bool IsBlockedByEmbedderPolicy(bool embedder_policy_isolates) const;
+  // take one that is not, but for a credentialless one (CoepBlockIframe()).
+  bool IsBlockedByEmbedderPolicy(bool embedder_policy_isolates,
+                                 bool credentialless) const;
+  // Whether the frame's element is credentialless now.
+  bool OwnerCredentialless() const;
+  // IsDocumentToCommitAnonymous(): whether a document that the frame
+  // navigates to now is credentialless, as its element is, or its parent's
+  // document.
+  bool PendingCredentialless() const;
   // A child frame's navigation to a data: URL, which the Page answers itself
   // from a later task, through a DocumentLoader as a response.
   void BeginDataUrlNavigation(const NavigationRequest& request);
@@ -580,12 +602,16 @@ class PageFrame final : public NavigationClient, public Frame {
   ParsedPolicy provisional_container_policy_;
   base::TimeTicks provisional_start_;
   // Whether the frame's sandbox gave an opaque origin as the network navigation
-  // started.
+  // started, and whether its document is credentialless, as it started.
   bool provisional_origin_sandboxed_ = false;
+  bool provisional_credentialless_ = false;
   // Whether a sandbox, its frame's or its response's, gives the document an
   // opaque origin in Chrome. The Page makes the frame's own; a response's is a
   // Known Gap, which only the Session's isolation tells of.
   bool origin_sandboxed_ = false;
+  // Whether that sandbox is its response's, which only the Session's isolation
+  // tells of.
+  bool response_sandboxed_ = false;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,
   // as Chrome's pending entry, which the next go() counts from.

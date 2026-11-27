@@ -347,13 +347,16 @@ class PageHost final : public PageChannel::Delegate {
   // that the Page gave it.
   // Where a document's frame is in the frame tree: the top-level document's
   // origin, and whether a document from this one up is of another site, or of
-  // another origin, than the top-level one. A worker is in its creator's
+  // another origin, than the top-level one, and for a credentialless document,
+  // the nonce of the top-level document's credentialless frames, which
+  // partitions its requests, cookies and storage. A worker is in its creator's
   // frame.
   struct FrameTree {
     url::Origin top_frame_origin;
     bool is_top_level = true;
     bool cross_site = false;
     bool cross_origin = false;
+    std::optional<base::UnguessableToken> nonce;
   };
 
   struct Context {
@@ -380,12 +383,20 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
-    // Whether a document is cross-origin isolated, as
-    // CrossOriginIsolatedCapability() says: the top-level document's
-    // isolation, and for a frame's that, and its parent's, and the same origin
-    // as its parent's, the default allowlist 'self' of the
-    // cross-origin-isolated feature (FrameIsCrossOriginIsolated()).
+    // Whether a document's agent cluster is cross-origin isolated: the
+    // top-level document's, which Chrome's browser isolates for each frame of
+    // its page (AgentIsCrossOriginIsolated()). The Page has the document's
+    // CrossOriginIsolatedCapability(), with its cross-origin-isolated
+    // feature, which its permissions policy says.
     bool cross_origin_isolated = false;
+    // Whether a document is credentialless, as each under it is, and a
+    // worker's creator: its policy container's is_credentialless, fixed as
+    // its navigation started.
+    bool credentialless = false;
+    // For a frame's document: whether its frame's element is credentialless,
+    // as the Page last said with message 250, which the frame's next
+    // navigation takes, as Chrome's FrameTreeNode keeps it for the frame.
+    bool frame_credentialless = false;
     // What the headers of a document's response say of its permissions policy,
     // which PermissionsPolicyHeaders::Allows() answers.
     PermissionsPolicyHeaders policy_headers;
@@ -445,6 +456,8 @@ class PageHost final : public PageChannel::Delegate {
   // A document that the Page has made, which takes the place of the
   // top-level one, or of its frame's document, or is a frame's first one.
   void OnDocumentCommitted(const PageDocumentCommitted& committed);
+  // What the Page says of the attributes of the frame of a document.
+  void OnFrameAttributes(uint64_t document, bool credentialless);
   // A dedicated worker that a context has started.
   void OnWorkerStarted(const PageWorkerStarted& started);
   // A context that goes while its parent stays.
@@ -523,13 +536,9 @@ class PageHost final : public PageChannel::Delegate {
   // place of its creator's or initiator's takes, as Blink's
   // DocumentInit::GetCookieUrl() does from its owner document.
   static GURL CookieUrlOf(const Context& context);
-  // Whether a frame's document of `origin` under document `parent` is
-  // cross-origin isolated: the parent is, and they are of the same origin, as
-  // the cross-origin-isolated feature's default allowlist 'self' has it. Known
-  // Gap: a frame's allow attribute and a document's Permissions-Policy for
-  // the feature, which need the container policy.
-  bool FrameIsCrossOriginIsolated(uint64_t parent,
-                                  const url::Origin& origin) const;
+  // Whether the agent cluster of a frame's document under document `parent` is
+  // cross-origin isolated: its page's, whatever its origin.
+  bool AgentIsCrossOriginIsolated(uint64_t parent) const;
   // The embedder policy of a frame's document under document `parent` that
   // the response that `event` describes makes.
   CrossOriginEmbedderPolicy FrameEmbedderPolicyOf(
@@ -697,28 +706,36 @@ class PageHost final : public PageChannel::Delegate {
   static bool DocumentHasCookies(const GURL& document_url);
   // The partition of the cookies of a frame of `frame_origin` under a
   // top-level frame of `top_frame_origin`, with `site_for_cookies`, as
-  // Chrome's RestrictedCookieManager has it.
+  // Chrome's RestrictedCookieManager has it, and `nonce` for a credentialless
+  // document's.
   static std::optional<net::CookiePartitionKey> FramePartitionKey(
       const url::Origin& top_frame_origin,
       const url::Origin& frame_origin,
-      const net::SiteForCookies& site_for_cookies);
+      const net::SiteForCookies& site_for_cookies,
+      const std::optional<base::UnguessableToken>& nonce);
   // Keeps `context`, a document or a worker that the Page has made, as `id`.
   void AddContext(uint64_t id, Context context);
+  // The top-level document over context `id`, or `id` itself.
+  uint64_t TopDocumentOf(uint64_t id) const;
+  // The nonce of the credentialless frames under top-level document `top`,
+  // made at the first, as Chrome's PageImpl keeps one for each main document.
+  const base::UnguessableToken& CredentiallessNonce(uint64_t top);
 
   // The storage key of `context`, as Chrome works it out for a frame with
   // third-party storage partitioning, which it turns on: the document's
   // origin, the site of the top-level document and whether a document from
   // this one up is of another site. None for a document of an opaque origin, or
   // one that is not of an HTTP or HTTPS URL, which have no storage, and for a
-  // document under a top-level one of an opaque origin, whose key no other
-  // top-level document ever has.
+  // document under a top-level one of an opaque origin, or a credentialless
+  // one, whose key no other top-level document ever has.
   static std::optional<StorageKey> CalculateStorageKey(const Context& context);
 
   // The storage key of context `id`'s IndexedDB and Cache API, as
   // StorageKey::Serialize() writes it: CalculateStorageKey()'s, or for a
-  // context under a top-level document of an opaque origin one of that
-  // document's own, which the Session keeps in memory. None for a context of
-  // an opaque origin, or one that is not of an HTTP or HTTPS URL.
+  // credentialless context one of its frame tree's nonce, or for a context
+  // under a top-level document of an opaque origin one of that document's own,
+  // which the Session keeps in memory. None for a context of an opaque origin,
+  // or one that is not of an HTTP or HTTPS URL.
   std::optional<std::string> ContextSerializedStorageKey(uint64_t id);
 
   // Lets go of every storage area that the Page bound.
@@ -776,6 +793,8 @@ class PageHost final : public PageChannel::Delegate {
     // makes.
     CrossOriginEmbedderPolicy coep;
     bool cross_origin_isolated = false;
+    // Whether the document is credentialless, as the navigation started.
+    bool credentialless = false;
     PermissionsPolicyHeaders policy_headers;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
@@ -789,6 +808,8 @@ class PageHost final : public PageChannel::Delegate {
     url::Origin origin;
     CrossOriginEmbedderPolicy coep;
     GURL cookie_url;
+    // Whether its document is credentialless, as it started.
+    bool credentialless = false;
   };
   std::map<uint64_t, AboutBlankNavigation> about_blank_navigations_;
   // The responses of the scripts of workers that the Page has and has not
@@ -904,6 +925,13 @@ class PageHost final : public PageChannel::Delegate {
   // What stands for the opaque origin of each top-level document whose frames
   // have asked for IndexedDB or the Cache API, by that document's ID.
   std::map<uint64_t, base::UnguessableToken> opaque_top_nonces_;
+  // The nonce of each top-level document whose frames are credentialless, by
+  // that document's ID, and their localStorage and sessionStorage, by the
+  // nonce, which stay in memory for as long as the Page.
+  std::map<uint64_t, base::UnguessableToken> credentialless_nonces_;
+  std::map<std::pair<base::UnguessableToken, PageStorageKind>,
+           std::unique_ptr<SessionStorageNamespace>>
+      credentialless_storage_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;

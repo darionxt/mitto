@@ -168,7 +168,7 @@ void IndexedDbContext::DeleteBucketData(const std::string& bucket_key,
 }
 
 bool IndexedDbContext::KeptInFile(const std::string& storage_key) const {
-  return file_ && !IsSerializedUnderOpaqueTop(storage_key);
+  return file_ && !IsSerializedForOneTopDocument(storage_key);
 }
 
 IndexedDbBucket& IndexedDbContext::AddBucket(const std::string& storage_key,
