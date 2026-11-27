@@ -410,9 +410,7 @@ v8::Local<v8::Promise> ExecutionContext::Fetch(
     LocalSchemeFetch::Start(std::move(answer), std::move(loader), *this);
     return resolver->GetPromise();
   }
-  // The document's origin, or the worker's URL's.
-  const url::Origin document_origin =
-      url::Origin::Create(GURL(base::UTF16ToUTF8(Url())));
+  const url::Origin document_origin = GetSecurityOrigin();
   // A cross-origin request of mode same-origin fails before anything goes, as
   // CorsURLLoader fails it. One that needs a CORS preflight goes to the
   // Session, which makes the preflight first.

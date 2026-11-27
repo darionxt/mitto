@@ -181,7 +181,8 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   if (const Frame* const parent = frame_->Parent()) {
     const Window* const parent_window = parent->DomWindow();
     if (parent_window && parent_window->HasDocument() &&
-        parent_window->GetSecurityOrigin().IsSameOriginWith(url_)) {
+        parent_window->GetSecurityOrigin().IsSameOriginWith(
+            document_->GetOrigin())) {
       const Document& parent_document = parent_window->GetDocument();
       parent_encoding = ParentFrameEncoding{
           base::UTF16ToUTF8(parent_document.CharacterSet()),

@@ -387,7 +387,7 @@ float HTMLImageElement::SourceSize(Element& element) {
   if (!sizes && &element != this && AllowAutoSizes()) {
     sizes = u"auto";
   }
-  MediaValues values = MediaValuesFor(window->Start());
+  MediaValues values = MediaValuesFor(*window);
   values.strict_mode = !GetDocument().InQuirksMode();
   const MediaQueryFeatures features = MediaQueryFeaturesFor(
       bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features());

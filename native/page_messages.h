@@ -848,6 +848,9 @@ struct PageDocumentCommitted {
   uint64_t replaces = kNoDocument;
   // For kDataUrl and kBlob: the URL.
   std::string url;
+  // Whether a sandbox makes its origin opaque, as it does that of every
+  // document under it.
+  bool sandboxed_origin = false;
 };
 
 // Where a dedicated worker's script comes from.

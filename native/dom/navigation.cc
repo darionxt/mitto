@@ -257,7 +257,8 @@ bool Navigation::HasEntriesAndEventsDisabled() const {
       document.KeepsOriginOfEarlierUrl()
           ? document.GetOrigin()
           : url::Origin::Create(GURL(document.UrlForBinding()));
-  return document.IsInitialEmptyDocument() || origin.opaque();
+  return document.IsInitialEmptyDocument() || origin.opaque() ||
+         document.GetOrigin().opaque();
 }
 
 int64_t Navigation::DocumentSequence() const {

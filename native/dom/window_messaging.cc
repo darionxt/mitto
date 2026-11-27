@@ -106,12 +106,14 @@ void DispatchPostMessage(Window& window,
                          SerializedScriptValue data,
                          std::vector<MessagePortChannel> channels,
                          Window* source,
-                         const url::Origin& source_origin,
+                         const RendererProcess& source_process,
                          const TargetOrigin& target,
                          UserActivation* user_activation,
                          SchedulerTaskContext* task_state) {
-  const url::Origin recipient = window.GetSecurityOrigin();
-  const bool is_remote = !IsInSameProcess(source_origin, recipient);
+  const url::Origin& source_origin = source_process.origin;
+  const RendererProcess process = window.Process();
+  const url::Origin& recipient = process.origin;
+  const bool is_remote = !IsInSameProcess(source_process, process);
   // Between processes it is the browser that drops a message for another
   // origin, with its ports and without a word, as
   // RenderFrameProxyHost::RouteMessageEvent() does.
@@ -139,7 +141,7 @@ void DispatchPostMessage(Window& window,
   // in by now, so a sender whose frame has gone or shows another document is
   // no source.
   RemoteWindow* const remote_source =
-      is_remote ? RemoteWindow::From(*source, recipient) : nullptr;
+      is_remote ? RemoteWindow::From(*source, process) : nullptr;
   if (is_remote) {
     source = nullptr;
   }
@@ -207,19 +209,19 @@ void DoPostMessage(Window& window,
       base::BindOnce(
           [](cppgc::WeakPersistent<Window> window, SerializedScriptValue data,
              std::vector<MessagePortChannel> channels,
-             cppgc::Persistent<Window> source, url::Origin source_origin,
+             cppgc::Persistent<Window> source, RendererProcess source_process,
              TargetOrigin target,
              cppgc::Persistent<UserActivation> user_activation,
              cppgc::Persistent<SchedulerTaskContext> task_state) {
             if (window) {
               DispatchPostMessage(*window, std::move(data), std::move(channels),
-                                  source.Get(), source_origin, target,
+                                  source.Get(), source_process, target,
                                   user_activation.Get(), task_state.Get());
             }
           },
           cppgc::WeakPersistent<Window>(&window), std::move(data),
           *std::move(channels), cppgc::Persistent<Window>(&source),
-          source.GetSecurityOrigin(), *std::move(target),
+          source.Process(), *std::move(target),
           cppgc::Persistent<UserActivation>(user_activation),
           cppgc::Persistent<SchedulerTaskContext>(
               &source == &window ? SchedulerTaskContext::Current(isolate)

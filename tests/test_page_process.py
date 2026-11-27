@@ -249,21 +249,23 @@ def _fetch_request(
     *,
     fixed: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0),
     target: int = 0,
+    referrer: str = "",
 ) -> str:
     """The Python expression of a Request's payload, with no body, from `document`, which a fake Page program sends.
 
     `fixed` holds its mode, credentials mode, referrer policy, priority and whether it is incremental, 0 each for the
-    kind's own, and it has no referrer."""
+    kind's own, and `referrer` the referrer that it names, none for the document's own."""
     return (
         f"struct.pack('<QQBB', {document}, {number}, {kind}, {flags}) "
         f"+ struct.pack('<BBBBBQ', *{fixed}, {target}) "
         f"+ struct.pack('<I', {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
-        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + struct.pack('<I', 0) + b'\\x00'"
+        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} "
+        f"+ struct.pack('<I', {len(referrer)}) + b'{referrer}' + b'\\x00'"
     )
 
 
 # The hello, and the Page's initial about:blank, document 1.
-_HELLO = "hello()\nsend(70, struct.pack('<QBQ', 1, 0, 0))"
+_HELLO = "hello()\nsend(70, struct.pack('<QBBQ', 1, 0, 0, 0))"
 # A worker of a data: URL that document 1 started, as context 2.
 _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
 
@@ -347,15 +349,27 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
         ),
         pytest.param(
             "document-numbered-again",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 1, 0, 0))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 1, 0, 0, 0))",
             "the library refused a message from the Page: a document numbered 1, after a context numbered 1",
             id="document-numbered-again",
         ),
         pytest.param(
             "document-of-no-response",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 1, 0, 0))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQQ', 2, 1, 0, 0, 0))",
             "the library refused a message from the Page: a document of navigation 0, which has no response",
             id="document-of-no-response",
+        ),
+        pytest.param(
+            "top-level-in-a-sandbox",
+            "hello()\nsend(70, struct.pack('<QBBQ', 1, 0, 1, 0))",
+            "the library refused a message from the Page: a top-level document in a sandbox",
+            id="top-level-in-a-sandbox",
+        ),
+        pytest.param(
+            "frame-outside-its-parent-s-sandbox",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 1, 1))\nsend(70, struct.pack('<QBBQ', 3, 0, 0, 2))",
+            "the library refused a message from the Page: a document outside the sandbox of its parent",
+            id="frame-outside-its-parent-s-sandbox",
         ),
         pytest.param(
             "same-document-elsewhere",
@@ -419,115 +433,121 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
         ),
         pytest.param(
             "frame-of-no-parent",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 9))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 9))",
             "the library refused a message from the Page: a frame's document whose parent is not one of the Page's"
             " documents",
             id="frame-of-no-parent",
         ),
         pytest.param(
             "own-parent",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 2))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 2))",
             "the library refused a message from the Page: a document that is its own parent",
             id="own-parent",
         ),
         pytest.param(
             "frame-of-no-navigation",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 1, 1, 7))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQQ', 2, 1, 0, 1, 7))",
             "the library refused a message from the Page: a frame's document of navigation 7, which has no response",
             id="frame-of-no-navigation",
         ),
         pytest.param(
+            "document-of-an-unknown-flag",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 2, 1))",
+            "the library refused a message from the Page: a document that is not valid",
+            id="document-of-an-unknown-flag",
+        ),
+        pytest.param(
             "about-blank-of-the-wrong-size",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 2, 1, 1))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQQ', 2, 2, 0, 1, 1))",
             "the library refused a message from the Page: a document that is not valid",
             id="about-blank-of-the-wrong-size",
         ),
         pytest.param(
             "srcdoc-of-no-frame",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 3, 0, 1))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQQ', 2, 3, 0, 0, 1))",
             "the library refused a message from the Page: a document that does not take the place of its frame's"
             " document",
             id="srcdoc-of-no-frame",
         ),
         pytest.param(
             "srcdoc-in-place-of-another-frames",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(70, struct.pack('<QBQQ', 3, 3, 2, 2))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))\nsend(70, struct.pack('<QBBQQ', 3, 3, 0, 2, 2))",
             "the library refused a message from the Page: a document that does not take the place of its frame's"
             " document",
             id="srcdoc-in-place-of-another-frames",
         ),
         pytest.param(
             "top-level-error-page",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 4, 0, 1))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQQ', 2, 4, 0, 0, 1))",
             "the library refused a message from the Page: a document that does not take the place of its frame's"
             " document",
             id="top-level-error-page",
         ),
         pytest.param(
             "top-level-data-url",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQQQ', 2, 5, 0, 1, 1) + b'data:,a')",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQQQ', 2, 5, 0, 0, 1, 1) + b'data:,a')",
             "the library refused a message from the Page: a document that does not take the place of its frame's"
             " document",
             id="top-level-data-url",
         ),
         pytest.param(
             "data-url-of-no-navigation",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))"
-            f"\nsend(70, struct.pack('<QBQQQ', 3, 5, 1, 1, 2) + b'data:,a')",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))"
+            f"\nsend(70, struct.pack('<QBBQQQ', 3, 5, 0, 1, 1, 2) + b'data:,a')",
             "the library refused a message from the Page: a data: URL's document whose navigation did not start",
             id="data-url-of-no-navigation",
         ),
         pytest.param(
             "blob-document",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))"
-            f"\nsend(70, struct.pack('<QBQQQ', 3, 6, 1, 1, 2) + b'blob:http://a.test/x')",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))"
+            f"\nsend(70, struct.pack('<QBBQQQ', 3, 6, 0, 1, 1, 2) + b'blob:http://a.test/x')",
             "the library refused a message from the Page: a blob: document, which no navigation of the library's backs",
             id="blob-document",
         ),
         pytest.param(
             "data-url-of-an-about-blank-navigation",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 0))"
-            f"\nsend(70, struct.pack('<QBQQQ', 3, 5, 1, 1, 2) + b'data:,a')",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 0))"
+            f"\nsend(70, struct.pack('<QBBQQQ', 3, 5, 0, 1, 1, 2) + b'data:,a')",
             "the library refused a message from the Page: a data: URL's document whose navigation did not start",
             id="data-url-of-an-about-blank-navigation",
         ),
         pytest.param(
             "about-blank-of-a-data-url-navigation",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 1))"
-            "\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 1, 2))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 1))"
+            "\nsend(70, struct.pack('<QBBQQQ', 3, 2, 0, 1, 1, 2))",
             "the library refused a message from the Page: an about:blank whose navigation did not start",
             id="about-blank-of-a-data-url-navigation",
         ),
         pytest.param(
             "about-blank-whose-navigation-ended",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 0))"
-            "\nsend(72, struct.pack('<QQB', 2, 0, 2))\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 1, 2))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 0))"
+            "\nsend(72, struct.pack('<QQB', 2, 0, 2))\nsend(70, struct.pack('<QBBQQQ', 3, 2, 0, 1, 1, 2))",
             "the library refused a message from the Page: an about:blank whose navigation did not start",
             id="about-blank-whose-navigation-ended",
         ),
         pytest.param(
             "local-navigation-of-no-kind",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 3))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 3))",
             "the library refused a message from the Page: a local navigation of no kind",
             id="local-navigation-of-no-kind",
         ),
         pytest.param(
             "about-blank-of-no-initiator",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQB', 2, 9, 0))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))\nsend(72, struct.pack('<QQB', 2, 9, 0))",
             "the library refused a message from the Page: an about:blank whose initiator is not one of the Page's"
             " documents",
             id="about-blank-of-no-initiator",
         ),
         pytest.param(
             "about-blank-that-did-not-start",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 1, 2))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))\nsend(70, struct.pack('<QBBQQQ', 3, 2, 0, 1, 1, 2))",
             "the library refused a message from the Page: an about:blank whose navigation did not start",
             id="about-blank-that-did-not-start",
         ),
         pytest.param(
             "about-blank-of-another-initiator",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 0))"
-            "\nsend(70, struct.pack('<QBQQQ', 3, 2, 1, 2, 2))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 0, 1))\nsend(72, struct.pack('<QQB', 2, 1, 0))"
+            "\nsend(70, struct.pack('<QBBQQQ', 3, 2, 0, 1, 2, 2))",
             "the library refused a message from the Page: an about:blank whose navigation did not start",
             id="about-blank-of-another-initiator",
         ),
@@ -598,6 +618,13 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             "the library refused a message from the Page: message type 101 of context 2, which is not one of the"
             " Page's",
             id="gone-twice",
+        ),
+        pytest.param(
+            "module-referrer-of-no-precursor",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/m.js', kind=7, referrer='data:,a')})",
+            "the library refused a message from the Page: a request whose referrer is neither a URL of its document's origin "
+            "nor that of a response it has had",
+            id="module-referrer-of-no-precursor",
         ),
         pytest.param(
             "storage-of-opaque-origin",
