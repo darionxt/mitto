@@ -334,6 +334,12 @@ void PageRequests::SendDeferred(uint64_t number) {
   }
 }
 
+void PageRequests::CancelDeferred(uint64_t number) {
+  if (open_.erase(number)) {
+    sender_->SendForRequest(number, EncodeCancel(number));
+  }
+}
+
 void PageRequests::ForgetDeferred(uint64_t number) {
   open_.erase(number);
 }

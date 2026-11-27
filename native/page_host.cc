@@ -1780,36 +1780,6 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       return;
     }
   }
-  // A deferred request that would take what the Session holds past its cap,
-  // as a long method, which no quota counts, may, is dropped without a word,
-  // as if it went, before anything of it is copied: the Page may have sent or
-  // forgotten it before an answer came. Its number, if the Session can keep
-  // it, answers a later cancel.
-  if (asked.deferred &&
-      deferred_bytes_ + DeferredBytes(asked) > kMaxDeferredBytesPerPage) {
-    if (dropped_deferred_requests_.size() < kMaxPageRequests) {
-      dropped_deferred_requests_[asked.number] = context_id;
-    }
-    return;
-  }
-  // The script's own lines, each name once, with its values joined, in the
-  // order the names first come, as Fetch combines them.
-  std::vector<std::pair<std::string, std::string>> lines;
-  for (const std::string_view line :
-       base::SplitStringPiece(asked.headers, "\n", base::KEEP_WHITESPACE,
-                              base::SPLIT_WANT_NONEMPTY)) {
-    const size_t colon = line.find(": ");
-    const std::string_view name = line.substr(0, colon);
-    const std::string_view value = line.substr(colon + 2);
-    const auto same = std::ranges::find_if(lines, [&name](const auto& entry) {
-      return base::EqualsCaseInsensitiveASCII(entry.first, name);
-    });
-    if (same == lines.end()) {
-      lines.emplace_back(name, value);
-    } else {
-      base::StrAppend(&same->second, {", ", value});
-    }
-  }
   // These fail as such a request fails in Chrome, and the Page goes on.
   int net_error = net::OK;
   if (!url.is_valid()) {
@@ -1841,6 +1811,34 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       PushNavigated(asked.url, 0, net_error);
     }
     return;
+  }
+  // A deferred request that would take what the Session holds past its cap,
+  // as a long method, which no quota counts, may, is dropped without a word,
+  // as if it went, before the Session copies it into a request of its own:
+  // the Page may have sent or forgotten it before an answer came, and expects
+  // none to a cancel of it.
+  const size_t deferred_size = asked.deferred ? DeferredBytes(asked) : 0;
+  if (asked.deferred &&
+      deferred_bytes_ + deferred_size > kMaxDeferredBytesPerPage) {
+    return;
+  }
+  // The script's own lines, each name once, with its values joined, in the
+  // order the names first come, as Fetch combines them.
+  std::vector<std::pair<std::string, std::string>> lines;
+  for (const std::string_view line :
+       base::SplitStringPiece(asked.headers, "\n", base::KEEP_WHITESPACE,
+                              base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(": ");
+    const std::string_view name = line.substr(0, colon);
+    const std::string_view value = line.substr(colon + 2);
+    const auto same = std::ranges::find_if(lines, [&name](const auto& entry) {
+      return base::EqualsCaseInsensitiveASCII(entry.first, name);
+    });
+    if (same == lines.end()) {
+      lines.emplace_back(name, value);
+    } else {
+      base::StrAppend(&same->second, {", ", value});
+    }
   }
   // The script's lines take the places of the Persona's lines of their names,
   // and the rest follow, until FetchRules puts a fetch()'s in the order of
@@ -1963,10 +1961,9 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .parent_embedder_policy = std::move(parent_embedder_policy),
       .parent_origin = std::move(parent_origin)};
   if (asked.deferred) {
-    const size_t bytes = DeferredBytes(asked);
-    deferred_bytes_ += bytes;
+    deferred_bytes_ += deferred_size;
     DeferredRequest& deferred = deferred_requests_[asked.number];
-    deferred.bytes = bytes;
+    deferred.bytes = deferred_size;
     deferred.context_id = context_id;
     deferred.document_origin = document_origin;
     // The fragment, which no request sends, is not held.
@@ -1991,9 +1988,6 @@ PageHost::DeferredRequest& PageHost::DeferredRequest::operator=(
 PageHost::DeferredRequest::~DeferredRequest() = default;
 
 void PageHost::OnSendDeferredRequest(uint64_t number) {
-  if (dropped_deferred_requests_.erase(number)) {
-    return;
-  }
   if (!deferred_requests_.contains(number)) {
     // It may have been cancelled since the Page asked for it to go.
     if (number > last_request_number_) {
@@ -2041,9 +2035,6 @@ void PageHost::SendDeferredRequest(uint64_t number) {
 }
 
 void PageHost::SendDeferredRequests(const std::set<uint64_t>* ids) {
-  std::erase_if(dropped_deferred_requests_, [ids](const auto& entry) {
-    return !ids || ids->contains(entry.second);
-  });
   std::vector<uint64_t> numbers;
   for (const auto& [number, deferred] : deferred_requests_) {
     if (!ids || ids->contains(deferred.context_id)) {
@@ -2066,18 +2057,12 @@ void PageHost::OnCancel(uint64_t number) {
     }
     return;
   }
-  // fetchLater()'s request, whose signal aborted before it went.
+  // fetchLater()'s request, whose signal aborted before it went, of which the
+  // Page expects no end.
   if (const auto deferred = deferred_requests_.find(number);
-      deferred != deferred_requests_.end() ||
-      dropped_deferred_requests_.erase(number)) {
-    if (deferred != deferred_requests_.end()) {
-      deferred_bytes_ -= deferred->second.bytes;
-      deferred_requests_.erase(deferred);
-    }
-    PageResponseEnded ended;
-    ended.number = number;
-    ended.net_error = net::ERR_ABORTED;
-    channel_->Send(EncodeResponseEnded(ended));
+      deferred != deferred_requests_.end()) {
+    deferred_bytes_ -= deferred->second.bytes;
+    deferred_requests_.erase(deferred);
     return;
   }
   // A navigation that the Page let go after its response came, before it
@@ -3292,7 +3277,6 @@ void PageHost::EndWithSession() {
   // Nothing sends the deferred requests of a Page whose Session goes.
   deferred_requests_.clear();
   deferred_bytes_ = 0;
-  dropped_deferred_requests_.clear();
   AbandonRequests();
   ReleaseStorage();
   channel_.reset();

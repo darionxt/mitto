@@ -905,9 +905,6 @@ class PageHost final : public PageChannel::Delegate {
   std::map<uint64_t, DeferredRequest> deferred_requests_;
   // The bytes that they hold.
   size_t deferred_bytes_ = 0;
-  // Those dropped past kMaxDeferredBytesPerPage, by number, with the ID of
-  // the context that asked.
-  std::map<uint64_t, uint64_t> dropped_deferred_requests_;
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.
   const scoped_refptr<KeepaliveInFlight> keepalive_in_flight_ =

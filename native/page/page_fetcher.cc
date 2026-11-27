@@ -183,7 +183,11 @@ class PageFetcher::Request final : public PageRequests::Client,
     if (stopped_) {
       return;
     }
-    fetcher_->requests_->Cancel(number_);
+    if (deferred_) {
+      fetcher_->requests_->CancelDeferred(number_);
+    } else {
+      fetcher_->requests_->Cancel(number_);
+    }
     // A cancel under a call to the client, as when page code that resolving
     // the fetch's promise runs aborts it: the client goes once the call has
     // returned, not under it.

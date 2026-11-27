@@ -140,9 +140,10 @@ class PageRequests {
   // the Page, once it hears of the next document.
   void LetGo(uint64_t number);
   // Has the Session send deferred request `number` now, or forgets one whose
-  // document is going, which the Session sends then, and of which neither
-  // ends for the Page.
+  // document is going, which the Session sends then, or has the Session drop
+  // one, of none of which an end comes.
   void SendDeferred(uint64_t number);
+  void CancelDeferred(uint64_t number);
   void ForgetDeferred(uint64_t number);
 
   // Sends the Session a network hint of the current window's document.
