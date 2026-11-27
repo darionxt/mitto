@@ -130,15 +130,19 @@ inline constexpr size_t kMaxKeepaliveRequests = 2048;
 inline constexpr size_t kMaxKeepaliveRequestsPerPage = 256;
 inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
 
-// How many bytes of fetchLater() requests one Page may hold at once, counted
-// by their URLs without the fragment, their methods, referrers, header lines
-// and bodies: three times what Blink's quotas let the control documents of a
-// frame tree queue, the top-level document's 512 KiB and the 128 KiB of its
-// frames' minimal quotas, since a string body counts there by its UTF-16
-// length and comes as UTF-8, of up to three bytes for each unit. One more is
-// dropped.
+// How many bytes of fetchLater() requests one document, and one Page, may hold
+// at once, counted by their URLs without the fragment, their methods,
+// referrers, header lines and bodies: three times what Blink's quotas let a
+// document queue, no more than the 512 KiB of a top-level control document,
+// and a frame tree, those 512 KiB and the 64 KiB that an iframe's allow may
+// give each of a page's at most 1,000 frames, since a string body counts there
+// by its UTF-16 length and comes as UTF-8, of up to three bytes for each unit.
+// One more is dropped.
 // Upstream: third_party/blink/renderer/core/fetch/fetch_later_util.h
-inline constexpr size_t kMaxDeferredBytesPerPage = 3 * 640 * 1024;
+// Upstream: third_party/blink/renderer/core/page/page.cc
+inline constexpr size_t kMaxDeferredBytesPerDocument = 3 * 512 * 1024;
+inline constexpr size_t kMaxDeferredBytesPerPage =
+    3 * (512 * 1024 + 1000 * 64 * 1024);
 
 // What a Page's Session gives it, on the network thread: its requests and its
 // cookies.
@@ -903,8 +907,11 @@ class PageHost final : public PageChannel::Delegate {
   uint64_t last_request_number_ = kNavigationRequest;
   // The deferred requests that wait, by number.
   std::map<uint64_t, DeferredRequest> deferred_requests_;
-  // The bytes that they hold.
+  // The bytes that they hold, in all and by the ID of the context that asked.
   size_t deferred_bytes_ = 0;
+  std::map<uint64_t, size_t> deferred_bytes_of_context_;
+  // Takes a deferred request's bytes off what they hold.
+  void ForgetDeferredBytes(const DeferredRequest& deferred);
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.
   const scoped_refptr<KeepaliveInFlight> keepalive_in_flight_ =

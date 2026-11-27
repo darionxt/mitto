@@ -744,9 +744,8 @@ _FETCH_LATER_QUOTAS: dict[str, tuple[str, Any]] = {
         65536,
     ),
     "a top-level document's quota beside a frame of another origin allowed deferred-fetch": (
-        "await frame(B + F, {allow: 'deferred-fetch'}); for (const u of fillers.slice(0, 6)) fill(u, "
-        "65536); return avail('/x');",
-        65536,
+        "await frame(B + F, {allow: 'deferred-fetch'}); for (const u of fillers) fill(u, 65536); return avail('/x');",
+        0,
     ),
     "a frame of another origin denied deferred-fetch-minimal": (
         'const b = await frame(B + F, {allow: "deferred-fetch-minimal \'none\'"}); return ask(b, "return '
@@ -895,21 +894,44 @@ def test_a_borrowed_send_beacon_and_fetch_later_go_as_their_receivers_window(
 def test_a_deferred_request_past_what_the_session_holds_is_dropped_and_the_page_lives_on(
     session: mitto.Session, server: _Server
 ) -> None:
-    # The Session holds no more than three times what Blink's quotas let a frame tree queue, and a method, which no quota
-    # counts, can fill that. The next request goes nowhere, but the Page, which may have let it go already, as a frame
-    # that goes at once does, hears nothing of it and goes on. Chrome has no such bound of its own.
+    # The Session holds no more for a document than three times what Blink's quotas let one queue, and a method, which no
+    # quota counts, can fill that. The next request goes nowhere, but the Page, which may have let it go already, as a
+    # frame that goes at once does, hears nothing of it and goes on. Chrome has no such bound of its own.
     url = _fetch_later_page(server)
     dropped = "/dropped?" + "x" * 1000
     server.text(dropped, "x")
     with _open_page(session, url) as page:
         page.evaluate(
             "(async () => { const a = await frame(F);"
-            " a.contentWindow.fetchLater('/held', {method: 'A'.repeat(3 * 640 * 1024 - 500)});"
+            " a.contentWindow.fetchLater('/held', {method: 'A'.repeat(3 * 512 * 1024 - 500)});"
             f" a.contentWindow.fetchLater('{dropped}'); a.remove(); }})()",
             timeout=_TIMEOUT_SECONDS,
         )
         assert page.evaluate("new Promise((r) => setTimeout(() => r(1 + 1), 300))", timeout=_TIMEOUT_SECONDS) == 2
     assert server.headers_of(dropped) == []
+
+
+def test_thirty_one_frames_that_allow_gives_deferred_fetch_each_send_what_they_deferred(
+    session: mitto.Session, server: _Server
+) -> None:
+    # Blink gives each frame of another origin that an iframe's allow gives deferred-fetch the 64 KiB of the normal quota,
+    # however little its parent has left, so Chrome 157 took and sent 63 KiB from each of 31 of them, more in all than
+    # what the 640 KiB of a frame tree's other quotas would hold.
+    url = _fetch_later_page(server)
+    for index in range(31):
+        server.text(f"/log/p{index}", "x")
+    with _open_page(session, url) as page:
+        last = page.evaluate(
+            "(async () => { const frames = [];"
+            " for (let i = 0; i < 31; i++) frames.push(await frame(B + F, {allow: 'deferred-fetch'}));"
+            " const last = await ask(frames[30], \"return avail('/x');\");"
+            " for (let i = 0; i < 31; i++) await ask(frames[i],"
+            " `fetchLater('/log/p${i}', {method: 'POST', body: 'a'.repeat(63 * 1024)}); return 1;`);"
+            " for (const f of frames) f.remove(); return last; })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert all(server.wait_for(f"/log/p{index}") for index in range(31))
+    assert last == 65536
 
 
 def test_fetch_later_counts_a_cloned_requests_body(session: mitto.Session, server: _Server) -> None:

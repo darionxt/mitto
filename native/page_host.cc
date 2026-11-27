@@ -1818,8 +1818,12 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   // the Page may have sent or forgotten it before an answer came, and expects
   // none to a cancel of it.
   const size_t deferred_size = asked.deferred ? DeferredBytes(asked) : 0;
+  const auto of_context = deferred_bytes_of_context_.find(context_id);
+  const size_t held_by_document =
+      of_context != deferred_bytes_of_context_.end() ? of_context->second : 0;
   if (asked.deferred &&
-      deferred_bytes_ + deferred_size > kMaxDeferredBytesPerPage) {
+      (deferred_bytes_ + deferred_size > kMaxDeferredBytesPerPage ||
+       held_by_document + deferred_size > kMaxDeferredBytesPerDocument)) {
     return;
   }
   // The script's own lines, each name once, with its values joined, in the
@@ -1962,6 +1966,7 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .parent_origin = std::move(parent_origin)};
   if (asked.deferred) {
     deferred_bytes_ += deferred_size;
+    deferred_bytes_of_context_[context_id] += deferred_size;
     DeferredRequest& deferred = deferred_requests_[asked.number];
     deferred.bytes = deferred_size;
     deferred.context_id = context_id;
@@ -2016,7 +2021,7 @@ void PageHost::SendDeferredRequest(uint64_t number) {
     return;
   }
   DeferredRequest& deferred = node.mapped();
-  deferred_bytes_ -= deferred.bytes;
+  ForgetDeferredBytes(deferred);
   // The network service fails one past its keepalive limits as the browser's
   // FetchLaterLoader starts it, which no renderer hears of.
   // Upstream: services/network/url_loader_factory.cc
@@ -2031,6 +2036,17 @@ void PageHost::SendDeferredRequest(uint64_t number) {
   if (const auto found = requests_.find(number); found != requests_.end()) {
     found->second->DetachJob();
     requests_.erase(found);
+  }
+}
+
+void PageHost::ForgetDeferredBytes(const DeferredRequest& deferred) {
+  deferred_bytes_ -= deferred.bytes;
+  const auto of_context = deferred_bytes_of_context_.find(deferred.context_id);
+  if (of_context != deferred_bytes_of_context_.end()) {
+    of_context->second -= deferred.bytes;
+    if (of_context->second == 0) {
+      deferred_bytes_of_context_.erase(of_context);
+    }
   }
 }
 
@@ -2061,7 +2077,7 @@ void PageHost::OnCancel(uint64_t number) {
   // Page expects no end.
   if (const auto deferred = deferred_requests_.find(number);
       deferred != deferred_requests_.end()) {
-    deferred_bytes_ -= deferred->second.bytes;
+    ForgetDeferredBytes(deferred->second);
     deferred_requests_.erase(deferred);
     return;
   }
@@ -3277,6 +3293,7 @@ void PageHost::EndWithSession() {
   // Nothing sends the deferred requests of a Page whose Session goes.
   deferred_requests_.clear();
   deferred_bytes_ = 0;
+  deferred_bytes_of_context_.clear();
   AbandonRequests();
   ReleaseStorage();
   channel_.reset();

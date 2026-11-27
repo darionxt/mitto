@@ -169,7 +169,7 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
 )
 
 # A top-level document that asks the Session to hold two deferred requests of 1,000 KiB, past three times what Blink's
-# quotas let a frame tree queue, and then to send both.
+# quotas let a document queue, and then to send both.
 _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
     def deferred(number, url):
@@ -506,9 +506,9 @@ def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: 
 
 
 def test_a_deferred_request_past_what_the_session_holds_goes_nowhere(tmp_path: Path, top: _Server) -> None:
-    # A Page queues no more than the 640 KiB that Blink's quotas give the control documents of a frame tree, counted as
+    # A document queues no more than the 512 KiB that Blink's quota gives a top-level control document, counted as
     # FetchLaterUtil counts each request, a string body by its UTF-16 length, so the Session holds no more than three
-    # times that, as UTF-8 may take, and drops one more without a word: a send of it sends nothing.
+    # times that for it, as UTF-8 may take, and drops one more without a word: a send of it sends nothing.
     program = _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES.format(
         python=sys.executable, first=top.url("/later-first"), second=top.url("/later-second")
     )
