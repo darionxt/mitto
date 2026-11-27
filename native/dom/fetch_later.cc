@@ -454,7 +454,9 @@ FetchLaterResult* FetchLater(Window& window,
     }
   }
   const url::Origin origin = url::Origin::Create(url);
-  const uint64_t size = RequestSize(*request, bytes ? bytes->size() : 0);
+  // A string body counts by its length, as Blink's ExtractBody() records it,
+  // though it goes as UTF-8.
+  const uint64_t size = RequestSize(*request, request->body_length());
   const uint64_t available = AvailableDeferredFetchQuota(*frame, origin);
   if (available < size) {
     QuotaExceededError::Throw(

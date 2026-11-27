@@ -447,6 +447,36 @@ def test_a_beacon_of_a_blob_of_a_long_safelisted_type_goes_without_a_preflight(
     assert (_value(lines, "Content-Type"), _value(lines, "Sec-Fetch-Mode")) == (content_type, "no-cors")
 
 
+def test_a_beacon_that_cannot_go_gives_false_before_its_data_is_read(session: mitto.Session, server: _Server) -> None:
+    # Chrome 157 gave false for a detached window's beacon of a stream, which CanSendBeacon() refuses before the stream
+    # throws, and for a Blob and a buffer past the keepalive quota.
+    url = server.page("/", "<body><p>beacon</p></body>")
+    server.text("/small", "small")
+    server.text("/small-beacon", "small")
+
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "(async () => {"
+            " const a = document.createElement('iframe'); document.body.append(a);"
+            " await new Promise((resolve) => { a.onload = resolve; a.src = '/small'; });"
+            " const navigator_of_a = a.contentWindow.navigator; a.remove(); let detached;"
+            " try { detached = navigator_of_a.sendBeacon('/detached', new ReadableStream()); }"
+            " catch (e) { detached = String(e); }"
+            " return [detached, navigator.sendBeacon('/big-blob', new Blob([new Uint8Array(70000)])),"
+            " navigator.sendBeacon('/big-buffer', new Uint8Array(70000)),"
+            " navigator.sendBeacon('/small-beacon', new Blob([new Uint8Array(100)]))];"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert server.wait_for("/small-beacon")
+    assert gave == [False, False, False, True]
+    assert (server.headers_of("/detached"), server.headers_of("/big-blob"), server.headers_of("/big-buffer")) == (
+        [],
+        [],
+        [],
+    )
+
+
 def test_a_beacon_stays_within_the_keepalive_quota_and_refuses_what_it_cannot_send(
     session: mitto.Session, server: _Server
 ) -> None:
@@ -772,6 +802,24 @@ def test_a_frames_fetch_later_results_say_activated_as_the_frame_goes(session: m
         assert server.wait_for("/log/kept")
         assert server.wait_for("/log/aborted")
     assert gave == [False, True, True]
+
+
+def test_fetch_later_counts_a_string_body_by_its_length(session: mitto.Session, server: _Server) -> None:
+    # Blink's ExtractBody() records a string's length, which FetchLaterUtil counts, though the body goes as UTF-8, so
+    # Chrome 157 took 30,000 CJK characters within the 64 KiB of an origin, and counted 70,000 as 70,048 bytes with the
+    # referrer about:client and the Content-Type line.
+    url = server.page("/", "<p>later</p>")
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "let fits = 'no throw'; try { fetchLater('/x', {method: 'POST', body: '\u4e2d'.repeat(30000)}); }"
+            " catch (e) { fits = String(e); }"
+            " let got = null; try { fetchLater('/x', {method: 'POST', body: '\u4e2d'.repeat(70000)}); } catch (e) {"
+            " const m = /got (\\d+) bytes/.exec(e.message);"
+            " got = m ? Number(m[1]) - new URL('/x', location.href).href.length : String(e); }"
+            " [fits, got]",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    assert gave == ["no throw", 70048]
 
 
 def test_a_detached_frames_fetch_later_throws_before_it_takes_its_input(

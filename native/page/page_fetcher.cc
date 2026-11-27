@@ -15,11 +15,6 @@ namespace {
 // net::ERR_FAILED, which the Page program, with no //net, cannot name.
 constexpr int kFailed = -2;
 
-// How many bytes of the bodies of a document's keepalive requests may be in
-// flight at once. One more fails before it goes.
-// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
-constexpr size_t kKeepaliveInflightBytesQuota = 64 * 1024;
-
 // net::ERR_ABORTED.
 constexpr int kNetErrorAborted = -3;
 

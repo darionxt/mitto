@@ -76,6 +76,9 @@ struct BeaconBody {
   std::string bytes;
   std::optional<std::string> content_type;
   bool cors = false;
+  // A Blob or buffer larger than the keepalive quota, which never fits in it,
+  // whose bytes are not copied.
+  bool past_quota = false;
 };
 
 // The size that Blink's beacons of a buffer cannot pass.
@@ -102,8 +105,11 @@ std::optional<BeaconBody> SerializeBeacon(
   }
   if (Blob* const* const blob = std::get_if<Blob*>(&*data)) {
     const BlobDataHandle& handle = *(*blob)->GetBlobDataHandle();
-    const base::span<const uint8_t> bytes = handle.Bytes();
-    body.bytes.assign(bytes.begin(), bytes.end());
+    body.past_quota = handle.size() > kKeepaliveInflightBytesQuota;
+    if (!body.past_quota) {
+      const base::span<const uint8_t> bytes = handle.Bytes();
+      body.bytes.assign(bytes.begin(), bytes.end());
+    }
     const std::string& type = handle.GetType();
     if (!type.empty() && ParsedContentType(base::UTF8ToUTF16(type)).IsValid()) {
       // BeaconBlob::Serialize(): a type of any length that is safelisted.
@@ -132,8 +138,11 @@ std::optional<BeaconBody> SerializeBeacon(
       exception_state.ThrowRangeError(kBeaconTooLong);
       return std::nullopt;
     }
-    body.bytes.assign(static_cast<const char*>(store->Data()),
-                      store->ByteLength());
+    body.past_quota = store->ByteLength() > kKeepaliveInflightBytesQuota;
+    if (!body.past_quota) {
+      body.bytes.assign(static_cast<const char*>(store->Data()),
+                        store->ByteLength());
+    }
     return body;
   }
   if (const auto* const view =
@@ -142,8 +151,11 @@ std::optional<BeaconBody> SerializeBeacon(
       exception_state.ThrowRangeError(kBeaconTooLong);
       return std::nullopt;
     }
-    body.bytes.resize((*view)->ByteLength());
-    (*view)->CopyContents(body.bytes.data(), body.bytes.size());
+    body.past_quota = (*view)->ByteLength() > kKeepaliveInflightBytesQuota;
+    if (!body.past_quota) {
+      body.bytes.resize((*view)->ByteLength());
+      (*view)->CopyContents(body.bytes.data(), body.bytes.size());
+    }
     return body;
   }
   body.bytes = base::UTF16ToUTF8(std::get<std::u16string>(*data));
@@ -473,13 +485,17 @@ bool Navigator::SendBeacon(const std::u16string& url_string,
     exception_state.ThrowTypeError("Beacons are only supported over HTTP(S).");
     return false;
   }
+  // CanSendBeacon(): a detached window sends none, before its data is read.
+  Fetcher* const fetcher = window.GetFetcher();
+  if (!fetcher) {
+    return false;
+  }
   std::optional<BeaconBody> body = SerializeBeacon(data, exception_state);
   if (!body) {
     return false;
   }
-  // A detached window sends none.
-  Fetcher* const fetcher = window.GetFetcher();
-  if (!fetcher) {
+  // One that never fits in the keepalive quota fails as Fetch() fails it.
+  if (body->past_quota) {
     return false;
   }
   // PingLoader's SendBeaconCommon(): a keepalive POST, of request context

@@ -160,6 +160,11 @@ CrossOriginAttribute CrossOriginAttributeFromValue(
 
 // The referrer of a request that is the document's, as Blink's referrer string
 // says it, and of one that has none.
+// How many bytes of the bodies of a document's keepalive requests may be in
+// flight at once. One more fails before it goes.
+// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
+inline constexpr size_t kKeepaliveInflightBytesQuota = 64 * 1024;
+
 inline constexpr char kClientReferrer[] = "about:client";
 inline constexpr char kNoReferrer[] = "";
 

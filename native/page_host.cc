@@ -868,8 +868,9 @@ size_t KeepaliveBytes(const GURL& url, const net::HttpRequestHeaders& headers) {
 }
 
 // What a deferred request holds against kMaxDeferredBytesPerPage, as
-// FetchLaterUtil::CalculateRequestSize() counts it, but for its referrer: its
-// URL without the fragment, each header line's name and value, and its body.
+// FetchLaterUtil::CalculateRequestSize() counts it: its URL without the
+// fragment, the referrer that the Page names, each header line's name and
+// value, and its body.
 size_t DeferredBytes(const PageRequest& asked) {
   size_t bytes =
       std::string_view(asked.url).substr(0, asked.url.find('#')).size();
@@ -879,7 +880,7 @@ size_t DeferredBytes(const PageRequest& asked) {
     const size_t colon = line.find(": ");
     bytes += colon == std::string_view::npos ? line.size() : line.size() - 2;
   }
-  return bytes + (asked.body ? asked.body->size() : 0);
+  return bytes + asked.referrer.size() + (asked.body ? asked.body->size() : 0);
 }
 
 // A keepalive request's place among those in flight of its Session and of its
@@ -1686,6 +1687,16 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     return;
   }
   const Context& context = contexts_.at(context_id);
+  // fetchLater() is a window's, to a potentially trustworthy URL, as Blink's
+  // FetchLaterManager checks before it queues a request.
+  if (asked.deferred && context.is_worker) {
+    Refuse("a deferred request of a worker");
+    return;
+  }
+  if (asked.deferred && !net::IsUrlPotentiallyTrustworthy(GURL(asked.url))) {
+    Refuse("a deferred request to a URL that is not potentially trustworthy");
+    return;
+  }
   // Only a document navigates, and a frame's navigation names the frame's
   // document that the new one replaces, whose parent the frame tree counts
   // from.
@@ -1952,7 +1963,10 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     deferred.bytes = bytes;
     deferred.context_id = context_id;
     deferred.document_origin = document_origin;
-    deferred.url = std::move(url);
+    // The fragment, which no request sends, is not held.
+    GURL::Replacements no_fragment;
+    no_fragment.ClearRef();
+    deferred.url = url.ReplaceComponents(no_fragment);
     deferred.headers = std::move(headers);
     deferred.options = std::move(options);
     deferred.body = std::move(body);

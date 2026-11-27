@@ -409,6 +409,18 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             id="deferred-without-keepalive",
         ),
         pytest.param(
+            "deferred-of-a-worker",
+            f"{_HELLO}\n{_DATA_WORKER}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:2/', document=2, flags=136)})",
+            "the library refused a message from the Page: a deferred request of a worker",
+            id="deferred-of-a-worker",
+        ),
+        pytest.param(
+            "deferred-to-an-insecure-url",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://example.test/', flags=136)})",
+            "the library refused a message from the Page: a deferred request to a URL that is not potentially trustworthy",
+            id="deferred-to-an-insecure-url",
+        ),
+        pytest.param(
             "unasked-deferred-send",
             f"{_HELLO}\nsend(220, struct.pack('<Q', 7))",
             "the library refused a message from the Page: a send of deferred request 7, which the Page has not asked "
