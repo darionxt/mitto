@@ -867,18 +867,20 @@ def test_a_deferred_request_past_what_the_session_holds_is_dropped_and_the_page_
     session: mitto.Session, server: _Server
 ) -> None:
     # The Session holds no more than three times what Blink's quotas let a frame tree queue, and a method, which no quota
-    # counts, can take one past that. Such a request goes nowhere, but the Page, which may have let it go already, as a
-    # frame that goes at once does, hears nothing of it and goes on. Chrome has no such bound of its own.
+    # counts, can fill that. The next request goes nowhere, but the Page, which may have let it go already, as a frame
+    # that goes at once does, hears nothing of it and goes on. Chrome has no such bound of its own.
     url = _fetch_later_page(server)
-    server.text("/long-method", "x")
+    dropped = "/dropped?" + "x" * 1000
+    server.text(dropped, "x")
     with _open_page(session, url) as page:
         page.evaluate(
             "(async () => { const a = await frame(F);"
-            " a.contentWindow.fetchLater('/long-method', {method: 'A'.repeat(2 * 1024 * 1024)}); a.remove(); })()",
+            " a.contentWindow.fetchLater('/held', {method: 'A'.repeat(3 * 640 * 1024 - 500)});"
+            f" a.contentWindow.fetchLater('{dropped}'); a.remove(); }})()",
             timeout=_TIMEOUT_SECONDS,
         )
         assert page.evaluate("new Promise((r) => setTimeout(() => r(1 + 1), 300))", timeout=_TIMEOUT_SECONDS) == 2
-    assert server.headers_of("/long-method") == []
+    assert server.headers_of(dropped) == []
 
 
 def test_fetch_later_counts_a_cloned_requests_body(session: mitto.Session, server: _Server) -> None:

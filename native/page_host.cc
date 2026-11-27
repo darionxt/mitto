@@ -1780,6 +1780,18 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       return;
     }
   }
+  // A deferred request that would take what the Session holds past its cap,
+  // as a long method, which no quota counts, may, is dropped without a word,
+  // as if it went, before anything of it is copied: the Page may have sent or
+  // forgotten it before an answer came. Its number, if the Session can keep
+  // it, answers a later cancel.
+  if (asked.deferred &&
+      deferred_bytes_ + DeferredBytes(asked) > kMaxDeferredBytesPerPage) {
+    if (dropped_deferred_requests_.size() < kMaxPageRequests) {
+      dropped_deferred_requests_[asked.number] = context_id;
+    }
+    return;
+  }
   // The script's own lines, each name once, with its values joined, in the
   // order the names first come, as Fetch combines them.
   std::vector<std::pair<std::string, std::string>> lines;
@@ -1952,20 +1964,6 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .parent_origin = std::move(parent_origin)};
   if (asked.deferred) {
     const size_t bytes = DeferredBytes(asked);
-    // One that would take what the Session holds past its cap, as a long
-    // method, which no quota counts, may, is dropped without a word, as if it
-    // went: the Page may have sent or forgotten it before an answer came. Its
-    // number answers a later send, cancel or end of its document.
-    if (deferred_bytes_ + bytes > kMaxDeferredBytesPerPage) {
-      if (dropped_deferred_requests_.size() >= kMaxPageRequests) {
-        Refuse(
-            base::StrCat({"more than ", base::NumberToString(kMaxPageRequests),
-                          " deferred requests past what the Session holds"}));
-        return;
-      }
-      dropped_deferred_requests_[asked.number] = context_id;
-      return;
-    }
     deferred_bytes_ += bytes;
     DeferredRequest& deferred = deferred_requests_[asked.number];
     deferred.bytes = bytes;
