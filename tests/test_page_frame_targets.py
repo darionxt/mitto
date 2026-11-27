@@ -270,6 +270,60 @@ def test_a_fragment_of_another_process_starts_again_where_the_url_has_changed() 
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_fragment_that_would_start_again_goes_nowhere_once_its_initiator_has_gone() -> None:
+    pages = {
+        "/race": """<body><script>
+            unloads = 0;
+            addEventListener('beforeunload', () => { unloads++; });
+            const {port1, port2} = new MessageChannel();
+            port1.onmessage = () => {
+              history.pushState(null, '', '/elsewhere');
+              document.querySelector('iframe').remove();
+              setTimeout(() => { settled = true; }, 100);
+            };
+            onmessage = () => {
+              postMessage.call(frames[0], 'go', '*');
+              port2.postMessage('push');
+            };
+        </script><iframe src='B/frame'></iframe>""",
+        "/frame": """<body><script>
+            onmessage = () => open('A/race#x', '_top');
+            postMessage.call(parent, 'ready', '*');
+        </script>""",
+    }
+    # The Session has no initiator left for it, so it goes nowhere, and the page hears nothing of it.
+    with _page_of(pages, "/race") as (page, server):
+        _until(page, "window.settled === true")
+        assert page.evaluate("[location.pathname, location.hash, unloads]", timeout=_TIMEOUT_SECONDS) == [
+            "/elsewhere",
+            "",
+            0,
+        ]
+        assert server.paths == ["/race", "/frame"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_navigation_that_starts_with_no_referrer_keeps_none() -> None:
+    pages = {
+        "/top": "<body><iframe name='blank'></iframe><iframe name='target' src='/target'></iframe>",
+        "/target": """<body><script>
+            navigation.onnavigate = () => { parent.frames.blank.document.open(); parent.frames.blank.document.close(); };
+        </script>""",
+    }
+    # As in Chrome 157: an about:blank starts it with none, whatever URL the target's listener gives it with document.open().
+    with _page_of(pages, "/top") as (page, server):
+        _until(page, "document.readyState === 'complete'")
+        page.evaluate(
+            """frames.blank.Function("parent.frames.target.location.href = '/next'")(); 0""", timeout=_TIMEOUT_SECONDS
+        )
+        _until(page, "frames.target.location.pathname === '/next' && frames.target.document.readyState === 'complete'")
+        said = page.evaluate("[frames.blank.document.URL, frames.target.document.referrer]", timeout=_TIMEOUT_SECONDS)
+        assert said == [server.url + "/target", ""]
+        assert server.paths == ["/top", "/target", "/next"]
+        assert server.referrers[-1] is None
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_srcdoc_of_a_document_of_another_origin_is_chrome_s_error_page() -> None:
     pages = {
         "/top": "<body><script>said = []; onmessage = ({data}) => said.push(data);</script><iframe src='B/mid'></iframe>",
@@ -319,6 +373,22 @@ def test_a_page_that_the_back_forward_cache_would_not_keep_keeps_its_opener() ->
             page.evaluate(f"window.before = true; {navigation}", timeout=_TIMEOUT_SECONDS)
             _until(page, "!window.before && document.readyState === 'complete'")
             assert page.evaluate("opener === window", timeout=_TIMEOUT_SECONDS) is kept
+
+
+@pytest.mark.usefixtures("page_program")
+@pytest.mark.parametrize("first_opens_itself", [False, True])
+def test_a_page_that_the_back_forward_cache_restores_has_the_opener_it_had(first_opens_itself: bool) -> None:
+    opens_itself = "name = 'roof'; open('', 'roof'); 0"
+    # As in Chrome 157: the cache keeps a page's opener with it, whichever page opened itself.
+    with _page_of({}, "/own") as (page, _):
+        page.evaluate(opens_itself if first_opens_itself else "0", timeout=_TIMEOUT_SECONDS)
+        page.evaluate("window.mark = 'a'; location.href = '/own?b'; 0", timeout=_TIMEOUT_SECONDS)
+        _until(page, "location.search === '?b' && document.readyState === 'complete'")
+        page.evaluate("0" if first_opens_itself else opens_itself, timeout=_TIMEOUT_SECONDS)
+        assert page.evaluate("opener === window", timeout=_TIMEOUT_SECONDS) is not first_opens_itself
+        page.evaluate("history.back(); 0", timeout=_TIMEOUT_SECONDS)
+        _until(page, "location.search === '' && document.readyState === 'complete'")
+        assert page.evaluate("[window.mark, opener === window]", timeout=_TIMEOUT_SECONDS) == ["a", first_opens_itself]
 
 
 @pytest.mark.usefixtures("page_program")

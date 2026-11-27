@@ -252,11 +252,15 @@ bool ShouldPerformFragmentNavigation(const Document& document,
 }
 
 // Fires load at the element of the current window's frame, unless another has
-// taken the place of the document's load number `load`.
+// taken the place of the document's load number `load`, or another document
+// the document's, as its DocumentLoader's task goes with it in Blink.
 void DispatchOwnerLoad(cppgc::WeakPersistent<Document> document,
                        uint64_t load) {
-  Frame* const frame = Window::Current().GetFrame();
-  if (document && document->OwnerLoad() == load && frame && frame->Owner()) {
+  Window& window = Window::Current();
+  Frame* const frame = window.GetFrame();
+  if (document && window.HasDocument() &&
+      &window.GetDocument() == document.Get() &&
+      document->OwnerLoad() == load && frame && frame->Owner()) {
     frame->Owner()->DispatchLoad();
   }
 }
@@ -358,7 +362,7 @@ void CommitFragmentFromBrowser(cppgc::WeakPersistent<Document> document,
   request.origin_window = origin_window.Get();
   if (ShouldPerformFragmentNavigation(*document, request.url, type)) {
     CommitSameDocumentNavigation(window, request, type, /*from_browser=*/true);
-  } else {
+  } else if (origin_window && origin_window->HasContext()) {
     StartNavigation(window, request, type);
   }
 }
@@ -601,7 +605,8 @@ void StartNavigation(Window& window,
   navigation.initiator_referrer = referrer;
   navigation.names_referrer =
       referrer != OutgoingReferrer(origin_window) &&
-      navigation.initiator_origin.IsSameOriginWith(referrer);
+      (referrer.is_empty() ||
+       navigation.initiator_origin.IsSameOriginWith(referrer));
   navigation.initiator_in_sandboxed_process =
       origin_window.GetDocument().IsInSandboxedProcess();
   navigation.initiator_has_header_csp =

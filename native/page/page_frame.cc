@@ -208,6 +208,10 @@ struct PageFrame::StoredDocument {
   uint64_t browsing_instance = 0;
   // The frame's name, which Chrome's frame of the page keeps with it.
   std::u16string name;
+  // Whether the page's own frame opened it, as its renderer keeps the opener
+  // that it had: a stored page has no frames, so nothing else of its browsing
+  // instance has.
+  bool opened_itself = false;
   // The microtasks of the context, which wait in a queue of their own once the
   // task that stored it has ended, as kBackForwardCachePauseMicrotasks pauses
   // those of a frozen page's agent.
@@ -893,7 +897,9 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   page_request.user_activation = request.user_activation;
   page_request.reload = request.reload;
   page_request.referrer_policy = ToPageReferrerPolicy(request.referrer_policy);
-  if (request.names_referrer) {
+  if (request.names_referrer && request.initiator_referrer.is_empty()) {
+    page_request.referrer_policy = PageReferrerPolicy::kNoReferrer;
+  } else if (request.names_referrer) {
     page_request.referrer = request.initiator_referrer.spec();
   }
   // A worker's thread may number a request in between, so the loader learns
@@ -1545,18 +1551,18 @@ Document* PageFrame::CommitNavigation(
     }
   }
   const GURL old_url(old_document.UrlForBinding());
-  // A page of another browsing instance than the one it leaves, as
-  // RenderFrameHostManager::ShouldProactivelySwapBrowsingInstance() swaps
-  // it for the back/forward cache, has nothing of that one open it.
-  if (!parent_ && next_browsing_instance != browsing_instance_) {
-    SetOpener(nullptr);
-  }
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
   if (store) {
     StoreDocument(std::exchange(current_, std::move(committing)));
   } else {
     current_ = std::move(committing);
+  }
+  // A page of another browsing instance than the one it leaves, as
+  // RenderFrameHostManager::ShouldProactivelySwapBrowsingInstance() swaps
+  // it for the back/forward cache, has nothing of that one open it.
+  if (!parent_ && next_browsing_instance != browsing_instance_) {
+    SetOpener(nullptr);
   }
   Document& document =
       CommitDocument(current_->number(), url, navigation_start, connection,
@@ -1688,6 +1694,7 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   worker_starter_ = std::move(stored->worker_starter);
   chrome_object_data_ = stored->chrome_object_data;
   name_ = std::move(stored->name);
+  SetOpener(stored->opened_itself ? this : nullptr);
   current_ = std::move(stored->loader);
   browsing_instance_ = stored->browsing_instance;
   MemoryInfo::SetProcessLockedToSite(true);
@@ -1884,6 +1891,7 @@ void PageFrame::StoreDocument(std::unique_ptr<DocumentLoader> loader) {
           : 0;
   stored->entry = history().CurrentRootRef();
   stored->name = name_;
+  stored->opened_itself = Opener() == this;
   stored->context = std::move(context_);
   stored->window = window_.Get();
   window_ = nullptr;
