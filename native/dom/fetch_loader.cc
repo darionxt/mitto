@@ -455,8 +455,10 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   }
   // ThreadableLoader::ResponseReceived(): a script's fetch() whose response
   // says no-store keeps its context's page out of the back/forward cache, one
-  // that a link preloaded for it included, whatever checks its integrity.
-  if (no_store) {
+  // that a link preloaded for it included, whatever checks its integrity. A
+  // redirect that mode manual stops at goes to FetchManager's
+  // WillFollowRedirect() instead, which never calls it.
+  if (no_store && !(is_redirect && HasLocation(head.headers))) {
     if (ExecutionContext* const execution_context =
             ExecutionContext::From(isolate_, context)) {
       execution_context->DidReceiveNoStoreForScriptRequest();
