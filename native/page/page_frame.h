@@ -126,6 +126,7 @@ class PageFrame final : public NavigationClient, public Frame {
   void NavigateFromOwner(const GURL& url) override;
   void Detach() override;
   NavigationRateLimiter& GetNavigationRateLimiter() override;
+  void DidChangeCredentialless() override;
 
   // NavigationClient:
   void BeginNavigation(const NavigationRequest& request) override;
@@ -461,6 +462,8 @@ class PageFrame final : public NavigationClient, public Frame {
     // the document that started it had one of its response's sandbox, whose
     // origin an about:blank takes.
     bool origin_sandboxed = false;
+    // Whether its document is credentialless, as it started.
+    bool credentialless = false;
     // A srcdoc's markup.
     std::u16string body;
     // Whether it reloads the frame's document, as location.reload() does.
@@ -474,12 +477,20 @@ class PageFrame final : public NavigationClient, public Frame {
   // network or went to a data: URL, or a local one that the parent's embedder
   // policy blocks.
   void CommitErrorPageSoon(SandboxFlags sandbox,
-                           ContainerPolicy container_policy);
+                           ContainerPolicy container_policy,
+                           bool credentialless);
   // NavigationRequest::CheckResponseAdherenceToCoep(): whether the frame's
   // parent has an embedder policy that is compatible with cross-origin
   // isolation and a document that the frame makes without the network would
-  // take one that is not.
-  bool IsBlockedByEmbedderPolicy(bool embedder_policy_isolates) const;
+  // take one that is not, but for a credentialless one (CoepBlockIframe()).
+  bool IsBlockedByEmbedderPolicy(bool embedder_policy_isolates,
+                                 bool credentialless) const;
+  // Whether the frame's element is credentialless now.
+  bool OwnerCredentialless() const;
+  // IsDocumentToCommitAnonymous(): whether a document that the frame
+  // navigates to now is credentialless, as its element is, or its parent's
+  // document.
+  bool PendingCredentialless() const;
   // A child frame's navigation to a data: URL, which the Page answers itself
   // from a later task, through a DocumentLoader as a response.
   void BeginDataUrlNavigation(const NavigationRequest& request);
@@ -564,8 +575,9 @@ class PageFrame final : public NavigationClient, public Frame {
   ContainerPolicy provisional_container_policy_;
   base::TimeTicks provisional_start_;
   // Whether the frame's sandbox gave an opaque origin as the network navigation
-  // started.
+  // started, and whether its document is credentialless, as it started.
   bool provisional_origin_sandboxed_ = false;
+  bool provisional_credentialless_ = false;
   // Whether a sandbox, its frame's or its response's, gives the document an
   // opaque origin in Chrome. The Page makes the frame's own; a response's is a
   // Known Gap, which only the Session's isolation tells of.

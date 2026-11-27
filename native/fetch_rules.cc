@@ -223,7 +223,7 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
     request.set_site_for_cookies(site_for_cookies);
     request.set_isolation_info(net::IsolationInfo::Create(
         net::IsolationInfo::RequestType::kSubFrame, TopFrameOrigin(),
-        url::Origin::Create(url), site_for_cookies));
+        url::Origin::Create(url), site_for_cookies, params_.nonce));
   } else if (params_.mode == RequestMode::kNavigate) {
     SetUpTopLevelNavigation(request);
   } else {
@@ -235,7 +235,7 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
     request.set_site_for_cookies(site_for_cookies);
     request.set_isolation_info(net::IsolationInfo::Create(
         net::IsolationInfo::RequestType::kOther, TopFrameOrigin(), *initiator_,
-        site_for_cookies));
+        site_for_cookies, params_.nonce));
   }
   request.set_initiator(initiator_);
   SetRequestCredentials(request, url);

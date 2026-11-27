@@ -173,6 +173,8 @@ class Window final : public WindowProperties, public ExecutionContext {
   bool IsSecureContextForBindings() const override;
   // WindowOrWorkerGlobalScope::crossOriginIsolated().
   bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
+  // LocalDOMWindow::credentialless(): its document's policy container's.
+  bool Credentialless() const;
   // Chrome keys agent clusters by origin by default.
   bool OriginAgentCluster() const { return true; }
   bool OffscreenBuffering() const { return true; }

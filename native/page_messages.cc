@@ -214,6 +214,7 @@ bool IsKnown(uint32_t type) {
           type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer)) ||
          (type >= static_cast<uint32_t>(PageMessage::kTraversalRequest) &&
           type <= static_cast<uint32_t>(PageMessage::kDocumentEvicted)) ||
+         type == static_cast<uint32_t>(PageMessage::kFrameAttributes) ||
          type == static_cast<uint32_t>(PageMessage::kIsolation);
 }
 
@@ -1149,8 +1150,13 @@ base::expected<PageBroadcast, std::string> ReadBroadcast(
   return broadcast;
 }
 
-// In a document's byte of flags: PageDocumentCommitted's sandboxed_origin.
+// In a document's byte of flags: PageDocumentCommitted's sandboxed_origin and
+// credentialless.
 constexpr uint8_t kSandboxedOriginFlag = 1;
+constexpr uint8_t kCredentiallessFlag = 2;
+
+// In a frame's byte of attributes: its element's credentialless.
+constexpr uint8_t kCredentiallessAttribute = 1;
 
 // A document that the Page has made: its ID, a byte for its source, a byte of
 // flags, its parent, and for a navigation's response the navigation's number.
@@ -1165,10 +1171,11 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
   committed.document = DecodeUint64(payload.substr(0, 8));
   const uint8_t source = static_cast<uint8_t>(payload[8]);
   const uint8_t flags = static_cast<uint8_t>(payload[9]);
-  if ((flags & ~kSandboxedOriginFlag) != 0) {
+  if ((flags & ~(kSandboxedOriginFlag | kCredentiallessFlag)) != 0) {
     return base::unexpected("a document that is not valid");
   }
   committed.sandboxed_origin = (flags & kSandboxedOriginFlag) != 0;
+  committed.credentialless = (flags & kCredentiallessFlag) != 0;
   size_t named = 0;
   switch (source) {
     case static_cast<uint8_t>(PageDocumentSource::kInitialEmpty):
@@ -2215,7 +2222,9 @@ std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
   const char bytes[] = {
       static_cast<char>(committed.source),
-      static_cast<char>(committed.sandboxed_origin ? kSandboxedOriginFlag : 0)};
+      static_cast<char>(
+          (committed.sandboxed_origin ? kSandboxedOriginFlag : 0) |
+          (committed.credentialless ? kCredentiallessFlag : 0))};
   std::string payload = base::StrCat({EncodeUint64(committed.document),
                                       std::string_view(bytes, sizeof(bytes)),
                                       EncodeUint64(committed.parent)});
@@ -2314,6 +2323,13 @@ std::string EncodeDocumentEvicted(uint64_t document) {
   return EncodeFrame(PageMessage::kDocumentEvicted, EncodeUint64(document));
 }
 
+std::string EncodeFrameAttributes(uint64_t document, bool credentialless) {
+  const char attributes =
+      static_cast<char>(credentialless ? kCredentiallessAttribute : 0);
+  return EncodeDocumentFrame(PageMessage::kFrameAttributes, document,
+                             std::string_view(&attributes, 1));
+}
+
 bool NamesDocument(PageMessage type) {
   switch (type) {
     case PageMessage::kSameDocumentNavigation:
@@ -2333,6 +2349,7 @@ bool NamesDocument(PageMessage type) {
     case PageMessage::kIndexedDb:
     case PageMessage::kStorageBuckets:
     case PageMessage::kNetworkHint:
+    case PageMessage::kFrameAttributes:
       return true;
     default:
       return false;
@@ -2791,6 +2808,17 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       return frame;
     }
+    case PageMessage::kFrameAttributes:
+      if (payload.size() != 1) {
+        return base::unexpected(
+            WrongSize("frame's attributes", payload.size()));
+      }
+      if ((static_cast<uint8_t>(payload[0]) & ~kCredentiallessAttribute) != 0) {
+        return base::unexpected("a frame's attributes that are not valid");
+      }
+      frame.frame_credentialless =
+          (static_cast<uint8_t>(payload[0]) & kCredentiallessAttribute) != 0;
+      return frame;
     case PageMessage::kDocumentStored:
     case PageMessage::kDocumentRestored:
     case PageMessage::kDocumentEvicted:
@@ -3129,6 +3157,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kDocumentStored:
     case PageMessage::kDocumentRestored:
     case PageMessage::kDocumentEvicted:
+    case PageMessage::kFrameAttributes:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

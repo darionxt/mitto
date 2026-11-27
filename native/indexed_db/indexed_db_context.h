@@ -5,8 +5,9 @@
 // with a storage directory keeps them in its file IndexedDB there, and loads
 // each storage key's once, before its first open, delete or list, into memory,
 // which every commit writes through to the file from, in order. Without a
-// directory, and for a frame under a top-level document of an opaque origin,
-// they are kept in memory until the Session goes, as in Incognito.
+// directory, and for a frame under a top-level document of an opaque origin
+// or a credentialless frame, they are kept in memory until the Session goes,
+// as in Incognito.
 //
 // Upstream: content/browser/indexed_db/indexed_db_context_impl.cc
 

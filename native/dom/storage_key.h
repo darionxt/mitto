@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "base/unguessable_token.h"
 #include "url/origin.h"
 
 namespace mitto {
@@ -24,6 +25,13 @@ namespace mitto {
 // has.
 std::string SerializeStorageKey(const url::Origin& origin,
                                 const std::vector<url::Origin>& ancestors);
+
+// The key of a credentialless document of `origin`,
+// StorageKey::CreateWithNonce()'s, whose nonce is that of the credentialless
+// frames under its top-level document, which no document under another one
+// has.
+std::string SerializeStorageKeyWithNonce(const url::Origin& origin,
+                                         const base::UnguessableToken& nonce);
 
 }  // namespace mitto
 
