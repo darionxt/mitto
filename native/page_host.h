@@ -366,11 +366,11 @@ class PageHost final : public PageChannel::Delegate {
     // worker's from its script's, and a frame's initial about:blank's and a
     // blob: or data: worker's from its parent or creator.
     CrossOriginEmbedderPolicy coep;
-    // Whether a document is cross-origin isolated, as
-    // CrossOriginIsolatedCapability() says: the top-level document's
-    // isolation, and for a frame's that, and its parent's, and the same origin
-    // as its parent's, the default allowlist 'self' of the
-    // cross-origin-isolated feature (FrameIsCrossOriginIsolated()).
+    // Whether a document's agent cluster is cross-origin isolated: the
+    // top-level document's, which Chrome's browser isolates for each frame of
+    // its page (AgentIsCrossOriginIsolated()). The Page has the document's
+    // CrossOriginIsolatedCapability(), with its cross-origin-isolated
+    // feature, which its permissions policy says.
     bool cross_origin_isolated = false;
     // What the headers of a document's response say of its permissions policy,
     // which PermissionsPolicyHeaders::Allows() answers.
@@ -508,13 +508,9 @@ class PageHost final : public PageChannel::Delegate {
   // place of its creator's or initiator's takes, as Blink's
   // DocumentInit::GetCookieUrl() does from its owner document.
   static GURL CookieUrlOf(const Context& context);
-  // Whether a frame's document of `origin` under document `parent` is
-  // cross-origin isolated: the parent is, and they are of the same origin, as
-  // the cross-origin-isolated feature's default allowlist 'self' has it. Known
-  // Gap: a frame's allow attribute and a document's Permissions-Policy for
-  // the feature, which need the container policy.
-  bool FrameIsCrossOriginIsolated(uint64_t parent,
-                                  const url::Origin& origin) const;
+  // Whether the agent cluster of a frame's document under document `parent` is
+  // cross-origin isolated: its page's, whatever its origin.
+  bool AgentIsCrossOriginIsolated(uint64_t parent) const;
   // The embedder policy of a frame's document under document `parent` that
   // the response that `event` describes makes.
   CrossOriginEmbedderPolicy FrameEmbedderPolicyOf(
