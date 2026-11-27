@@ -987,8 +987,18 @@ def test_an_xml_http_request_s_timeout_waits_while_its_page_is_kept(
         held.set()
 
 
-def test_a_response_that_came_while_its_page_was_kept_ends_its_request_before_a_timeout(
-    session: mitto.Session, server: RecordingServer
+@pytest.mark.parametrize(
+    ("timeout", "ending"),
+    [
+        # Due after the response has come: the response ends the request.
+        (_TIMEOUT_AS_IT_FREEZES, ["readystatechange 2", "readystatechange 3", "readystatechange 4", "load 4"]),
+        # Due already as the page freezes, which a task of no delay waits for: the timeout ends it.
+        ("document.addEventListener('freeze', () => { x.timeout = 1; });", ["readystatechange 4", "timeout 4"]),
+    ],
+    ids=["due-after-the-response", "due-as-the-page-freezes"],
+)
+def test_what_ends_a_request_whose_response_came_while_its_page_was_kept(
+    session: mitto.Session, server: RecordingServer, timeout: str, ending: list[str]
 ) -> None:
     first = server.page("/a", "<title>A</title>" + _LOGGING)
     second = server.page("/b", "<title>B</title>")
@@ -1001,10 +1011,10 @@ def test_a_response_that_came_while_its_page_was_kept_ends_its_request_before_a_
                 "const x = new XMLHttpRequest();"
                 " for (const type of ['readystatechange', 'load', 'timeout', 'loadend'])"
                 " x.addEventListener(type, () => log.push(`${type} ${x.readyState}`)); x.open('GET', '/held');"
-                f" x.send(); {_TIMEOUT_AS_IT_FREEZES} window.marker = 1; location.href = '/b'; 0"
+                f" x.send(); {timeout} window.marker = 1; location.href = '/b'; 0"
             )
             assert _next_document(page).url == second
-            # The response comes while the cache keeps the page, and the timeout's time after it.
+            # The response comes while the cache keeps the page.
             assert server.wait_for_path("/held")
             held.set()
             _wait(page, 900)
@@ -1013,16 +1023,7 @@ def test_a_response_that_came_while_its_page_was_kept_ends_its_request_before_a_
             _wait(page, 100)
             assert page.evaluate("[window.marker, log]") == [
                 1,
-                [
-                    "pageshow:false",
-                    "readystatechange 1",
-                    *_KEPT_AND_BACK[1:],
-                    "readystatechange 2",
-                    "readystatechange 3",
-                    "readystatechange 4",
-                    "load 4",
-                    "loadend 4",
-                ],
+                ["pageshow:false", "readystatechange 1", *_KEPT_AND_BACK[1:], *ending, "loadend 4"],
             ]
     finally:
         held.set()
