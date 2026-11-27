@@ -397,7 +397,11 @@ class TypeMapper:
             return "bindings::ScriptWrappable*"
         if self._is_union_of_values(idl_type):
             # The value of one of its members, or null, which the class makes, as Blink's class makes the union's Ret
-            # for HTMLElement's hidden, or FileReader's result, a string or an ArrayBuffer.
+            # for HTMLElement's hidden, FileReader's result, a string or an ArrayBuffer, or FormData's get(), a File or
+            # a string.
+            for member in idl_type.members:
+                if member.kind is TypeKind.INTERFACE:
+                    self.used_interfaces.add(member.name)
             return "v8::Local<v8::Value>"
         if kind is TypeKind.INTERFACE and idl_type.name in self._implemented:
             self.used_interfaces.add(idl_type.name)
@@ -419,6 +423,13 @@ class TypeMapper:
                 return "std::vector<std::u16string>"
             if element.kind is TypeKind.STRING and element.name == "ByteString" and not element.nullable:
                 return "std::vector<std::string>"
+            reduced = self.reduce(element)
+            if self._is_union_of_values(reduced) and not self._is_union_of_classes(reduced) and not reduced.nullable:
+                # The value of each, which the class makes, as FormData's getAll() gives Files and strings.
+                for member in reduced.members:
+                    if member.kind is TypeKind.INTERFACE:
+                        self.used_interfaces.add(member.name)
+                return "std::vector<v8::Local<v8::Value>>"
         raise self._refuse(idl_type, where, "a return value")
 
     def to_v8(self, idl_type: IdlType, expression: str) -> str:
@@ -488,12 +499,21 @@ class TypeMapper:
         reduced = self.reduce(idl_type)
         return reduced.kind is TypeKind.INTERFACE and not reduced.nullable and reduced.name not in self._implemented
 
-    @staticmethod
-    def _is_union_of_values(idl_type: IdlType) -> bool:
-        """Whether the type is a union whose members are all booleans, numbers, strings or buffer sources."""
+    def _is_union_of_values(self, idl_type: IdlType) -> bool:
+        """Whether the type is a union whose members are all booleans, numbers, strings, buffer sources or interfaces
+        with a class, as FormData's (File or USVString) is."""
         return idl_type.kind is TypeKind.UNION and all(
-            member.kind
-            in (TypeKind.BOOLEAN, TypeKind.INTEGER, TypeKind.FLOATING_POINT, TypeKind.STRING, TypeKind.BUFFER_SOURCE)
+            (
+                member.kind
+                in (
+                    TypeKind.BOOLEAN,
+                    TypeKind.INTEGER,
+                    TypeKind.FLOATING_POINT,
+                    TypeKind.STRING,
+                    TypeKind.BUFFER_SOURCE,
+                )
+                or (member.kind is TypeKind.INTERFACE and member.name in self._implemented)
+            )
             and not member.nullable
             for member in idl_type.members
         )
@@ -727,14 +747,19 @@ class TypeMapper:
             key_value = self._name("key_value")
             item = self._name("item")
             item_value = self._name("item_value")
+            get_item = self._name("get_item")
             item_site = Site(fail="return false;", element=True)
             converted_key = self.from_v8(idl_type.members[0], key_value, key, item_site, where)
             converted_item = self.from_v8(idl_type.members[1], item_value, item, item_site, where)
             return [
                 f"{cpp_type} {target};",
                 f"if (!IterateRecord(isolate, {value}, exception_state, {_quote(idl_type.syntax)},",
-                f"                   [&](v8::Local<v8::Value> {key_value}, v8::Local<v8::Value> {item_value}) {{",
+                f"                   [&](v8::Local<v8::Value> {key_value}, RecordValueGetter {get_item}) {{",
                 *["      " + line for line in converted_key],
+                f"      v8::Local<v8::Value> {item_value};",
+                f"      if (!{get_item}(&{item_value})) {{",
+                "        return false;",
+                "      }",
                 *["      " + line for line in converted_item],
                 f"      {target}.emplace_back(std::move({key}), std::move({item}));",
                 "      return true;",

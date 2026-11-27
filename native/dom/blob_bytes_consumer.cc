@@ -102,6 +102,14 @@ std::optional<std::string> BlobBytesConsumer::DrainAsBytes() {
   return bytes;
 }
 
+scoped_refptr<BlobDataHandle> BlobBytesConsumer::DrainAsBlobDataHandle() {
+  if (started_ || state_ != PublicState::kReadableOrWaiting) {
+    return nullptr;
+  }
+  state_ = PublicState::kClosed;
+  return std::move(handle_);
+}
+
 void BlobBytesConsumer::SetClient(BytesConsumer::Client* client) {
   DCHECK(!client_);
   DCHECK(client);

@@ -315,14 +315,20 @@ def test_a_keepalive_fetch_outlives_its_document_and_another_does_not(session: m
     server.routes["/dropped"] = _Route(status=302, headers=[("Location", "/dropped-after")], hold=held)
     server.text("/kept-after", "kept")
     server.text("/dropped-after", "dropped")
-    url = server.page("/", "<p>first</p>")
+    # A page of no-store whose script's request gets a response of no-store is not kept in the back/forward cache, so it
+    # unloads, as in Chrome.
+    no_store = [("Cache-Control", "no-store")]
+    url = server.page("/", "<p>first</p>", no_store)
+    server.text("/not-stored", "", no_store)
     second = server.page("/second", "<p>second</p>")
 
     with _open_page(session, url) as page:
         page.evaluate("fetch('/kept', {keepalive: true, method: 'POST', body: 'beacon'}); fetch('/dropped'); null")
         assert server.wait_for("/kept")
         assert server.wait_for("/dropped")
-        page.evaluate("location.href = '/second'; null")
+        page.evaluate(
+            "fetch('/not-stored').then(r => r.text()).then(() => { location.href = '/second'; return null; })"
+        )
         assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS) == PageNavigation(url=second, status=200)
         held.set()
         assert server.wait_for("/kept-after")

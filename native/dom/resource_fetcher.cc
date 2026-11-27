@@ -23,9 +23,10 @@
 namespace mitto {
 namespace {
 
-// net::ERR_INVALID_URL and ERR_ABORTED, which the Page program, with no
-// //net, cannot name.
+// net::ERR_INVALID_URL, ERR_BLOCKED_BY_CLIENT and ERR_ABORTED, which the Page
+// program, with no //net, cannot name.
 constexpr int kInvalidUrl = -300;
+constexpr int kBlockedByClient = -20;
 constexpr int kAborted = -3;
 
 // Blink's kSmallImageMaxSize: an image of at most this many square pixels
@@ -397,6 +398,14 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
   Window* const window = document ? document->DefaultView() : nullptr;
   if (!window || !params.url.is_valid()) {
     return nullptr;
+  }
+  // PrepareRequest() blocks what FrameFetchContext::CanRequest() refuses:
+  // ResourceForBlockedRequest().
+  if (document->RefusesRequestWhileFreezing(params.url)) {
+    Resource* const blocked = bindings::MakeGarbageCollected<Resource>(
+        params.type, params.url, params.mode, params.credentials);
+    blocked->Finish(kBlockedByClient);
+    return blocked;
   }
   // MatchPreload() first: an unused preload of the URL and type, which a
   // newer resource of the URL and another type does not hide, and then the

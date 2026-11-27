@@ -67,6 +67,9 @@ CacheResponse ToCacheResponse(const PageCacheResponse& response) {
   cache_response.response_time = base::Time::FromDeltaSinceWindowsEpoch(
       base::Microseconds(response.response_time));
   cache_response.body_size = response.body_size;
+  if (ShouldPadResponseType(cache_response.response_type)) {
+    cache_response.padding = response.padding;
+  }
   return cache_response;
 }
 
@@ -85,6 +88,7 @@ PageCacheResponse ToPageResponse(const CacheResponse& response) {
       response.cors_exposed_header_names;
   page_response.response_time =
       response.response_time.ToDeltaSinceWindowsEpoch().InMicroseconds();
+  page_response.padding = response.padding;
   return page_response;
 }
 
@@ -103,6 +107,11 @@ bool IsPutValid(const PageCacheOperation& operation) {
           static_cast<uint8_t>(CacheResponseType::kOpaqueRedirect);
   if (!opaque && response.status == 206) {
     return false;
+  }
+  // Blink checks Vary in the lines that a script sees, which an opaque
+  // response has none of, though it sends those that it filters.
+  if (opaque) {
+    return true;
   }
   for (const auto& [name, value] : response.headers) {
     if (base::EqualsCaseInsensitiveASCII(name, "vary")) {

@@ -7,9 +7,11 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/v8_readable_stream.h"
 #include "mitto/bindings/v8_response.h"
 #include "mitto/dom/body_stream_buffer.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/fetch_data_loader.h"
 #include "mitto/dom/form_data_bytes_consumer.h"
 #include "mitto/dom/headers.h"
@@ -91,24 +93,30 @@ Response* Initialize(BodyStreamBuffer* body,
 class ReadAllClient final : public cppgc::GarbageCollected<ReadAllClient>,
                             public FetchDataLoader::Client {
  public:
-  explicit ReadAllClient(
-      base::OnceCallback<void(std::optional<std::string>)> done)
+  explicit ReadAllClient(Response::ReadAllCallback done)
       : done_(std::move(done)) {}
 
   void DidFetchDataLoadedArrayBuffer(std::string bytes) override {
     Done(std::move(bytes));
   }
-  void DidFetchDataLoadFailed() override { Done(std::nullopt); }
-  void Abort(v8::Local<v8::Value> reason) override { Done(std::nullopt); }
+  void DidFetchDataLoadFailed() override {
+    Done(base::unexpected(Response::ReadAllError::kFailed));
+  }
+  void Abort(v8::Local<v8::Value> reason) override {
+    Done(base::unexpected(Response::ReadAllError::kAborted));
+  }
+  void DidStopLoading() override {
+    Done(base::unexpected(Response::ReadAllError::kStopped));
+  }
 
  private:
-  void Done(std::optional<std::string> body) {
+  void Done(base::expected<std::string, Response::ReadAllError> body) {
     if (done_) {
       std::move(done_).Run(std::move(body));
     }
   }
 
-  base::OnceCallback<void(std::optional<std::string>)> done_;
+  Response::ReadAllCallback done_;
 };
 
 }  // namespace
@@ -170,24 +178,108 @@ Response* Response::CreateFetched(ResponseType type,
                                   BodyStreamBuffer* body) {
   Response* const response = bindings::MakeGarbageCollected<Response>();
   response->type_ = type;
+  if (type == ResponseType::kOpaque) {
+    // Blink's CreateOpaqueFilteredResponse(): the response goes behind an
+    // empty view.
+    response->internal_response_ =
+        CreateFetched(ResponseType::kDefault, status, std::move(status_text),
+                      std::move(url), redirected, headers, body);
+    response->status_ = 0;
+    response->headers_ = mitto::Headers::Create(Headers::Guard::kImmutable);
+    return response;
+  }
   response->status_ = status;
   response->status_text_ = std::move(status_text);
   response->url_ = std::move(url);
   response->redirected_ = redirected;
   response->headers_ = headers;
-  if (type == ResponseType::kOpaque) {
-    response->internal_body_buffer_ = body;
-  } else {
-    response->body_buffer_ = body;
+  response->body_buffer_ = body;
+  return response;
+}
+
+// static
+Response* Response::Error() {
+  // Blink's CreateNetworkErrorResponse().
+  Response* const response = bindings::MakeGarbageCollected<Response>();
+  response->type_ = ResponseType::kError;
+  response->status_ = 0;
+  response->headers_ = mitto::Headers::Create(Headers::Guard::kImmutable);
+  return response;
+}
+
+// static
+Response* Response::Redirect(const std::u16string& url,
+                             uint16_t status,
+                             bindings::ExceptionState& exception_state) {
+  // As ExecutionContext::CompleteURL() parses it, with a document's encoding
+  // for its query.
+  const GURL parsed = ExecutionContext::Current().CompleteUrl(url);
+  if (!parsed.is_valid()) {
+    exception_state.ThrowTypeError(
+        base::StrCat({"Failed to parse URL from ", base::UTF16ToUTF8(url)}));
+    return nullptr;
   }
+  if (status != 301 && status != 302 && status != 303 && status != 307 &&
+      status != 308) {
+    exception_state.ThrowRangeError("Invalid status code");
+    return nullptr;
+  }
+  Response* const response = bindings::MakeGarbageCollected<Response>();
+  response->status_ = status;
+  response->headers_ = mitto::Headers::Create(Headers::Guard::kImmutable);
+  response->headers_->AppendLine("Location", parsed.spec());
   return response;
 }
 
 Response::Response() = default;
 Response::~Response() = default;
 
-std::string Response::MimeType() const {
-  return base::ToLowerASCII(headers_->GetValue("content-type").value_or(""));
+Response* Response::Clone(bindings::ExceptionState& exception_state) {
+  if (IsBodyLocked() || IsBodyUsed()) {
+    exception_state.ThrowTypeError("Response body is already used");
+    return nullptr;
+  }
+  // FetchResponseData::Clone(): the body goes to both through a tee, and an
+  // opaque response's internal response is cloned with it.
+  Response* const response = bindings::MakeGarbageCollected<Response>();
+  response->type_ = type_;
+  response->status_ = status_;
+  response->status_text_ = status_text_;
+  response->url_ = url_;
+  response->redirected_ = redirected_;
+  response->padding_ = padding_;
+  response->headers_ = headers_->Clone();
+  if (internal_response_) {
+    response->internal_response_ = internal_response_->Clone(exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+  }
+  if (body_buffer_) {
+    BodyStreamBuffer* branch1 = nullptr;
+    BodyStreamBuffer* branch2 = nullptr;
+    body_buffer_->Tee(&branch1, &branch2, exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+    body_buffer_ = branch1;
+    response->body_buffer_ = branch2;
+  }
+  return response;
+}
+
+std::string Response::ContentType() const {
+  return headers_->GetValue("content-type").value_or("");
+}
+
+bool Response::IsBodyUsed() const {
+  const BodyStreamBuffer* const body_buffer = InternalBodyBuffer();
+  return body_buffer && body_buffer->IsStreamDisturbed();
+}
+
+BodyStreamBuffer* Response::InternalBodyBuffer() const {
+  return internal_response_ ? internal_response_->body_buffer_.Get()
+                            : body_buffer_.Get();
 }
 
 BodyStreamBuffer* Response::BodyBuffer() const {
@@ -202,7 +294,7 @@ void Response::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(headers_);
   visitor->Trace(body_buffer_);
-  visitor->Trace(internal_body_buffer_);
+  visitor->Trace(internal_response_);
 }
 
 std::u16string Response::Type() const {
@@ -215,26 +307,23 @@ std::u16string Response::Type() const {
       return u"default";
     case ResponseType::kOpaque:
       return u"opaque";
+    case ResponseType::kError:
+      return u"error";
   }
 }
 
-void Response::ReadAll(
-    base::OnceCallback<void(std::optional<std::string> body)> done) {
+void Response::ReadAll(ReadAllCallback done,
+                       bindings::ExceptionState& exception_state) {
   CHECK(!IsBodyLocked() && !IsBodyUsed());
-  if (!body_buffer_) {
+  BodyStreamBuffer* const body_buffer = InternalBodyBuffer();
+  if (!body_buffer) {
     std::move(done).Run(std::string());
     return;
   }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  auto* const client =
-      bindings::MakeGarbageCollected<ReadAllClient>(std::move(done));
-  bindings::ExceptionState exception_state(isolate);
-  const v8::TryCatch try_catch(isolate);
-  body_buffer_->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(),
-                             client, exception_state);
-  if (exception_state.HadException()) {
-    client->DidFetchDataLoadFailed();
-  }
+  body_buffer->StartLoading(
+      FetchDataLoader::CreateLoaderAsArrayBuffer(),
+      bindings::MakeGarbageCollected<ReadAllClient>(std::move(done)),
+      exception_state);
 }
 
 }  // namespace mitto

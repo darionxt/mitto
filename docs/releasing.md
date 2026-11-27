@@ -227,13 +227,14 @@ A test whose result changed against the list is a new test, a changed test, a ch
 
 ### 10. The version
 
-Raise `version` in [`pyproject.toml`](../pyproject.toml) and run `uv lock`, which writes it into `uv.lock` too. Then read the notes of the version's GitHub release, which hold [its entry in `CHANGELOG.md`](#what-changes-for-callers):
+Raise `version` in [`pyproject.toml`](../pyproject.toml) and run `uv lock`, which writes it into `uv.lock` too. Gather the lines in `changelog.d/` into the version's entry in `CHANGELOG.md`, as [What changes for callers](#what-changes-for-callers) says, and read the notes of the version's GitHub release, which hold that entry:
 
 ```bash
+uv run python -m tools.release changelog X.Y.Z
 uv run python -m tools.release notes X.Y.Z
 ```
 
-A run adds to the entry what it changes for callers itself, such as the Persona that [step 8](#8-drop-the-oldest-chrome-release) dropped, whose name `persona=` refuses from then on. Without an entry for the version, the command stops and says so, and so do `tests/release` and the first job of the release workflow. The run's pull request then holds everything from step 2 on.
+A run adds to the entry what it changes for callers itself, such as the Persona that [step 8](#8-drop-the-oldest-chrome-release) dropped, whose name `persona=` refuses from then on. Without an entry for the version, the second command stops and says so, and so do `tests/release` and the first job of the release workflow. While `changelog.d/` still holds a file, the second command and that job stop and name it. The run's pull request then holds everything from step 2 on.
 
 ### 11. The tag
 
@@ -314,11 +315,21 @@ It takes the newest pinnable build of the Engine Release that the command names,
    ```
 
 4. Record no Baselines and write no Persona data, but what a Page of each Persona turns on and off: its lists are against the engine's runtime-enabled features, which a patch build can change. Run `uv run python -m tools.release page-features` and review its report, as [step 6](#6-write-the-persona-data) of a run does. Its seed is the day's, so the report says that the Baselines have an older one, which the next run brings together. Step 2 gives the checkout and the Baselines of the Engine Release the same build, and a patch run is the exception: until the next run, the Engine Release's Persona keeps the build of its Baselines, which `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name, while the engine runs the new build. CI's Parity Checks still compare the engine with those Baselines, so a gap there is network code, or for the Script Fingerprint the Runtime, that the patch build changed, and a decision for the owner.
-5. Raise the patch in [the version](#10-the-version), with an entry in `CHANGELOG.md` that names each fix the build brings to exported files, with its severity and CVE from the command, and says that the Persona still names the build of its Baselines. Then [the tag](#11-the-tag) and [the publish](#12-the-publish), as in a run.
+5. Raise the patch in [the version](#10-the-version), gather `changelog.d/` into its entry as that step does, and write in the entry each fix that the build brings to exported files, with its severity and CVE from the command, and that the Persona still names the build of its Baselines. Then [the tag](#11-the-tag) and [the publish](#12-the-publish), as in a run.
 
 ## What changes for callers
 
-[`CHANGELOG.md`](../CHANGELOG.md) says what changes for callers in each version, under a heading `## X.Y.Z`, newest first: what a Session sends now, what a caller has to change, and what an older mitto cannot read any more. A change that callers will notice writes it there, in the pull request that makes the change. It goes under the version that ships it: the next minor version, whether a run makes it or [a change ships in one of its own](#when-a-run-starts), or a patch that ships before it. The notes of the version's GitHub release hold the entry after their first paragraph, which names the Supported Window and the Engine Release.
+[`CHANGELOG.md`](../CHANGELOG.md) says what changes for callers in each version, under a heading `## X.Y.Z`, newest first: what a Session sends now, what a caller has to change, and what an older mitto cannot read any more. The notes of the version's GitHub release hold the entry after their first paragraph, which names the Supported Window and the Engine Release.
+
+A change that callers will notice says so in the pull request that makes the change, in a file of its own in `changelog.d/`, named after its branch: `changelog.d/frame-storage.md` for the branch `feat/frame-storage`. The file holds the lines as the entry will: one item of its list a line, starting with `- `, with relative links from the repository's root. So two pull requests never change the same lines, where each used to add to the end of one list in `CHANGELOG.md`, and the second to merge had to merge `main` again. `tests/test_docs.py` checks the files as it checks `CHANGELOG.md`, and `tests/release` that the release can gather each one. Lines already in `CHANGELOG.md` stay where they are.
+
+The release's own pull request gathers the files into the entry of the version that ships them: the next minor version, whether a run makes it or [a change ships in one of its own](#when-a-run-starts), or a patch that ships before it. A patch's pull request gathers what its own branch holds, as a run's does:
+
+```bash
+uv run python -m tools.release changelog X.Y.Z
+```
+
+The command writes each file's lines at the end of the version's entry, after the lines that it already has, in the order that the files came to `main`, and deletes the files. A version with no entry yet gets its heading, above the newest version before it, and the pull request writes the entry's first paragraph, as before. The command reads that order from git's history, so it runs in a clone with the history of `main`: in a shallow clone, every file would seem to come in one commit, and they would go by name. Until `changelog.d/` is empty, `tools.release notes` and the first job of the release workflow, a dry run's too, stop and name the files left.
 
 Every version needs an entry, a patch too. A patch is made for its fix, and its notes are where a caller reads what it fixes and whether to take it. Without an entry, they would only say again what the notes of the version before said.
 

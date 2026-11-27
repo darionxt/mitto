@@ -28,6 +28,11 @@ struct MimeTypeAndCharset {
 // one, and keeps its charset only if it names the same type.
 MimeTypeAndCharset GetMimeTypeAndCharset(std::string_view content_type);
 
+// Blink's ResourceResponse::HttpContentType(), of a response with the header
+// lines `headers`: the MIME type that its Content-Type says, in lower case,
+// without parameters, which no sniffing rewrites.
+std::string HttpContentType(std::string_view headers);
+
 }  // namespace mitto
 
 #endif  // MITTO_ENCODING_CONTENT_TYPE_H_

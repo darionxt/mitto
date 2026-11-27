@@ -58,6 +58,9 @@ struct NavigationRequest {
   // Whether a header gave the initiator a Content-Security-Policy, which a
   // local URL's document that it commits takes with its policy container.
   bool initiator_has_header_csp = false;
+  // Whether the initiator's embedder policy, which such a document takes too,
+  // is compatible with cross-origin isolation.
+  bool initiator_embedder_policy_isolates = false;
 };
 
 struct HistoryItem;

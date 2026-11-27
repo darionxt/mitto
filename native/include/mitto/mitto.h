@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 12
+#define MITTO_ABI_VERSION 13
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -244,6 +244,10 @@ typedef struct MittoPageEvent {
   // NUL byte.
   char* url;
   size_t url_size;
+  // NAVIGATED with no net error: 1 if the Page's back/forward cache restored
+  // the document that the navigation goes to, a traversal of the session
+  // history, with no request, and 0 otherwise.
+  int32_t restored;
 } MittoPageEvent;
 
 // Returns the ABI version of the loaded library. Callers compare it with the
@@ -691,6 +695,13 @@ MITTO_EXPORT void mitto_session_end_waits(MittoSession* session);
 //   `headers` says, or stays absent, on each hop, whatever the rules would make of
 //   it. //net still changes an Origin on a redirect as it does in Chrome. "referer"
 //   here with no "referrer" sends none.
+// - "header_order" is "fetch" or "xhr", for a request in the place of a page's
+//   fetch() or XMLHttpRequest. If `headers` has a line that "fixed_headers" names
+//   and that a page's script may set, or a client hint, the lines that Blink holds
+//   in its HTTPHeaderMap, which are those, Content-Type, the client hints and
+//   User-Agent, go in the order that the map gives their names, ahead of the rest,
+//   as Chrome sends them. Any other line of a forbidden request-header name is one
+//   of the rest. Without it, each line goes where `headers` has it.
 //
 // An unknown key or an invalid value is refused, so a mistake cannot go
 // unnoticed.

@@ -4,9 +4,10 @@ Each test opens a Page at a blank page of the server and starts workers whose sc
 of them is held to what Chrome 157 does for the same scripts (docs/runtime.md, "Dedicated workers").
 """
 
+import contextlib
 import http.server
+import socket
 import threading
-import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -289,11 +290,8 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
     ),
-    # A keepalive fetch that goes on after the worker that started it closes.
-    "/keepalive.js": (
-        "text/javascript",
-        b"fetch('/beacon', { method: 'POST', body: 'kept', keepalive: true }); close();",
-    ),
+    # A keepalive fetch that the server holds.
+    "/keepalive.js": ("text/javascript", b"fetch('/held', { keepalive: true });"),
     # A module that a worker of a data: URL imports, with what it imports in turn, one of them behind a redirect, none
     # of them with a CORS header.
     "/graph-a.js": (
@@ -321,12 +319,13 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
     "/timing-dynamic.js": ("text/javascript", b""),
 }
 
-# The path and body of each POST that reached the server, in order.
-_POSTED: list[tuple[str, bytes]] = []
 # The Referer and the header lines of each GET, by path, and the paths that redirect, to where.
 _REFERERS: dict[str, str | None] = {}
 _HEADERS: dict[str, list[tuple[str, str]]] = {}
 _REDIRECTS = {"/redirect-w.js": "/v2/w.js", "/redirect-c.js": "/graph-c.js"}
+# Whether /held, which is never answered, has been asked for, and whether the client has then let go of it.
+_HELD = threading.Event()
+_LET_GO = threading.Event()
 # The headers of the last GET of /echo, which any origin may read, and how many preflights of it came.
 _ECHOED: dict[str, str] = {}
 _PREFLIGHTS: list[str] = []
@@ -362,6 +361,18 @@ def server() -> Iterator[str]:
                 self.end_headers()
                 self.wfile.write(b"echo")
                 return
+            if path == "/held":
+                _HELD.set()
+                self.connection.settimeout(_TIMEOUT_SECONDS)
+                with contextlib.suppress(TimeoutError):
+                    try:
+                        closed = self.connection.recv(1, socket.MSG_PEEK) == b""
+                    except ConnectionError:
+                        closed = True
+                    if closed:
+                        _LET_GO.set()
+                self.close_connection = True
+                return
             if path in _REDIRECTS:
                 self.send_response(302)
                 self.send_header("Location", _REDIRECTS[path])
@@ -387,13 +398,6 @@ def server() -> Iterator[str]:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Headers", "x-test")
             self.send_header("Access-Control-Max-Age", "600")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def do_POST(self) -> None:
-            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            _POSTED.append((self.path, body))
-            self.send_response(200)
             self.send_header("Content-Length", "0")
             self.end_headers()
 
@@ -866,19 +870,21 @@ def test_a_workers_high_entropy_values_are_the_windows(server: str) -> None:
     assert worker["architecture"] != ""
 
 
+@pytest.mark.parametrize("ending", ["terminate", "close"])
 @pytest.mark.usefixtures("page_program")
-def test_a_workers_keepalive_fetch_outlives_the_worker(server: str) -> None:
-    _POSTED.clear()
-    script = """new Promise((resolve) => {
-        new Worker('/keepalive.js');
-        setTimeout(() => resolve('waited'), 500);
-    })"""
-
-    assert _evaluate(server, script) == "waited"
-    deadline = time.monotonic() + _TIMEOUT_SECONDS
-    while not _POSTED and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert _POSTED == [("/beacon", b"kept")]
+def test_a_workers_keepalive_fetch_ends_with_the_worker(server: str, ending: str) -> None:
+    # Only a document's goes on: Chrome 157 follows no redirect of a worker's that has ended.
+    _HELD.clear()
+    _LET_GO.clear()
+    with mitto.Session() as session:
+        with session._open_page(f"{server}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+            page.evaluate("self.worker = new Worker('/keepalive.js'); 0", timeout=_TIMEOUT_SECONDS)
+            assert _HELD.wait(_TIMEOUT_SECONDS)
+            if ending == "terminate":
+                page.evaluate("worker.terminate()", timeout=_TIMEOUT_SECONDS)
+                assert _LET_GO.wait(_TIMEOUT_SECONDS)
+        # The Page has closed, and its Session goes on.
+        assert _LET_GO.wait(_TIMEOUT_SECONDS)
 
 
 @pytest.mark.usefixtures("page_program")

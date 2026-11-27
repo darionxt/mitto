@@ -123,6 +123,9 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver,
   void ReceiveMessage(SerializedScriptValue message,
                       std::vector<MessagePortChannel> ports,
                       bool user_activation);
+  // WorkerGlobalScope::Initialize(): the worker's URL is its script's final
+  // one, and its referrer policy its response's.
+  void Initialize(const ScriptResponse& response);
   void RunModuleScript(ScriptResponse response);
   void OnModuleTreeFetched(ModuleScript* module_script);
   // PrepareForShutdownOnWorkerThread(): the context goes, which ends the
@@ -285,7 +288,8 @@ void DedicatedWorkerThread::Scope::Start() {
           },
           scheduler_->TaskRunner(TaskType::kNetworking),
           base::Unretained(this)));
-  fetcher_ = std::make_unique<PageFetcher>(*requests_);
+  fetcher_ =
+      std::make_unique<PageFetcher>(*requests_, PageFetcher::Kind::kWorker);
   scope_->SetFetcher(fetcher_.get());
   // The worker's own Cache API, IndexedDB and Storage Buckets, as its
   // creator's frame's storage key reaches them, unless its origin is opaque
@@ -406,9 +410,6 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetStorageBucketHost(nullptr);
     scope_->SetAnimationFrames(nullptr);
   }
-  // The fetcher lets its keepalive requests go before the rest are cancelled,
-  // so that they go on without the worker, as a window's do without their
-  // document.
   fetcher_.reset();
   if (requests_) {
     requests_->CancelAll();
@@ -417,6 +418,12 @@ void DedicatedWorkerThread::Scope::Shutdown() {
   if (quit_) {
     std::move(quit_).Run();
   }
+}
+
+void DedicatedWorkerThread::Scope::Initialize(const ScriptResponse& response) {
+  scope_->SetUrl(response.url);
+  scope_->SetReferrerPolicy(FetchReferrerPolicyFromHeaderValue(
+      HeaderField(response.headers, "referrer-policy")));
 }
 
 void DedicatedWorkerThread::Scope::RunClassicScript(ScriptResponse response) {
@@ -450,8 +457,7 @@ void DedicatedWorkerThread::Scope::RunClassicScript(ScriptResponse response) {
     scope_->Close();
     return;
   }
-  // InitializeURL(): the worker's URL is its script's final one.
-  scope_->SetUrl(response.url);
+  Initialize(response);
   // WorkerClassicScriptLoader decodes as UTF-8, unless the response's charset
   // or a byte order mark names another.
   const std::unique_ptr<TextResourceDecoder> decoder =
@@ -510,8 +516,7 @@ void DedicatedWorkerThread::Scope::RunModuleScript(ScriptResponse response) {
     OnModuleTreeFetched(nullptr);
     return;
   }
-  // InitializeURL(): the worker's URL is its script's final one.
-  scope_->SetUrl(response.url);
+  Initialize(response);
   auto main_script = std::make_shared<ModuleWorkerMainScript>();
   main_script->url = response.url;
   // A data: URL's, which no request answered.
@@ -681,6 +686,7 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
   PageRequest request;
   request.kind = PageRequestKind::kScript;
   request.url = url.spec();
+  request.referrer_policy = ToPageReferrerPolicy(scope_->GetReferrerPolicy());
   request.priority = kHighestPriority;
   request.incremental = kIncremental;
   ImportedScriptClient client;
