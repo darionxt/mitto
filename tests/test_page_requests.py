@@ -794,6 +794,116 @@ def test_fetch_later_takes_the_quota_of_its_frames_deferred_fetch_control_docume
     assert gave == {name: expected for name, (_, expected) in _FETCH_LATER_QUOTAS.items()}
 
 
+# Each case's Permissions-Policy or Feature-Policy header of the page, or none, its script, with the paths of frame pages
+# whose own headers say what their names do, and what Chrome for Testing 157.0.8103.79 gave for it.
+_FETCH_LATER_HEADER_QUOTAS: dict[str, tuple[tuple[str, str] | None, str, Any]] = {
+    "a top-level document denied deferred-fetch": (
+        ("Permissions-Policy", "deferred-fetch=()"),
+        "return avail('/x');",
+        0,
+    ),
+    "a top-level document denied deferred-fetch-minimal": (
+        ("Permissions-Policy", "deferred-fetch-minimal=()"),
+        "return avail('/x');",
+        0,
+    ),
+    "a top-level document denied deferred-fetch by Feature-Policy": (
+        ("Feature-Policy", "deferred-fetch 'none'"),
+        "return avail('/x');",
+        0,
+    ),
+    "a frame of the page's origin under a top-level document denied deferred-fetch": (
+        ("Permissions-Policy", "deferred-fetch=()"),
+        "const a = await frame(F); return ask(a, \"return avail('/x');\");",
+        0,
+    ),
+    "a frame of another origin under a top-level document denied deferred-fetch": (
+        ("Permissions-Policy", "deferred-fetch=()"),
+        "const b = await frame(B + F); return ask(b, \"return avail('/x');\");",
+        8192,
+    ),
+    "a frame of another origin under a top-level document that keeps deferred-fetch-minimal to itself": (
+        ("Permissions-Policy", "deferred-fetch-minimal=(self)"),
+        "const b = await frame(B + F); return ask(b, \"return avail('/x');\");",
+        0,
+    ),
+    "a top-level document's quota beside a frame of another origin that it keeps deferred-fetch-minimal from": (
+        ("Permissions-Policy", "deferred-fetch-minimal=(self)"),
+        "await frame(B + F); for (const u of fillers) fill(u, 65536); return avail('/x');",
+        65536,
+    ),
+    "a frame of another origin allowed deferred-fetch under a top-level document that keeps it to itself": (
+        ("Permissions-Policy", "deferred-fetch=(self)"),
+        "const b = await frame(B + F, {allow: 'deferred-fetch'}); return ask(b, \"return avail('/x');\");",
+        8192,
+    ),
+    "a frame of another origin allowed deferred-fetch under a top-level document that gives it to all": (
+        ("Permissions-Policy", "deferred-fetch=*"),
+        "const b = await frame(B + F, {allow: 'deferred-fetch'}); return ask(b, \"return avail('/x');\");",
+        65536,
+    ),
+    "a frame of another origin whose header denies deferred-fetch-minimal": (
+        None,
+        "const b = await frame(B + '/f-no-minimal'); return ask(b, \"return avail('/x');\");",
+        0,
+    ),
+    "a frame of another origin whose Feature-Policy denies deferred-fetch-minimal": (
+        None,
+        "const b = await frame(B + '/f-fp-no-minimal'); return ask(b, \"return avail('/x');\");",
+        0,
+    ),
+    "a frame of another origin allowed deferred-fetch whose header denies it": (
+        None,
+        "const b = await frame(B + '/f-no-deferred-fetch', {allow: 'deferred-fetch'}); return ask(b, \"return "
+        "avail('/x');\");",
+        0,
+    ),
+    "a frame of another origin allowed deferred-fetch whose header denies deferred-fetch-minimal": (
+        None,
+        "const b = await frame(B + '/f-no-minimal', {allow: 'deferred-fetch'}); return ask(b, \"return avail('/x');\");",
+        65536,
+    ),
+    "a frame of another origin in one whose header keeps deferred-fetch-minimal to itself": (
+        None,
+        "const b = await frame(B + '/f-minimal-self'); return ask(b, \"const c = await frame(C + F); return ask(c, "
+        '\\"return avail(\'/x\');\\");");',
+        0,
+    ),
+    "a frame of the page's origin whose header denies deferred-fetch": (
+        None,
+        "const a = await frame('/f-no-deferred-fetch'); return ask(a, \"return avail('/x');\");",
+        65536,
+    ),
+}
+
+
+def test_fetch_later_takes_its_quota_from_the_permissions_policy_headers(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The quotas go by what each document's Permissions-Policy or Feature-Policy header declares of deferred-fetch and
+    # deferred-fetch-minimal, as by what an iframe's allow passes on: of a frame of another origin, its own, and of one of
+    # the page's origin, the top-level document's, whose quota it shares.
+    _fetch_later_page(server)
+    port = server.origin.rsplit(":", 1)[1]
+    helpers = (
+        f"const A = 'http://127.0.0.1:{port}', B = 'http://localhost:{port}', C = 'http://c.localhost:{port}', F = '/f';"
+        + _FETCH_LATER_HELPERS
+    )
+    for path, header in (
+        ("/f-no-minimal", ("Permissions-Policy", "deferred-fetch-minimal=()")),
+        ("/f-fp-no-minimal", ("Feature-Policy", "deferred-fetch-minimal 'none'")),
+        ("/f-no-deferred-fetch", ("Permissions-Policy", "deferred-fetch=()")),
+        ("/f-minimal-self", ("Permissions-Policy", "deferred-fetch-minimal=(self)")),
+    ):
+        server.page(path, f"<body><script>{helpers}</script>", [header])
+    gave: dict[str, Any] = {}
+    for index, (name, (header, script, _)) in enumerate(_FETCH_LATER_HEADER_QUOTAS.items()):
+        url = server.page(f"/top-{index}", f"<body><script>{helpers}</script>", [header] if header else [])
+        with _open_page(session, url) as page:
+            gave[name] = page.evaluate(f"(async () => {{ {script} }})()", timeout=_TIMEOUT_SECONDS)
+    assert gave == {name: expected for name, (_, _, expected) in _FETCH_LATER_HEADER_QUOTAS.items()}
+
+
 def test_a_frames_deferred_requests_go_as_its_document_does(session: mitto.Session, server: _Server) -> None:
     # As Chrome 157 sends them: those of a frame of the page's origin and of another site as the frame goes, and those of
     # a document that a navigation of its frame leaves.
