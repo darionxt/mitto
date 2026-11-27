@@ -445,9 +445,12 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   // origin then differs, an opaque one under a sandbox.
   const bool agent_isolated =
       parent_ && parent_->window_->AgentCrossOriginIsolated();
-  const bool isolated = IsolatesDocument(
-      agent_isolated, origin, navigation.container_policy, ParsedPolicy(),
-      /*headerless=*/true, navigation.response_sandboxed);
+  // Chrome's error page is never isolated, whatever its frame's allow.
+  const bool isolated =
+      committed.source != PageDocumentSource::kErrorPage &&
+      IsolatesDocument(agent_isolated, origin, navigation.container_policy,
+                       ParsedPolicy(),
+                       /*headerless=*/true, navigation.response_sandboxed);
   const bool reuse_window =
       old_document.IsInitialEmptyDocument() &&
       old_document.GetOrigin().IsSameOriginWith(origin) &&
