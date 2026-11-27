@@ -14,6 +14,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/window.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
@@ -42,6 +43,19 @@ v8::Local<v8::Promise> ResolvedFromTask(v8::Isolate* isolate,
   return resolver->GetPromise();
 }
 
+// Each of its operations is for a context whose origin is not opaque, but for
+// the top-level about:blank, whose scripts are those of the standalone program.
+bool ThrowIfOpaque(bindings::ExceptionState& exception_state) {
+  ExecutionContext& context = ExecutionContext::Current();
+  if (!context.GetSecurityOrigin().opaque() ||
+      (context.IsWindow() && !static_cast<Window&>(context).IsInFrame())) {
+    return false;
+  }
+  exception_state.ThrowTypeError(
+      "The operation is not supported in this context.");
+  return true;
+}
+
 }  // namespace
 
 // static
@@ -59,6 +73,9 @@ const bindings::WrapperTypeInfo* StorageManager::GetWrapperTypeInfo() const {
 v8::Local<v8::Promise> StorageManager::Estimate(
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = exception_state.GetIsolate();
+  if (ThrowIfOpaque(exception_state)) {
+    return v8::Local<v8::Promise>();
+  }
   // A document that its Session loaded, or a worker of one, asks the
   // Session's quota, as Blink asks the browser's QuotaManagerHost, and its
   // answer comes from a task of its own.
@@ -125,12 +142,18 @@ v8::Local<v8::Promise> StorageManager::Estimate(
 
 v8::Local<v8::Promise> StorageManager::Persisted(
     bindings::ExceptionState& exception_state) {
+  if (ThrowIfOpaque(exception_state)) {
+    return v8::Local<v8::Promise>();
+  }
   v8::Isolate* const isolate = exception_state.GetIsolate();
   return ResolvedFromTask(isolate, v8::False(isolate));
 }
 
 v8::Local<v8::Promise> StorageManager::Persist(
     bindings::ExceptionState& exception_state) {
+  if (ThrowIfOpaque(exception_state)) {
+    return v8::Local<v8::Promise>();
+  }
   v8::Isolate* const isolate = exception_state.GetIsolate();
   return ResolvedFromTask(isolate, v8::False(isolate));
 }

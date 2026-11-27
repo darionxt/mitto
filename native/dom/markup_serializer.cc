@@ -18,6 +18,7 @@
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/processing_instruction.h"
+#include "mitto/dom/window.h"
 
 namespace mitto {
 
@@ -394,7 +395,7 @@ class MarkupAccumulator {
 
   // MarkupFormatter::AppendText() with EntityMaskForText(): in HTML, the
   // text of these HTML elements is written as it is, and noscript's where
-  // the document has a window, whose scripts a Page always runs. A document
+  // the document has a window, whose scripts no sandbox withholds. A document
   // of no window, such as a template's contents or one that
   // createHTMLDocument() or DOMParser made, has noscript's text escaped.
   void AppendText(const Node& text) {
@@ -422,8 +423,9 @@ class MarkupAccumulator {
         return kEntityMaskInCdata;
       }
     }
-    if (element.LocalName() == u"noscript" &&
-        text.GetDocument().DefaultView() != nullptr) {
+    Window* const window = text.GetDocument().DefaultView();
+    if (element.LocalName() == u"noscript" && window &&
+        window->CanExecuteScripts(/*about_to_execute=*/false)) {
       return kEntityMaskInCdata;
     }
     return kEntityMaskInHtmlPcdata;

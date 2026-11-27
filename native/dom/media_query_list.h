@@ -46,7 +46,7 @@ MediaQueryFeatures MediaQueryFeaturesFor(
 // Machine's display, scale, viewport and settings. The fonts that ex, ch, ic,
 // cap and lh resolve against are Blink's sizes for a document with no font
 // data, until the Runtime has fonts (roadmap, M9).
-MediaValues MediaValuesFor(const PageStart& start);
+MediaValues MediaValuesFor(Window& window);
 
 // Whether `media`, the media attribute of an element of `document`, matches
 // its window, as a MediaQueryEvaluator of the document's frame evaluates it:

@@ -185,6 +185,15 @@ void HttpRefreshScheduler::MaybeHandle(std::u16string_view content,
                       " to a javascript: URL"}));
     return;
   }
+  if (source == Source::kMetaTag &&
+      document_->IsSandboxed(SandboxFlags::kAutomaticFeatures)) {
+    window->AddConsoleMessage(
+        ConsoleLevel::kError,
+        "Refused to execute the redirect specified via '<meta "
+        "http-equiv='refresh' content='...'>'. The document is sandboxed, and "
+        "the 'allow-scripts' keyword is not set.");
+    return;
+  }
   Schedule(parsed->delay, url,
            source == Source::kHeader
                ? ClientNavigationReason::kHttpHeaderRefresh

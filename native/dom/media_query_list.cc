@@ -31,7 +31,8 @@ constexpr int kColorBitsPerComponent = 8;
 // Upstream: third_party/blink/renderer/core/css/media_values.cc
 // Upstream: ui/base/pointer/pointer_device_win.cc
 // Upstream: ui/native_theme/os_settings_provider.cc
-MediaValues MediaValuesFor(const PageStart& start) {
+MediaValues MediaValuesFor(Window& window) {
+  const PageStart& start = window.Start();
   MediaValues values;
   values.media_type = "screen";
   values.viewport_width = start.viewport_width;
@@ -76,7 +77,9 @@ MediaValues MediaValuesFor(const PageStart& start) {
   values.horizontal_viewport_segments = 1;
   values.vertical_viewport_segments = 1;
   values.device_posture = MediaDevicePosture::kContinuous;
-  values.scripting = MediaScripting::kEnabled;
+  values.scripting = window.CanExecuteScripts(/*about_to_execute=*/false)
+                         ? MediaScripting::kEnabled
+                         : MediaScripting::kNone;
   return values;
 }
 
@@ -86,7 +89,7 @@ bool MediaAttributeMatches(const Document& document,
   if (media.empty() || !window) {
     return true;
   }
-  MediaValues values = MediaValuesFor(window->Start());
+  MediaValues values = MediaValuesFor(*window);
   values.strict_mode = !document.InQuirksMode();
   return MediaQueryEvaluator(values).Eval(*ParseMediaQuerySet(
       media, MediaQueryFeaturesFor(
@@ -148,7 +151,7 @@ std::u16string MediaQueryList::Media() const {
 // Evaluated on each read, as Blink's UpdateMatches() does, with what the
 // window has now: its machine never changes, but its document's mode can.
 bool MediaQueryList::Matches() const {
-  MediaValues values = MediaValuesFor(window_->Start());
+  MediaValues values = MediaValuesFor(*window_);
   values.strict_mode = !window_->GetDocument().InQuirksMode();
   return MediaQueryEvaluator(values).Eval(*media_);
 }

@@ -1,0 +1,1838 @@
+{
+ "chrome": "157.0.8103.79",
+ "how": "headless Chrome for Testing on macOS, on the server of tests/test_page_frame_sandbox.py",
+ "record": {
+  "reach": {
+   "initial": {
+    "none": [
+     "about:blank",
+     "about:blank"
+    ],
+    "all": [
+     "null",
+     "null"
+    ],
+    "scripts": [
+     "null",
+     "null"
+    ],
+    "origin": [
+     "about:blank",
+     "about:blank"
+    ],
+    "both": [
+     "about:blank",
+     "about:blank"
+    ]
+   },
+   "blank": {
+    "none": [
+     "about:blank",
+     "about:blank"
+    ],
+    "all": [
+     "null",
+     "null"
+    ],
+    "scripts": [
+     "null",
+     "null"
+    ],
+    "origin": [
+     "about:blank",
+     "about:blank"
+    ],
+    "both": [
+     "about:blank",
+     "about:blank"
+    ]
+   },
+   "srcdoc": {
+    "none": [
+     "about:blank",
+     "about:srcdoc"
+    ],
+    "all": [
+     "null",
+     "null"
+    ],
+    "scripts": [
+     "null",
+     "null"
+    ],
+    "origin": [
+     "about:blank",
+     "about:srcdoc"
+    ],
+    "both": [
+     "about:blank",
+     "about:srcdoc"
+    ]
+   },
+   "same": {
+    "none": [
+     "about:blank",
+     "ORIGIN/empty"
+    ],
+    "all": [
+     "null",
+     "null"
+    ],
+    "scripts": [
+     "null",
+     "null"
+    ],
+    "origin": [
+     "about:blank",
+     "ORIGIN/empty"
+    ],
+    "both": [
+     "about:blank",
+     "ORIGIN/empty"
+    ]
+   },
+   "other": {
+    "none": [
+     "about:blank",
+     "null"
+    ],
+    "all": [
+     "null",
+     "null"
+    ],
+    "scripts": [
+     "null",
+     "null"
+    ],
+    "origin": [
+     "about:blank",
+     "null"
+    ],
+    "both": [
+     "about:blank",
+     "null"
+    ]
+   },
+   "data": {
+    "none": [
+     "about:blank",
+     "null"
+    ],
+    "all": [
+     "null",
+     "null"
+    ],
+    "scripts": [
+     "null",
+     "null"
+    ],
+    "origin": [
+     "about:blank",
+     "null"
+    ],
+    "both": [
+     "about:blank",
+     "null"
+    ]
+   }
+  },
+  "within none": {
+   "srcdoc": {
+    "origin": "ORIGIN",
+    "location": "null",
+    "domain": "127.0.0.1",
+    "referrer": "ORIGIN/",
+    "baseURI": "PAGE",
+    "secure": "true",
+    "frameElement": "object",
+    "cookie": "top=1",
+    "setCookie": "top=1; set=1",
+    "localStorage": "0",
+    "sessionStorage": "0",
+    "open": "opened",
+    "databases": "object",
+    "caches": "object",
+    "locks": "object",
+    "cookieStore": "object",
+    "storageAccess": "true",
+    "estimate": "number",
+    "persisted": "false",
+    "buckets": "object",
+    "channel": "made",
+    "blob": "blob:http:",
+    "worker": "ran",
+    "fetch": "basic",
+    "cors": "basic",
+    "noCors": "basic",
+    "sameOrigin": "basic",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "load",
+    "module": "object",
+    "timing": "true,true,41 true,true,1",
+    "navigation": "false,true",
+    "pushed": "SecurityError: Failed to execute 'replaceState' on 'History': A history state object with URL 'PAGE#hash' cannot be created in a document with origin 'ORIGIN' and URL 'about:srcdoc'.",
+    "from": "ORIGIN"
+   },
+   "same": {
+    "origin": "ORIGIN",
+    "location": "ORIGIN",
+    "domain": "127.0.0.1",
+    "referrer": "PAGE",
+    "baseURI": "ORIGIN/child?key=same%20none",
+    "secure": "true",
+    "frameElement": "object",
+    "cookie": "top=1; set=1",
+    "setCookie": "top=1; set=1",
+    "localStorage": "0",
+    "sessionStorage": "0",
+    "open": "opened",
+    "databases": "object",
+    "caches": "object",
+    "locks": "object",
+    "cookieStore": "object",
+    "storageAccess": "true",
+    "estimate": "number",
+    "persisted": "false",
+    "buckets": "object",
+    "channel": "made",
+    "blob": "blob:http:",
+    "worker": "ran",
+    "fetch": "basic",
+    "cors": "basic",
+    "noCors": "basic",
+    "sameOrigin": "basic",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "load",
+    "module": "object",
+    "timing": "true,true,41 true,true,1",
+    "navigation": "true,true",
+    "pushed": "replaced",
+    "from": "ORIGIN"
+   },
+   "other": {
+    "origin": "OTHER",
+    "location": "OTHER",
+    "domain": "localhost",
+    "referrer": "ORIGIN/",
+    "baseURI": "OTHER/child?key=other%20none",
+    "secure": "true",
+    "frameElement": "null",
+    "cookie": "",
+    "setCookie": "",
+    "localStorage": "0",
+    "sessionStorage": "0",
+    "open": "opened",
+    "databases": "object",
+    "caches": "object",
+    "locks": "object",
+    "cookieStore": "object",
+    "storageAccess": "true",
+    "estimate": "number",
+    "persisted": "false",
+    "buckets": "object",
+    "channel": "made",
+    "blob": "blob:http:",
+    "worker": "ran",
+    "fetch": "basic",
+    "cors": "basic",
+    "noCors": "basic",
+    "sameOrigin": "basic",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "load",
+    "module": "object",
+    "timing": "true,true,41 true,true,1",
+    "navigation": "true,true",
+    "pushed": "replaced",
+    "from": "OTHER"
+   }
+  },
+  "within scripts": {
+   "srcdoc": {
+    "origin": "null",
+    "location": "null",
+    "domain": "",
+    "referrer": "ORIGIN/",
+    "baseURI": "PAGE",
+    "secure": "true",
+    "frameElement": "null",
+    "cookie": "SecurityError: Failed to read the 'cookie' property from 'Document': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "setCookie": "SecurityError: Failed to set the 'cookie' property on 'Document': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "localStorage": "SecurityError: Failed to read the 'localStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "sessionStorage": "SecurityError: Failed to read the 'sessionStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "open": "SecurityError: Failed to execute 'open' on 'IDBFactory': access to the Indexed Database API is denied in this context.",
+    "databases": "SecurityError: Failed to execute 'databases' on 'IDBFactory': Access to the IndexedDB API is denied in this context.",
+    "caches": "SecurityError: Failed to read the 'caches' property from 'Window': Cache storage is disabled because the context is sandboxed and lacks the 'allow-same-origin' flag.",
+    "locks": "SecurityError: Failed to execute 'query' on 'LockManager': Access to the Locks API is denied in this context.",
+    "cookieStore": "SecurityError: Failed to execute 'getAll' on 'CookieStore': Access to the CookieStore API is denied in this context.",
+    "storageAccess": "false",
+    "estimate": "TypeError: Failed to execute 'estimate' on 'StorageManager': The operation is not supported in this context.",
+    "persisted": "TypeError: Failed to execute 'persisted' on 'StorageManager': The operation is not supported in this context.",
+    "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
+    "channel": "made",
+    "blob": "blob:null/",
+    "worker": "SecurityError: Failed to construct 'Worker': Script at 'ORIGIN/worker.js?worker&srcdoc%20scripts' cannot be accessed from origin 'null'.",
+    "fetch": "TypeError: Failed to fetch",
+    "cors": "cors",
+    "noCors": "opaque",
+    "sameOrigin": "TypeError: Failed to fetch",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "error",
+    "module": "object",
+    "timing": "false,false,0 false,false,0",
+    "navigation": "false,true",
+    "pushed": "SecurityError: Failed to execute 'replaceState' on 'History': A history state object with URL 'PAGE#hash' cannot be created in a document with origin 'null' and URL 'about:srcdoc'.",
+    "from": "null"
+   },
+   "same": {
+    "origin": "null",
+    "location": "ORIGIN",
+    "domain": "",
+    "referrer": "PAGE",
+    "baseURI": "ORIGIN/child?key=same%20scripts",
+    "secure": "true",
+    "frameElement": "null",
+    "cookie": "SecurityError: Failed to read the 'cookie' property from 'Document': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "setCookie": "SecurityError: Failed to set the 'cookie' property on 'Document': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "localStorage": "SecurityError: Failed to read the 'localStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "sessionStorage": "SecurityError: Failed to read the 'sessionStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "open": "SecurityError: Failed to execute 'open' on 'IDBFactory': access to the Indexed Database API is denied in this context.",
+    "databases": "SecurityError: Failed to execute 'databases' on 'IDBFactory': Access to the IndexedDB API is denied in this context.",
+    "caches": "SecurityError: Failed to read the 'caches' property from 'Window': Cache storage is disabled because the context is sandboxed and lacks the 'allow-same-origin' flag.",
+    "locks": "SecurityError: Failed to execute 'query' on 'LockManager': Access to the Locks API is denied in this context.",
+    "cookieStore": "SecurityError: Failed to execute 'getAll' on 'CookieStore': Access to the CookieStore API is denied in this context.",
+    "storageAccess": "false",
+    "estimate": "TypeError: Failed to execute 'estimate' on 'StorageManager': The operation is not supported in this context.",
+    "persisted": "TypeError: Failed to execute 'persisted' on 'StorageManager': The operation is not supported in this context.",
+    "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
+    "channel": "made",
+    "blob": "blob:null/",
+    "worker": "SecurityError: Failed to construct 'Worker': Script at 'ORIGIN/worker.js?worker&same%20scripts' cannot be accessed from origin 'null'.",
+    "fetch": "TypeError: Failed to fetch",
+    "cors": "cors",
+    "noCors": "opaque",
+    "sameOrigin": "TypeError: Failed to fetch",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "error",
+    "module": "object",
+    "timing": "false,false,0 false,false,0",
+    "navigation": "true,true",
+    "pushed": "replaced",
+    "from": "null"
+   },
+   "other": {
+    "origin": "null",
+    "location": "OTHER",
+    "domain": "",
+    "referrer": "ORIGIN/",
+    "baseURI": "OTHER/child?key=other%20scripts",
+    "secure": "true",
+    "frameElement": "null",
+    "cookie": "SecurityError: Failed to read the 'cookie' property from 'Document': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "setCookie": "SecurityError: Failed to set the 'cookie' property on 'Document': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "localStorage": "SecurityError: Failed to read the 'localStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "sessionStorage": "SecurityError: Failed to read the 'sessionStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+    "open": "SecurityError: Failed to execute 'open' on 'IDBFactory': access to the Indexed Database API is denied in this context.",
+    "databases": "SecurityError: Failed to execute 'databases' on 'IDBFactory': Access to the IndexedDB API is denied in this context.",
+    "caches": "SecurityError: Failed to read the 'caches' property from 'Window': Cache storage is disabled because the context is sandboxed and lacks the 'allow-same-origin' flag.",
+    "locks": "SecurityError: Failed to execute 'query' on 'LockManager': Access to the Locks API is denied in this context.",
+    "cookieStore": "SecurityError: Failed to execute 'getAll' on 'CookieStore': Access to the CookieStore API is denied in this context.",
+    "storageAccess": "false",
+    "estimate": "TypeError: Failed to execute 'estimate' on 'StorageManager': The operation is not supported in this context.",
+    "persisted": "TypeError: Failed to execute 'persisted' on 'StorageManager': The operation is not supported in this context.",
+    "buckets": "SecurityError: Failed to execute 'keys' on 'StorageBucketManager': Access to Storage Buckets API is denied in this context.",
+    "channel": "made",
+    "blob": "blob:null/",
+    "worker": "SecurityError: Failed to construct 'Worker': Script at 'OTHER/worker.js?worker&other%20scripts' cannot be accessed from origin 'null'.",
+    "fetch": "TypeError: Failed to fetch",
+    "cors": "cors",
+    "noCors": "opaque",
+    "sameOrigin": "TypeError: Failed to fetch",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "error",
+    "module": "object",
+    "timing": "false,false,0 false,false,0",
+    "navigation": "true,true",
+    "pushed": "replaced",
+    "from": "null"
+   }
+  },
+  "within both": {
+   "srcdoc": {
+    "origin": "ORIGIN",
+    "location": "null",
+    "domain": "127.0.0.1",
+    "referrer": "ORIGIN/",
+    "baseURI": "PAGE",
+    "secure": "true",
+    "frameElement": "object",
+    "cookie": "top=1; set=1",
+    "setCookie": "top=1; set=1",
+    "localStorage": "0",
+    "sessionStorage": "0",
+    "open": "opened",
+    "databases": "object",
+    "caches": "object",
+    "locks": "object",
+    "cookieStore": "object",
+    "storageAccess": "true",
+    "estimate": "number",
+    "persisted": "false",
+    "buckets": "object",
+    "channel": "made",
+    "blob": "blob:http:",
+    "worker": "ran",
+    "fetch": "basic",
+    "cors": "basic",
+    "noCors": "basic",
+    "sameOrigin": "basic",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "load",
+    "module": "object",
+    "timing": "true,true,41 true,true,1",
+    "navigation": "false,true",
+    "pushed": "SecurityError: Failed to execute 'replaceState' on 'History': A history state object with URL 'PAGE#hash' cannot be created in a document with origin 'ORIGIN' and URL 'about:srcdoc'.",
+    "from": "ORIGIN"
+   },
+   "same": {
+    "origin": "ORIGIN",
+    "location": "ORIGIN",
+    "domain": "127.0.0.1",
+    "referrer": "PAGE",
+    "baseURI": "ORIGIN/child?key=same%20both",
+    "secure": "true",
+    "frameElement": "object",
+    "cookie": "top=1; set=1",
+    "setCookie": "top=1; set=1",
+    "localStorage": "0",
+    "sessionStorage": "0",
+    "open": "opened",
+    "databases": "object",
+    "caches": "object",
+    "locks": "object",
+    "cookieStore": "object",
+    "storageAccess": "true",
+    "estimate": "number",
+    "persisted": "false",
+    "buckets": "object",
+    "channel": "made",
+    "blob": "blob:http:",
+    "worker": "ran",
+    "fetch": "basic",
+    "cors": "basic",
+    "noCors": "basic",
+    "sameOrigin": "basic",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "load",
+    "module": "object",
+    "timing": "true,true,41 true,true,1",
+    "navigation": "true,true",
+    "pushed": "replaced",
+    "from": "ORIGIN"
+   },
+   "other": {
+    "origin": "OTHER",
+    "location": "OTHER",
+    "domain": "localhost",
+    "referrer": "ORIGIN/",
+    "baseURI": "OTHER/child?key=other%20both",
+    "secure": "true",
+    "frameElement": "null",
+    "cookie": "",
+    "setCookie": "",
+    "localStorage": "0",
+    "sessionStorage": "0",
+    "open": "opened",
+    "databases": "object",
+    "caches": "object",
+    "locks": "object",
+    "cookieStore": "object",
+    "storageAccess": "true",
+    "estimate": "number",
+    "persisted": "false",
+    "buckets": "object",
+    "channel": "made",
+    "blob": "blob:http:",
+    "worker": "ran",
+    "fetch": "basic",
+    "cors": "basic",
+    "noCors": "basic",
+    "sameOrigin": "basic",
+    "image": "load",
+    "script": "load",
+    "crossorigin": "load",
+    "module": "object",
+    "timing": "true,true,41 true,true,1",
+    "navigation": "true,true",
+    "pushed": "replaced",
+    "from": "OTHER"
+   }
+  },
+  "changes": {
+   "before": "ORIGIN/empty",
+   "set, not navigated": "ORIGIN/empty",
+   "navigated": "null",
+   "removed, not navigated": "null",
+   "removed, navigated": "ORIGIN/empty?3",
+   "set while it waits": "ORIGIN/empty?slow",
+   "the same navigation again": "ORIGIN/empty?slow%20again",
+   "set, and the same navigation again": "null",
+   "a clone": [
+    "",
+    "null",
+    null
+   ],
+   "an imported one": [
+    "",
+    "null",
+    null
+   ],
+   "an adopted one": [
+    "",
+    "null",
+    null
+   ],
+   "a clone without": [
+    null,
+    "ORIGIN/empty",
+    [
+     "",
+     ""
+    ]
+   ],
+   "a clone of a srcdoc": [
+    "allow-same-origin",
+    "about:srcdoc",
+    [
+     "copy",
+     "x"
+    ]
+   ],
+   "a frame element": "ORIGIN/empty",
+   "tokens": {
+    "ALLOW-SAME-ORIGIN": [
+     "about:srcdoc",
+     1,
+     "ALLOW-SAME-ORIGIN"
+    ],
+    " allow-same-origin\n": [
+     "about:srcdoc",
+     1,
+     " allow-same-origin\n"
+    ],
+    "allow-same-origin,": [
+     "null",
+     1,
+     "allow-same-origin,"
+    ],
+    "allow-everything allow-same-origin": [
+     "about:srcdoc",
+     2,
+     "allow-everything allow-same-origin"
+    ],
+    "allow-forms allow-same-origin": [
+     "about:srcdoc",
+     2,
+     "allow-forms allow-same-origin"
+    ]
+   }
+  },
+  "nested": {
+   "none in scripts": [
+    [
+     [
+      "inner",
+      "null",
+      false
+     ],
+     "null"
+    ]
+   ],
+   "scripts in scripts": [
+    [
+     [
+      "inner",
+      "null",
+      false
+     ],
+     "null"
+    ]
+   ],
+   "both in scripts": [
+    [
+     [
+      "inner",
+      "null",
+      false
+     ],
+     "null"
+    ]
+   ],
+   "none in both": [
+    [
+     [
+      "inner",
+      "ORIGIN",
+      true
+     ],
+     "ORIGIN"
+    ]
+   ],
+   "scripts in both": [
+    [
+     [
+      "inner",
+      "null",
+      false
+     ],
+     "null"
+    ]
+   ],
+   "both in both": [
+    [
+     [
+      "inner",
+      "ORIGIN",
+      true
+     ],
+     "ORIGIN"
+    ]
+   ],
+   "secure contexts": {
+    "none": [
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "http:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "data:",
+       false
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       false
+      ]
+     ]
+    ],
+    "scripts": [
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "http:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "data:",
+       false
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       false
+      ]
+     ]
+    ],
+    "both": [
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "http:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "data:",
+       false
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       true
+      ]
+     ],
+     [
+      [
+       "inner",
+       "about:",
+       false
+      ]
+     ]
+    ]
+   },
+   "a module of a data: URL scripts": [
+    [
+     [
+      "module",
+      "null"
+     ],
+     "null"
+    ]
+   ],
+   "a module of a data: URL none": [
+    [
+     [
+      "module",
+      "null"
+     ],
+     "null"
+    ]
+   ],
+   "/closed in ''": "loaded",
+   "data:text/html;base64,% in ''": "loaded",
+   "http://127.0.0.1:1/ in ''": "loaded",
+   "data:text/unknown,x in ''": "loaded",
+   "/closed in 'allow-scripts'": "loaded",
+   "data:text/html;base64,% in 'allow-scripts'": "loaded",
+   "http://127.0.0.1:1/ in 'allow-scripts'": "loaded",
+   "data:text/unknown,x in 'allow-scripts'": "loaded",
+   "/closed": "null",
+   "data:text/html;base64,%": "null",
+   "unload times": {
+    "none": [
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ],
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ]
+    ],
+    "scripts": [
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ],
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ]
+    ],
+    "both": [
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ],
+     [
+      [
+       true,
+       true,
+       true
+      ]
+     ]
+    ]
+   },
+   "a frame of its own": [
+    [
+     [
+      true,
+      "null"
+     ],
+     "null"
+    ]
+   ]
+  },
+  "from the page": {
+   "scripts": [
+    "heard * from null",
+    "heard last from null"
+   ],
+   "both": [
+    "heard * from ORIGIN",
+    "heard / from ORIGIN",
+    "heard ORIGIN from ORIGIN",
+    "heard last from ORIGIN"
+   ],
+   "javascript": {
+    "scripts": [],
+    "both": [
+     "javascript: ran"
+    ]
+   }
+  },
+  "messages": {
+   "same": {
+    "stays": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed document": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed srcdoc": [
+     "its window",
+     "its window"
+    ],
+    "to its own origin": [
+     "its window",
+     "null"
+    ],
+    "to the other site": [
+     "its window",
+     "its window"
+    ],
+    "to about:blank": [
+     "its window",
+     "null"
+    ],
+    "to a data: URL": [
+     "its window",
+     "its window"
+    ],
+    "is removed": [
+     "its window",
+     "its window"
+    ]
+   },
+   "other": {
+    "stays": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed document": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed srcdoc": [
+     "its window",
+     "its window"
+    ],
+    "to its own origin": [
+     "its window",
+     "null"
+    ],
+    "to the other site": [
+     "its window",
+     "its window"
+    ],
+    "to about:blank": [
+     "its window",
+     "null"
+    ],
+    "to a data: URL": [
+     "its window",
+     "its window"
+    ],
+    "is removed": [
+     "its window",
+     "its window"
+    ]
+   },
+   "data": {
+    "stays": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed document": [
+     "its window",
+     "its window"
+    ],
+    "to a sandboxed srcdoc": [
+     "its window",
+     "its window"
+    ],
+    "to its own origin": [
+     "its window",
+     "null"
+    ],
+    "to the other site": [
+     "its window",
+     "its window"
+    ],
+    "to about:blank": [
+     "its window",
+     "null"
+    ],
+    "to a data: URL": [
+     "its window",
+     "its window"
+    ],
+    "is removed": [
+     "its window",
+     "its window"
+    ]
+   },
+   "within: /says": [
+    [
+     "its window",
+     "null"
+    ]
+   ],
+   "within: OTHER/says": [
+    [
+     "its window",
+     "its window"
+    ]
+   ]
+  },
+  "javascript": {
+   "none, then none": [
+    "src",
+    "location",
+    "link"
+   ],
+   "none, then all": [],
+   "none, then scripts": [],
+   "none, then origin": [
+    "src",
+    "location",
+    "link"
+   ],
+   "none, then both": [
+    "src",
+    "location",
+    "link"
+   ],
+   "both, then none": [
+    "src",
+    "location",
+    "link"
+   ],
+   "both, then all": [],
+   "both, then scripts": [],
+   "both, then origin": [
+    "src",
+    "location",
+    "link"
+   ],
+   "both, then both": [
+    "src",
+    "location",
+    "link"
+   ]
+  },
+  "encoding": {
+   "none": [
+    "windows-1251"
+   ],
+   "scripts": [
+    "windows-1252"
+   ],
+   "both": [
+    "windows-1251"
+   ]
+  },
+  "no scripts": {
+   "noscript": [
+    true,
+    0
+   ],
+   "onclick": "null",
+   "eval": 2,
+   "adopted": "null",
+   "compiled": "function",
+   "serialized": [
+    "<noscript>&lt;&amp;&gt;</noscript>",
+    "<noscript>&lt;b&gt;</noscript>"
+   ],
+   "fragment": 1,
+   "media": [
+    false,
+    true,
+    true,
+    false
+   ],
+   "ran": [
+    "Function",
+    "compiled handler",
+    "eval",
+    "its function as a listener",
+    "its function in the page's timer",
+    "microtask of its window",
+    "promise of its window",
+    "the page's handler",
+    "the page's handler",
+    "the page's handler",
+    "the page's handler",
+    "the page's listener"
+   ],
+   "refresh": {
+    "/refresh origin": "ORIGIN/refresh",
+    "/refresh-header origin": "ORIGIN/empty?refreshed",
+    "/refresh both": "ORIGIN/empty?refreshed",
+    "/refresh-header both": "ORIGIN/empty?refreshed"
+   },
+   "parsed": 0
+  }
+ },
+ "requests": {
+  "/worker.js?worker&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?no-cors&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?same-origin&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?script&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?crossorigin&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&srcdoc%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/child?key=same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/worker.js?worker&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?no-cors&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?same-origin&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?script&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?crossorigin&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&same%20none": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "ORIGIN/child?key=same%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/child?key=other%20none": [
+   {
+    "referer": "ORIGIN/",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/worker.js?worker&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?same-origin&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&other%20none": [
+   {
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&other%20none": [
+   {
+    "origin": "OTHER",
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&other%20none": [
+   {
+    "origin": "OTHER",
+    "referer": "OTHER/child?key=other%20none",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&srcdoc%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?cors&srcdoc%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&srcdoc%20scripts": [
+   {
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen.svg?image&srcdoc%20scripts": [
+   {
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&srcdoc%20scripts": [
+   {
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&srcdoc%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?module&srcdoc%20scripts": [
+   {
+    "origin": "null",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/child?key=same%20scripts": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&same%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?cors&same%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&same%20scripts": [
+   {
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen.svg?image&same%20scripts": [
+   {
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&same%20scripts": [
+   {
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&same%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?module&same%20scripts": [
+   {
+    "origin": "null",
+    "referer": "ORIGIN/child?key=same%20scripts",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/child?key=other%20scripts": [
+   {
+    "referer": "ORIGIN/",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?fetch&other%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?cors&other%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&other%20scripts": [
+   {
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen.svg?image&other%20scripts": [
+   {
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&other%20scripts": [
+   {
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&other%20scripts": [
+   {
+    "origin": "null",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?module&other%20scripts": [
+   {
+    "origin": "null",
+    "referer": "OTHER/child?key=other%20scripts",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/worker.js?worker&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?no-cors&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?same-origin&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?script&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?crossorigin&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&srcdoc%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/child?key=same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/worker.js?worker&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?no-cors&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?same-origin&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?script&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?crossorigin&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&same%20both": [
+   {
+    "cookie": "top=1; set=1",
+    "origin": "ORIGIN",
+    "referer": "ORIGIN/child?key=same%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/child?key=other%20both": [
+   {
+    "referer": "ORIGIN/",
+    "sec-fetch-dest": "iframe",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/worker.js?worker&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "worker",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen?fetch&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?cors&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?no-cors&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?same-origin&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "same-origin",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/seen.svg?image&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?script&other%20both": [
+   {
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-storage-access": "active"
+   }
+  ],
+  "/seen?crossorigin&other%20both": [
+   {
+    "origin": "OTHER",
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?module&other%20both": [
+   {
+    "origin": "OTHER",
+    "referer": "OTHER/child?key=other%20both",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/cors?data%20scripts": [
+   {
+    "origin": "null",
+    "referer": "ORIGIN/app/",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/cors?data%20none": [
+   {
+    "origin": "null",
+    "referer": "ORIGIN/app/",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site"
+   }
+  ],
+  "/seen.svg?noscript": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "image",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ],
+  "/ran.js": [
+   {
+    "cookie": "top=1; set=1",
+    "referer": "PAGE",
+    "sec-fetch-dest": "script",
+    "sec-fetch-mode": "no-cors",
+    "sec-fetch-site": "same-origin"
+   }
+  ]
+ },
+ "console": [
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "Error while parsing the 'sandbox' attribute: 'allow-same-origin,' is an invalid sandbox flag.",
+  "Error while parsing the 'sandbox' attribute: 'allow-everything' is an invalid sandbox flag.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "Failed to execute 'postMessage' on 'DOMWindow': The target origin provided ('https://blank.example') does not match the recipient window's origin ('null').",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+  "Refused to execute the redirect specified via '<meta http-equiv='refresh' content='...'>'. The document is sandboxed, and the 'allow-scripts' keyword is not set.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.",
+  "An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing."
+ ]
+}

@@ -599,7 +599,7 @@ Resource* HTMLLinkElement::PreloadIfNeeded() {
   const std::u16string_view href =
       StripHTMLSpaces(AttributeOrEmpty(*this, u"href"));
   GURL url = href.empty() ? GURL() : document.CompleteUrl(href);
-  MediaValues values = MediaValuesFor(window->Start());
+  MediaValues values = MediaValuesFor(*window);
   values.strict_mode = !document.InQuirksMode();
   const MediaQueryFeatures features = MediaQueryFeaturesFor(
       bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features());
@@ -751,7 +751,7 @@ void HTMLLinkElement::ModulePreloadIfNeeded() {
   // Only if media matches.
   const std::u16string* media = FindAttribute(u"media");
   if (media && !media->empty()) {
-    MediaValues values = MediaValuesFor(window->Start());
+    MediaValues values = MediaValuesFor(*window);
     values.strict_mode = !document.InQuirksMode();
     const MediaQueryFeatures features = MediaQueryFeaturesFor(
         bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features());

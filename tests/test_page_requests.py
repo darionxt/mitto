@@ -263,7 +263,7 @@ def test_a_fetchs_referrer_and_referrer_policy_set_its_referer(
     session: mitto.Session, server: _Server, other: _Server
 ) -> None:
     url = server.page("/page?x=1", "<p>referrer</p>")
-    for path in ("/document", "/none", "/chosen", "/origin", "/elsewhere"):
+    for path in ("/document", "/none", "/chosen", "/origin", "/elsewhere", "/blob"):
         server.text(path, path)
     other.text("/unsafe", "unsafe", [("Access-Control-Allow-Origin", "*")])
     other.text("/strict", "strict", [("Access-Control-Allow-Origin", "*")])
@@ -276,18 +276,20 @@ def test_a_fetchs_referrer_and_referrer_policy_set_its_referer(
             _outcome(page, "fetch('/origin', {referrerPolicy: 'origin'})"),
             # A referrer of another origin leaves the document's.
             _outcome(page, "fetch('/elsewhere', {referrer: 'http://elsewhere.test/'})"),
+            # A blob: URL is of the document's origin, and Referrer Policy gives none for it.
+            _outcome(page, "fetch('/blob', {referrer: URL.createObjectURL(new Blob(['x']))})"),
             _outcome(page, f"fetch('{other.url('/unsafe')}', {{referrerPolicy: 'unsafe-url'}})"),
             _outcome(page, f"fetch('{other.url('/strict')}')"),
         ]
         invalid = page.evaluate("try { new Request('/x', {referrer: 'http://['}); 'made' } catch (e) { String(e) }")
 
-    assert outcomes[:5] == [["basic", 200]] * 5
-    assert outcomes[5:] == [["cors", 200]] * 2
+    assert outcomes[:6] == [["basic", 200]] * 6
+    assert outcomes[6:] == [["cors", 200]] * 2
     assert invalid == "TypeError: Failed to construct 'Request': Referrer 'http://[' is not a valid URL."
     referers = {
         path: _value(lines[0], "Referer")
         for source, paths in (
-            (server, ("/document", "/none", "/chosen", "/origin", "/elsewhere")),
+            (server, ("/document", "/none", "/chosen", "/origin", "/elsewhere", "/blob")),
             (other, ("/unsafe", "/strict")),
         )
         for path in paths
@@ -299,6 +301,7 @@ def test_a_fetchs_referrer_and_referrer_policy_set_its_referer(
         "/chosen": server.url("/other?y=2"),
         "/origin": server.url("/"),
         "/elsewhere": url,
+        "/blob": None,
         "/unsafe": url,
         "/strict": server.url("/"),
     }

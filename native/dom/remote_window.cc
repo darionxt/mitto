@@ -9,9 +9,12 @@
 
 namespace mitto {
 
-bool IsInSameProcess(const url::Origin& a, const url::Origin& b) {
-  const url::SchemeHostPort& of_a = a.GetTupleOrPrecursorTupleIfOpaque();
-  const url::SchemeHostPort& of_b = b.GetTupleOrPrecursorTupleIfOpaque();
+bool IsInSameProcess(const RendererProcess& a, const RendererProcess& b) {
+  const url::SchemeHostPort& of_a = a.origin.GetTupleOrPrecursorTupleIfOpaque();
+  const url::SchemeHostPort& of_b = b.origin.GetTupleOrPrecursorTupleIfOpaque();
+  if (a.sandboxed || b.sandboxed) {
+    return a.sandboxed == b.sandboxed && of_a == of_b;
+  }
   if (of_a.scheme() != of_b.scheme()) {
     return false;
   }
@@ -23,14 +26,14 @@ bool IsInSameProcess(const url::Origin& a, const url::Origin& b) {
 
 // static
 RemoteWindow* RemoteWindow::From(const Window& window,
-                                 const url::Origin& viewer) {
+                                 const RendererProcess& viewer) {
   Frame* const frame = window.GetFrame();
-  return frame && !IsInSameProcess(window.GetSecurityOrigin(), viewer)
+  return frame && !IsInSameProcess(window.Process(), viewer)
              ? frame->RemoteWindowFor(viewer)
              : nullptr;
 }
 
-RemoteWindow::RemoteWindow(url::Origin viewer, Window* window)
+RemoteWindow::RemoteWindow(RendererProcess viewer, Window* window)
     : viewer_(std::move(viewer)), window_(window) {}
 
 RemoteWindow::~RemoteWindow() = default;

@@ -58,9 +58,10 @@ std::string ContentTypeType(std::u16string_view value) {
   return base::UTF16ToUTF8(base::TrimWhitespace(value, base::TRIM_ALL));
 }
 
-// HTMLTokenizer::UpdateStateFor(), with scripting on: the state that the
-// tree builder would set after a start tag.
-std::optional<HtmlTokenizer::State> StateForTag(std::u16string_view name) {
+// HTMLTokenizer::SpeculativeStateForTag(): the state that the tree builder
+// would set after a start tag.
+std::optional<HtmlTokenizer::State> StateForTag(std::u16string_view name,
+                                                bool scripting_flag) {
   if (name == u"textarea" || name == u"title") {
     return HtmlTokenizer::State::kRcdata;
   }
@@ -71,7 +72,8 @@ std::optional<HtmlTokenizer::State> StateForTag(std::u16string_view name) {
     return HtmlTokenizer::State::kScriptData;
   }
   if (name == u"style" || name == u"iframe" || name == u"xmp" ||
-      name == u"noembed" || name == u"noframes" || name == u"noscript") {
+      name == u"noembed" || name == u"noframes" ||
+      (name == u"noscript" && scripting_flag)) {
     return HtmlTokenizer::State::kRawtext;
   }
   return std::nullopt;
@@ -987,7 +989,7 @@ TokenPreloadScanner::TokenPreloadScanner(Document& document,
               ->features())),
       device_pixel_ratio_(1) {
   if (Window* const window = document.DefaultView()) {
-    media_values_ = MediaValuesFor(window->Start());
+    media_values_ = MediaValuesFor(*window);
     device_pixel_ratio_ = static_cast<float>(window->DevicePixelRatio());
   }
   media_values_.strict_mode = !document.InQuirksMode();
@@ -1171,7 +1173,8 @@ HtmlPreloadScanner::Result::~Result() = default;
 HtmlPreloadScanner::HtmlPreloadScanner(
     Document& document,
     TokenPreloadScanner::ScannerType scanner_type)
-    : tokenizer_(std::make_unique<HtmlTokenizer>(HtmlTokenizer::Options())),
+    : scripting_flag_(HtmlParserOptions::ForDocument(document).scripting_flag),
+      tokenizer_(std::make_unique<HtmlTokenizer>(HtmlTokenizer::Options())),
       scanner_(document, scanner_type) {}
 
 HtmlPreloadScanner::~HtmlPreloadScanner() = default;
@@ -1191,7 +1194,7 @@ HtmlPreloadScanner::Result HtmlPreloadScanner::Scan(
   while (tokenizer_->NextToken(token)) {
     if (token.type == HtmlToken::Type::kStartTag) {
       if (const std::optional<HtmlTokenizer::State> state =
-              StateForTag(token.name)) {
+              StateForTag(token.name, scripting_flag_)) {
         tokenizer_->SetState(*state);
       }
     }

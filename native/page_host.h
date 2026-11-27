@@ -357,6 +357,9 @@ class PageHost final : public PageChannel::Delegate {
     // context that started a worker; kNoDocument for the top-level document.
     uint64_t parent = kNoDocument;
     bool is_worker = false;
+    // Whether a sandbox makes a document's origin opaque, and with it that of
+    // each document under it.
+    bool sandboxed_origin = false;
     // Its embedder policy, as the policy container that Chrome's browser
     // keeps for it holds it: a document's from its navigation's response, a
     // worker's from its script's, and a frame's initial about:blank's and a

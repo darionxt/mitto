@@ -33,6 +33,7 @@
 #include "mitto/dom/qualified_name.h"
 #include "mitto/dom/svg_elements.h"
 #include "mitto/dom/text.h"
+#include "mitto/dom/window.h"
 #include "mitto/html/html_token.h"
 #include "mitto/html/html_tokenizer.h"
 #include "v8/include/cppgc/persistent.h"
@@ -3299,7 +3300,9 @@ void HtmlTreeBuilderReferences::KeepOnly(const std::vector<Node*>& nodes) {
 
 HtmlParserOptions HtmlParserOptions::ForDocument(const Document& document) {
   HtmlParserOptions options;
-  options.scripting_flag = document.DefaultView() != nullptr;
+  Window* const window = document.DefaultView();
+  options.scripting_flag =
+      window && window->CanExecuteScripts(/*about_to_execute=*/false);
   options.include_shadow_roots = document.AllowsDeclarativeShadowRoots();
   return options;
 }

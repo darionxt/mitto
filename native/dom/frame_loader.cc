@@ -27,6 +27,7 @@
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/history.h"
 #include "mitto/dom/history_item.h"
+#include "mitto/dom/html_frame_owner_element.h"
 #include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/navigation_rate_limiter.h"
@@ -254,6 +255,9 @@ void CommitSameDocumentNavigation(Window& window,
 // after the scheme, its escapes decoded as UTF-8, run as a classic script.
 // A string that it gives would take the document's place: a Known Gap.
 void ExecuteJavaScriptUrl(std::u16string source) {
+  if (!Window::Current().CanExecuteScripts(/*about_to_execute=*/true)) {
+    return;
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
@@ -348,17 +352,24 @@ void StartNavigation(Window& window,
     return;
   }
   if (url.SchemeIs(url::kJavaScriptScheme)) {
-    // A sandboxed frame's document runs no javascript: URL, as it would not
-    // without allow-scripts.
-    if (frame && frame->IsSandboxed()) {
-      return;
-    }
-    // Nor one that a document of another origin starts, as a parent's of a
+    // Not one that a document of another origin starts, as a parent's of a
     // frame that has navigated elsewhere, as Blink's FrameLoader checks the
-    // origin window can reach the frame's.
+    // origin window can reach the frame's, nor one that a document without
+    // scripts starts.
     if (request.origin_window &&
         !request.origin_window->GetSecurityOrigin().IsSameOriginWith(
             window.GetSecurityOrigin())) {
+      return;
+    }
+    // FrameLoader::AllowRequestForThisFrame(): nor with an element that now
+    // withholds the frame's origin, whatever its document has.
+    if (frame && frame->Owner() &&
+        (frame->Owner()->GetSandboxFlags() & SandboxFlags::kOrigin) !=
+            SandboxFlags::kNone) {
+      return;
+    }
+    if (request.origin_window &&
+        !request.origin_window->CanExecuteScripts(/*about_to_execute=*/true)) {
       return;
     }
     ProcessJavaScriptUrl(window, url);
@@ -428,6 +439,8 @@ void StartNavigation(Window& window,
   navigation.initiator_base_url = origin_window.GetDocument().BaseUrl();
   navigation.initiator_cookie_url = origin_window.GetDocument().CookieUrl();
   navigation.initiator_referrer = OutgoingReferrer(origin_window);
+  navigation.initiator_in_sandboxed_process =
+      origin_window.GetDocument().IsInSandboxedProcess();
   navigation.initiator_has_header_csp =
       origin_window.GetDocument().HasHeaderDeliveredContentSecurityPolicy();
   navigation.initiator_embedder_policy_isolates =

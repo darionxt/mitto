@@ -43,14 +43,17 @@ Storage* WindowStorage(Window& window,
     return nullptr;
   }
   // GetOrCreateLocalStorage() and GetOrCreateSessionStorage(): a document of
-  // an opaque origin has no storage. No document of a Page is sandboxed yet.
+  // an opaque origin has no storage.
   if (window.GetSecurityOrigin().opaque()) {
     if (exception_state) {
-      const GURL url(base::UTF16ToUTF8(window.GetDocument().UrlForBinding()));
-      exception_state->ThrowDOMException("SecurityError",
-                                         url.SchemeIs(url::kDataScheme)
-                                             ? Storage::kAccessDataMessage
-                                             : Storage::kAccessDeniedMessage);
+      const Document& document = window.GetDocument();
+      exception_state->ThrowDOMException(
+          "SecurityError",
+          document.IsSandboxed(SandboxFlags::kOrigin)
+              ? Storage::kAccessSandboxedMessage
+          : GURL(document.UrlForBinding()).SchemeIs(url::kDataScheme)
+              ? Storage::kAccessDataMessage
+              : Storage::kAccessDeniedMessage);
     }
     return nullptr;
   }

@@ -290,8 +290,10 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
   if (parser_inserted_ && parser_document_ != &element_document) {
     return nullptr;
   }
-  // Step 16: scripting is disabled for a document without a window.
-  if (!context_window) {
+  // Step 16: scripting is disabled for a document without a window, or one
+  // that a sandbox withholds scripts from.
+  if (!context_window ||
+      !context_window->CanExecuteScripts(/*about_to_execute=*/true)) {
     return nullptr;
   }
   // Step 17.
