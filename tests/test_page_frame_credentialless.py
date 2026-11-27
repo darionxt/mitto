@@ -185,10 +185,10 @@ def test_a_credentialless_frame_clears_no_client_hints(server: _Server, make: st
     # party's does, and a credentialless frame's does not, as ClearSiteDataHandler takes its nonce's key for a third
     # party's. The next top-level document then says what is left.
     origin = f"http://127.0.0.1:{server.server_port}"
-    script = f"(async () => {{ {_DATA['prelude']}await {make}('/clear'); return true; }})()"
+    script = f"(async () => {{ {_DATA['prelude']}return (await {make}('/clear')).contentWindow.location.pathname; }})()"
     with mitto.Session() as session:
         with session._open_page(f"{origin}/hints", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
-            assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) is True
+            assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "/clear"
         with session._open_page(f"{origin}/hinted", timeout=_TIMEOUT_SECONDS):  # pyright: ignore[reportPrivateUsage]
             pass
 
