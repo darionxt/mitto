@@ -294,6 +294,10 @@ v8::Local<v8::Value> WorkerGlobalScope::StructuredClone(
   return serialized->Deserialize(isolate, MessagePort::PortsOf(ports));
 }
 
+FetchReferrerPolicy WorkerGlobalScope::GetReferrerPolicy() const {
+  return referrer_policy_;
+}
+
 std::u16string WorkerGlobalScope::Url() const {
   return base::UTF8ToUTF16(url_.possibly_invalid_spec());
 }

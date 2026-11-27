@@ -33,6 +33,7 @@ constexpr std::string_view kCredentialsModeKey = "credentials_mode";
 constexpr std::string_view kHasUserActivationKey = "has_user_activation";
 constexpr std::string_view kInitiatorKey = "initiator";
 constexpr std::string_view kFixedHeadersKey = "fixed_headers";
+constexpr std::string_view kHeaderOrderKey = "header_order";
 
 // 2^53, the largest whole number up to which a double holds every one exactly.
 constexpr double kMaxSize = 9007199254740992.0;
@@ -121,6 +122,16 @@ std::optional<CredentialsMode> ParseCredentialsMode(const base::Value& value) {
   return std::nullopt;
 }
 
+std::optional<HeaderOrder> ParseHeaderOrder(const base::Value& value) {
+  if (value.is_string() && value.GetString() == "fetch") {
+    return HeaderOrder::kFetch;
+  }
+  if (value.is_string() && value.GetString() == "xhr") {
+    return HeaderOrder::kXhr;
+  }
+  return std::nullopt;
+}
+
 std::optional<FetchParams> ParseFetchParams(const base::Value& value) {
   if (!value.is_dict()) {
     return std::nullopt;
@@ -171,8 +182,17 @@ std::optional<FetchParams> ParseFetchParams(const base::Value& value) {
         if (!name.is_string()) {
           return std::nullopt;
         }
-        params.fixed_headers.insert(base::ToLowerASCII(name.GetString()));
+        std::string lower_name = base::ToLowerASCII(name.GetString());
+        if (params.fixed_headers.insert(lower_name).second) {
+          params.script_headers.push_back(std::move(lower_name));
+        }
       }
+    } else if (key == kHeaderOrderKey) {
+      const std::optional<HeaderOrder> header_order = ParseHeaderOrder(item);
+      if (!header_order) {
+        return std::nullopt;
+      }
+      params.header_order = *header_order;
     } else {
       return std::nullopt;
     }

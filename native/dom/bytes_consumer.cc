@@ -2,6 +2,7 @@
 
 #include "base/notreached.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/blob_data.h"
 
 namespace mitto {
 namespace {
@@ -36,6 +37,10 @@ class ClosedBytesConsumer final : public BytesConsumer {
 
 std::optional<std::string> BytesConsumer::DrainAsBytes() {
   return std::nullopt;
+}
+
+scoped_refptr<BlobDataHandle> BytesConsumer::DrainAsBlobDataHandle() {
+  return nullptr;
 }
 
 // static

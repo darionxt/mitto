@@ -493,6 +493,10 @@ StorageBucketHost* Window::GetStorageBucketHost() const {
   return GetDocument().GetStorageBucketHost();
 }
 
+bool Window::HasPublicKeyRequest() const {
+  return navigator_ && navigator_->HasPublicKeyRequest();
+}
+
 mitto::Performance* Window::Performance() {
   if (!performance_) {
     performance_ = Performance::Create(TimeOrigin(), &GetDocumentLoadTiming(),
@@ -522,6 +526,10 @@ Window* Window::ToWindow() {
 
 bool Window::IsWindow() const {
   return true;
+}
+
+FetchReferrerPolicy Window::GetReferrerPolicy() const {
+  return GetDocument().GetReferrerPolicy();
 }
 
 std::u16string Window::Url() const {

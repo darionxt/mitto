@@ -105,6 +105,8 @@ class Navigator final : public bindings::ScriptWrappable {
   // The Credential Management API's container, [SameObject], made the first
   // time a page asks.
   CredentialsContainer* Credentials();
+  // Whether the browser holds a WebAuthn request of the container's.
+  bool HasPublicKeyRequest() const;
   // How many of navigator.geolocation's requests wait on a timer.
   size_t GeolocationTimerCount() const;
   // A new array each time, of kItemsLengthCap nulls: no gamepad is there. It

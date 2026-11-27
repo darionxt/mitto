@@ -15,6 +15,7 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -45,6 +46,16 @@ class IdleTaskController {
   // and the callbacks go with the controller.
   void Stop();
 
+  // ScriptedIdleTaskController::ContextLifecycleStateChanged(), as the
+  // back/forward cache freezes a window: a callback whose idle period or
+  // timeout comes while frozen does not run, Resume() asks for its idle
+  // period again, and ResumeDelayed() runs its timeout's task, with the rest
+  // of what was delayed, as Blink reschedules them once the context runs
+  // again.
+  void Freeze() { frozen_ = true; }
+  void Resume();
+  void ResumeDelayed();
+
   // How many callbacks wait.
   size_t size() const { return tasks_.size(); }
 
@@ -62,6 +73,10 @@ class IdleTaskController {
   const std::unique_ptr<v8::Global<v8::Context>> context_;
   std::map<uint32_t, std::unique_ptr<IdleTask>> tasks_;
   uint32_t last_id_ = 0;
+  bool frozen_ = false;
+  // The callbacks whose idle periods, or whose timeouts, came while frozen.
+  std::vector<uint32_t> held_idle_tasks_;
+  std::vector<uint32_t> held_timeouts_;
   base::WeakPtrFactory<IdleTaskController> weak_factory_{this};
 };
 

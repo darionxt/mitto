@@ -1,7 +1,8 @@
 // The URL Standard's URLSearchParams: a list of names and values, from a query
 // or from what its constructor takes, which writes itself back into its URL
-// object's query on each change, as Blink's does. Iterating over it is a Known
-// Gap until the Runtime has pair iterators.
+// object's query on each change, as Blink's does. An iterator goes over the
+// list as it is at each step, by index, as Blink's
+// URLSearchParamsIterationSource does.
 //
 // Upstream: third_party/blink/renderer/core/url/url_search_params.h
 // Upstream: third_party/blink/renderer/core/url/url_search_params.cc
@@ -18,6 +19,7 @@
 #include <vector>
 
 #include "mitto/bindings/dictionaries.h"
+#include "mitto/bindings/pair_iterable.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
@@ -59,6 +61,7 @@ class URLSearchParams final : public bindings::ScriptWrappable {
            const std::optional<std::u16string>& value) const;
   void Set(const std::u16string& name, const std::u16string& value);
   void Sort();
+  bindings::PairIterationSource* CreateIterationSource();
   // The list as application/x-www-form-urlencoded.
   std::u16string ToString() const;
 
@@ -67,7 +70,13 @@ class URLSearchParams final : public bindings::ScriptWrappable {
   // its query changes.
   void SetInputWithoutUpdate(std::u16string_view query);
 
+  const std::vector<std::pair<std::u16string, std::u16string>>& params() const {
+    return params_;
+  }
+
  private:
+  class IterationSource;
+
   void AppendWithoutUpdate(const std::u16string& name,
                            const std::u16string& value);
   // The URL Standard's update steps: the URL object's query becomes the

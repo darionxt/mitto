@@ -11,6 +11,7 @@
 
 #include <string>
 
+#include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/event.h"
 
@@ -25,6 +26,11 @@ class PageTransitionEvent final : public Event {
   // PageTransitionEvent(type, persisted) makes it for a window.
   static PageTransitionEvent* CreateTrusted(const std::u16string& type,
                                             bool persisted);
+  // PageTransitionEvent::CreatePersistedPageshow(): the pageshow of a page
+  // that the back/forward cache restores, whose timeStamp is
+  // `navigation_start`, the start of the traversal that restored it.
+  static PageTransitionEvent* CreatePersistedPageshow(
+      base::TimeTicks navigation_start);
 
   PageTransitionEvent(const std::u16string& type,
                       const bindings::PageTransitionEventInit& init);

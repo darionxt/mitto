@@ -41,10 +41,16 @@ class NavigationActivation final : public bindings::ScriptWrappable {
   NavigationHistoryEntry* From() const { return from_.Get(); }
   const std::u16string& NavigationType() const { return navigation_type_; }
 
+  // NavigationActivation::Update(), as a document that the back/forward cache
+  // restores is activated again.
+  void Update(NavigationHistoryEntry* entry,
+              NavigationHistoryEntry* from,
+              std::u16string navigation_type);
+
  private:
   cppgc::Member<NavigationHistoryEntry> entry_;
   cppgc::Member<NavigationHistoryEntry> from_;
-  const std::u16string navigation_type_;
+  std::u16string navigation_type_;
 };
 
 }  // namespace mitto

@@ -14,6 +14,7 @@
 #include "base/time/time.h"
 #include "mitto/cache_storage/cache_storage.h"
 #include "mitto/cache_storage/cache_storage_context.h"
+#include "mitto/cross_origin_resource_policy.h"
 #include "mitto/page_messages.h"
 #include "mitto/storage_quota.h"
 #include "net/base/io_buffer.h"
@@ -67,6 +68,9 @@ CacheResponse ToCacheResponse(const PageCacheResponse& response) {
   cache_response.response_time = base::Time::FromDeltaSinceWindowsEpoch(
       base::Microseconds(response.response_time));
   cache_response.body_size = response.body_size;
+  if (ShouldPadResponseType(cache_response.response_type)) {
+    cache_response.padding = response.padding;
+  }
   return cache_response;
 }
 
@@ -85,6 +89,7 @@ PageCacheResponse ToPageResponse(const CacheResponse& response) {
       response.cors_exposed_header_names;
   page_response.response_time =
       response.response_time.ToDeltaSinceWindowsEpoch().InMicroseconds();
+  page_response.padding = response.padding;
   return page_response;
 }
 
@@ -103,6 +108,11 @@ bool IsPutValid(const PageCacheOperation& operation) {
           static_cast<uint8_t>(CacheResponseType::kOpaqueRedirect);
   if (!opaque && response.status == 206) {
     return false;
+  }
+  // Blink checks Vary in the lines that a script sees, which an opaque
+  // response has none of, though it sends those that it filters.
+  if (opaque) {
+    return true;
   }
   for (const auto& [name, value] : response.headers) {
     if (base::EqualsCaseInsensitiveASCII(name, "vary")) {
@@ -215,8 +225,18 @@ uint64_t PageCacheStorage::NextNumber() const {
   return std::max(next_cache_, next_stored_body_);
 }
 
+void PageCacheStorage::SetContextPolicy(
+    uint64_t context,
+    url::Origin origin,
+    CrossOriginEmbedderPolicy embedder_policy) {
+  context_policies_[context] = {std::move(origin), std::move(embedder_policy)};
+}
+
 void PageCacheStorage::ForgetContexts(const std::set<uint64_t>& contexts) {
   gone_contexts_.insert(contexts.begin(), contexts.end());
+  for (const uint64_t context : contexts) {
+    context_policies_.erase(context);
+  }
   // Each fails from a task of its own, and no longer counts as the Page's.
   for (auto it = put_bodies_.begin(); it != put_bodies_.end();) {
     if (!contexts.contains(it->second->context())) {
@@ -272,7 +292,8 @@ bool PageCacheStorage::Admit(uint64_t question,
   return true;
 }
 
-CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache) {
+CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache,
+                                               uint64_t context) {
   const auto found = caches_.find(cache);
   if (found == caches_.end() || !found->second.value()) {
     refuse_.Run(base::StrCat({"a Cache API call of cache ",
@@ -280,7 +301,21 @@ CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache) {
                               ", which the Page has not opened"}));
     return nullptr;
   }
-  return found->second.value();
+  return OpenedBy(cache, context) ? found->second.value() : nullptr;
+}
+
+bool PageCacheStorage::OpenedBy(uint64_t cache, uint64_t context) {
+  // A cache answers the context that opened it alone, as Chrome's CacheImpl
+  // is bound to its opener's pipe, whose origin and embedder policy its
+  // matches are held to. One that is not open is FindCache()'s to refuse.
+  if (const auto opener = cache_contexts_.find(cache);
+      opener != cache_contexts_.end() && opener->second != context) {
+    refuse_.Run(
+        base::StrCat({"a Cache API call of cache ", base::NumberToString(cache),
+                      ", which another context opened"}));
+    return false;
+  }
+  return true;
 }
 
 void PageCacheStorage::OnCall(PageCacheStorageCall call,
@@ -302,6 +337,9 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       stored_bodies_.erase(call.body);
       return;
     case CacheStorageCallOp::kReleaseCache:
+      if (!OpenedBy(call.cache, context)) {
+        return;
+      }
       cache_buckets_.erase(call.cache);
       cache_contexts_.erase(call.cache);
       if (caches_.erase(call.cache) == 0) {
@@ -315,6 +353,18 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
   }
   if (!Admit(call.question, storage_key)) {
     return;
+  }
+  switch (call.op) {
+    case CacheStorageCallOp::kCacheMatch:
+    case CacheStorageCallOp::kCacheMatchAll:
+    case CacheStorageCallOp::kCacheKeys:
+    case CacheStorageCallOp::kCacheBatch:
+      if (!OpenedBy(call.cache, context)) {
+        return;
+      }
+      break;
+    default:
+      break;
   }
   if (!bucket_live || CacheBucketGone(call)) {
     AnswerGoneBucket(call, context);
@@ -411,7 +461,7 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       return;
     case CacheStorageCallOp::kCacheMatch:
     case CacheStorageCallOp::kCacheMatchAll: {
-      CacheStorageCache* const cache = FindCache(call.cache);
+      CacheStorageCache* const cache = FindCache(call.cache, context);
       if (!cache) {
         return;
       }
@@ -445,7 +495,7 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       return;
     }
     case CacheStorageCallOp::kCacheKeys: {
-      CacheStorageCache* const cache = FindCache(call.cache);
+      CacheStorageCache* const cache = FindCache(call.cache, context);
       if (!cache) {
         return;
       }
@@ -474,7 +524,7 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       return;
     }
     case CacheStorageCallOp::kCacheBatch: {
-      CacheStorageCache* const cache = FindCache(call.cache);
+      CacheStorageCache* const cache = FindCache(call.cache, context);
       if (!cache) {
         return;
       }
@@ -696,6 +746,55 @@ void PageCacheStorage::AnswerResponses(
   answer.op = CacheStorageAnswerOp::kResponses;
   answer.question = question;
   answer.error = static_cast<uint8_t>(error);
+  // ResponseBlockedByCrossOriginResourcePolicy() of Chrome's
+  // CacheStorageDispatcherHost, for Cache.match() and matchAll() and
+  // CacheStorage.match(): under an embedder policy of require-corp or
+  // credentialless, an opaque response is held to its
+  // Cross-Origin-Resource-Policy against the context's origin, and one that
+  // fails fails the whole call. A context whose policy is a report-only one
+  // alone holds a response to the policy that its header names, as the check
+  // runs for it too. Its request counts as one that sent
+  // credentials, as kCacheStorageOpaqueResponseCredentialedForCorp, on in
+  // Chrome 157, has CacheStorageCache take any opaque response that it reads.
+  // Upstream: content/browser/cache_storage/cache_storage_dispatcher_host.cc
+  // Upstream: content/browser/cache_storage/cache_storage_cache.cc
+  if (const auto policy = context_policies_.find(context);
+      policy != context_policies_.end() &&
+      (policy->second.embedder_policy.value !=
+           CrossOriginEmbedderPolicyValue::kNone ||
+       policy->second.embedder_policy.report_only_value !=
+           CrossOriginEmbedderPolicyValue::kNone) &&
+      std::ranges::any_of(
+          matches, [&policy](const CacheStorageCache::MatchResult& match) {
+            const CacheResponse& response = match.response;
+            if (response.response_type != CacheResponseType::kOpaque) {
+              return false;
+            }
+            // One that an older storage directory holds of before an opaque
+            // response kept its URL and header lines has neither, and so no
+            // policy that would let a context with an enforced embedder policy
+            // have it.
+            if (response.url_list.empty()) {
+              return policy->second.embedder_policy.value !=
+                     CrossOriginEmbedderPolicyValue::kNone;
+            }
+            const auto corp =
+                response.headers.find("cross-origin-resource-policy");
+            return IsBlockedByResourcePolicy(
+                       response.url_list.back(), policy->second.origin,
+                       corp == response.headers.end()
+                           ? std::nullopt
+                           : std::optional<std::string>(corp->second),
+                       ResourcePolicyMode::kNoCors,
+                       /*request_include_credentials=*/true,
+                       policy->second.embedder_policy)
+                .has_value();
+          })) {
+    answer.error = static_cast<uint8_t>(
+        CacheStorageError::kErrorCrossOriginResourcePolicy);
+    SendAnswer(answer);
+    return;
+  }
   std::vector<uint64_t> bodies;
   for (CacheStorageCache::MatchResult& match : matches) {
     PageCacheResponse response = ToPageResponse(match.response);

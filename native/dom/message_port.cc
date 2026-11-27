@@ -546,6 +546,16 @@ void MessagePort::RunReadTask(
   if (counted) {
     --port->pending_dispatch_tasks_;
   }
+  // The messages of a window that the back/forward cache keeps wait until it
+  // comes back, as the tasks of Blink's frozen frame do.
+  if (ExecutionContext* const context = port->context_.Get();
+      context && context->IsInBackForwardCache()) {
+    context->HoldTask(TaskType::kPostedMessage,
+                      base::BindOnce(&MessagePort::RunReadTask,
+                                     std::move(port_handle), generation,
+                                     /*counted=*/false));
+    return;
+  }
   RunInContext(port->context_.Get(), [&] { port->ReadAvailableMessage(); });
 }
 

@@ -20,6 +20,7 @@
 #include "mitto/dom/resource_fetcher.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/worker_global_scope.h"
+#include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
@@ -261,14 +262,13 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   // A request whose policy is the empty string goes with that of its fetch
   // client settings: for a module worker's top-level graph, which only has
   // the destination worker, its creator's, as Blink fetches it through the
-  // outside settings. An import() graph in a worker would go with the policy
-  // of the worker's script's response, which a worker does not have: a Known
-  // Gap.
+  // outside settings, and otherwise its context's.
   data.referrer_policy = request.options.referrer_policy;
-  if (data.referrer_policy == FetchReferrerPolicy::kDefault &&
-      request.destination == FetchDestination::kWorker) {
+  if (data.referrer_policy == FetchReferrerPolicy::kDefault) {
     data.referrer_policy =
-        static_cast<WorkerGlobalScope*>(context)->OutsideReferrerPolicy();
+        request.destination == FetchDestination::kWorker
+            ? static_cast<WorkerGlobalScope*>(context)->OutsideReferrerPolicy()
+            : context->GetReferrerPolicy();
   }
   data.referrer = ReferrerOf(request, *context, *fetcher);
   // A module script's priority is its destination's whatever its scheduling,

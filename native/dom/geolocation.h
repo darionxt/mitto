@@ -55,6 +55,8 @@ class Geolocation final : public bindings::ScriptWrappable {
 
  private:
   void StartRequest(Window& window, GeoNotifier* notifier);
+  // Whether the request of `notifier` has not ended.
+  bool Has(const GeoNotifier& notifier) const;
   // Its requests go with its window's context.
   void ContextDestroyed();
   void Remove(GeoNotifier* notifier);

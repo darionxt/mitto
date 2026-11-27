@@ -87,9 +87,15 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
            (fatal_code_ != 0 || timeout_ms_ != kNoTimeout);
   }
 
+  // Whether its timer had a delay, which a fatal error has not.
+  bool is_delayed() const { return fatal_code_ == 0 && timeout_ms_ > 0; }
+
   uint16_t fatal_code() const { return fatal_code_; }
   const std::u16string& fatal_message() const { return fatal_message_; }
   int32_t watch_id() const { return watch_id_; }
+  v8::Local<v8::Function> success_callback(v8::Isolate* isolate) const {
+    return success_callback_.Get(isolate);
+  }
   v8::Local<v8::Function> error_callback(v8::Isolate* isolate) const {
     return error_callback_.Get(isolate);
   }
@@ -224,6 +230,16 @@ void Geolocation::StartRequest(Window& window, GeoNotifier* notifier) {
   notifier->StartTimer();
 }
 
+bool Geolocation::Has(const GeoNotifier& notifier) const {
+  for (const GeoNotifier* current = first_.Get(); current;
+       current = current->next()) {
+    if (current == &notifier) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void Geolocation::Remove(GeoNotifier* notifier) {
   notifier->Stop();
   GeoNotifier* previous = nullptr;
@@ -253,6 +269,30 @@ void Geolocation::Fire(GeoNotifier* notifier) {
       fatal ? notifier->fatal_message() : std::u16string(kTimeoutExpired);
   const v8::Local<v8::Function> error_callback =
       notifier->error_callback(isolate);
+  // A window that the back/forward cache keeps hears of it once it comes
+  // back, as a task of its frozen queues does: that of the request's success
+  // callback, whose page the cache keeps whole.
+  v8::Local<v8::Context> callback_context;
+  if (notifier->success_callback(isolate)->GetCreationContext(isolate).ToLocal(
+          &callback_context)) {
+    Window* const frozen = Window::From(isolate, callback_context);
+    if (frozen && frozen->IsInBackForwardCache()) {
+      frozen->HoldTask(TaskType::kMiscPlatformAPI,
+                       base::BindOnce(
+                           [](cppgc::Persistent<Geolocation> geolocation,
+                              cppgc::Persistent<GeoNotifier> notifier) {
+                             // Not for a watch that a script has cleared
+                             // since.
+                             if (geolocation->Has(*notifier)) {
+                               geolocation->Fire(notifier.Get());
+                             }
+                           },
+                           cppgc::Persistent<Geolocation>(this),
+                           cppgc::Persistent<GeoNotifier>(notifier)),
+                       /*delayed=*/notifier->is_delayed());
+      return;
+    }
+  }
   // The callback runs in its own context, which has to be there still.
   v8::Local<v8::Context> context;
   if (!error_callback.IsEmpty() &&

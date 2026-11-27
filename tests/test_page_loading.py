@@ -7,6 +7,7 @@ and needs a native library with the Page program beside it, as CI's native job i
 
 import contextlib
 import http.server
+import json
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -335,23 +336,40 @@ def test_a_script_whose_mime_type_cannot_run_fires_error_as_in_chrome(
     script("/image.js", "image/png", nosniff=False)
     script("/javascript.js", "Text/JavaScript; charset=utf-8", nosniff=True)
     script("/lax.js", "text/plain", nosniff=False)
+    # A quote takes in the comma after it, and a form feed is no white space of HTTP's.
+    script("/quoted.js", 'text/javascript;", x/x', nosniff=True)
+    script("/list.js", "text/javascript, x/x", nosniff=True)
+    script("/feed.js", "text/javascript\f", nosniff=True)
     url = server.page(
         "/",
         "<script>window.seen = [];</script>"
         "<script defer src=/plain.js></script><script defer src=/image.js></script>"
         "<script defer src=/javascript.js></script><script defer src=/lax.js></script>"
-        "<script>for (const name of ['/plain.js', '/image.js']) {"
+        "<script defer src=/quoted.js></script><script defer src=/list.js></script><script defer src=/feed.js></script>"
+        "<script>for (const name of ['/plain.js', '/image.js', '/list.js', '/feed.js']) {"
         "  document.querySelector(`script[src='${name}']`).addEventListener('error', () => seen.push(name + ' error'));"
         "}</script>",
     )
 
     with _open_page(session, url) as page:
-        assert page.evaluate("seen") == ["/plain.js error", "/image.js error", "/javascript.js ran", "/lax.js ran"]
+        assert page.evaluate("seen") == [
+            "/plain.js error",
+            "/image.js error",
+            "/javascript.js ran",
+            "/lax.js ran",
+            "/quoted.js ran",
+            "/list.js error",
+            "/feed.js error",
+        ]
         # The console says why as each response ends, as Blink's ClassicPendingScript::NotifyFinished() does, so in the
         # order the responses came.
         assert sorted(message.text for message in page.console_messages if message.level == "error") == [
+            f"Refused to execute script from '{server.url('/feed.js')}' because its MIME type ('text/javascript\f') is not"
+            " executable, and strict MIME type checking is enabled.",
             f"Refused to execute script from '{server.url('/image.js')}' because its MIME type ('image/png') is not"
             " executable.",
+            f"Refused to execute script from '{server.url('/list.js')}' because its MIME type ('x/x') is not"
+            " executable, and strict MIME type checking is enabled.",
             f"Refused to execute script from '{server.url('/plain.js')}' because its MIME type ('text/plain') is not"
             " executable, and strict MIME type checking is enabled.",
         ]
@@ -1085,6 +1103,145 @@ def test_a_same_origin_fetch_does_not_follow_a_redirect_to_another_origin(
 
         assert result == ["TypeError: Failed to fetch", "TypeError: Failed to fetch"]
         assert other.headers_of("/dest") == []
+
+
+def test_a_fetchs_redirect_mode_stops_at_a_redirect_as_chrome_does(session: mitto.Session, server: _PageServer) -> None:
+    # redirect: "manual" gives an opaque-redirect filtered response, which keeps the URL that redirected, and "error"
+    # fails, as Blink's WillFollowRedirect() has them; neither goes where the redirect points.
+    server.routes["/dest"] = _Route(b"dest", headers=[("Content-Type", "text/plain")])
+    server.routes["/hop"] = _Route(status=302, headers=[("Location", "/dest"), ("X-Hop", "1")])
+    url = server.page("/", "<p>redirect modes</p>")
+
+    with _open_page(session, url) as page:
+        manual = page.evaluate(
+            "fetch('/hop', {redirect: 'manual'}).then(r => [r.type, r.status, r.statusText, r.ok, r.url.endsWith('/hop'),"
+            " r.redirected, [...r.headers].length, r.body === null])",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        error = page.evaluate(
+            "fetch('/hop', {redirect: 'error'}).then(() => 'fetched', error => String(error))", timeout=_TIMEOUT_SECONDS
+        )
+
+    assert manual == ["opaqueredirect", 0, "", False, True, False, 0, True]
+    assert error == "TypeError: Failed to fetch"
+    assert server.headers_of("/dest") == []
+    assert len(server.headers_of("/hop")) == 2
+
+
+def test_a_fetchs_cache_mode_sends_the_lines_that_go_with_it(session: mitto.Session, server: _PageServer) -> None:
+    # The cache mode's load flags, as Blink's GetLoadFlagsForWebUrlRequest() gives them, which //net turns into Pragma
+    # and Cache-Control lines; only-if-cached with nothing in the cache fails before it sends anything.
+    for mode in ("default", "no-store", "reload", "no-cache", "force-cache"):
+        server.routes[f"/{mode}"] = _Route(b"x", headers=[("Content-Type", "text/plain")])
+    server.routes["/only"] = _Route(b"x", headers=[("Content-Type", "text/plain")])
+    url = server.page("/", "<p>cache modes</p>")
+
+    with _open_page(session, url) as page:
+        outcomes = page.evaluate(
+            "Promise.all(['default', 'no-store', 'reload', 'no-cache', 'force-cache'].map(m => fetch('/' + m,"
+            " {cache: m}).then(r => r.text())).concat([fetch('/only', {cache: 'only-if-cached', mode: 'same-origin'})"
+            ".then(() => 'fetched', error => String(error))]))",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    def cache_lines(path: str) -> list[tuple[str, str]]:
+        (headers,) = server.headers_of(path)
+        return [(name, value) for name, value in headers if name.lower() in ("pragma", "cache-control")]
+
+    assert outcomes == ["x", "x", "x", "x", "x", "TypeError: Failed to fetch"]
+    assert cache_lines("/default") == []
+    assert cache_lines("/no-store") == [("Pragma", "no-cache"), ("Cache-Control", "no-cache")]
+    assert cache_lines("/reload") == [("Pragma", "no-cache"), ("Cache-Control", "no-cache")]
+    assert cache_lines("/no-cache") == [("Cache-Control", "max-age=0")]
+    assert cache_lines("/force-cache") == []
+    assert server.headers_of("/only") == []
+
+
+def test_a_windows_conditional_fetch_validates_the_cache_as_chromes_does(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    # As Chrome 157 sent them: a window's fetch of the default cache mode with an If-* line goes as FrameFetchContext's
+    # kValidateCache, so //net puts Cache-Control: max-age=0 first, or the script's own Cache-Control in its place, and
+    # the preflight of a cross-origin one has it too. A worker's, one of another cache mode and one of mode no-cors,
+    # whose guard drops the line, have none of their own.
+    conditional = {
+        "inm": "If-None-Match: x",
+        "ims": "If-Modified-Since: Sat, 01 Jan 2000 00:00:00 GMT",
+        "im": "If-Match: x",
+        "ir": "If-Range: x",
+        "ius": "If-Unmodified-Since: Sat, 01 Jan 2000 00:00:00 GMT",
+        "lower": "if-none-match: x",
+    }
+    for name in [*conditional, "script", "force", "store", "no-cors", "post", "none", "worker"]:
+        server.routes[f"/c/{name}"] = _Route(b"x", headers=[("Content-Type", "text/plain")])
+    server.script("/w.js", "fetch('/c/worker', {headers: {'If-None-Match': 'x'}}).then(() => postMessage('done'))")
+    url = server.page("/", "<p>conditional</p>")
+    script = """
+      (async () => {
+        for (const [name, line] of Object.entries(CONDITIONAL)) {
+          const [key, value] = line.split(": ");
+          await fetch("/c/" + name, { headers: { [key]: value } });
+        }
+        await fetch("/c/script", { headers: { "X-A": "1", "If-None-Match": "x", "Cache-Control": "no-transform" } });
+        await fetch("/c/force", { cache: "force-cache", headers: { "If-None-Match": "x" } });
+        await fetch("/c/store", { cache: "no-store", headers: { "If-None-Match": "x" } });
+        await fetch("/c/no-cors", { mode: "no-cors", headers: { "If-None-Match": "x" } });
+        await fetch("/c/post", { method: "POST", body: "b", headers: { "If-None-Match": "x" } });
+        await fetch("/c/none");
+        await fetch(CROSS, { headers: { "If-None-Match": "x" } });
+        const worker = new Worker("/w.js");
+        return await new Promise((resolve) => { worker.onmessage = (event) => resolve(event.data); });
+      })()
+    """
+    with _PageServer() as other:
+        other.routes["/c/cross"] = _Route(
+            b"x", headers=[("Content-Type", "text/plain"), ("Access-Control-Allow-Origin", "*")]
+        )
+        other.routes["OPTIONS /c/cross"] = _Route(
+            headers=[("Access-Control-Allow-Origin", "*"), ("Access-Control-Allow-Headers", "If-None-Match")]
+        )
+        cross_url = json.dumps(other.url("/c/cross"))
+        script = script.replace("CONDITIONAL", json.dumps(conditional)).replace("CROSS", cross_url)
+        with _open_page(session, url) as page:
+            done = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+        (preflight,) = other.headers_of("OPTIONS /c/cross")
+        (cross,) = other.headers_of("/c/cross")
+
+    def cache_lines(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        return [(name, value) for name, value in headers if name.lower() in ("pragma", "cache-control")]
+
+    def lines_of(path: str) -> list[tuple[str, str]]:
+        (headers,) = server.headers_of(path)
+        return headers
+
+    assert done == "done"
+    for name in conditional:
+        assert cache_lines(lines_of(f"/c/{name}")) == [("Cache-Control", "max-age=0")], name
+    assert cache_lines(lines_of("/c/script")) == [("Cache-Control", "no-transform")]
+    assert cache_lines(lines_of("/c/force")) == []
+    assert cache_lines(lines_of("/c/store")) == [("Pragma", "no-cache"), ("Cache-Control", "no-cache")]
+    assert cache_lines(lines_of("/c/no-cors")) == []
+    assert not any(name.lower() == "if-none-match" for name, _ in lines_of("/c/no-cors"))
+    assert cache_lines(lines_of("/c/none")) == []
+    assert cache_lines(lines_of("/c/worker")) == []
+    assert cache_lines(preflight) == [("Cache-Control", "max-age=0")]
+    assert cache_lines(cross) == [("Cache-Control", "max-age=0")]
+    # Chrome's order of the names, which the Persona's values do not change.
+    assert [name.lower() for name, _ in lines_of("/c/inm")] == [
+        "host", "connection", "cache-control", "if-none-match", "sec-ch-ua-platform", "user-agent", "sec-ch-ua",
+        "sec-ch-ua-mobile", "accept", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "referer",
+        "accept-encoding", "accept-language",
+    ]  # fmt: skip
+    assert [name.lower() for name, _ in lines_of("/c/script")] == [
+        "host", "connection", "cache-control", "if-none-match", "sec-ch-ua-platform", "user-agent", "sec-ch-ua",
+        "x-a", "sec-ch-ua-mobile", "accept", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "referer",
+        "accept-encoding", "accept-language",
+    ]  # fmt: skip
+    assert [name.lower() for name, _ in lines_of("/c/post")] == [
+        "host", "connection", "content-length", "cache-control", "if-none-match", "sec-ch-ua-platform", "user-agent",
+        "sec-ch-ua", "content-type", "sec-ch-ua-mobile", "accept", "origin", "sec-fetch-site", "sec-fetch-mode",
+        "sec-fetch-dest", "referer", "accept-encoding", "accept-language",
+    ]  # fmt: skip
 
 
 def test_a_head_request_gives_an_empty_stream_as_chrome_does(session: mitto.Session, server: _PageServer) -> None:

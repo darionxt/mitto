@@ -175,7 +175,7 @@ In mitto 0.1 every Session claimed one machine, which [`Machine.named("mitto-0.1
 | In `headers` | On the wire |
 | --- | --- |
 | A name the Persona has | Takes the place of the Persona's line, which keeps the Persona's spelling of the name, as HTTP/1.1 shows |
-| Another name | After the Persona's lines, in the order given, before what `//net` adds |
+| Another name | After the Persona's lines, in the order given, before what `//net` adds. On a `fetch` or an `xhr`, a name that a page's script may set goes [in the order of Blink's table](#where-they-go), as does one that the Persona has |
 | A name the Persona has, with `None` | The line is gone |
 | Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
 | `User-Agent`, with `None` | The line leaves its place, and `//net` adds the Persona's `user_agent` after the other lines, because a request always gets one from the context |
@@ -184,7 +184,7 @@ In mitto 0.1 every Session claimed one machine, which [`Machine.named("mitto-0.1
 | A client hint that no server has asked for | Goes as given, on each hop |
 | `Content-Type`, with a body | Takes the place of the line in the file, whatever the body is, so a type for bytes goes where a text body's would. `None` removes it |
 
-On a script, image or fetch that sends a hint a server asked for, `User-Agent`, `Content-Type` and the hints go [in the order of Blink's table](#where-they-go), so a caller's own `Content-Type` goes there too, as a page's does.
+On a script, image or fetch that sends a hint a server asked for, `User-Agent`, `Content-Type` and the hints go [in the order of Blink's table](#where-they-go), so a caller's own `Content-Type` goes there too, as a page's does. On a `fetch` or an `xhr` with lines of a caller's that a page's script may set, those go there with them, hint or no hint.
 
 A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone. `Cookie` is the exception: it keeps that place, but `//net` writes over its value whenever the store holds a cookie for the URL, and it does not follow a redirect to another origin.
 

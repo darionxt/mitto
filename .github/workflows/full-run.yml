@@ -1,0 +1,32 @@
+name: Full run
+
+# CI's jobs on the head of a branch, such as a draft pull request's, without marking the pull request ready for review.
+# It starts by hand only, from the repository's Actions tab or with: gh workflow run full-run.yml --ref BRANCH
+#
+# Not by a label on the pull request. CI would start for every label on every pull request, and a run that a label
+# starts is newer than the full run of a ready pull request, which it would cancel and stand in for. Not by the pull
+# request's number either: the run would be main's, with a pull request's code in reach of main's caches and its checks
+# on main's commit. On the branch, the caches are the branch's and the checks are on its head, and only someone who can
+# push here can start it, so a fork's code cannot run.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A second run of a branch takes the place of the first.
+concurrency:
+  group: full-run-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    # Its checks are called "Full run / Native core on ...", so that none of them is one that main requires: what merges
+    # a pull request is still the run of the pull request itself.
+    name: Full run
+    # One of CI's jobs reads what earlier runs did. It does not run here, but a called workflow is refused if any of its
+    # jobs asks for more than this.
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/ci.yml

@@ -36,7 +36,6 @@ pytestmark = [
 _TIMEOUT_SECONDS = 60
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 36
 
 _FAKE_PAGE = textwrap.dedent(
     """\
@@ -65,13 +64,19 @@ _FAKE_PAGE = textwrap.dedent(
         pending = pending[8 + size :]
         return message_type, payload
 
+    def hello():
+        # The library's hello comes first: speak its version back, as a Page of the same tree does.
+        message_type, payload = receive()
+        assert message_type == 1, message_type
+        send(1, payload)
+
     def sized(data):
         return struct.pack("<I", len(data)) + data
 
     def request(document, number, kind, url, target=0):
         return (
             struct.pack("<QQBB", document, number, kind, 0)
-            + struct.pack("<BBBBBQ", 0, 0, 0, 0, 0, target)
+            + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, target)
             + sized(url.encode()) + sized(b"GET") + sized(b"") + sized(b"") + b"\\x00"
         )
 
@@ -177,7 +182,7 @@ _FAKE_PAGE = textwrap.dedent(
             rest = rest[4 + size :]
         return names
 
-    send(1, struct.pack("<I", {version}))
+    hello()
     send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
     send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
@@ -352,7 +357,7 @@ def _run_page(tmp_path: Path, top: _Server, actions: str, storage: Path) -> Any:
     copy = directory / library.name
     shutil.copy2(library, copy)
     page_program = directory / _native.PAGE_PROGRAM_NAME
-    page_program.write_text(_FAKE_PAGE.format(python=sys.executable, version=_PROTOCOL_VERSION, actions=actions))
+    page_program.write_text(_FAKE_PAGE.format(python=sys.executable, actions=actions))
     page_program.chmod(0o755)
     environment = {**os.environ, _native.LIBRARY_ENV_VAR: str(copy)}
     finished = subprocess.run(

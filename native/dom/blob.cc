@@ -128,6 +128,10 @@ Blob* Blob::Create(scoped_refptr<BlobDataHandle> handle) {
   return bindings::MakeGarbageCollected<Blob>(std::move(handle));
 }
 
+bool Blob::IsFile() const {
+  return false;
+}
+
 // static
 Blob* Blob::Create(base::span<const uint8_t> bytes,
                    std::string_view content_type) {

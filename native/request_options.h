@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/time/time.h"
 #include "net/base/request_priority.h"
@@ -30,6 +31,16 @@ enum class CredentialsMode {
   kOmit,
   kSameOrigin,
   kInclude,
+};
+
+// Whose order a request's headers go in, once a page's script, or a caller in
+// its place, has set some.
+enum class HeaderOrder {
+  // The order they are given in.
+  kGiven,
+  // That of Blink's HTTPHeaderMap for a fetch() or an XMLHttpRequest.
+  kFetch,
+  kXhr,
 };
 
 // What a page's request says of itself, in the terms of Chrome's
@@ -104,6 +115,15 @@ struct FetchParams {
 
   // The names of the headers that are the caller's, in lower case.
   std::set<std::string> fixed_headers;
+
+  // The same names, each once, in the order that the script or the caller set
+  // them.
+  std::vector<std::string> script_headers;
+  // Whether a page's script sent them, so that Blink's map holds each in any
+  // mode, as a request of cache.keys(), of mode no-cors, keeps lines that need
+  // a preflight. A caller's line of mode no-cors that needs one is no script's.
+  bool script_headers_of_a_page = false;
+  HeaderOrder header_order = HeaderOrder::kGiven;
 };
 
 // What a request is started with, besides its URL and headers.
@@ -130,9 +150,11 @@ struct RequestOptions {
   // False makes a redirect the response, as mitto_request_start() describes.
   bool follow_redirects = true;
 
-  // A Page's reload, which validates what the cache holds: //net's
-  // LOAD_VALIDATE_CACHE. No option of the C API's sets it.
-  bool validate_cache = false;
+  // //net's load flags for the cache of a Page's request: LOAD_VALIDATE_CACHE
+  // for a reload, and a fetch()'s cache mode's, as Blink's
+  // GetLoadFlagsForWebUrlRequest() gives them, so that //net adds the lines
+  // that go with them. No option of the C API's sets them.
+  int cache_load_flags = 0;
 
   // A Page's traversal of its session history to another document, which
   // takes what the cache holds without validating it: //net's

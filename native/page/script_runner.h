@@ -112,6 +112,7 @@ class ScriptRunner final : public base::TaskObserver {
   void OnResponseEnded(PageResponseEnded ended);
   void OnRequestBodyCredit(PageCredit credit);
   void OnIsolation(PageIsolation isolation);
+  void OnRestore(uint64_t number);
   void OnPermissionsPolicy(PagePermissionsPolicy policy);
 
   // Runs `task` with a handle scope, in no context: what it runs enters the

@@ -10,6 +10,7 @@
 #include "mitto/dom/read_request.h"
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/readable_stream_default_reader.h"
+#include "mitto/dom/script_forbidden_scope.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -139,7 +140,10 @@ void ReadableStreamBytesConsumer::Cancel() {
   if (state_ == PublicState::kClosed || state_ == PublicState::kErrored) {
     return;
   }
-  {
+  // Cancel() can come while script is forbidden, as when an execution context
+  // ends. The reader is not cancelled then, so the stream stays as it is and
+  // its source hears of nothing.
+  if (!ScriptForbiddenScope::IsScriptForbidden()) {
     // We ignore exceptions as we can do nothing here.
     const v8::TryCatch try_catch(isolate_);
     bindings::ExceptionState exception_state(isolate_);
