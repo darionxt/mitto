@@ -73,6 +73,7 @@ class Navigation;
 class NavigationClient;
 class Navigator;
 class Performance;
+struct RendererProcess;
 class Scheduler;
 class Screen;
 class StyleMedia;
@@ -264,6 +265,10 @@ class Window final : public WindowProperties, public ExecutionContext {
   // Whether it has its document yet, which it has once its context is made
   // and set up.
   bool HasDocument() const { return document_; }
+  // LocalDOMWindow::CanExecuteScripts(): whether its document's sandbox lets
+  // scripts run. One that is about to run and may not is said to be blocked
+  // in the console.
+  bool CanExecuteScripts(bool about_to_execute);
   // Makes `document` the window's, and the window its document's.
   void SetDocument(mitto::Document* document);
   // Makes the global proxy and the global object of `context`, which was made
@@ -303,6 +308,10 @@ class Window final : public WindowProperties, public ExecutionContext {
       back_forward_cache_eviction_.Run();
     }
   }
+  // Whether its frame is under another.
+  bool IsInFrame() const;
+  // The process that Chrome has its document in.
+  RendererProcess Process() const;
   // What a navigation of the window's frame to another document asks the
   // Session through. Without one, as in the Page program given a script or
   // once the context is gone, such a navigation does not start.

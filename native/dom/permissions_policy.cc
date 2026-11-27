@@ -288,16 +288,15 @@ bool IsUnloadDeprecated(const DeprecatedUnload& seed, const GURL& url) {
 }
 
 // static
-PermissionsPolicy* PermissionsPolicy::Create(const std::u16string& url,
+PermissionsPolicy* PermissionsPolicy::Create(const url::Origin& origin,
                                              bool unload_deprecated) {
-  return bindings::MakeGarbageCollected<PermissionsPolicy>(url,
+  return bindings::MakeGarbageCollected<PermissionsPolicy>(origin,
                                                            unload_deprecated);
 }
 
-PermissionsPolicy::PermissionsPolicy(const std::u16string& url,
+PermissionsPolicy::PermissionsPolicy(const url::Origin& origin,
                                      bool unload_deprecated)
-    : origin_(url::Origin::Create(GURL(base::UTF16ToUTF8(url)))),
-      unload_deprecated_(unload_deprecated) {
+    : origin_(origin), unload_deprecated_(unload_deprecated) {
   const bindings::RuntimeFeatureSet& features =
       bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->features();
   // FeatureAvailable(): a feature of the map that no origin trial hides and

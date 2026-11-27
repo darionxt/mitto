@@ -35,6 +35,8 @@ pytestmark = [
 
 _TIMEOUT_SECONDS = 60
 
+# The version of the messages of native/page_messages.h.
+
 _FAKE_PAGE = textwrap.dedent(
     """\
     #!{python}
@@ -86,10 +88,10 @@ _FAKE_PAGE = textwrap.dedent(
 
     def frame(parent, blank, navigation, document, url):
         # A frame's initial about:blank, then its navigation, of Kind iframe, whose document takes its place.
-        send(70, struct.pack("<QBQ", blank, 0, parent))
+        send(70, struct.pack("<QBBQ", blank, 0, 0, parent))
         send(8, request(parent, navigation, 11, url, target=blank))
         wait_for_end(navigation)
-        send(70, struct.pack("<QBQQ", document, 1, parent, navigation))
+        send(70, struct.pack("<QBBQQ", document, 1, 0, parent, navigation))
 
     # localStorage's keys and values, after Blink's byte for Latin-1.
     def bind(document, area, observer):
@@ -181,9 +183,9 @@ _FAKE_PAGE = textwrap.dedent(
         return names
 
     hello()
-    send(70, struct.pack("<QBQ", 1, 0, 0))
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
-    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
     send(12, struct.pack("<Q", 2))
     while True:
         message_type, payload = receive()
@@ -203,7 +205,7 @@ _FRAME_ACTIONS = textwrap.dedent(
     """\
     frame(2, 3, 1, 4, "{frame}")
     frame(4, 5, 2, 6, "{nested}")
-    send(70, struct.pack("<QBQ", 7, 0, 2))
+    send(70, struct.pack("<QBBQ", 7, 0, 0, 2))
 
     bind(2, 1, 1)
     put(1, b"k", b"top")
@@ -226,7 +228,7 @@ _INDEXED_DB_ACTIONS = textwrap.dedent(
     """\
     frame(2, 3, 1, 4, "{frame}")
     frame(4, 5, 2, 6, "{nested}")
-    send(70, struct.pack("<QBQ", 7, 0, 2))
+    send(70, struct.pack("<QBBQ", 7, 0, 0, 2))
 
     idb_open(2, 1, 1, 1)
     seen = {{}}

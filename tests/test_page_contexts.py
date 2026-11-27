@@ -30,6 +30,8 @@ pytestmark = [
 
 _TIMEOUT_SECONDS = 60
 
+# The version of the messages of native/page_messages.h.
+
 _FAKE_PAGE = textwrap.dedent(
     """\
     #!{python}
@@ -79,9 +81,9 @@ _FAKE_PAGE = textwrap.dedent(
                 return
 
     hello()
-    send(70, struct.pack("<QBQ", 1, 0, 0))
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
-    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
     send(12, struct.pack("<Q", 2))
     while True:
         message_type, payload = receive()
@@ -89,10 +91,10 @@ _FAKE_PAGE = textwrap.dedent(
             call = struct.unpack_from("<Q", payload)[0]
             break
     # The frame's initial about:blank, then its navigation, of Kind iframe, whose document takes its place.
-    send(70, struct.pack("<QBQ", 3, 0, 2))
+    send(70, struct.pack("<QBBQ", 3, 0, 0, 2))
     send(8, request(2, 1, 11, "{frame}", target=3))
     wait_for_end(1)
-    send(70, struct.pack("<QBQQ", 4, 1, 2, 1))
+    send(70, struct.pack("<QBBQQ", 4, 1, 0, 2, 1))
     send(8, request(4, 2, 2, "{frame_fetch}"))
     wait_for_end(2)
     # A worker of the top-level document, from its script's response, which fetches.
@@ -103,7 +105,7 @@ _FAKE_PAGE = textwrap.dedent(
     wait_for_end(4)
     # A frame's initial about:blank, of the top-level document's origin, whose CookieStore listens beside the
     # top-level document's. Each hears of a change, until the frame goes.
-    send(70, struct.pack("<QBQ", 6, 0, 2))
+    send(70, struct.pack("<QBBQ", 6, 0, 0, 2))
     send(21, struct.pack("<QB", 2, 1))
     send(21, struct.pack("<QB", 6, 1))
     changes = []
@@ -137,9 +139,9 @@ _FAKE_PAGE_HELPERS = _FAKE_PAGE[: _FAKE_PAGE.index("\nhello()\n") + 1]
 _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
     hello()
-    send(70, struct.pack("<QBQ", 1, 0, 0))
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
-    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
     send(12, struct.pack("<Q", 2))
     while True:
         message_type, payload = receive()
@@ -171,10 +173,10 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
 _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
     hello()
-    send(70, struct.pack("<QBQ", 1, 0, 0))
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
-    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
-    send(70, struct.pack("<QBQ", 3, 0, 2))
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(70, struct.pack("<QBBQ", 3, 0, 0, 2))
     send(71, struct.pack("<Q", 3) + b"{other}")
     while channel.recv(65536):
         pass
@@ -186,17 +188,53 @@ _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
 _FAKE_PAGE_OF_A_BLOCKED_DOCUMENT = _FAKE_PAGE_HELPERS + textwrap.dedent(
     """\
     hello()
-    send(70, struct.pack("<QBQ", 1, 0, 0))
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
     wait_for_end(0)
-    send(70, struct.pack("<QBQQ", 2, 1, 0, 0))
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
     send(12, struct.pack("<Q", 2))
-    send(70, struct.pack("<QBQ", 3, 0, 2))
+    send(70, struct.pack("<QBBQ", 3, 0, 0, 2))
     send(8, request(2, 1, 11, "{frame}", target=3))
     wait_for_end(1)
-    send(70, struct.pack("<QBQQ", 4, 1, 2, 1))
-    send(70, struct.pack("<QBQ", 5, 0, 4))
+    send(70, struct.pack("<QBBQQ", 4, 1, 0, 2, 1))
+    send(70, struct.pack("<QBBQ", 5, 0, 0, 4))
     send(72, struct.pack("<QQB", 5, {initiator}, {kind}))
-    send(70, struct.pack("<QBQQQ", 6, {source}, 4, {initiator}, 5) + b"{url}")
+    send(70, struct.pack("<QBBQQQ", 6, {source}, 0, 4, {initiator}, 5) + b"{url}")
+    while channel.recv(65536):
+        pass
+    """
+)
+
+# A frame in a sandbox without allow-same-origin, whose document of the top-level document's URL's origin fetches, asks for
+# its cookies, and then for storage, which it has none of.
+_FAKE_PAGE_OF_A_SANDBOX = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    hello()
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    while True:
+        message_type, payload = receive()
+        if message_type == 4:
+            call = struct.unpack_from("<Q", payload)[0]
+            break
+    send(70, struct.pack("<QBBQ", 3, 0, 1, 2))
+    send(8, request(2, 1, 11, "{frame}", target=3))
+    wait_for_end(1)
+    send(70, struct.pack("<QBBQQ", 4, 1, 1, 2, 1))
+    send(8, request(4, 2, 2, "{fetch}"))
+    wait_for_end(2)
+    answers = []
+    for document in (2, 4):
+        send(10, struct.pack("<QQ", document, document))
+        while True:
+            message_type, payload = receive()
+            if message_type == 16:
+                answers.append('"' + payload[8:].decode() + '"')
+                break
+    send(5, struct.pack("<QB", call, 0) + ("[" + ",".join(answers) + "]").encode())
+    if {bind}:
+        send(27, struct.pack("<QQBQ", 4, 1, 1, 1))
     while channel.recv(65536):
         pass
     """
@@ -456,3 +494,40 @@ def test_a_frames_local_document_with_no_embedder_policy_is_refused_under_a_pare
     printed = _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page"))
 
     assert printed == "the library refused a message from the Page: a document that its parent's embedder policy blocks"
+
+
+def test_a_sandboxed_documents_requests_and_cookies_are_an_opaque_origins(tmp_path: Path, top: _Server) -> None:
+    program = _FAKE_PAGE_OF_A_SANDBOX.format(
+        python=sys.executable,
+        frame=top.url("/frame-page"),
+        fetch=top.url("/frame-fetch"),
+        bind=False,
+    )
+
+    printed = _run_fake_page(tmp_path, program, _SESSION, top.url("/page"), top.url("/set"))
+
+    # The top-level document reads its cookie, and the frame's, of the same URL's origin, none.
+    assert printed == "['f=1', '']"
+    (navigation,) = top.headers_of("/frame-page")
+    assert _value(navigation, "Cookie") == "f=1"
+    (fetched,) = top.headers_of("/frame-fetch")
+    assert (_value(fetched, "Origin"), _value(fetched, "Sec-Fetch-Site")) == ("null", "cross-site")
+    assert (_value(fetched, "Cookie"), _value(fetched, "Referer")) == (None, None)
+
+
+def test_a_sandboxed_document_binds_no_storage(tmp_path: Path, top: _Server) -> None:
+    program = _FAKE_PAGE_OF_A_SANDBOX.format(
+        python=sys.executable,
+        frame=top.url("/frame-page"),
+        fetch=top.url("/frame-fetch"),
+        bind=True,
+    )
+    session = _SESSION_OF_AN_ENDED_PAGE.replace(
+        'page.evaluate("1"', 'page.evaluate("1", timeout=60); page.evaluate("2"'
+    )
+
+    printed = _run_fake_page(tmp_path, program, session, top.url("/page"))
+
+    assert (
+        printed == "the library refused a message from the Page: a storage area of a document that has no storage key"
+    )

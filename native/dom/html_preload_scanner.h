@@ -220,6 +220,7 @@ class HtmlPreloadScanner {
   Result Scan(const GURL& starting_base_url);
 
  private:
+  const bool scripting_flag_;
   std::unique_ptr<HtmlTokenizer> tokenizer_;
   TokenPreloadScanner scanner_;
 };

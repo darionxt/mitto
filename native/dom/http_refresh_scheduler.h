@@ -54,7 +54,8 @@ class HttpRefreshScheduler {
 
   // Document::MaybeHandleHttpRefresh(): schedules the refresh that `content`
   // says, of the document's own URL for none, and nothing for a document of
-  // no window or a javascript: URL, which the console says.
+  // no window, a javascript: URL or a meta element of a document whose sandbox
+  // withholds automatic features, which the console says of the last two.
   void MaybeHandle(std::u16string_view content, Source source);
 
   // Starts the delay of the refresh, if one waits and the document's load

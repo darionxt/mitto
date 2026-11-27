@@ -186,7 +186,7 @@ void MessageEvent::SetSource(EventTarget* source) {
   const Window* const viewer =
       window ? Window::From(isolate, isolate->GetCurrentContext()) : nullptr;
   if (viewer) {
-    remote_source_ = RemoteWindow::From(*window, viewer->GetSecurityOrigin());
+    remote_source_ = RemoteWindow::From(*window, viewer->Process());
   }
   // A remote window stands for its frame, whichever document it shows.
   source_ = remote_source_ ? nullptr : source;

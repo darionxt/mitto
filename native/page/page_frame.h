@@ -44,6 +44,7 @@
 #include "mitto/dom/history_item.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/navigation_rate_limiter.h"
+#include "mitto/dom/sandbox_flags.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -313,9 +314,13 @@ class PageFrame final : public NavigationClient, public Frame {
   // a context passes its WindowProxy, the old context's global proxy, which
   // the old context has let go, so that the new context takes it, as
   // LocalWindowProxy reinitializes on the same global proxy.
+  // Whether its document's origin is potentially trustworthy, or was before a
+  // sandbox made it opaque, decides with the parent's context whether the
+  // context is a secure one.
   v8::Local<v8::Context> NewContext(
       base::TimeTicks time_origin,
       const url::Origin& origin,
+      bool is_trustworthy,
       bool cross_origin_isolated = false,
       v8::Local<v8::Object> global_proxy = v8::Local<v8::Object>());
   // The security token of a context of the Page whose document has
@@ -332,10 +337,8 @@ class PageFrame final : public NavigationClient, public Frame {
   // nothing.
   bool IsolatedLikeParent(const url::Origin& origin,
                           bool origin_sandboxed) const;
-  // Whether the frame's element is an iframe whose sandbox attribute withholds
-  // allow-same-origin, as Chrome takes it when a navigation of the frame
-  // starts. A frame element's sandbox attribute means nothing.
-  bool OwnerSandboxesOrigin() const;
+  // Warns of a sandbox that its frame's document can take away.
+  void WarnIfSandboxIneffective();
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
   // `connection` for its document, and the ID of its document, which it tells
@@ -430,6 +433,12 @@ class PageFrame final : public NavigationClient, public Frame {
     // the default for an error page, and its referrer, none for an error page.
     url::Origin origin;
     FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+    // What the sandbox withholds from it, and whether its origin was
+    // potentially trustworthy before that made it opaque, where a srcdoc's is
+    // if its parent's is, which its parent's context says.
+    SandboxFlags sandbox = SandboxFlags::kNone;
+    bool trustworthy = false;
+    bool sandboxed_process = false;
     std::u16string referrer;
     // Its document's about base URL, the parent document's base URL for a
     // srcdoc and the initiator's for an about:blank, and its cookie URL, the
@@ -441,8 +450,9 @@ class PageFrame final : public NavigationClient, public Frame {
     // srcdoc, the initiator's for an about:blank and none for an error page, is
     // compatible with cross-origin isolation.
     bool embedder_policy_isolates = false;
-    // OwnerSandboxesOrigin() as it started, or of the document that started
-    // it, whose origin an about:blank takes.
+    // Whether the frame's sandbox gave it an opaque origin as it started, or
+    // the document that started it had one of its response's sandbox, whose
+    // origin an about:blank takes.
     bool origin_sandboxed = false;
     // A srcdoc's markup.
     std::u16string body;
@@ -452,8 +462,10 @@ class PageFrame final : public NavigationClient, public Frame {
   // Commits `navigation` from a later task, as Chrome's browser commits it,
   // unless a newer navigation of the frame takes its place first.
   void CommitWithoutNetworkSoon(LocalNavigation navigation);
-  // Commits Chrome's error page so, which a navigation that failed ends with.
-  void CommitErrorPageSoon();
+  // The same with Chrome's error page, as a navigation that started under
+  // `sandbox` has failed: the latest one that asked the network or went to a
+  // data: URL, or a local one that the parent's embedder policy blocks.
+  void CommitErrorPageSoon(SandboxFlags sandbox);
   // NavigationRequest::CheckResponseAdherenceToCoep(): whether the frame's
   // parent has an embedder policy that is compatible with cross-origin
   // isolation and a document that the frame makes without the network would
@@ -537,11 +549,15 @@ class PageFrame final : public NavigationClient, public Frame {
   // Counts the requests that have waited, so that a data: URL's navigation
   // lets its request go only while it is still the one that waits.
   uint64_t provisional_request_serial_ = 0;
+  // What the sandbox withheld as the navigation started.
+  SandboxFlags provisional_sandbox_ = SandboxFlags::kNone;
   base::TimeTicks provisional_start_;
-  // OwnerSandboxesOrigin() as the network navigation started.
+  // Whether the frame's sandbox gave an opaque origin as the network navigation
+  // started.
   bool provisional_origin_sandboxed_ = false;
   // Whether a sandbox, its frame's or its response's, gives the document an
-  // opaque origin in Chrome, where the Page gives it its URL's yet.
+  // opaque origin in Chrome. The Page makes the frame's own; a response's is a
+  // Known Gap, which only the Session's isolation tells of.
   bool origin_sandboxed_ = false;
   uint64_t provisional_cookie_writes_ = 0;
   // The entry that the latest traversal asked for goes to, while one waits,

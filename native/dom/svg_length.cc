@@ -106,12 +106,12 @@ CssLengthResolver ResolverFor(const SVGElement* element) {
   if (element) {
     if (Window* const window = element->GetDocument().DefaultView()) {
       if (element->IsConnected()) {
-        return MediaValuesFor(window->Start()).LengthResolver();
+        return MediaValuesFor(*window).LengthResolver();
       }
       CssLengthResolver resolver{};
       resolver.em = resolver.rem = resolver.ex = resolver.rex = 0;
       resolver.ch = resolver.rch = resolver.ic = resolver.ric = 0;
-      const MediaValues values = MediaValuesFor(window->Start());
+      const MediaValues values = MediaValuesFor(*window);
       resolver.viewport_width = values.viewport_width;
       resolver.viewport_height = values.viewport_height;
       return resolver;
