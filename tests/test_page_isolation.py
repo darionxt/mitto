@@ -793,26 +793,19 @@ def test_a_page_whose_policy_takes_the_feature_is_not_isolated(
     ]
 
 
-@pytest.mark.parametrize(
-    ("path", "isolated"),
-    [
-        pytest.param(
-            "/rhdr",
-            False,
-            id="policy-takes-the-feature",
-            marks=pytest.mark.xfail(
-                reason="a first document whose policy takes the feature gets a window of its own", strict=True
-            ),
-        ),
-        pytest.param("/rplain", True, id="plain"),
-    ],
-)
-def test_a_frame_keeps_its_initial_window_for_its_first_document(
-    session: mitto.Session, server: RecordingServer, path: str, isolated: bool
-) -> None:
-    # A same-origin frame's first document keeps the initial about:blank's window, with what a script set on it, and
-    # Chrome for Testing 157 keeps it, with crossOriginIsolated false, also where the response's Permissions-Policy
-    # takes the feature, as Blink's ShouldReuseDOMWindow() compares the agent cluster's isolation: a Known Gap there.
+_KEEPS_WINDOW = """(async () => {
+    const frame = document.createElement('iframe');
+    frame.src = 'PATH';
+    document.documentElement.appendChild(frame);
+    const before = frame.contentWindow;
+    before.foo = 1;
+    await new Promise((resolve) => frame.onload = resolve);
+    const after = frame.contentWindow;
+    return [after.crossOriginIsolated, after === before, after.foo, typeof after.SharedArrayBuffer];
+})()"""
+
+
+def _route_reused_frames(server: RecordingServer) -> None:
     server.route(
         "/rhdr",
         b"<!doctype html><title>r</title>",
@@ -820,18 +813,42 @@ def test_a_frame_keeps_its_initial_window_for_its_first_document(
         [*_POLICY_HEADERS, ("Permissions-Policy", "cross-origin-isolated=()")],
     )
     server.route("/rplain", _BLANK.encode(), "text/html", _POLICY_HEADERS)
-    script = f"""(async () => {{
-        const frame = document.createElement('iframe');
-        frame.src = '{path}';
-        document.documentElement.appendChild(frame);
-        const before = frame.contentWindow;
-        before.foo = 1;
-        await new Promise((resolve) => frame.onload = resolve);
-        const after = frame.contentWindow;
-        return [after === before, after.foo, after.crossOriginIsolated];
-    }})()"""
 
-    assert _evaluate(session, server.page("/", _BLANK, _ISOLATING), script) == [True, 1, isolated]
+
+@pytest.mark.parametrize(("path", "isolated"), [("/rhdr", False), ("/rplain", True)])
+def test_a_frame_s_first_document_takes_its_own_isolation(
+    session: mitto.Session, server: RecordingServer, path: str, isolated: bool
+) -> None:
+    # A same-origin frame's first document is isolated as its own permissions policy says, also where a script reached
+    # the initial about:blank's window first (Chrome for Testing 157).
+    _route_reused_frames(server)
+    result = _evaluate(session, server.page("/", _BLANK, _ISOLATING), _KEEPS_WINDOW.replace("PATH", path))
+
+    assert result[0] is isolated
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(
+            "/rhdr",
+            marks=pytest.mark.xfail(
+                reason="a first document of another capability gets a window of its own", strict=True
+            ),
+        ),
+        "/rplain",
+    ],
+)
+def test_a_frame_keeps_its_initial_window_for_its_first_document(
+    session: mitto.Session, server: RecordingServer, path: str
+) -> None:
+    # The first document keeps the initial about:blank's window, with what a script set on it and SharedArrayBuffer,
+    # which its context was made with, as Blink's ShouldReuseDOMWindow() compares the agent cluster's isolation, also
+    # where the response's Permissions-Policy takes the feature (Chrome for Testing 157): a Known Gap there.
+    _route_reused_frames(server)
+    result = _evaluate(session, server.page("/", _BLANK, _ISOLATING), _KEEPS_WINDOW.replace("PATH", path))
+
+    assert result[1:] == [True, 1, "function"]
 
 
 def test_a_frame_s_requests_are_held_to_its_own_embedder_policy(
