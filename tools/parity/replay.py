@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from mitto import RequestError, RequestKind, Session
 from mitto._errors import PageTimeoutError
 from mitto._native import PrivateSettings
+from mitto._page import Page
 from mitto._request import BodyOptions
 from tools.capture import (
     CASES,
@@ -65,7 +66,7 @@ _CLICK_NEXT = """new Promise((resolve) => {
 })"""
 
 # The start page's script asks for its cases one after another, and last for the page of navigation_location, where it
-# sets location.
+# sets location, and the pages after it navigate on, as navigation_location's replay follows them.
 _START_LAST_PATH = _PATHS["navigation_location"]
 # How long a Page's document stays where it is before a replay takes it that it navigates no further.
 _SETTLED_SECONDS = 3.0
@@ -109,6 +110,9 @@ class Replay:
         until: The path that the page's own script asks for last: the Page stays open until the server has had a request
             for it, by when every other request of the page has ended, so that closing the Page, or a navigation, cancels
             none.
+        settles: Whether the Page then stays until its document has navigated no further for a while, for a page whose
+            own script navigates on once it has asked for the request, so that closing the Page cancels none of those
+            navigations.
     """
 
     kind: RequestKind
@@ -130,6 +134,7 @@ class Replay:
     lands_at: str | None = None
     clicks: tuple[str, ...] = ()
     until: str | None = None
+    settles: bool = False
 
 
 def _hops(prefix: str, kind: RequestKind, page: str) -> dict[str, Replay]:
@@ -231,16 +236,20 @@ def _document_replays() -> dict[str, Replay]:
         "xhr_get_cross_site": Replay(RequestKind.XHR, host=CROSS_SITE_HOST, page=start),
         "xhr_post_text": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start),
         # Blink gives a synchronous request a priority that a caller cannot say.
-        "xhr_get_sync": Replay(RequestKind.XHR, page=start, through_page=True, until=_START_LAST_PATH),
+        "xhr_get_sync": Replay(RequestKind.XHR, page=start, through_page=True, until=_START_LAST_PATH, settles=True),
         "xhr_post_text_sync": Replay(
-            RequestKind.XHR, _POST, body=_TEXT, page=start, through_page=True, until=_START_LAST_PATH
+            RequestKind.XHR, _POST, body=_TEXT, page=start, through_page=True, until=_START_LAST_PATH, settles=True
         ),
         "worker": Replay(RequestKind.WORKER, page=start),
         # The worker's script asks for both.
-        "worker_import_scripts": Replay(RequestKind.SCRIPT, page=start, through_page=True, until=_START_LAST_PATH),
-        "worker_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, until=_START_LAST_PATH),
+        "worker_import_scripts": Replay(
+            RequestKind.SCRIPT, page=start, through_page=True, until=_START_LAST_PATH, settles=True
+        ),
+        "worker_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, until=_START_LAST_PATH, settles=True),
         "worker_module": Replay(RequestKind.WORKER, page=start),
-        "worker_blob_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, until=_START_LAST_PATH),
+        "worker_blob_fetch": Replay(
+            RequestKind.FETCH, page=start, through_page=True, until=_START_LAST_PATH, settles=True
+        ),
         "beacon_text": Replay(RequestKind.BEACON, _POST, body=_TEXT, page=start),
         "beacon_blob": Replay(RequestKind.BEACON, _POST, body={"data": b"blob body"}, page=start),
         "beacon_form_data": Replay(
@@ -522,6 +531,8 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
         if steps.page_script is not None:
             page.evaluate(steps.page_script, timeout=_PAGE_TIMEOUT_SECONDS)
         if steps.kind is not RequestKind.NAVIGATION:
+            if steps.settles:
+                _settle(page)
             return
         clicks = list(steps.clicks)
         while True:
@@ -531,16 +542,21 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
                 page.evaluate(_CLICK_NEXT, timeout=_PAGE_TIMEOUT_SECONDS)
             elif path == lands_at and not clicks:
                 break
-        # The case's page navigates on, as the pages of Chrome's run did. Each navigation ends before the Page closes,
-        # so that closing it cancels no request, which over HTTP/3 would open the QPACK decoder stream that Chrome's
-        # run, which cancelled nothing, never opened.
-        while True:
-            try:
-                page.wait_for_navigation(timeout=_SETTLED_SECONDS)
-            except PageTimeoutError:
-                return
-            except RequestError:
-                continue
+        # The case's page navigates on, as the pages of Chrome's run did.
+        _settle(page)
+
+
+def _settle(page: Page) -> None:
+    """Wait until `page`'s document has navigated no further for a while. Each navigation ends before the Page closes,
+    so that closing it cancels no request, which over HTTP/3 would open the QPACK decoder stream that Chrome's run,
+    which cancelled nothing, never opened."""
+    while True:
+        try:
+            page.wait_for_navigation(timeout=_SETTLED_SECONDS)
+        except PageTimeoutError:
+            return
+        except RequestError:
+            continue
 
 
 def _wait_for_request(server: CaptureServer, run: Run, path: str) -> None:

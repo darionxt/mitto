@@ -135,6 +135,14 @@ def test_a_page_replays_its_own_navigations_its_traversal_its_workers_requests_a
         "xhr_post_text_sync",
         *markup,
     }
+    # The pages after the start page navigate on, which the replays of what its script asks for wait out.
+    assert {name for name in through if REPLAYS[name].settles} == {
+        "worker_import_scripts",
+        "worker_fetch",
+        "worker_blob_fetch",
+        "xhr_get_sync",
+        "xhr_post_text_sync",
+    }
     # Only the traversal clicks a page's links, where the person recording did.
     assert {name for name in through if REPLAYS[name].clicks} == {"navigation_history_back"}
 

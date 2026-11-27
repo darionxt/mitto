@@ -21,12 +21,14 @@ namespace {
 
 // Runs `task` in `context`, or, for a window that the back/forward cache keeps,
 // holds it until the window comes back, as Blink's frozen frames hold their
-// tasks.
+// tasks: a `delayed` one, whose delay came due meanwhile, after what the
+// window's resume and pageshow listeners post.
 void RunOrHoldInContext(cppgc::WeakPersistent<ExecutionContext> context,
                         TaskType type,
+                        bool delayed,
                         base::OnceClosure task) {
   if (context && context->IsInBackForwardCache()) {
-    context->HoldTask(type, std::move(task));
+    context->HoldTask(type, std::move(task), delayed);
     return;
   }
   RunInContext(context.Get(), [&] { std::move(task).Run(); });
@@ -48,7 +50,7 @@ void PostTaskInContext(ExecutionContext* context,
       FROM_HERE,
       base::BindOnce(&RunOrHoldInContext,
                      cppgc::WeakPersistent<ExecutionContext>(context), type,
-                     std::move(task)));
+                     /*delayed=*/false, std::move(task)));
 }
 
 ExecutionContext* FrozenContext(v8::Isolate* isolate,
@@ -70,7 +72,7 @@ void PostDelayedTaskInContext(ExecutionContext* context,
       FROM_HERE,
       base::BindOnce(&RunOrHoldInContext,
                      cppgc::WeakPersistent<ExecutionContext>(context), type,
-                     std::move(task)),
+                     /*delayed=*/delay.is_positive(), std::move(task)),
       delay);
 }
 

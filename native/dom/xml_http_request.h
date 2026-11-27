@@ -268,6 +268,8 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget {
   cppgc::Member<Document> response_document_;
   cppgc::Member<Blob> response_blob_;
   v8::TracedReference<v8::ArrayBuffer> response_array_buffer_;
+  // The length of the blob that a read gives back, while it does.
+  size_t blob_read_back_length_ = 0;
   // What V8 has been told that the response keeps.
   int64_t reported_memory_ = 0;
   v8::ExternalMemoryAccounter memory_accounter_;

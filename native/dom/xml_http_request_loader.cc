@@ -83,7 +83,8 @@ void XMLHttpRequestLoader::SetTimeout(base::TimeDelta timeout) {
     return;
   }
   // The timer that runs stops, and the time counts from the start.
-  ++timer_;
+  timer_.Stop();
+  ++timer_number_;
   if (!timeout_.is_zero()) {
     StartTimer(std::max(timeout_ - (base::TimeTicks::Now() - request_started_),
                         base::TimeDelta()));
@@ -197,25 +198,46 @@ void XMLHttpRequestLoader::DidTimeout() {
 }
 
 void XMLHttpRequestLoader::StartTimer(base::TimeDelta delay) {
-  // From a task of the context, which waits while the back/forward cache keeps
-  // its window, as Blink's timer on the context's task runner does.
-  PostDelayedTaskInContext(
-      context_.Get(), TaskType::kNetworking,
+  // The Page program always makes one before it runs a script.
+  EventLoop* const event_loop = EventLoop::Get();
+  CHECK(event_loop);
+  timer_.SetTaskRunner(event_loop->TaskRunner(TaskType::kNetworking));
+  timer_.Start(
+      FROM_HERE, delay,
       base::BindOnce(
           [](cppgc::WeakPersistent<XMLHttpRequestLoader> loader,
              uint64_t timer) {
-            if (loader && loader->timer_ == timer) {
-              loader->DidTimeout();
+            if (!loader) {
+              return;
             }
+            base::OnceClosure fire = base::BindOnce(
+                [](cppgc::WeakPersistent<XMLHttpRequestLoader> loader,
+                   uint64_t timer) {
+                  if (loader && loader->timer_number_ == timer) {
+                    loader->DidTimeout();
+                  }
+                },
+                loader, timer);
+            // While the back/forward cache keeps the window, the timeout
+            // waits, as a delayed task of Blink's frozen frame does, and
+            // fires once the window has come back, unless what came of the
+            // request meanwhile has ended it.
+            ExecutionContext* const context = loader->context_.Get();
+            if (context && context->IsInBackForwardCache()) {
+              context->HoldTask(TaskType::kNetworking, std::move(fire),
+                                /*delayed=*/true);
+              return;
+            }
+            RunInContext(context, [&] { std::move(fire).Run(); });
           },
-          cppgc::WeakPersistent<XMLHttpRequestLoader>(this), ++timer_),
-      delay);
+          cppgc::WeakPersistent<XMLHttpRequestLoader>(this), ++timer_number_));
 }
 
 void XMLHttpRequestLoader::Clear() {
   client_ = nullptr;
   request_started_ = base::TimeTicks();
-  ++timer_;
+  timer_.Stop();
+  ++timer_number_;
 }
 
 }  // namespace mitto

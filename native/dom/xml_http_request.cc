@@ -1251,6 +1251,8 @@ void XMLHttpRequest::ClearVariablesForLoading() {
   if (BlobLoader* const blob_loader = blob_loader_.Get()) {
     blob_loader_ = nullptr;
     blob_loader->Cancel();
+    blob_read_back_length_ = 0;
+    ReportMemoryUsageToV8();
   }
   decoder_.reset();
 }
@@ -1449,8 +1451,10 @@ void XMLHttpRequest::DidFinishLoading() {
   if (downloading_to_blob_ && response_type_ != ResponseTypeCode::kBlob &&
       !error_) {
     downloading_to_blob_ = false;
+    blob_read_back_length_ = binary_response_.size();
     blob_loader_ = bindings::MakeGarbageCollected<BlobLoader>(
         this, BlobDataHandle::Create(std::exchange(binary_response_, {}), ""));
+    ReportMemoryUsageToV8();
     return;
   }
   DidFinishLoadingInternal();
@@ -1625,8 +1629,11 @@ std::unique_ptr<TextResourceDecoder> XMLHttpRequest::CreateDecoder() const {
 }
 
 void XMLHttpRequest::ReportMemoryUsageToV8() {
+  // The blob that a read gives back is held too until the read ends, as Blink
+  // counts the length downloaded to it.
   const int64_t size = static_cast<int64_t>(
-      binary_response_.size() + response_text_.size() * sizeof(char16_t));
+      binary_response_.size() + response_text_.size() * sizeof(char16_t) +
+      blob_read_back_length_);
   if (size != reported_memory_) {
     memory_accounter_.Update(v8::Isolate::GetCurrent(),
                              size - reported_memory_);

@@ -4,7 +4,6 @@ of each request it gets, in order, so a test can check what the Page sent and in
 import http.server
 import struct
 import threading
-import time
 import zlib
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -39,14 +38,14 @@ def png(width: int, height: int) -> bytes:
 
 @dataclass
 class Route:
-    """What the server answers for one path. With `hold`, it answers only once that is set. With `read_pause`, it reads
-    a request's body slowly, in pieces of 64 KiB with that many seconds after each."""
+    """What the server answers for one path. With `hold`, it answers only once that is set. With `read_hold`, it reads the
+    first 64 KiB of a request's body, and the rest only once that is set."""
 
     body: bytes = b""
     status: int = 200
     headers: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     hold: threading.Event | None = None
-    read_pause: float = 0.0
+    read_hold: threading.Event | None = None
 
 
 class RecordingServer:
@@ -82,10 +81,12 @@ class RecordingServer:
                 # The body is read before the answer, which is as for a GET.
                 left = int(self.headers.get("Content-Length") or 0)
                 route = server.routes.get(self.path)
+                first = True
                 while left > 0:
                     left -= len(self.rfile.read(min(left, 65536))) or left
-                    if route is not None and route.read_pause:
-                        time.sleep(route.read_pause)
+                    if first and route is not None and route.read_hold is not None:
+                        route.read_hold.wait(TIMEOUT_SECONDS)
+                    first = False
                 self.do_GET()
 
             def log_message(self, format: str, *args: Any) -> None:

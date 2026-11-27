@@ -15,6 +15,7 @@
 #include "base/functional/function_ref.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/local_scheme_fetch.h"
 #include "v8/include/cppgc/garbage-collected.h"
@@ -81,8 +82,10 @@ class XMLHttpRequestLoader final
   base::TimeDelta timeout_;
   // Null before the request starts and once it has ended.
   base::TimeTicks request_started_;
-  // The timer of the timeout that runs: a later one stops it.
-  uint64_t timer_ = 0;
+  base::OneShotTimer timer_;
+  // The number of the timer that runs, which a timeout held for a window that
+  // comes back checks, as a later timer or the request's end stops it.
+  uint64_t timer_number_ = 0;
 };
 
 }  // namespace mitto

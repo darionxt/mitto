@@ -979,26 +979,75 @@ def test_an_xml_http_request_s_timeout_waits_while_its_page_is_kept(
         held.set()
 
 
+def test_a_response_that_came_while_its_page_was_kept_ends_its_request_before_a_timeout(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    held = threading.Event()
+    server.routes["/held"] = Route(b"late", headers=[("Content-Type", "text/plain")], hold=held)
+
+    try:
+        with _open_page(session, first) as page:
+            page.evaluate(
+                "const x = new XMLHttpRequest();"
+                " for (const type of ['readystatechange', 'load', 'timeout', 'loadend'])"
+                " x.addEventListener(type, () => log.push(`${type} ${x.readyState}`)); x.open('GET', '/held');"
+                " x.timeout = 600; x.send(); setTimeout(() => { window.marker = 1; location.href = '/b'; }, 50); 0"
+            )
+            assert _next_document(page).url == second
+            # The response comes while the cache keeps the page, and the timeout's time after it.
+            assert server.wait_for_path("/held")
+            held.set()
+            _wait(page, 900)
+            page.evaluate("history.back()")
+            assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+            _wait(page, 100)
+            assert page.evaluate("[window.marker, log]") == [
+                1,
+                [
+                    "pageshow:false",
+                    "readystatechange 1",
+                    *_KEPT_AND_BACK[1:],
+                    "readystatechange 2",
+                    "readystatechange 3",
+                    "readystatechange 4",
+                    "load 4",
+                    "loadend 4",
+                ],
+            ]
+    finally:
+        held.set()
+
+
 def test_an_upload_s_progress_waits_while_its_page_is_kept(session: mitto.Session, server: RecordingServer) -> None:
     first = server.page("/a", "<title>A</title>" + _LOGGING)
     second = server.page("/b", "<title>B</title>")
-    # The server takes the body slowly, so it goes on while the cache keeps the page.
-    server.routes["/upload"] = Route(b"ok", headers=[("Content-Type", "text/plain")], read_pause=0.05)
+    # The server takes the rest of the body only once the cache keeps the page, so the progress of all that it takes,
+    # and the response, come while the page is kept.
+    reading = threading.Event()
+    server.routes["/upload"] = Route(b"ok", headers=[("Content-Type", "text/plain")], read_hold=reading)
 
-    with _open_page(session, first) as page:
-        page.evaluate(
-            "const x = new XMLHttpRequest(); window.done = new Promise(r => x.addEventListener('loadend', r));"
-            " x.upload.addEventListener('progress', () => log.push('upload progress'));"
-            " x.upload.addEventListener('loadend', () => log.push('upload loadend'));"
-            " x.addEventListener('loadend', () => log.push('loadend ' + x.status)); x.open('POST', '/upload');"
-            " x.send(new Uint8Array(3000000)); setTimeout(() => { window.marker = 1; location.href = '/b'; }, 120); 0"
-        )
-        assert _next_document(page).url == second
-        _wait(page, 900)
-        page.evaluate("history.back()")
-        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
-        page.evaluate("done.then(() => 0)")
-        marker, log = page.evaluate("[window.marker, log]")
+    try:
+        with _open_page(session, first) as page:
+            page.evaluate(
+                "const x = new XMLHttpRequest(); window.done = new Promise(r => x.addEventListener('loadend', r));"
+                " x.upload.addEventListener('progress', () => log.push('upload progress'));"
+                " x.upload.addEventListener('loadend', () => log.push('upload loadend'));"
+                " x.addEventListener('loadend', () => log.push('loadend ' + x.status)); x.open('POST', '/upload');"
+                " x.send(new Uint8Array(8000000)); setTimeout(() => { window.marker = 1; location.href = '/b'; }, 100);"
+                " 0"
+            )
+            assert _next_document(page).url == second
+            reading.set()
+            assert server.wait_for_path("/upload")
+            _wait(page, 300)
+            page.evaluate("history.back()")
+            assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+            page.evaluate("done.then(() => 0)")
+            marker, log = page.evaluate("[window.marker, log]")
+    finally:
+        reading.set()
     # What came of the upload while the page was kept comes once it shows again, as in Chrome.
     after = log[log.index("pageshow:true") + 1 :]
     assert marker == 1
