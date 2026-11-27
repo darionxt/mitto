@@ -42,8 +42,9 @@ def page_program(native_library: Any) -> None:
 
 
 class _Server(QuietServer):
-    # The path, Referer and Cookie of each request, as it came.
+    # The path, Referer and Cookie of each request, as it came, and the Sec-CH-UA-Arch of each of /hinted.
     seen: list[tuple[str, str | None, str | None]]
+    hinted: list[str | None]
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -61,6 +62,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if "set=" in self.path:
                 headers.append(("Set-Cookie", f"{self.path.partition('set=')[2]}; Path=/"))
             self._send("application/json", json.dumps(self.headers.get("Cookie")), headers)
+            return
+        if self.path == "/hints":
+            # A top-level document that asks for a hint, which the Session keeps for its origin.
+            self._send("text/html", "<!doctype html>", [("Accept-CH", "Sec-CH-UA-Arch")])
+            return
+        if self.path == "/hinted":
+            cast(_Server, self.server).hinted.append(self.headers.get("Sec-CH-UA-Arch"))
+            self._send("text/html", "<!doctype html>", [])
+            return
+        if self.path == "/clear":
+            self._send("text/html", "<!doctype html>", [("Clear-Site-Data", '"clientHints"')])
             return
         if self.path.startswith("/hdr.js"):
             # What a script request said of its storage access.
@@ -99,6 +111,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 def server() -> Iterator[_Server]:
     server = _Server(("127.0.0.1", 0), _Handler)
     server.seen = []
+    server.hinted = []
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield server
     server.shutdown()
@@ -163,3 +176,20 @@ def test_the_session_neither_lists_nor_deletes_a_credentialless_frames_cookies(s
         left = page.evaluate("[document.cookie, f.contentDocument.cookie]", timeout=_TIMEOUT_SECONDS)
 
     assert (listed, deleted, left) == ([("n", "top")], 1, ["", "n=cl"])
+
+
+@pytest.mark.usefixtures("page_program")
+@pytest.mark.parametrize(("make", "kept"), [("cl", True), ("plain", False)])
+def test_a_credentialless_frame_clears_no_client_hints(server: _Server, make: str, kept: bool) -> None:
+    # A same-site frame's Clear-Site-Data: "clientHints" clears what the top-level document asked for, as a first
+    # party's does, and a credentialless frame's does not, as ClearSiteDataHandler takes its nonce's key for a third
+    # party's. The next top-level document then says what is left.
+    origin = f"http://127.0.0.1:{server.server_port}"
+    script = f"(async () => {{ {_DATA['prelude']}await {make}('/clear'); return true; }})()"
+    with mitto.Session() as session:
+        with session._open_page(f"{origin}/hints", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+            assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) is True
+        with session._open_page(f"{origin}/hinted", timeout=_TIMEOUT_SECONDS):  # pyright: ignore[reportPrivateUsage]
+            pass
+
+    assert [value is not None for value in server.hinted] == [kept]

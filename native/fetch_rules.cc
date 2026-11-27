@@ -568,8 +568,9 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
   const url::Origin origin = url::Origin::Create(request.url());
 
   // SiteDataClearer: the store is only read in first-party contexts, so a
-  // third-party context cannot clear it.
-  if (parsed.clears_client_hints &&
+  // third-party context cannot clear it, nor a credentialless document, whose
+  // storage key's nonce makes it third-party (ClearSiteDataHandler).
+  if (parsed.clears_client_hints && !params_.nonce &&
       (params_.mode == RequestMode::kNavigate ||
        net::SchemefulSite(TopFrameOrigin()) == net::SchemefulSite(origin))) {
     client_hints_store_->ClearClientHints(origin);
