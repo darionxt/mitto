@@ -795,9 +795,11 @@ enum class PageEmbedderPolicy : uint8_t {
 
 // The cross-origin isolation of the document that the response of
 // navigation `navigation` makes, kNavigationRequest for the navigation that
-// opened the Page: a top-level document's agent cluster's, and a frame's
-// CrossOriginIsolatedCapability(), kCoopAndCoep for isolated. And its embedder
-// policy, which its frames' documents of no response take from it.
+// opened the Page: its agent cluster's, the top-level document's, but none for
+// a frame's response whose Content-Security-Policy sandboxes it, kCoopAndCoep
+// for isolated, which the Page ANDs with the document's cross-origin-isolated
+// feature. And its embedder policy, which its frames' documents of no response
+// take from it.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;

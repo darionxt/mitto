@@ -2344,11 +2344,15 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
     frame->second.url = GURL(event.url);
     frame->second.coep = coep;
     frame->second.cross_origin_isolated =
-        !SandboxesOrigin(event.headers) &&
-        FrameIsCrossOriginIsolated(frame->second.parent,
-                                   url::Origin::Create(frame->second.url));
-    isolation = IsolationOf(request.number(),
-                            frame->second.cross_origin_isolated, coep);
+        AgentIsCrossOriginIsolated(frame->second.parent);
+    // The Page ANDs the document's cross-origin-isolated feature. It cannot
+    // see a response whose Content-Security-Policy sandboxes its origin, which
+    // then has none, and hears not isolated for it, as for each document
+    // under it.
+    isolation = IsolationOf(
+        request.number(),
+        frame->second.cross_origin_isolated && !SandboxesOrigin(event.headers),
+        coep);
   }
   if (const auto script = worker_scripts_.find(request.number());
       script != worker_scripts_.end()) {
@@ -3591,13 +3595,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         Refuse("a document that its parent's embedder policy blocks");
         return;
       }
-      // Each document that a frame makes without the network is isolated by
-      // its origin, as one that the network gives is: one of its isolated
-      // parent's origin is, and an opaque one, an error page's or a data:
-      // URL's, is not.
+      // Each document that a frame makes without the network is in its page's
+      // agent cluster, as one that the network gives is.
       context.cross_origin_isolated =
-          !top_level &&
-          FrameIsCrossOriginIsolated(committed.parent, context.origin);
+          !top_level && AgentIsCrossOriginIsolated(committed.parent);
       replaced = committed.replaces;
       break;
     }
@@ -4161,17 +4162,16 @@ CrossOriginEmbedderPolicy PageHost::FrameEmbedderPolicyOf(
   return EmbedderPolicyOf(PolicyHeadersOf(event.headers));
 }
 
-bool PageHost::FrameIsCrossOriginIsolated(uint64_t parent,
-                                          const url::Origin& origin) const {
-  // ExecutionContext::CrossOriginIsolatedCapability(): the agent cluster's
-  // isolation and the cross-origin-isolated feature, whose default allowlist
-  // is 'self', so a frame of its parent's origin has it where its parent has.
+bool PageHost::AgentIsCrossOriginIsolated(uint64_t parent) const {
+  // The browsing context group's WebExposedIsolationInfo, which isolates each
+  // agent cluster of an isolated top-level document's page, its frames' of
+  // another origin, of an opaque one and in a sandbox too; the Page ANDs each
+  // document's cross-origin-isolated feature (CrossOriginIsolatedCapability()).
   // A parent that went while its frame's navigation went on leaves the
   // navigation nothing to commit in, and isolates nothing.
   const auto parent_context = contexts_.find(parent);
   return parent_context != contexts_.end() &&
-         parent_context->second.cross_origin_isolated &&
-         parent_context->second.origin.IsSameOriginWith(origin);
+         parent_context->second.cross_origin_isolated;
 }
 
 void PageHost::FillContextFetch(uint64_t id,

@@ -243,6 +243,9 @@ void PageFrame::Start(const PageConnection& connection) {
       parent_ ? parent_->window_->GetDocument().GetOrigin() : url::Origin();
   const url::Origin origin = SandboxedOrigin(parent_origin, sandbox);
   origin_sandboxed_ = IsOriginSandboxed(sandbox);
+  // It is in its page's agent cluster.
+  const bool agent_isolated =
+      parent_ && parent_->window_->AgentCrossOriginIsolated();
   // WebLocalFrameImpl::CreateChildFrame(): credentialless where its element is
   // as the frame is made, or its parent's document is, though the browser
   // keys its storage and requests as its parent's.
@@ -253,11 +256,17 @@ void PageFrame::Start(const PageConnection& connection) {
       parent_ && parent_->window_->GetDocument().InCredentiallessPartition();
   // It is as trustworthy as its parent's, whose context is a secure one only
   // if that is.
-  context_.Reset(isolate,
-                 NewContext(base::TimeTicks::Now(), origin,
-                            /*is_trustworthy=*/parent_ != nullptr,
-                            IsolatedLikeParent(origin, origin_sandboxed_)));
+  context_.Reset(
+      isolate,
+      NewContext(
+          base::TimeTicks::Now(), origin,
+          /*is_trustworthy=*/parent_ != nullptr,
+          parent_ && IsolatesDocument(agent_isolated, origin,
+                                      PendingContainerPolicy(), ParsedPolicy(),
+                                      /*headerless=*/true,
+                                      /*response_sandboxed=*/false)));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
+  window_->SetAgentCrossOriginIsolated(agent_isolated);
   window_->BindToContext(isolate, context());
   if (parent_) {
     // The frame's own storage, which asks as each of its documents in turn.
@@ -479,7 +488,18 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   // credentialless, as ShouldReuseDOMWindow() has it, which compares no
   // storage key: a Storage that an initial about:blank of its parent's
   // partition made stays bound to that area, as DOMWindowStorage keeps it.
-  const bool isolated = IsolatedLikeParent(origin, navigation.origin_sandboxed);
+  // Chrome compares the agent cluster's isolation, and keeps the window for a
+  // document whose permissions policy takes the feature: a Known Gap, as a
+  // reused window would keep the clocks, SharedArrayBuffer and members of its
+  // isolation.
+  const bool agent_isolated =
+      parent_ && parent_->window_->AgentCrossOriginIsolated();
+  // Chrome's error page is never isolated, whatever its frame's allow.
+  const bool isolated =
+      committed.source != PageDocumentSource::kErrorPage &&
+      IsolatesDocument(agent_isolated, origin, navigation.container_policy,
+                       ParsedPolicy(),
+                       /*headerless=*/true, navigation.response_sandboxed);
   const bool reuse_window =
       old_document.IsInitialEmptyDocument() &&
       old_document.GetOrigin().IsSameOriginWith(origin) &&
@@ -508,6 +528,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     }
   }
   origin_sandboxed_ = navigation.origin_sandboxed;
+  response_sandboxed_ = navigation.response_sandboxed;
   Document* document = nullptr;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
@@ -536,6 +557,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
+    window_->SetAgentCrossOriginIsolated(agent_isolated);
     AttachWindow(parent_->window_->Connection(), committed);
     const v8::Context::Scope context_scope(context);
     document = Document::CreateHTML();
@@ -788,6 +810,9 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
         IsOriginSandboxed(PendingSandboxFlags()) ||
         (request.url.IsAboutBlank() && origin_sandboxed_ &&
          request.initiator == window_->DocumentId());
+    navigation.response_sandboxed = request.url.IsAboutBlank() &&
+                                    response_sandboxed_ &&
+                                    request.initiator == window_->DocumentId();
     navigation.reload = request.reload;
     // Its document's referrer is what the initiator's outgoing referrer gives
     // a navigation to its URL under the initiator's referrer policy, as
@@ -2174,22 +2199,36 @@ Document& PageFrame::CommitDocument(
           ? url::Origin::Resolve(url, provisional_request_.initiator_origin)
           : url::Origin::Create(url);
   const url::Origin origin = SandboxedOrigin(url_origin, sandbox);
-  // A frame's document is isolated where the Session says and its parent's
-  // window is, so that none is more so than its parent, whose own sandbox the
-  // Session cannot see yet.
+  // Its agent cluster is the top-level document's, as the Session says, and a
+  // frame's its page's: one of a data: URL, which the Session never saw, too.
+  // The Session says not isolated for a frame's response that sandboxes its
+  // origin under an isolated agent cluster.
+  const bool agent_isolated = parent_
+                                  ? parent_->window_->AgentCrossOriginIsolated()
+                                  : cross_origin_isolated;
+  const bool response_sandboxed =
+      parent_ && committed.source != PageDocumentSource::kDataUrl &&
+      agent_isolated && !cross_origin_isolated;
+  // What its response's headers declare of its permissions policy, which its
+  // isolation needs before its window is made.
+  std::vector<PolicyMessage> policy_messages;
+  ParsedPolicy declared = ParsePolicyHeaders(
+      policy_headers, origin,
+      bindings::PerIsolateData::From(isolate)->features(), policy_messages);
+  const ParsedPolicy container_policy =
+      parent_ ? provisional_container_policy_ : ParsedPolicy();
+  const bool headerless = url.IsAboutBlank() || url.IsAboutSrcdoc() ||
+                          url.SchemeIs(url::kDataScheme) || url.SchemeIsBlob();
   const bool isolated =
-      parent_ ? cross_origin_isolated &&
-                    IsolatedLikeParent(origin, provisional_origin_sandboxed_)
-              : cross_origin_isolated;
-  // The Session isolates what the parent's window lets be, but for a response
-  // that sandboxes its document's origin.
-  origin_sandboxed_ = provisional_origin_sandboxed_ ||
-                      (!cross_origin_isolated &&
-                       IsolatedLikeParent(origin, /*origin_sandboxed=*/false));
+      IsolatesDocument(agent_isolated, origin, container_policy, declared,
+                       headerless, response_sandboxed);
+  origin_sandboxed_ = provisional_origin_sandboxed_ || response_sandboxed;
+  response_sandboxed_ = response_sandboxed;
   // Blink keeps the window of a frame's initial about:blank for a document of
   // its origin and isolation, as DocumentLoader::CommitNavigation() reuses
-  // it. A top-level frame's initial about:blank has an opaque origin, so it
-  // never does, and one whose window the back/forward cache took has none.
+  // it (but see CommitWithoutNetwork()). A top-level frame's initial
+  // about:blank has an opaque origin, so it never does, and one whose window
+  // the back/forward cache took has none.
   const bool reuse_window =
       window_ && window_->GetDocument().IsInitialEmptyDocument() &&
       window_->GetDocument().GetOrigin().IsSameOriginWith(origin) &&
@@ -2203,6 +2242,7 @@ Document& PageFrame::CommitDocument(
       cookie_store->DocumentWillChange();
     }
     EndOldDocumentInWindow();
+    window_->SetAgentCrossOriginIsolated(agent_isolated);
     window_->SetDocumentId(SendDocumentCommitted(committed));
   } else {
     // The frame keeps its WindowProxy, which takes the new window, as
@@ -2233,6 +2273,7 @@ Document& PageFrame::CommitDocument(
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
+    window_->SetAgentCrossOriginIsolated(agent_isolated);
     AttachWindow(connection, committed);
   }
   const v8::Context::Scope context_scope(context());
@@ -2258,12 +2299,8 @@ Document& PageFrame::CommitDocument(
   document->SetCredentialless(credentialless);
   document->SetInCredentiallessPartition(credentialless);
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
-  std::vector<PolicyMessage> policy_messages;
-  ApplyPermissionsPolicy(
-      *document, url, provisional_container_policy_,
-      ParsePolicyHeaders(policy_headers, origin,
-                         bindings::PerIsolateData::From(isolate)->features(),
-                         policy_messages));
+  ApplyPermissionsPolicy(*document, url, provisional_container_policy_,
+                         std::move(declared));
   // Blink's Document::CookieURL() is the URL it was made at, which a
   // navigation within it leaves, as the Session keeps it too.
   document->SetCookieUrl(url);
@@ -2291,13 +2328,38 @@ Document& PageFrame::CommitDocument(
   return *document;
 }
 
-bool PageFrame::IsolatedLikeParent(const url::Origin& origin,
-                                   bool origin_sandboxed) const {
-  // An ancestor's sandbox counts through its document, as committed: its
-  // isolation, which the parent's window carries.
-  return parent_ && !origin_sandboxed &&
-         parent_->window_->CrossOriginIsolatedCapability() &&
-         parent_->window_->GetDocument().GetOrigin().IsSameOriginWith(origin);
+bool PageFrame::IsolatesDocument(bool agent_isolated,
+                                 const url::Origin& origin,
+                                 const ParsedPolicy& container_policy,
+                                 const ParsedPolicy& declared,
+                                 bool headerless,
+                                 bool response_sandboxed) const {
+  // ExecutionContext::CrossOriginIsolatedCapability(): the agent cluster's
+  // isolation and the document's cross-origin-isolated feature, so a frame of
+  // another origin, of an opaque one or in a sandbox has it where its
+  // element's allow lets it, and a document whose Permissions-Policy takes it
+  // has not.
+  if (!agent_isolated || response_sandboxed) {
+    return false;
+  }
+  for (const PageFrame* frame = parent_; frame; frame = frame->parent_) {
+    if (frame->response_sandboxed_) {
+      return false;
+    }
+  }
+  return AllowsIsolation(origin, container_policy, declared, headerless);
+}
+
+bool PageFrame::AllowsIsolation(const url::Origin& origin,
+                                const ParsedPolicy& container_policy,
+                                const ParsedPolicy& declared,
+                                bool headerless) const {
+  const PermissionsPolicyState state(
+      parent_ ? &parent_->window_->GetDocument().GetPermissionsPolicyState()
+              : nullptr,
+      container_policy, origin, /*unload_deprecated=*/false, headerless,
+      declared);
+  return state.IsEnabled(PolicyFeatureNamed("cross-origin-isolated"));
 }
 
 ParsedPolicy PageFrame::PendingContainerPolicy() const {
