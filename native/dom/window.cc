@@ -30,6 +30,8 @@
 #include "mitto/dom/document_named_properties.h"
 #include "mitto/dom/dom_file_system.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/fetch_later.h"
+#include "mitto/dom/fetch_later_result.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/headers.h"
@@ -438,6 +440,30 @@ mitto::CacheStorage* Window::Caches(
     caches_ = bindings::MakeGarbageCollected<mitto::CacheStorage>(this);
   }
   return caches_.Get();
+}
+
+FetchLaterResult* Window::FetchLater(
+    const bindings::RequestOrUSVString& input,
+    const bindings::DeferredRequestInit& init,
+    bindings::ExceptionState& exception_state) {
+  // In this window's realm, as Blink's bindings give a non-static operation
+  // its receiver's ScriptState, so that a fetchLater() that another window
+  // borrows resolves, queues and goes as this one's.
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Context> context;
+  if (HasContext() &&
+      ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context)) {
+    const v8::Context::Scope context_scope(context);
+    return mitto::FetchLater(*this, input, init, exception_state);
+  }
+  return mitto::FetchLater(*this, input, init, exception_state);
+}
+
+const scoped_refptr<DeferredFetches>& Window::GetDeferredFetches() {
+  if (!deferred_fetches_) {
+    deferred_fetches_ = base::MakeRefCounted<DeferredFetches>();
+  }
+  return deferred_fetches_;
 }
 
 IDBFactory* Window::IndexedDB() {

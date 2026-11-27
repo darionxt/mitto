@@ -552,6 +552,10 @@ mitto_bindings_interfaces = [
     missing = [ "when" ]
   },
   {
+    name = "FetchLaterResult"
+    file = "fetch_later_result"
+  },
+  {
     name = "File"
     file = "file"
     made_by_known_gaps = true
@@ -1596,6 +1600,7 @@ mitto_bindings_interfaces = [
       "keyboard",
       "mediaDevices",
       "credentials",
+      "sendBeacon",
     ]
   },
   {
@@ -3102,6 +3107,7 @@ mitto_bindings_interfaces = [
       "queueMicrotask",
       "open",
       "fetch",
+      "fetchLater",
       "navigator",
       "clientInformation",
       "screen",

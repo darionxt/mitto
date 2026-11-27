@@ -9,6 +9,7 @@ the Page program beside it.
 """
 
 import http.server
+import json
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -355,6 +356,751 @@ def test_keepalive_bodies_in_flight_stay_within_their_quota(session: mitto.Sessi
 
     assert (over, within, first) == ("TypeError: Failed to fetch", ["basic", 200], "first")
     assert server.headers_of("/second") == []
+
+
+def _without_boundary(lines: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return header lines with a multipart body's boundary and length left out, which each body has its own of."""
+    return [
+        (name, value.split(";")[0] if name.lower() == "content-type" else value)
+        for name, value in lines
+        if name.lower() != "content-length"
+    ]
+
+
+def test_a_beacon_goes_as_a_callers_beacon_of_the_same_body(session: mitto.Session, server: _Server) -> None:
+    for path in ("/text", "/blob", "/form", "/params", "/none"):
+        server.text(path, "beacon")
+    url = server.page("/", "<p>beacon</p>")
+
+    with _open_page(session, url) as page:
+        sent = page.evaluate(
+            """
+            const form = new FormData();
+            form.append('name', 'mitto');
+            [
+              navigator.sendBeacon('/text', 'text body'),
+              navigator.sendBeacon('/blob', new Blob(['blob body'])),
+              navigator.sendBeacon('/form', form),
+              navigator.sendBeacon('/params', new URLSearchParams('a=1')),
+              navigator.sendBeacon('/none'),
+            ]
+            """
+        )
+        for path in ("/text", "/blob", "/form", "/params", "/none"):
+            assert server.wait_for(path)
+
+    assert sent == [True, True, True, True, True]
+    session.post(server.url("/text"), kind="beacon", initiator=url, data="text body")
+    session.post(server.url("/blob"), kind="beacon", initiator=url, data=b"blob body")
+    session.post(server.url("/form"), kind="beacon", initiator=url, data={"name": "mitto"}, files={})
+    session.post(server.url("/none"), kind="beacon", initiator=url, data=b"")
+    for path in ("/text", "/blob", "/none"):
+        page_lines, caller_lines = server.headers_of(path)
+        assert page_lines == caller_lines, path
+    page_lines, caller_lines = server.headers_of("/form")
+    assert _without_boundary(page_lines) == _without_boundary(caller_lines)
+    (params,) = server.headers_of("/params")
+    assert _value(params, "Content-Type") == "application/x-www-form-urlencoded;charset=UTF-8"
+    assert _value(server.headers_of("/none")[0], "Content-Length") == "0"
+
+
+def test_a_beacon_of_a_blob_of_a_type_that_is_not_safelisted_is_a_cors_request(
+    session: mitto.Session, server: _Server, other: _Server
+) -> None:
+    # BeaconBlob puts it in mode cors, so it waits for a preflight at another origin, which allows nothing here.
+    url = server.page("/", "<p>beacon</p>")
+    server.text("/json", "json")
+
+    with _open_page(session, url) as page:
+        sent = page.evaluate(
+            f"""
+            const json = new Blob(['{{}}'], {{type: 'application/json'}});
+            [navigator.sendBeacon('/json', json), navigator.sendBeacon('{other.url("/json")}', json)]
+            """
+        )
+        assert server.wait_for("/json")
+        assert other.wait_for("OPTIONS /json")
+
+    assert sent == [True, True]
+    assert _value(server.headers_of("/json")[0], "Content-Type") == "application/json"
+    assert other.headers_of("/json") == []
+
+
+def test_a_beacon_of_a_blob_of_a_long_safelisted_type_goes_without_a_preflight(
+    session: mitto.Session, server: _Server, other: _Server
+) -> None:
+    # BeaconBlob checks a Blob's type as a safelisted type of any length, so Chrome 157 sent this one in mode no-cors, with
+    # its type, where a script's line of more than 128 bytes would need a preflight.
+    url = server.page("/", "<p>beacon</p>")
+    other.text("/long", "long")
+    content_type = "text/plain;a=" + "x" * 200
+
+    with _open_page(session, url) as page:
+        sent = page.evaluate(
+            f"navigator.sendBeacon('{other.url('/long')}', new Blob(['x'], {{type: '{content_type}'}}))"
+        )
+        assert other.wait_for("/long")
+
+    assert sent is True
+    assert other.headers_of("OPTIONS /long") == []
+    (lines,) = other.headers_of("/long")
+    assert (_value(lines, "Content-Type"), _value(lines, "Sec-Fetch-Mode")) == (content_type, "no-cors")
+
+
+def test_a_beacon_that_cannot_go_gives_false_before_its_data_is_read(session: mitto.Session, server: _Server) -> None:
+    # Chrome 157 gave false for a detached window's beacon of a stream, which CanSendBeacon() refuses before the stream
+    # throws, and for a Blob, a buffer and a FormData with a file past the keepalive quota.
+    url = server.page("/", "<body><p>beacon</p></body>")
+    server.text("/small", "small")
+    server.text("/small-beacon", "small")
+
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "(async () => {"
+            " const a = document.createElement('iframe'); document.body.append(a);"
+            " await new Promise((resolve) => { a.onload = resolve; a.src = '/small'; });"
+            " const navigator_of_a = a.contentWindow.navigator; a.remove(); let detached;"
+            " try { detached = navigator_of_a.sendBeacon('/detached', new ReadableStream()); }"
+            " catch (e) { detached = String(e); }"
+            " const form = new FormData(); form.append('f', new Blob([new Uint8Array(70000)]), 'f.bin');"
+            " return [detached, navigator.sendBeacon('/big-blob', new Blob([new Uint8Array(70000)])),"
+            " navigator.sendBeacon('/big-buffer', new Uint8Array(70000)),"
+            " navigator.sendBeacon('/big-form', form),"
+            " navigator.sendBeacon('/small-beacon', new Blob([new Uint8Array(100)]))];"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert server.wait_for("/small-beacon")
+    assert gave == [False, False, False, False, True]
+    assert [server.headers_of(path) for path in ("/detached", "/big-blob", "/big-buffer", "/big-form")] == [
+        [],
+        [],
+        [],
+        [],
+    ]
+
+
+def test_a_beacon_stays_within_the_keepalive_quota_and_refuses_what_it_cannot_send(
+    session: mitto.Session, server: _Server
+) -> None:
+    held = threading.Event()
+    server.routes["/first"] = _Route(b"first", headers=[("Content-Type", "text/plain")], hold=held)
+    server.text("/third", "third")
+    url = server.page("/", "<p>quota</p>")
+
+    with _open_page(session, url) as page:
+        # 40 KiB in flight leaves room for 24 KiB more of a document's 64 KiB.
+        sent = page.evaluate(
+            """
+            [
+              navigator.sendBeacon('/first', 'x'.repeat(40 * 1024)),
+              navigator.sendBeacon('/second', 'x'.repeat(30 * 1024)),
+              navigator.sendBeacon('/third', 'x'.repeat(20 * 1024)),
+            ]
+            """
+        )
+        errors = page.evaluate(
+            """
+            [() => navigator.sendBeacon('ftp://example.test/'), () => navigator.sendBeacon('http://['),
+             () => navigator.sendBeacon('/stream', new ReadableStream())].map(call => {
+              try { return call(); } catch (error) { return String(error); }
+            })
+            """
+        )
+        assert server.wait_for("/third")
+        held.set()
+
+    assert sent == [True, False, True]
+    assert server.headers_of("/second") == []
+    assert errors == [
+        "TypeError: Failed to execute 'sendBeacon' on 'Navigator': Beacons are only supported over HTTP(S).",
+        "TypeError: Failed to execute 'sendBeacon' on 'Navigator': The URL argument is ill-formed or unsupported.",
+        "TypeError: Failed to execute 'sendBeacon' on 'Navigator': sendBeacon cannot have a ReadableStream body.",
+    ]
+    assert server.headers_of("/stream") == []
+
+
+def test_a_fetch_later_goes_when_its_page_closes_as_a_callers_fetch(session: mitto.Session, server: _Server) -> None:
+    server.text("/later", "later")
+    url = server.page("/", "<p>later</p>")
+
+    with _open_page(session, url) as page:
+        page.evaluate("window.result = fetchLater('/later'); null")
+        assert not server.wait_for("/later", timeout=1.0)
+        activated = page.evaluate("result.activated")
+    assert server.wait_for("/later")
+
+    assert activated is False
+    session.get(server.url("/later"), kind="fetch", initiator=url)
+    page_lines, caller_lines = server.headers_of("/later")
+    assert page_lines == caller_lines
+
+
+def test_a_fetch_later_goes_after_its_activate_after_or_with_its_document_and_never_once_aborted(
+    session: mitto.Session, server: _Server
+) -> None:
+    for path in ("/soon", "/next", "/aborted"):
+        server.text(path, path)
+    url = server.page("/", "<p>later</p>")
+    second = server.page("/second", "<p>second</p>")
+
+    with _open_page(session, url) as page:
+        page.evaluate(
+            """
+            window.soon = fetchLater('/soon', {activateAfter: 100});
+            window.next = fetchLater('/next');
+            const controller = new AbortController();
+            window.aborted = fetchLater('/aborted', {signal: controller.signal});
+            controller.abort();
+            null
+            """
+        )
+        assert server.wait_for("/soon")
+        activated = page.evaluate("[soon.activated, next.activated, aborted.activated]")
+        assert server.headers_of("/next") == []
+        page.evaluate("location.href = '/second'; null")
+        assert page.wait_for_navigation(timeout=_TIMEOUT_SECONDS) == PageNavigation(url=second, status=200)
+        assert server.wait_for("/next")
+
+    assert activated == [True, False, False]
+    assert server.headers_of("/aborted") == []
+
+
+def test_fetch_later_throws_chromes_errors_and_holds_its_quota(session: mitto.Session, server: _Server) -> None:
+    url = server.page("/", "<p>later</p>")
+    # The URL without its fragment, the referrer "about:client", the Content-Type line of a string and the body.
+    line = len("Content-Type") + len("text/plain;charset=UTF-8")
+    size = len(server.url("/x")) + len("about:client") + line + 64 * 1024
+
+    with _open_page(session, url) as page:
+        errors = page.evaluate(
+            """
+            [() => fetchLater('/x', {method: 'POST', body: 'x'.repeat(64 * 1024)}),
+             () => fetchLater('/x', {activateAfter: -1}),
+             () => fetchLater('ftp://example.test/'),
+             () => fetchLater('http://example.test/'),
+             () => fetchLater('/x', {signal: AbortSignal.abort()}),
+             () => fetchLater('/x', {method: 'POST', body: new ReadableStream(), duplex: 'half'})
+            ].map(call => { try { call(); return 'none'; } catch (error) { return String(error); } })
+            """
+        )
+        # A request that waits takes from the quota of its origin until its signal aborts.
+        quota = page.evaluate(
+            """
+            const controller = new AbortController();
+            fetchLater('/a', {method: 'POST', body: 'x'.repeat(60 * 1024), signal: controller.signal});
+            const outcome = () => {
+              try { fetchLater('/b', {method: 'POST', body: 'x'.repeat(10 * 1024)}); return 'queued'; }
+              catch (error) { return error.name; }
+            };
+            const before = outcome();
+            controller.abort();
+            [before, outcome()]
+            """
+        )
+
+    prefix = "Failed to execute 'fetchLater' on 'Window': "
+    assert errors == [
+        f"QuotaExceededError: {prefix}fetchLater exceeds its quota for the origin: got {size} bytes, expected less "
+        "than 65536 bytes.",
+        f"RangeError: {prefix}fetchLater's activateAfter cannot be negative.",
+        f"TypeError: {prefix}fetchLater is only supported over HTTP(S).",
+        f"SecurityError: {prefix}fetchLater was passed an insecure URL.",
+        f"AbortError: {prefix}The user aborted a fetchLater request.",
+        f"TypeError: {prefix}fetchLater doesn't support body with unknown length.",
+    ]
+    assert quota == ["QuotaExceededError", "queued"]
+
+
+# What each page and frame of the fetchLater() quota cases has: avail(url) reads what is left of the quota for a request to
+# the origin of `url` from the QuotaExceededError of a 1 MiB body, fill(url, n) queues a deferred request of n bytes as
+# Blink counts them, fillers are seven origins of other sites to fill, frame(src) appends an iframe and waits for its load,
+# and ask(frame, script) runs a script in a frame of any origin and gives back its result, through the page's own
+# postMessage(), as a page reaches a window of another origin only so until #286.
+_FETCH_LATER_HELPERS = r"""
+const BIG = new Uint8Array(1 << 20);
+const fillers = [1, 2, 3, 4, 5, 6, 7].map((i) => `http://f${i}.localhost:${location.port}/fill`);
+function avail(url) {
+  try { fetchLater(url, {method: 'POST', body: BIG}); return 'no throw'; }
+  catch (e) { const m = /expected less than (\d+) bytes/.exec(e.message); return m ? Number(m[1]) : e.name + ': ' + e.message; }
+}
+function fill(url, n) {
+  const length = new URL(url, location.href).href.split('#')[0].length + 'about:client'.length;
+  return fetchLater(url, {method: 'POST', body: new Uint8Array(n - length)});
+}
+function frame(src, attributes = {}) {
+  return new Promise((resolve) => {
+    const f = document.createElement('iframe');
+    for (const [k, v] of Object.entries(attributes)) f.setAttribute(k, v);
+    if (src !== null) f.src = src;
+    f.onload = () => resolve(f);
+    document.body.append(f);
+  });
+}
+let asked = 0;
+function ask(f, script) {
+  const id = ++asked + ':' + Math.random();
+  return new Promise((resolve) => {
+    addEventListener('message', function listener(e) {
+      if (e.data && e.data.id === id) { removeEventListener('message', listener); resolve(e.data.result); }
+    });
+    postMessage.call(f.contentWindow, {id, script}, '*');
+  });
+}
+addEventListener('message', async (e) => {
+  if (!e.data || !e.data.script) return;
+  let result;
+  try { result = await (0, eval)('(async () => {' + e.data.script + '})()'); } catch (error) { result = 'threw: ' + error; }
+  postMessage.call(e.source, {id: e.data.id, result}, '*');
+});
+"""
+
+# Each case's script at the top level of a page of its own, with B and C the origins of two other sites and F the path of
+# the frame page, and what Chrome for Testing 157.0.8103.79 gave for it.
+_FETCH_LATER_QUOTAS: dict[str, tuple[str, Any]] = {
+    "a top-level document's quota": (
+        "return avail('/x');",
+        65536,
+    ),
+    "a top-level document's quota after seven other origins": (
+        "for (const u of fillers) fill(u, 65536); return avail('/x');",
+        65536,
+    ),
+    "a top-level document's quota beside a frame of another origin": (
+        "await frame(B + F); for (const u of fillers) fill(u, 65536); return avail('/x');",
+        57344,
+    ),
+    "a top-level document's quota beside a frame of its origin": (
+        "await frame(F); for (const u of fillers) fill(u, 65536); return avail('/x');",
+        65536,
+    ),
+    "a top-level document's quota beside a frame of another origin in a frame of its origin": (
+        "const a = await frame(F); await ask(a, 'await frame(B + F); return 1;'); for (const u of "
+        "fillers) fill(u, 65536); return avail('/x');",
+        49152,
+    ),
+    "a frame of another origin": (
+        "const b = await frame(B + F); return ask(b, \"return avail('/x');\");",
+        8192,
+    ),
+    "a frame of the page's origin": (
+        "const a = await frame(F); return ask(a, \"return avail('/x');\");",
+        65536,
+    ),
+    "a frame of the page's origin shares its quota": (
+        "fill('/x', 30000); const a = await frame(F); return ask(a, \"return avail('/y');\");",
+        35536,
+    ),
+    "a frame of another origin takes what it queued": (
+        "const b = await frame(B + F); return ask(b, \"fill('/x', 5000); return avail('/y');\");",
+        3192,
+    ),
+    "a frame of another origin in one of another origin": (
+        'const b = await frame(B + F); return ask(b, "const c = await frame(C + F); return ask(c, '
+        '\\"return avail(\'/x\');\\");");',
+        0,
+    ),
+    "a frame of the origin of the frame of another origin it is in": (
+        'const b = await frame(B + F); return ask(b, "const d = await frame(F); return ask(d, \\"return '
+        "avail('/x');\\\");\");",
+        8192,
+    ),
+    "a frame of another origin in a frame of the page's origin": (
+        'const a = await frame(F); return ask(a, "const b = await frame(B + F); return ask(b, \\"return '
+        "avail('/x');\\\");\");",
+        8192,
+    ),
+    "the sixteenth and seventeenth frames of other origins": (
+        "const frames = []; for (let i = 0; i < 17; i++) frames.push(await frame(B + F)); return [await "
+        "ask(frames[15], \"return avail('/x');\"), await ask(frames[16], \"return avail('/x');\")];",
+        [8192, 0],
+    ),
+    "a frame that goes gives its quota back": (
+        "const frames = []; for (let i = 0; i < 17; i++) frames.push(await frame(B + F)); "
+        "frames[0].remove(); const again = await frame(B + F); return ask(again, \"return avail('/x');\");",
+        8192,
+    ),
+    "a sandboxed frame of the page's URL": (
+        "const s = await frame(F, {sandbox: 'allow-scripts'}); return ask(s, \"return avail('/x');\");",
+        8192,
+    ),
+    "a srcdoc frame": (
+        "fill('/x', 30000); const s = await frame(null, {srcdoc: '<script>' + HELPERS_SOURCE + "
+        "'<\\/script>'}); return ask(s, \"return avail('/y');\");",
+        35536,
+    ),
+    "a frame of another origin that navigates itself to the page's origin": (
+        "const b = await frame(B + F); await new Promise((resolve) => { b.onload = resolve; ask(b, "
+        '"location.href = A + F; return 1;"); }); return ask(b, "return avail(\'/x\');");',
+        65536,
+    ),
+    "a frame of the page's origin that its parent navigates to another origin": (
+        "const a = await frame(F); await new Promise((resolve) => { a.onload = resolve; a.src = B + F; "
+        "}); return ask(a, \"return avail('/x');\");",
+        8192,
+    ),
+    "a frame of another origin allowed deferred-fetch": (
+        "const b = await frame(B + F, {allow: 'deferred-fetch'}); return ask(b, \"return avail('/x');\");",
+        65536,
+    ),
+    "a top-level document's quota beside a frame of another origin allowed deferred-fetch": (
+        "await frame(B + F, {allow: 'deferred-fetch'}); for (const u of fillers) fill(u, 65536); return avail('/x');",
+        0,
+    ),
+    "a frame of another origin denied deferred-fetch-minimal": (
+        'const b = await frame(B + F, {allow: "deferred-fetch-minimal \'none\'"}); return ask(b, "return '
+        "avail('/x');\");",
+        0,
+    ),
+    "a frame of the page's origin denied deferred-fetch": (
+        "const a = await frame(F, {allow: \"deferred-fetch 'none'\"}); return ask(a, \"return avail('/x');\");",
+        65536,
+    ),
+    "a frame of another origin in one allowed deferred-fetch": (
+        "const b = await frame(B + F, {allow: 'deferred-fetch'}); return ask(b, \"const c = await frame(C "
+        '+ F); return ask(c, \\"return avail(\'/x\');\\");");',
+        0,
+    ),
+    "a frame of another origin allowed deferred-fetch for all in one allowed it": (
+        "const b = await frame(B + F, {allow: 'deferred-fetch *'}); return ask(b, \"const c = await "
+        "frame(C + F, {allow: 'deferred-fetch *'}); return ask(c, \\\"return avail('/x');\\\");\");",
+        65536,
+    ),
+}
+
+
+def _fetch_later_page(server: _Server) -> str:
+    """Serve the page and the frame page of the fetchLater() quota cases, with the helpers, and return the page's URL."""
+    port = server.origin.rsplit(":", 1)[1]
+    origins = f"const A = 'http://127.0.0.1:{port}', B = 'http://localhost:{port}', C = 'http://c.localhost:{port}', F = '/f';"
+    helpers = origins + _FETCH_LATER_HELPERS
+    for path in ("/x", "/y", "/fill"):
+        server.text(path, "x", [("Access-Control-Allow-Origin", "*")])
+    server.page("/f", f"<body><script>{helpers}</script>")
+    return server.page("/", f"<body><script>const HELPERS_SOURCE = {json.dumps(helpers)}; {helpers}</script>")
+
+
+def test_fetch_later_takes_the_quota_of_its_frames_deferred_fetch_control_document(
+    session: mitto.Session, server: _Server
+) -> None:
+    # A frame of the page's origin shares the top-level document's quota, one of another site has the 8 KiB that its
+    # element reserved of the top-level document's, as at most 16 elements do, and one under that has none, unless its
+    # element's allow gives it deferred-fetch, and the 64 KiB of that, or takes deferred-fetch-minimal away.
+    url = _fetch_later_page(server)
+    gave: dict[str, Any] = {}
+    for name, (script, _) in _FETCH_LATER_QUOTAS.items():
+        with _open_page(session, url) as page:
+            gave[name] = page.evaluate(f"(async () => {{ {script} }})()", timeout=_TIMEOUT_SECONDS)
+    assert gave == {name: expected for name, (_, expected) in _FETCH_LATER_QUOTAS.items()}
+
+
+# Each case's Permissions-Policy or Feature-Policy header of the page, or none, its script, with the paths of frame pages
+# whose own headers say what their names do, and what Chrome for Testing 157.0.8103.79 gave for it.
+_FETCH_LATER_HEADER_QUOTAS: dict[str, tuple[tuple[str, str] | None, str, Any]] = {
+    "a top-level document denied deferred-fetch": (
+        ("Permissions-Policy", "deferred-fetch=()"),
+        "return avail('/x');",
+        0,
+    ),
+    "a top-level document denied deferred-fetch-minimal": (
+        ("Permissions-Policy", "deferred-fetch-minimal=()"),
+        "return avail('/x');",
+        0,
+    ),
+    "a top-level document denied deferred-fetch by Feature-Policy": (
+        ("Feature-Policy", "deferred-fetch 'none'"),
+        "return avail('/x');",
+        0,
+    ),
+    "a frame of the page's origin under a top-level document denied deferred-fetch": (
+        ("Permissions-Policy", "deferred-fetch=()"),
+        "const a = await frame(F); return ask(a, \"return avail('/x');\");",
+        0,
+    ),
+    "a frame of another origin under a top-level document denied deferred-fetch": (
+        ("Permissions-Policy", "deferred-fetch=()"),
+        "const b = await frame(B + F); return ask(b, \"return avail('/x');\");",
+        8192,
+    ),
+    "a frame of another origin under a top-level document that keeps deferred-fetch-minimal to itself": (
+        ("Permissions-Policy", "deferred-fetch-minimal=(self)"),
+        "const b = await frame(B + F); return ask(b, \"return avail('/x');\");",
+        0,
+    ),
+    "a top-level document's quota beside a frame of another origin that it keeps deferred-fetch-minimal from": (
+        ("Permissions-Policy", "deferred-fetch-minimal=(self)"),
+        "await frame(B + F); for (const u of fillers) fill(u, 65536); return avail('/x');",
+        65536,
+    ),
+    "a frame of another origin allowed deferred-fetch under a top-level document that keeps it to itself": (
+        ("Permissions-Policy", "deferred-fetch=(self)"),
+        "const b = await frame(B + F, {allow: 'deferred-fetch'}); return ask(b, \"return avail('/x');\");",
+        8192,
+    ),
+    "a frame of another origin allowed deferred-fetch under a top-level document that gives it to all": (
+        ("Permissions-Policy", "deferred-fetch=*"),
+        "const b = await frame(B + F, {allow: 'deferred-fetch'}); return ask(b, \"return avail('/x');\");",
+        65536,
+    ),
+    "a frame of another origin whose header denies deferred-fetch-minimal": (
+        None,
+        "const b = await frame(B + '/f-no-minimal'); return ask(b, \"return avail('/x');\");",
+        0,
+    ),
+    "a frame of another origin whose Feature-Policy denies deferred-fetch-minimal": (
+        None,
+        "const b = await frame(B + '/f-fp-no-minimal'); return ask(b, \"return avail('/x');\");",
+        0,
+    ),
+    "a frame of another origin allowed deferred-fetch whose header denies it": (
+        None,
+        "const b = await frame(B + '/f-no-deferred-fetch', {allow: 'deferred-fetch'}); return ask(b, \"return "
+        "avail('/x');\");",
+        0,
+    ),
+    "a frame of another origin allowed deferred-fetch whose header denies deferred-fetch-minimal": (
+        None,
+        "const b = await frame(B + '/f-no-minimal', {allow: 'deferred-fetch'}); return ask(b, \"return avail('/x');\");",
+        65536,
+    ),
+    "a frame of another origin in one whose header keeps deferred-fetch-minimal to itself": (
+        None,
+        "const b = await frame(B + '/f-minimal-self'); return ask(b, \"const c = await frame(C + F); return ask(c, "
+        '\\"return avail(\'/x\');\\");");',
+        0,
+    ),
+    "a frame of the page's origin whose header denies deferred-fetch": (
+        None,
+        "const a = await frame('/f-no-deferred-fetch'); return ask(a, \"return avail('/x');\");",
+        65536,
+    ),
+}
+
+
+def test_fetch_later_takes_its_quota_from_the_permissions_policy_headers(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The quotas go by what each document's Permissions-Policy or Feature-Policy header declares of deferred-fetch and
+    # deferred-fetch-minimal, as by what an iframe's allow passes on: of a frame of another origin, its own, and of one of
+    # the page's origin, the top-level document's, whose quota it shares.
+    _fetch_later_page(server)
+    port = server.origin.rsplit(":", 1)[1]
+    helpers = (
+        f"const A = 'http://127.0.0.1:{port}', B = 'http://localhost:{port}', C = 'http://c.localhost:{port}', F = '/f';"
+        + _FETCH_LATER_HELPERS
+    )
+    for path, header in (
+        ("/f-no-minimal", ("Permissions-Policy", "deferred-fetch-minimal=()")),
+        ("/f-fp-no-minimal", ("Feature-Policy", "deferred-fetch-minimal 'none'")),
+        ("/f-no-deferred-fetch", ("Permissions-Policy", "deferred-fetch=()")),
+        ("/f-minimal-self", ("Permissions-Policy", "deferred-fetch-minimal=(self)")),
+    ):
+        server.page(path, f"<body><script>{helpers}</script>", [header])
+    gave: dict[str, Any] = {}
+    for index, (name, (header, script, _)) in enumerate(_FETCH_LATER_HEADER_QUOTAS.items()):
+        url = server.page(f"/top-{index}", f"<body><script>{helpers}</script>", [header] if header else [])
+        with _open_page(session, url) as page:
+            gave[name] = page.evaluate(f"(async () => {{ {script} }})()", timeout=_TIMEOUT_SECONDS)
+    assert gave == {name: expected for name, (_, _, expected) in _FETCH_LATER_HEADER_QUOTAS.items()}
+
+
+def test_a_frames_deferred_requests_go_as_its_document_does(session: mitto.Session, server: _Server) -> None:
+    # As Chrome 157 sends them: those of a frame of the page's origin and of another site as the frame goes, and those of
+    # a document that a navigation of its frame leaves.
+    url = _fetch_later_page(server)
+    with _open_page(session, url) as page:
+        page.evaluate(
+            "(async () => {"
+            " const a = await frame(F); await ask(a, \"fetchLater('/log/gone-a', {activateAfter: 600000}); return 1;\");"
+            " const b = await frame(B + F); await ask(b, \"fetchLater('/log/gone-b', {activateAfter: 600000}); return 1;\");"
+            " const n = await frame(B + F);"
+            " await ask(n, \"fetchLater('/log/navigated', {activateAfter: 600000}); return 1;\");"
+            " a.remove(); b.remove();"
+            " await new Promise((resolve) => { n.onload = resolve; n.src = C + F; });"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert server.wait_for("/log/gone-a")
+        assert server.wait_for("/log/gone-b")
+        assert server.wait_for("/log/navigated")
+
+
+def test_a_frames_fetch_later_results_say_activated_as_the_frame_goes(session: mitto.Session, server: _Server) -> None:
+    # FetchLaterManager::ContextDestroyed() sends each deferred request as the frame goes, before any script runs again, so
+    # Chrome 157 said both had been activated right after the removal, the one whose signal then aborted too.
+    url = _fetch_later_page(server)
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "(async () => {"
+            " const a = await frame(F); const controller = new AbortController();"
+            " const kept = a.contentWindow.fetchLater('/log/kept', {activateAfter: 600000});"
+            " const aborted = a.contentWindow.fetchLater('/log/aborted', {activateAfter: 600000, signal: controller.signal});"
+            " const before = kept.activated; a.remove(); controller.abort();"
+            " return [before, kept.activated, aborted.activated];"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert server.wait_for("/log/kept")
+        assert server.wait_for("/log/aborted")
+    assert gave == [False, True, True]
+
+
+def test_fetch_later_counts_a_string_body_by_its_length(session: mitto.Session, server: _Server) -> None:
+    # Blink's ExtractBody() records a string's length, which FetchLaterUtil counts, though the body goes as UTF-8, so
+    # Chrome 157 took 30,000 CJK characters within the 64 KiB of an origin, and counted 70,000 as 70,048 bytes with the
+    # referrer about:client and the Content-Type line.
+    url = server.page("/", "<p>later</p>")
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "let fits = 'no throw'; try { fetchLater('/x', {method: 'POST', body: '\u4e2d'.repeat(30000)}); }"
+            " catch (e) { fits = String(e); }"
+            " let got = null; try { fetchLater('/x', {method: 'POST', body: '\u4e2d'.repeat(70000)}); } catch (e) {"
+            " const m = /got (\\d+) bytes/.exec(e.message);"
+            " got = m ? Number(m[1]) - new URL('/x', location.href).href.length : String(e); }"
+            " [fits, got]",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    assert gave == ["no throw", 70048]
+
+
+def test_a_borrowed_send_beacon_and_fetch_later_go_as_their_receivers_window(
+    session: mitto.Session, server: _Server
+) -> None:
+    # Blink's bindings give a non-static operation its receiver's ScriptState, so Chrome 157 resolved each URL against the
+    # frame's, sent each with the frame's URL as Referer, the deferred request as the frame went, and gave false for a
+    # detached frame's navigator.
+    url = _fetch_later_page(server)
+    server.page("/sub/f", f"<body><script>{_FETCH_LATER_HELPERS}</script>")
+    for path in (
+        "/sub/log/beacon",
+        "/sub/log/later",
+        "/sub/log/detached",
+        "/log/beacon",
+        "/log/later",
+        "/log/detached",
+    ):
+        server.text(path, "x")
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "(async () => {"
+            " const a = await frame('/sub/f');"
+            " const sent = Navigator.prototype.sendBeacon.call(a.contentWindow.navigator, 'log/beacon');"
+            " const result = fetchLater.call(a.contentWindow, 'log/later', {activateAfter: 600000});"
+            " const d = await frame('/sub/f'); const navigator_of_d = d.contentWindow.navigator; d.remove();"
+            " const detached = Navigator.prototype.sendBeacon.call(navigator_of_d, 'log/detached');"
+            " a.remove(); return [sent, result.activated, detached];"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert server.wait_for("/sub/log/beacon")
+        assert server.wait_for("/sub/log/later")
+    assert gave == [True, True, False]
+    frame_url = server.url("/sub/f")
+    assert _value(server.headers_of("/sub/log/beacon")[0], "Referer") == frame_url
+    assert _value(server.headers_of("/sub/log/later")[0], "Referer") == frame_url
+    assert [server.headers_of(path) for path in ("/log/beacon", "/log/later", "/sub/log/detached")] == [[], [], []]
+
+
+def test_a_deferred_request_past_what_the_session_holds_is_dropped_and_the_page_lives_on(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The Session holds no more for a document than three times what Blink's quotas let one queue, and a method, which no
+    # quota counts, can fill that. The next request goes nowhere, but the Page, which may have let it go already, as a
+    # frame that goes at once does, hears nothing of it and goes on. Chrome has no such bound of its own.
+    url = _fetch_later_page(server)
+    dropped = "/dropped?" + "x" * 1000
+    server.text(dropped, "x")
+    with _open_page(session, url) as page:
+        page.evaluate(
+            "(async () => { const a = await frame(F);"
+            " a.contentWindow.fetchLater('/held', {method: 'A'.repeat(3 * 512 * 1024 - 500)});"
+            f" a.contentWindow.fetchLater('{dropped}'); a.remove(); }})()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert page.evaluate("new Promise((r) => setTimeout(() => r(1 + 1), 300))", timeout=_TIMEOUT_SECONDS) == 2
+    assert server.headers_of(dropped) == []
+
+
+def test_thirty_one_frames_that_allow_gives_deferred_fetch_each_send_what_they_deferred(
+    session: mitto.Session, server: _Server
+) -> None:
+    # Blink gives each frame of another origin that an iframe's allow gives deferred-fetch the 64 KiB of the normal quota,
+    # however little its parent has left, so Chrome 157 took and sent 63 KiB from each of 31 of them, more in all than
+    # what the 640 KiB of a frame tree's other quotas would hold.
+    url = _fetch_later_page(server)
+    for index in range(31):
+        server.text(f"/log/p{index}", "x")
+    with _open_page(session, url) as page:
+        last = page.evaluate(
+            "(async () => { const frames = [];"
+            " for (let i = 0; i < 31; i++) frames.push(await frame(B + F, {allow: 'deferred-fetch'}));"
+            " const last = await ask(frames[30], \"return avail('/x');\");"
+            " for (let i = 0; i < 31; i++) await ask(frames[i],"
+            " `fetchLater('/log/p${i}', {method: 'POST', body: 'a'.repeat(63 * 1024)}); return 1;`);"
+            " for (const f of frames) f.remove(); return last; })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        assert all(server.wait_for(f"/log/p{index}") for index in range(31))
+    assert last == 65536
+
+
+def test_fetch_later_counts_a_cloned_requests_body(session: mitto.Session, server: _Server) -> None:
+    # A clone keeps its body's length, as Blink's FetchRequestData::Clone() does, so Chrome 157 refused this one.
+    url = server.page("/", "<p>later</p>")
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "const request = new Request('/x', {method: 'POST', body: 'a'.repeat(70000)});"
+            " let name = 'no throw'; try { fetchLater(request.clone()); } catch (e) { name = e.name; } name",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    assert gave == "QuotaExceededError"
+
+
+def test_a_detached_frames_fetch_later_throws_before_it_takes_its_input(
+    session: mitto.Session, server: _Server
+) -> None:
+    # GlobalFetch's ScopedFetcher refuses a context that has gone before it makes the Request, so the body stays unused.
+    url = _fetch_later_page(server)
+    with _open_page(session, url) as page:
+        gave = page.evaluate(
+            "(async () => {"
+            " const a = await frame(F); const kept = a.contentWindow.fetchLater; a.remove();"
+            " const request = new Request('/x', {method: 'POST', body: 'a'}); let error = 'no throw';"
+            " try { kept(request); } catch (e) { error = String(e); }"
+            " return [error, request.bodyUsed];"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    assert gave == ["TypeError: Failed to execute 'fetchLater' on 'Window': The global scope is shutting down.", False]
+
+
+def test_a_deferred_request_past_the_keepalive_requests_in_flight_never_goes(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The network service counts a deferred request as the browser starts it, past 256 keepalive requests of the page in
+    # flight, so Chrome 157 never sent the one that went then, but sent the next once they had ended.
+    url = server.page("/", "<p>held</p>")
+    held = threading.Event()
+    for index in range(257):
+        server.routes[f"/hold{index}"] = _Route(b"held", headers=[("Content-Type", "text/plain")], hold=held)
+    server.text("/over", "over")
+    server.text("/after", "after")
+
+    with _open_page(session, url) as page:
+        one_more = page.evaluate(
+            "(async () => {"
+            " window.held = []; for (let i = 0; i < 256; i++) held.push(fetch('/hold' + i, {keepalive: true}).catch(() => 0));"
+            " const one_more = await fetch('/hold256', {keepalive: true}).then(() => 'ok', (e) => String(e));"
+            " fetchLater('/over', {activateAfter: 0}); await new Promise((r) => setTimeout(r, 500)); return one_more;"
+            " })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        held.set()
+        page.evaluate("Promise.all(held).then(() => 0)", timeout=_TIMEOUT_SECONDS)
+        page.evaluate("fetchLater('/after', {activateAfter: 0}); 0", timeout=_TIMEOUT_SECONDS)
+        assert server.wait_for("/after")
+    assert one_more == "TypeError: Failed to fetch"
+    assert server.headers_of("/over") == []
 
 
 def test_a_scripts_crossorigin_attribute_makes_its_request_a_cors_one(
