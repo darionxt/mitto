@@ -1,18 +1,21 @@
 #include "mitto/dom/permission_status.h"
 
+#include <utility>
+
 #include "mitto/bindings/v8_permission_status.h"
 
 namespace mitto {
 
 // static
 PermissionStatus* PermissionStatus::Create(const std::u16string& name,
-                                           const std::u16string& state) {
-  return bindings::MakeGarbageCollected<PermissionStatus>(name, state);
+                                           scoped_refptr<SharedState> state) {
+  return bindings::MakeGarbageCollected<PermissionStatus>(name,
+                                                          std::move(state));
 }
 
 PermissionStatus::PermissionStatus(const std::u16string& name,
-                                   const std::u16string& state)
-    : name_(name), state_(state) {}
+                                   scoped_refptr<SharedState> state)
+    : name_(name), state_(std::move(state)) {}
 
 PermissionStatus::~PermissionStatus() = default;
 

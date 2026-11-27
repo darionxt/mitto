@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
@@ -58,10 +59,12 @@ class CookieStore;
 class Storage;
 class Crypto;
 class CustomElementRegistry;
+class DeferredFetches;
 class Document;
 class DocumentLoadTiming;
 class Element;
 class Event;
+class FetchLaterResult;
 class Frame;
 class History;
 class IDBFactory;
@@ -85,6 +88,8 @@ class Window final : public WindowProperties, public ExecutionContext {
   static Window* Create();
   // The Window of the isolate's current context.
   static Window& Current();
+  // ExecutionContext::OfReceiver(), of a member that windows alone have.
+  static Window& OfReceiver();
   // The window of `context`, as ExecutionContext::From() finds it, or null
   // for a context of none or of a worker.
   static Window* From(v8::Isolate* isolate, v8::Local<v8::Context> context);
@@ -171,6 +176,7 @@ class Window final : public WindowProperties, public ExecutionContext {
                             bindings::ExceptionState& exception_state);
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
+  bool AllowsHighEntropyValues() override;
   // WindowOrWorkerGlobalScope::crossOriginIsolated().
   bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
   // LocalDOMWindow::credentialless(): its document's policy container's.
@@ -219,6 +225,17 @@ class Window final : public WindowProperties, public ExecutionContext {
   // time, which a document whose origin may not reach IndexedDB has too: its
   // calls throw.
   IDBFactory* IndexedDB();
+  // fetchLater(), as fetch_later.h says.
+  FetchLaterResult* FetchLater(const bindings::RequestOrUSVString& input,
+                               const bindings::DeferredRequestInit& init,
+                               bindings::ExceptionState& exception_state);
+  // The deferred requests of fetchLater() that have not gone yet, made the
+  // first time.
+  const scoped_refptr<DeferredFetches>& GetDeferredFetches();
+  // Those requests, or null before the first.
+  const DeferredFetches* FindDeferredFetches() const {
+    return deferred_fetches_.get();
+  }
   // WindowLocalStorage and WindowSessionStorage, in dom_window_storage.cc.
   mitto::Storage* LocalStorage(bindings::ExceptionState& exception_state);
   mitto::Storage* SessionStorage(bindings::ExceptionState& exception_state);
@@ -318,6 +335,11 @@ class Window final : public WindowProperties, public ExecutionContext {
                         bool discard_duplicate);
   // Whether its frame is under another.
   bool IsInFrame() const;
+  // How many times the origin changes from its document's up to the top-level
+  // frame's, through each frame between.
+  size_t OriginChangesToTop() const;
+  // Frame::IsCrossOriginToOutermostMainFrame().
+  bool IsCrossOriginToTop() const;
   // The process that Chrome has its document in.
   RendererProcess Process() const;
   // What a navigation of the window's frame to another document asks the
@@ -420,6 +442,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   std::u16string frameless_name_;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
   raw_ptr<AnimationFrameController> animation_frames_ = nullptr;
+  scoped_refptr<DeferredFetches> deferred_fetches_;
 };
 
 }  // namespace mitto

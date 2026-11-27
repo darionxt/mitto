@@ -213,6 +213,7 @@ bool IsKnown(uint32_t type) {
          type == static_cast<uint32_t>(PageMessage::kNetworkHint) ||
          (type >= static_cast<uint32_t>(PageMessage::kStorageBuckets) &&
           type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer)) ||
+         type == static_cast<uint32_t>(PageMessage::kSendDeferredRequest) ||
          (type >= static_cast<uint32_t>(PageMessage::kTraversalRequest) &&
           type <= static_cast<uint32_t>(PageMessage::kDocumentEvicted)) ||
          type == static_cast<uint32_t>(PageMessage::kFrameAttributes) ||
@@ -241,9 +242,11 @@ constexpr uint8_t kKeepaliveFlag = 8;
 constexpr uint8_t kSynchronousFlag = 16;
 constexpr uint8_t kNoReferrerFlag = 32;
 constexpr uint8_t kStreamsBodyFlag = 64;
-constexpr uint8_t kRequestFlags = kUserActivationFlag | kReloadFlag |
-                                  kKeepaliveFlag | kSynchronousFlag |
-                                  kNoReferrerFlag | kStreamsBodyFlag;
+// The flags byte's last free bit.
+constexpr uint8_t kDeferredFlag = 128;
+constexpr uint8_t kRequestFlags =
+    kUserActivationFlag | kReloadFlag | kKeepaliveFlag | kSynchronousFlag |
+    kNoReferrerFlag | kStreamsBodyFlag | kDeferredFlag;
 
 // The last value of each byte of a request's fixed part.
 constexpr uint8_t kLastRequestMode = static_cast<uint8_t>(PageRequestMode::kCors);
@@ -872,6 +875,7 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   request.synchronous = flags & kSynchronousFlag;
   request.no_referrer = flags & kNoReferrerFlag;
   request.streams_body = flags & kStreamsBodyFlag;
+  request.deferred = flags & kDeferredFlag;
   const uint8_t mode = static_cast<uint8_t>(bytes[10]);
   const uint8_t credentials = static_cast<uint8_t>(bytes[11]);
   const uint8_t referrer_policy = static_cast<uint8_t>(bytes[12]);
@@ -952,6 +956,12 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   if (request.keepalive && request.kind != PageRequestKind::kFetch &&
       request.kind != PageRequestKind::kBeacon) {
     return base::unexpected("keepalive on a request that is not a fetch");
+  }
+  if (request.deferred &&
+      (!request.keepalive || request.kind != PageRequestKind::kFetch ||
+       request.streams_body)) {
+    return base::unexpected(
+        "a deferred request that is not a keepalive fetch of a known body");
   }
   if (request.synchronous && request.kind != PageRequestKind::kXhr) {
     return base::unexpected("a synchronous request that is not an XHR");
@@ -2031,7 +2041,8 @@ std::string EncodeRequest(uint64_t document, const PageRequest& request) {
                         (request.keepalive ? kKeepaliveFlag : 0) |
                         (request.synchronous ? kSynchronousFlag : 0) |
                         (request.no_referrer ? kNoReferrerFlag : 0) |
-                        (request.streams_body ? kStreamsBodyFlag : 0)),
+                        (request.streams_body ? kStreamsBodyFlag : 0) |
+                        (request.deferred ? kDeferredFlag : 0)),
       static_cast<char>(request.mode),
       static_cast<char>(request.credentials),
       static_cast<char>(request.referrer_policy),
@@ -2053,6 +2064,10 @@ std::string EncodeRequest(uint64_t document, const PageRequest& request) {
 
 std::string EncodeCancel(uint64_t number) {
   return EncodeFrame(PageMessage::kCancel, EncodeUint64(number));
+}
+
+std::string EncodeSendDeferredRequest(uint64_t number) {
+  return EncodeFrame(PageMessage::kSendDeferredRequest, EncodeUint64(number));
 }
 
 std::string EncodeCredit(const PageCredit& credit) {
@@ -2694,6 +2709,13 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.cancelled = DecodeUint64(payload);
       return frame;
+    case PageMessage::kSendDeferredRequest:
+      if (payload.size() != 8) {
+        return base::unexpected(
+            WrongSize("send of a deferred request", payload.size()));
+      }
+      frame.deferred_to_send = DecodeUint64(payload);
+      return frame;
     case PageMessage::kKnownGap:
       if (!IsText(payload)) {
         return base::unexpected("a Known Gap that is not UTF-8");
@@ -3213,6 +3235,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kSetCookie:
     case PageMessage::kLoaded:
     case PageMessage::kCancel:
+    case PageMessage::kSendDeferredRequest:
     case PageMessage::kKnownGap:
     case PageMessage::kCookieStoreGet:
     case PageMessage::kCookieStoreSet:

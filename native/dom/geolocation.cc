@@ -11,6 +11,7 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_geolocation.h"
 #include "mitto/bindings/v8_window.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/geolocation_position_error.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/garbage-collected.h"
@@ -31,6 +32,13 @@ namespace {
 constexpr char16_t kInsecureOrigin[] =
     u"Only secure origins are allowed (see: https://goo.gl/Y0ZkNV).";
 constexpr char16_t kTimeoutExpired[] = u"Timeout expired";
+// What a document whose permissions policy withholds it is told.
+constexpr char16_t kPolicyError[] =
+    u"Geolocation has been disabled in this document by permissions policy.";
+constexpr char kPolicyConsoleWarning[] =
+    "Geolocation access has been blocked because of a permissions policy "
+    "applied to the current document. See https://crbug.com/414348233 for more "
+    "details.";
 // PositionOptions' default timeout, 0xFFFFFFFF: none.
 constexpr uint32_t kNoTimeout = UINT32_MAX;
 
@@ -136,9 +144,14 @@ void Geolocation::GetCurrentPositionForBindings(
     v8::Local<v8::Function> error_callback,
     const bindings::PositionOptions& options) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  StartRequest(bindings::MakeGarbageCollected<GeoNotifier>(
-      isolate, this, success_callback, error_callback, options.timeout,
-      /*watch_id=*/0));
+  Window& window = Window::OfReceiver();
+  if (!window.HasContext()) {
+    return;
+  }
+  StartRequest(window, bindings::MakeGarbageCollected<GeoNotifier>(
+                           isolate, this, success_callback, error_callback,
+                           options.timeout,
+                           /*watch_id=*/0));
 }
 
 int32_t Geolocation::WatchPositionForBindings(
@@ -146,11 +159,15 @@ int32_t Geolocation::WatchPositionForBindings(
     v8::Local<v8::Function> error_callback,
     const bindings::PositionOptions& options) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  Window& window = Window::OfReceiver();
+  if (!window.HasContext()) {
+    return 0;
+  }
   // ExecutionContext::CircularSequentialID(): from 1, never 0.
   last_watch_id_ = last_watch_id_ == INT32_MAX ? 1 : last_watch_id_ + 1;
-  StartRequest(bindings::MakeGarbageCollected<GeoNotifier>(
-      isolate, this, success_callback, error_callback, options.timeout,
-      last_watch_id_));
+  StartRequest(window, bindings::MakeGarbageCollected<GeoNotifier>(
+                           isolate, this, success_callback, error_callback,
+                           options.timeout, last_watch_id_));
   return last_watch_id_;
 }
 
@@ -175,15 +192,39 @@ size_t Geolocation::TimerCount() const {
   return count;
 }
 
-void Geolocation::StartRequest(GeoNotifier* notifier) {
+void Geolocation::ContextDestroyed() {
+  for (GeoNotifier* notifier = first_.Get(); notifier;
+       notifier = notifier->next()) {
+    notifier->Stop();
+  }
+  first_ = nullptr;
+}
+
+void Geolocation::StartRequest(Window& window, GeoNotifier* notifier) {
+  if (!observes_context_) {
+    observes_context_ = true;
+    window.AddContextDestroyedCallback(base::BindOnce(
+        [](cppgc::WeakPersistent<Geolocation> geolocation) {
+          if (geolocation) {
+            geolocation->ContextDestroyed();
+          }
+        },
+        cppgc::WeakPersistent<Geolocation>(this)));
+  }
   notifier->set_next(first_.Get());
   first_ = notifier;
-  if (!Window::Current().IsSecureContextForBindings()) {
+  if (!window.IsSecureContextForBindings()) {
     notifier->SetFatalError(GeolocationPositionError::kPermissionDenied,
                             kInsecureOrigin);
     return;
   }
-  // A top-level page of a tab that a Session opened is visible, and has no
+  if (!window.GetDocument().IsFeatureEnabledOrReport("geolocation",
+                                                     kPolicyConsoleWarning)) {
+    notifier->SetFatalError(GeolocationPositionError::kPermissionDenied,
+                            kPolicyError);
+    return;
+  }
+  // A page of a tab that a Session opened is visible, and has no
   // position cached. The browser shows its prompt, which nobody answers, so
   // only the timeout can end the request.
   notifier->StartTimer();
@@ -220,8 +261,7 @@ void Geolocation::Fire(GeoNotifier* notifier) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
   // Blink's GeoNotifier::TimerFired(): a fatal error ends any request, and a
-  // timeout ends a one-shot, while a watch waits on. The callback runs in its
-  // own context, which has to be there still.
+  // timeout ends a one-shot, while a watch waits on.
   const bool fatal = notifier->fatal_code() != 0;
   const uint16_t code =
       fatal ? notifier->fatal_code() : GeolocationPositionError::kTimeout;
@@ -229,48 +269,50 @@ void Geolocation::Fire(GeoNotifier* notifier) {
       fatal ? notifier->fatal_message() : std::u16string(kTimeoutExpired);
   const v8::Local<v8::Function> error_callback =
       notifier->error_callback(isolate);
-  v8::Local<v8::Context> context;
-  if (!notifier->success_callback(isolate)->GetCreationContext(isolate).ToLocal(
-          &context)) {
-    Remove(notifier);
-    return;
-  }
-  Window* const window = Window::From(isolate, context);
   // A window that the back/forward cache keeps hears of it once it comes
-  // back, as a task of its frozen queues does.
-  if (window && window->IsInBackForwardCache()) {
-    window->HoldTask(TaskType::kMiscPlatformAPI,
-                     base::BindOnce(
-                         [](cppgc::Persistent<Geolocation> geolocation,
-                            cppgc::Persistent<GeoNotifier> notifier) {
-                           // Not for a watch that a script has cleared since.
-                           if (geolocation->Has(*notifier)) {
-                             geolocation->Fire(notifier.Get());
-                           }
-                         },
-                         cppgc::Persistent<Geolocation>(this),
-                         cppgc::Persistent<GeoNotifier>(notifier)),
-                     /*delayed=*/notifier->is_delayed());
-    return;
+  // back, as a task of its frozen queues does: that of the request's success
+  // callback, whose page the cache keeps whole.
+  v8::Local<v8::Context> callback_context;
+  if (notifier->success_callback(isolate)->GetCreationContext(isolate).ToLocal(
+          &callback_context)) {
+    Window* const frozen = Window::From(isolate, callback_context);
+    if (frozen && frozen->IsInBackForwardCache()) {
+      frozen->HoldTask(TaskType::kMiscPlatformAPI,
+                       base::BindOnce(
+                           [](cppgc::Persistent<Geolocation> geolocation,
+                              cppgc::Persistent<GeoNotifier> notifier) {
+                             // Not for a watch that a script has cleared
+                             // since.
+                             if (geolocation->Has(*notifier)) {
+                               geolocation->Fire(notifier.Get());
+                             }
+                           },
+                           cppgc::Persistent<Geolocation>(this),
+                           cppgc::Persistent<GeoNotifier>(notifier)),
+                       /*delayed=*/notifier->is_delayed());
+      return;
+    }
   }
-  const v8::Context::Scope context_scope(context);
-  if (!window || !window->HasContext()) {
-    Remove(notifier);
-    return;
-  }
-  if (!error_callback.IsEmpty()) {
-    v8::Local<v8::Value> argument =
-        GeolocationPositionError::Create(code, message)->ToV8(isolate);
-    // As Blink's V8ScriptRunner::CallFunction(): what the callback queued
-    // runs once it returns.
-    const v8::MicrotasksScope microtasks_scope(
-        context, v8::MicrotasksScope::kRunMicrotasks);
-    const v8::TryCatch try_catch(isolate);
-    if (error_callback->Call(context, v8::Undefined(isolate), 1, &argument)
-            .IsEmpty() &&
-        try_catch.HasCaught()) {
-      bindings::ReportException(isolate, try_catch.Exception(),
-                                try_catch.Message());
+  // The callback runs in its own context, which has to be there still.
+  v8::Local<v8::Context> context;
+  if (!error_callback.IsEmpty() &&
+      error_callback->GetCreationContext(isolate).ToLocal(&context)) {
+    const v8::Context::Scope context_scope(context);
+    const Window* const window = Window::From(isolate, context);
+    if (window && window->HasContext()) {
+      v8::Local<v8::Value> argument =
+          GeolocationPositionError::Create(code, message)->ToV8(isolate);
+      // As Blink's V8ScriptRunner::CallFunction(): what the callback queued
+      // runs once it returns.
+      const v8::MicrotasksScope microtasks_scope(
+          context, v8::MicrotasksScope::kRunMicrotasks);
+      const v8::TryCatch try_catch(isolate);
+      if (error_callback->Call(context, v8::Undefined(isolate), 1, &argument)
+              .IsEmpty() &&
+          try_catch.HasCaught()) {
+        bindings::ReportException(isolate, try_catch.Exception(),
+                                  try_catch.Message());
+      }
     }
   }
   if (fatal || notifier->watch_id() == 0) {

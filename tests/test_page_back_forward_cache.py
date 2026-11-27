@@ -449,6 +449,29 @@ def test_a_keepalive_request_outlives_the_eviction_of_its_page(session: mitto.Se
         assert page.evaluate("window.marker ?? null") is None
 
 
+def test_a_kept_page_sends_its_deferred_requests_as_it_goes_in(session: mitto.Session, server: RecordingServer) -> None:
+    # Chrome 157's FetchLaterManager sends each as its context enters the cache, once the next page has been asked for,
+    # where send_on_enter_bfcache is on by default, and the page that comes back says it was activated.
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    server.route("/soon", b"", "text/plain")
+    server.route("/later", b"", "text/plain")
+
+    with _open_page(session, first) as page:
+        page.evaluate(
+            "window.later = fetchLater('/later', {activateAfter: 600000});"
+            " window.soon = fetchLater('/soon', {activateAfter: 0}); 0"
+        )
+        assert server.wait_for_path("/soon")
+        page.evaluate("location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        assert server.wait_for_path("/later")
+        assert [path for path in server.paths() if path in ("/soon", "/b", "/later")] == ["/soon", "/b", "/later"]
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        assert page.evaluate("[log.at(-1), later.activated, soon.activated]") == ["pageshow:true", True, True]
+
+
 def test_a_traversal_lets_the_kept_pages_of_the_browsing_instance_it_goes_into_go(
     session: mitto.Session, server: RecordingServer
 ) -> None:

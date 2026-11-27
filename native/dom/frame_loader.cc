@@ -23,6 +23,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/fetch_later.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/history.h"
@@ -36,6 +37,7 @@
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/mime_types.h"
+#include "url/origin.h"
 #include "url/url_canon.h"
 #include "url/url_constants.h"
 #include "url/url_util.h"
@@ -398,6 +400,20 @@ void StartNavigation(Window& window,
         Navigation::DispatchResult::kContinue) {
       return;
     }
+  }
+  // A navigation that the frame's parent starts reserves the frame's element
+  // a quota of fetchLater() for the URL's origin, an opaque one where the
+  // element's sandbox withholds the origin, as FrameLoader::StartNavigation()
+  // has HTMLFrameOwnerElement::UpdateDeferredFetchPolicy() do.
+  if (frame && frame->Owner() && request.origin_window &&
+      request.origin_window->GetFrame() == frame->Parent()) {
+    url::Origin to_origin = url::Origin::Create(url);
+    if ((frame->Owner()->GetSandboxFlags() & SandboxFlags::kOrigin) !=
+        SandboxFlags::kNone) {
+      to_origin = to_origin.DeriveNewOpaqueOrigin();
+    }
+    frame->Owner()->SetDeferredFetchPolicy(
+        DeferredFetchPolicyOnNavigation(*frame, to_origin));
   }
   if (!window.GetNavigationClient() || !window.HasContext()) {
     return;

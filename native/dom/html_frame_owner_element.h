@@ -29,6 +29,15 @@ class Frame;
 class PermissionsPolicy;
 class Window;
 
+// Blink's mojom::DeferredFetchPolicy: the quota of fetchLater() that a frame's
+// element reserves for its documents, none, the normal 64 KiB or the minimal
+// 8 KiB.
+enum class DeferredFetchPolicy {
+  kDisabled,
+  kDeferredFetch,
+  kDeferredFetchMinimal
+};
+
 class HTMLFrameOwnerElement : public HTMLElement {
  public:
   ~HTMLFrameOwnerElement() override;
@@ -57,6 +66,15 @@ class HTMLFrameOwnerElement : public HTMLElement {
   PermissionsPolicy* FeaturePolicy();
   // The frame goes, as its documents have unloaded: the element holds none.
   void ClearContentFrame() { content_frame_ = nullptr; }
+  // The quota of fetchLater() that the element reserves, as its FramePolicy's
+  // deferred_fetch_policy holds it, which a navigation that its frame's
+  // parent starts sets and a document of the parent's origin clears.
+  DeferredFetchPolicy GetDeferredFetchPolicy() const {
+    return deferred_fetch_policy_;
+  }
+  void SetDeferredFetchPolicy(DeferredFetchPolicy policy) {
+    deferred_fetch_policy_ = policy;
+  }
   // HTMLFrameOwnerElement::DispatchLoad(): load at the element, once its
   // frame's window's load event has been dispatched.
   void DispatchLoad();
@@ -113,6 +131,7 @@ class HTMLFrameOwnerElement : public HTMLElement {
   ParsedPolicy container_policy_;
   // An iframe's featurePolicy.
   cppgc::Member<PermissionsPolicy> feature_policy_;
+  DeferredFetchPolicy deferred_fetch_policy_ = DeferredFetchPolicy::kDisabled;
 };
 
 }  // namespace mitto

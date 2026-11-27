@@ -330,6 +330,7 @@ void DedicatedWorkerThread::Scope::Start() {
   scope_->SetOutsideOrigin(params_.outside_origin);
   scope_->SetAgentClusterOrigin(params_.agent_cluster_origin);
   scope_->SetStorageKey(params_.storage_key);
+  scope_->SetAllowsHighEntropyValues(params_.allows_high_entropy_values);
   scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.

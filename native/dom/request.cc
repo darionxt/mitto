@@ -134,8 +134,14 @@ FetchCredentialsMode CredentialsFromString(std::u16string_view credentials) {
 BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
                               v8::Local<v8::Value> value,
                               std::optional<std::string>* content_type,
-                              bindings::ExceptionState& exception_state) {
+                              bindings::ExceptionState& exception_state,
+                              uint64_t* length) {
+  uint64_t ignored_length = 0;
+  if (!length) {
+    length = &ignored_length;
+  }
   if (Blob* const blob = bindings::V8Blob::ToWrappable(isolate, value)) {
+    *length = blob->GetBlobDataHandle()->size();
     if (!blob->GetBlobDataHandle()->GetType().empty()) {
       *content_type = blob->GetBlobDataHandle()->GetType();
     }
@@ -149,6 +155,7 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
           bindings::V8FormData::ToWrappable(isolate, value)) {
     FormData::MultipartBody body = form_data->EncodeMultiPartFormData();
     *content_type = body.ContentType();
+    *length = body.bytes.size();
     if (!body.has_files) {
       return BodyStreamBuffer::Create(
           isolate,
@@ -168,10 +175,12 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
   if (URLSearchParams* const params =
           bindings::V8URLSearchParams::ToWrappable(isolate, value)) {
     *content_type = "application/x-www-form-urlencoded;charset=UTF-8";
+    std::string encoded = base::UTF16ToUTF8(params->ToString());
+    *length = encoded.size();
     return BodyStreamBuffer::Create(
         isolate,
         bindings::MakeGarbageCollected<FormDataBytesConsumer>(
-            base::UTF16ToUTF8(params->ToString())),
+            std::move(encoded)),
         /*signal=*/nullptr);
   }
   std::string bytes;
@@ -184,6 +193,7 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
       return nullptr;
     }
     bytes.assign(static_cast<const char*>(store->Data()), store->ByteLength());
+    *length = bytes.size();
   } else if (value->IsArrayBufferView()) {
     const v8::Local<v8::ArrayBufferView> view = value.As<v8::ArrayBufferView>();
     if (view->ByteLength() > std::numeric_limits<uint32_t>::max()) {
@@ -193,6 +203,7 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
     }
     bytes.resize(view->ByteLength());
     view->CopyContents(bytes.data(), bytes.size());
+    *length = bytes.size();
   } else {
     // What the page's own conversion throws reaches the caller through
     // `exception_state`.
@@ -202,6 +213,7 @@ BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
       return nullptr;
     }
     *content_type = "text/plain;charset=UTF-8";
+    *length = text.size();
     bytes = base::UTF16ToUTF8(text);
   }
   return BodyStreamBuffer::Create(
@@ -401,6 +413,7 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     return nullptr;
   }
   BodyStreamBuffer* body = input_body;
+  request->body_length_ = input_request ? input_request->body_length_ : 0;
   if (has_init_body) {
     ReadableStream* const stream =
         bindings::V8ReadableStream::ToWrappable(isolate, *init.body);
@@ -422,8 +435,10 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
         return nullptr;
       }
       body = bindings::MakeGarbageCollected<BodyStreamBuffer>(isolate, stream);
+      request->body_length_ = 0;
     } else {
-      body = ExtractBody(isolate, *init.body, &content_type, exception_state);
+      body = ExtractBody(isolate, *init.body, &content_type, exception_state,
+                         &request->body_length_);
       if (!body) {
         return nullptr;
       }
@@ -608,6 +623,7 @@ Request* Request::Clone(bindings::ExceptionState& exception_state) {
     }
     body_buffer_ = branch1;
     request->body_buffer_ = branch2;
+    request->body_length_ = body_length_;
   }
   request->url_ = url_;
   request->method_ = method_;

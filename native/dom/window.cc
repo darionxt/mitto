@@ -30,6 +30,8 @@
 #include "mitto/dom/document_named_properties.h"
 #include "mitto/dom/dom_file_system.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/fetch_later.h"
+#include "mitto/dom/fetch_later_result.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/headers.h"
@@ -77,6 +79,13 @@ Window& Window::Current() {
   Window* const window = From(isolate, isolate->GetCurrentContext());
   CHECK(window);
   return *window;
+}
+
+// static
+Window& Window::OfReceiver() {
+  ExecutionContext& context = ExecutionContext::OfReceiver();
+  CHECK(context.IsWindow());
+  return static_cast<Window&>(context);
 }
 
 // static
@@ -437,6 +446,30 @@ mitto::CacheStorage* Window::Caches(
   return caches_.Get();
 }
 
+FetchLaterResult* Window::FetchLater(
+    const bindings::RequestOrUSVString& input,
+    const bindings::DeferredRequestInit& init,
+    bindings::ExceptionState& exception_state) {
+  // In this window's realm, as Blink's bindings give a non-static operation
+  // its receiver's ScriptState, so that a fetchLater() that another window
+  // borrows resolves, queues and goes as this one's.
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Context> context;
+  if (HasContext() &&
+      ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context)) {
+    const v8::Context::Scope context_scope(context);
+    return mitto::FetchLater(*this, input, init, exception_state);
+  }
+  return mitto::FetchLater(*this, input, init, exception_state);
+}
+
+const scoped_refptr<DeferredFetches>& Window::GetDeferredFetches() {
+  if (!deferred_fetches_) {
+    deferred_fetches_ = base::MakeRefCounted<DeferredFetches>();
+  }
+  return deferred_fetches_;
+}
+
 IDBFactory* Window::IndexedDB() {
   if (!indexed_db_) {
     indexed_db_ = bindings::MakeGarbageCollected<IDBFactory>(this);
@@ -556,6 +589,32 @@ RendererProcess Window::Process() const {
 
 bool Window::IsInFrame() const {
   return frame_ && frame_->Parent();
+}
+
+bool Window::AllowsHighEntropyValues() {
+  return GetDocument().IsFeatureEnabledOrReport(
+      "ch-ua-high-entropy-values",
+      "Collection of high-entropy user-agent client hints is disabled for this "
+      "document.");
+}
+
+size_t Window::OriginChangesToTop() const {
+  size_t changes = 0;
+  url::Origin origin = GetSecurityOrigin();
+  for (mitto::Frame* frame = frame_ ? frame_->Parent() : nullptr; frame;
+       frame = frame->Parent()) {
+    const url::Origin parent = frame->DomWindow()->GetSecurityOrigin();
+    if (!origin.IsSameOriginWith(parent)) {
+      ++changes;
+      origin = parent;
+    }
+  }
+  return changes;
+}
+
+bool Window::IsCrossOriginToTop() const {
+  return frame_ && !GetSecurityOrigin().IsSameOriginWith(
+                       frame_->Top().DomWindow()->GetSecurityOrigin());
 }
 
 bool Window::CanExecuteScripts(bool about_to_execute) {

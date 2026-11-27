@@ -160,6 +160,11 @@ CrossOriginAttribute CrossOriginAttributeFromValue(
 
 // The referrer of a request that is the document's, as Blink's referrer string
 // says it, and of one that has none.
+// How many bytes of the bodies of a document's keepalive requests may be in
+// flight at once. One more fails before it goes.
+// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
+inline constexpr size_t kKeepaliveInflightBytesQuota = 64 * 1024;
+
 inline constexpr char kClientReferrer[] = "about:client";
 inline constexpr char kNoReferrer[] = "";
 
@@ -196,6 +201,13 @@ struct FetchRequestData {
   // Whether it fetches a module script, or what one imports, which the
   // Session sends as a module.
   bool is_module = false;
+  // Whether it is navigator.sendBeacon()'s, which the Session sends as a
+  // beacon, as Blink's request context BEACON says.
+  bool is_beacon = false;
+  // Whether it is fetchLater()'s, keepalive too, which the Session holds
+  // until FetchController::SendDeferred(), its document goes or its Page
+  // ends, and whose client hears nothing of its response.
+  bool deferred = false;
   // Whether it blocks rendering, which its entry of the Performance Timeline
   // says.
   bool render_blocking = false;
@@ -240,6 +252,9 @@ class FetchController {
   // call to the client, once that call has returned. So the client must touch
   // nothing of itself after calling it, and hears nothing more.
   virtual void Cancel() = 0;
+  // For a deferred request: has the Session send it now, and destroys the
+  // client before it returns, as Cancel() does.
+  virtual void SendDeferred() {}
 
   // For a body that streams: how many more bytes of it the Session takes now,
   // none until it starts reading the body. A request whose body does not
@@ -271,6 +286,10 @@ class FetchClient {
   virtual void OnResponseEnded(int net_error) = 0;
   // For a request whose body streams: the Session takes more of it.
   virtual void OnBodyRoom() {}
+  // For a deferred request: its document has gone, and the Session sends it
+  // then, as FetchLaterManager::ContextDestroyed() processes each loader
+  // before any script runs again.
+  virtual void OnDocumentGone() {}
 };
 
 class Fetcher {
