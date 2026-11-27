@@ -22,6 +22,8 @@ uint64_t RequestOf(const FrameFromSession& frame) {
       return frame.ended.number;
     case PageMessage::kRequestBodyCredit:
       return frame.request_body_credit.number;
+    case PageMessage::kUploadProgress:
+      return frame.upload_progress.number;
     default:
       return kNavigationRequest;
   }

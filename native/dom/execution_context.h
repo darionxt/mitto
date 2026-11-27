@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/functional/function_ref.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
@@ -53,6 +54,8 @@ class Fetcher;
 class WindowTasks;
 class WorkerStarter;
 enum class FetchReferrerPolicy;
+enum class FetchCredentialsMode;
+enum class FetchMode;
 
 class ExecutionContext : public cppgc::GarbageCollectedMixin {
  public:
@@ -324,12 +327,21 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // ExecutionContext::AddConsoleMessage().
   void AddConsoleMessage(ConsoleLevel level, std::string text);
 
+  // The resource that a link preloaded as fetch which a request of `method`
+  // for `url` takes, if any, as Blink's MatchPreload() gives it. `has_header`
+  // says whether the request has a header of a name.
+  Resource* MatchFetchPreload(
+      std::string_view method,
+      const GURL& url,
+      FetchMode mode,
+      FetchCredentialsMode credentials,
+      base::FunctionRef<bool(std::string_view)> has_header);
+
  protected:
   ExecutionContext();
 
  private:
-  // The resource that a link preloaded as fetch which `request` takes, if
-  // any, as Blink's MatchPreload() gives it.
+  // The same for `request`.
   Resource* MatchFetchPreload(const Request& request);
   // Says in the console that a fetch() of `url` of mode no-cors would not
   // follow a redirect, which a cross-origin one may not ask for.

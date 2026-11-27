@@ -516,33 +516,45 @@ void ExecutionContext::AddRedirectModeError(const GURL& url) {
 }
 
 Resource* ExecutionContext::MatchFetchPreload(const Request& request) {
+  // No keepalive, and only the default cache and redirect modes and no
+  // integrity, where Blink's MatchPreload() and DetermineRevalidationPolicy()
+  // also reuse a preload.
+  if (request.keepalive() || request.cache_mode() != FetchCacheMode::kDefault ||
+      request.redirect_mode() != FetchRedirectMode::kFollow ||
+      !request.integrity().empty()) {
+    return nullptr;
+  }
+  return MatchFetchPreload(
+      request.Method(), request.url(), request.mode(), request.credentials(),
+      [&](std::string_view name) {
+        return request.GetHeaders()->GetValue(name).has_value();
+      });
+}
+
+Resource* ExecutionContext::MatchFetchPreload(
+    std::string_view method,
+    const GURL& url,
+    FetchMode mode,
+    FetchCredentialsMode credentials,
+    base::FunctionRef<bool(std::string_view)> has_header) {
   // A window's GET takes what a link preloaded as fetch, as Blink's
   // ThreadableLoader asks the document's ResourceFetcher for a resource of
   // type kRaw, with what Resource::CanReuse() wants of the request beside its
-  // mode and credentials mode: no keepalive, and no header of a conditional
-  // request. A data: or a blob: URL's too, which Blink fetches through the
-  // same, so a preload of a blob: URL serves a fetch after the URL is
-  // revoked. Only for the default cache and redirect modes and no integrity,
-  // where Blink's MatchPreload() and DetermineRevalidationPolicy() also reuse
-  // it.
-  const Headers& headers = *request.GetHeaders();
-  if (!IsWindow() || !GetTasks() || request.Method() != "GET" ||
-      request.keepalive() || request.cache_mode() != FetchCacheMode::kDefault ||
-      request.redirect_mode() != FetchRedirectMode::kFollow ||
-      !request.integrity().empty() ||
+  // mode and credentials mode: no header of a conditional request. A data: or
+  // a blob: URL's too, which Blink fetches through the same, so a preload of a
+  // blob: URL serves a fetch after the URL is revoked.
+  if (!IsWindow() || !GetTasks() || method != "GET" ||
       std::ranges::any_of(std::to_array<std::string_view>(
                               {"if-match", "if-modified-since", "if-none-match",
                                "if-range", "if-unmodified-since"}),
-                          [&headers](std::string_view name) {
-                            return headers.GetValue(name).has_value();
-                          })) {
+                          has_header)) {
     return nullptr;
   }
   FetchParameters params;
-  params.url = request.url();
+  params.url = url;
   params.type = ResourceType::kRaw;
-  params.mode = request.mode();
-  params.credentials = request.credentials();
+  params.mode = mode;
+  params.credentials = credentials;
   return static_cast<Window*>(this)->GetDocument().Fetcher().MatchPreload(
       params);
 }

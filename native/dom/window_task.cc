@@ -54,6 +54,23 @@ ExecutionContext* FrozenContext(v8::Isolate* isolate,
              : nullptr;
 }
 
+void PostDelayedTaskInContext(ExecutionContext* context,
+                              TaskType type,
+                              base::OnceClosure task,
+                              base::TimeDelta delay) {
+  EventLoop* const event_loop = EventLoop::Get();
+  CHECK(event_loop);
+  event_loop->TaskRunner(type)->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](cppgc::WeakPersistent<ExecutionContext> context,
+             base::OnceClosure task) {
+            RunInContext(context.Get(), [&] { std::move(task).Run(); });
+          },
+          cppgc::WeakPersistent<ExecutionContext>(context), std::move(task)),
+      delay);
+}
+
 bool RunInWindowContext(Window* window, base::FunctionRef<void()> run) {
   return RunInContext(window, run);
 }

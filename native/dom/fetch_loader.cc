@@ -57,26 +57,6 @@ Response* CreateResponse(Response::ResponseType type,
   return response;
 }
 
-// The names that Access-Control-Expose-Headers lists, in lower case, with
-// "*" among them, which exposes every name only for a request without
-// credentials, as Blink's ExtractCorsExposedHeaderNamesList() has it.
-// Upstream: third_party/blink/renderer/platform/loader/cors/cors.cc
-std::set<std::string> ExposedHeaderNames(const Headers& headers) {
-  std::set<std::string> names;
-  const std::optional<std::string> list =
-      headers.GetValue("access-control-expose-headers");
-  if (!list) {
-    return names;
-  }
-  for (const std::string_view name : base::SplitStringPiece(
-           *list, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    if (IsHttpToken(name) || name == "*") {
-      names.insert(base::ToLowerASCII(name));
-    }
-  }
-  return names;
-}
-
 // The abort algorithm of a fetch, which holds the loader weakly, as Blink's
 // binds FetchLoaderBase::Abort().
 class AbortFetchAlgorithm final : public AbortSignal::Algorithm {
@@ -512,7 +492,9 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   // as Blink's FetchResponseData filters them.
   Headers* const headers = Headers::Create(Headers::Guard::kNone);
   const std::set<std::string> exposed =
-      cors ? ExposedHeaderNames(*all) : std::set<std::string>();
+      cors ? CorsExposedHeaderNames(
+                 all->GetValue("access-control-expose-headers").value_or(""))
+           : std::set<std::string>();
   // With credentials, "*" is a name like any other.
   const bool expose_all = !credentials_ && exposed.contains("*");
   for (const auto& [name, value] : all->list()) {

@@ -75,6 +75,9 @@ struct TextResourceDecoderOptions {
   ~TextResourceDecoderOptions();
 
   EncodingDetection detection = EncodingDetection::kContentAndBom;
+  // Whether bytes that the encoding cannot decode stop XML no more than they
+  // do anything else, as for an XMLHttpRequest's.
+  bool use_lenient_xml_decoding = false;
   ContentType content_type = ContentType::kPlainText;
   // What decodes when nothing else says, which may be no encoding.
   std::string default_encoding;

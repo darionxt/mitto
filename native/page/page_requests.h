@@ -54,6 +54,9 @@ class PageRequests {
     // For a request whose body streams: the Session has given credit for
     // more of it.
     virtual void OnRequestBodyCredit() {}
+    // For an XMLHttpRequest with a body: `position` of its `size` bytes have
+    // gone.
+    virtual void OnUploadProgress(uint64_t position, uint64_t size) {}
     // For a navigation: whether the document of its response is cross-origin
     // isolated, and its embedder policy, which the Session says just before
     // the response starts.
@@ -111,14 +114,24 @@ class PageRequests {
   // "other": from when the response started, with none of the request's own
   // steps, nor its redirects, and only for an ok response that ends whole.
   uint64_t StartWorkerScript(PageRequest request, Client& client);
-  // The same for a synchronous request, as importScripts() makes one: this
-  // thread waits for each part of its response and hands it to `client`,
+  // The same for a synchronous request, as importScripts() makes one, with no
+  // entry, and a synchronous XMLHttpRequest, with an entry of `initiator_type`:
+  // this thread waits for each part of its response and hands it to `client`,
   // which takes each part of the body as it comes, and returns once it has
-  // ended, or once `abort` is signaled, as when the worker ends, which cancels
-  // it.
-  void StartSynchronous(PageRequest request,
-                        Client& client,
-                        base::WaitableEvent& abort);
+  // ended, or once the worker of the thread ends, which cancels it, as does
+  // `timeout`, if it is not zero, after which `client` hears of
+  // ERR_TIMED_OUT.
+  void StartSynchronous(
+      PageRequest request,
+      Client& client,
+      base::TimeDelta timeout = base::TimeDelta(),
+      std::optional<std::u16string> initiator_type = std::nullopt);
+  // What ends a synchronous request early, for a worker's thread: `abort` is
+  // signaled once the worker ends. The main thread's Page ends with its
+  // process.
+  void SetAbortSynchronousRequests(base::WaitableEvent& abort) {
+    abort_synchronous_requests_ = &abort;
+  }
 
   // Asks the Session for `request`, a navigation that document `initiator`
   // starts, whose number this sets, and returns it. Its response is a
@@ -192,6 +205,7 @@ class PageRequests {
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(const PageResponseEnded& ended);
   void OnRequestBodyCredit(const PageCredit& credit);
+  void OnUploadProgress(const PageUploadProgress& progress);
   void OnIsolation(const PageIsolation& isolation);
   void OnRestore(uint64_t number);
   void OnPermissionsPolicy(PagePermissionsPolicy policy);
@@ -226,6 +240,11 @@ class PageRequests {
     v8::Global<v8::Context> context;
   };
 
+  // What the entry of `request`, of the current context, starts as.
+  static Timed TimedFor(const PageRequest& request,
+                        bool render_blocking,
+                        std::u16string initiator_type);
+
   struct Open {
     Open();
     Open(Open&&);
@@ -244,6 +263,8 @@ class PageRequests {
     // for, which it does first when it starts reading it, and how much the
     // Page has sent.
     bool streams_body = false;
+    // Whether the Session tells how its body goes.
+    bool reports_upload = false;
     bool body_ended = false;
     uint64_t body_credited = 0;
     uint64_t body_sent = 0;
@@ -311,6 +332,7 @@ class PageRequests {
   // bodies among it.
   std::map<uint64_t, std::deque<Held>> held_;
   size_t held_bytes_ = 0;
+  raw_ptr<base::WaitableEvent> abort_synchronous_requests_ = nullptr;
   raw_ptr<Client> navigation_client_ = nullptr;
   bool navigation_seen_ = false;
 };

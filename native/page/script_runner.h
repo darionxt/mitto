@@ -111,6 +111,7 @@ class ScriptRunner final : public base::TaskObserver {
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(PageResponseEnded ended);
   void OnRequestBodyCredit(PageCredit credit);
+  void OnUploadProgress(PageUploadProgress progress);
   void OnIsolation(PageIsolation isolation);
   void OnRestore(uint64_t number);
   void OnPermissionsPolicy(PagePermissionsPolicy policy);

@@ -13,8 +13,8 @@
 #include "mitto/dom/data_url.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/execution_context.h"
-#include "mitto/dom/http_byte_range.h"
 #include "mitto/dom/window_task.h"
+#include "mitto/http_byte_range.h"
 #include "url/gurl.h"
 
 namespace mitto {
@@ -88,6 +88,7 @@ LocalSchemeFetch::Answer LocalSchemeFetch::DecodeDataUrl(
   if (method != "HEAD") {
     answer.body = std::move(data->body);
   }
+  answer.head.expected_length = answer.body.size();
   return answer;
 }
 

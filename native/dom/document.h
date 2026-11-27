@@ -467,6 +467,10 @@ class Document : public Node {
                    bool saw_decoding_error);
   // The time of its response's Last-Modified, which lastModified gives.
   void SetLastModified(base::Time time) { last_modified_ = time; }
+  // Whether the document's parse met no error, as Blink's WellFormed() says:
+  // only an XML one meets any.
+  bool WellFormed() const { return well_formed_; }
+  void SetWellFormed(bool value) { well_formed_ = value; }
   // The referrer of the navigation that loaded the document, which referrer
   // gives: none for one that the browser started, and for one that a document
   // started, what its request sent as Referer.
@@ -981,6 +985,7 @@ class Document : public Node {
   int load_event_delay_count_ = 0;
   int pending_script_blocking_stylesheets_ = 0;
   int pending_parser_blocking_stylesheets_ = 0;
+  bool well_formed_ = true;
   bool load_event_check_pending_ = false;
   cppgc::Member<DocumentParser> parser_;
   cppgc::Member<DocumentLoadTiming> load_timing_;

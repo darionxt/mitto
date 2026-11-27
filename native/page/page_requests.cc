@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -103,10 +104,10 @@ uint64_t PageRequests::Start(PageRequestKind kind,
   return Start(std::move(request), client, render_blocking);
 }
 
-uint64_t PageRequests::Start(PageRequest request,
-                             Client& client,
-                             bool render_blocking,
-                             std::u16string initiator_type) {
+// static
+PageRequests::Timed PageRequests::TimedFor(const PageRequest& request,
+                                           bool render_blocking,
+                                           std::u16string initiator_type) {
   // ResourceFetcher::RecordResourceTimingInfo(), when the page asks.
   Timed timed;
   timed.start_time = base::TimeTicks::Now();
@@ -130,12 +131,22 @@ uint64_t PageRequests::Start(PageRequest request,
   timed.execution_context = &context;
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timed.context.Reset(isolate, isolate->GetCurrentContext());
+  return timed;
+}
+
+uint64_t PageRequests::Start(PageRequest request,
+                             Client& client,
+                             bool render_blocking,
+                             std::u16string initiator_type) {
+  Timed timed = TimedFor(request, render_blocking, std::move(initiator_type));
   // The Session works out the Initiator from the context that asks.
   const bool deferred = request.deferred;
-  const uint64_t number = Send(context.ContextId(), request);
+  const uint64_t number =
+      Send(ExecutionContext::Current().ContextId(), request);
   Open& open = open_[number];
   open.client = &client;
   open.streams_body = request.streams_body;
+  open.reports_upload = request.reports_upload;
   // fetchLater()'s request goes around the document's ResourceFetcher, so the
   // Performance Timeline has no entry of it, as in Chrome.
   if (!deferred) {
@@ -237,21 +248,80 @@ class SynchronousResponse
   base::WaitableEvent arrived_{base::WaitableEvent::ResetPolicy::AUTOMATIC};
 };
 
+// How a wait for a synchronous request's response ends.
+enum class SynchronousWait { kArrived, kAborted, kTimedOut };
+
+// net::ERR_TIMED_OUT, which the Page program, with no //net, cannot name.
+constexpr int kTimedOut = -7;
+
+// How often a wait that has both an end and a deadline looks at the first.
+constexpr base::TimeDelta kAbortCheckInterval = base::Milliseconds(10);
+
+// Waits for more of `response`, until `abort`, if there is one, is signaled or
+// `deadline` has passed.
+SynchronousWait WaitForSynchronous(SynchronousResponse& response,
+                                   base::WaitableEvent* abort,
+                                   base::TimeTicks deadline) {
+  base::WaitableEvent& arrived = response.arrived();
+  if (deadline.is_max()) {
+    if (!abort) {
+      arrived.Wait();
+      return SynchronousWait::kArrived;
+    }
+    base::WaitableEvent* events[] = {&arrived, abort};
+    return base::WaitableEvent::WaitMany(events) == 0
+               ? SynchronousWait::kArrived
+               : SynchronousWait::kAborted;
+  }
+  while (true) {
+    const base::TimeDelta left = deadline - base::TimeTicks::Now();
+    if (!left.is_positive()) {
+      return SynchronousWait::kTimedOut;
+    }
+    if (arrived.TimedWait(abort ? std::min(left, kAbortCheckInterval) : left)) {
+      return SynchronousWait::kArrived;
+    }
+    if (abort && abort->IsSignaled()) {
+      return SynchronousWait::kAborted;
+    }
+  }
+}
+
 }  // namespace
 
-void PageRequests::StartSynchronous(PageRequest request,
-                                    Client& client,
-                                    base::WaitableEvent& abort) {
+void PageRequests::StartSynchronous(
+    PageRequest request,
+    Client& client,
+    base::TimeDelta timeout,
+    std::optional<std::u16string> initiator_type) {
   auto response = base::MakeRefCounted<SynchronousResponse>();
+  std::optional<Timed> timed;
+  if (initiator_type) {
+    timed = TimedFor(request, /*render_blocking=*/false,
+                     *std::move(initiator_type));
+  }
   const uint64_t number =
       Send(ExecutionContext::Current().ContextId(), request,
            base::BindRepeating(&SynchronousResponse::Add, response));
   open_[number].client = &client;
+  open_[number].timed = std::move(timed);
+  const base::TimeTicks deadline = timeout.is_zero()
+                                       ? base::TimeTicks::Max()
+                                       : base::TimeTicks::Now() + timeout;
   while (open_.contains(number)) {
-    base::WaitableEvent* events[] = {&response->arrived(), &abort};
-    if (base::WaitableEvent::WaitMany(events) == 1) {
-      Cancel(number);
-      return;
+    switch (
+        WaitForSynchronous(*response, abort_synchronous_requests_, deadline)) {
+      case SynchronousWait::kArrived:
+        break;
+      case SynchronousWait::kAborted:
+        Cancel(number);
+        return;
+      case SynchronousWait::kTimedOut:
+        Cancel(number);
+        // What still comes of it goes to `response`, which nothing reads.
+        open_.erase(number);
+        client.OnResponseEnded(kTimedOut);
+        return;
     }
     for (FrameFromSession& frame : response->Take()) {
       switch (frame.type) {
@@ -267,6 +337,13 @@ void PageRequests::StartSynchronous(PageRequest request,
         }
         case PageMessage::kResponseEnded:
           OnResponseEnded(frame.ended);
+          break;
+        // A synchronous request has neither, so both are refused.
+        case PageMessage::kRequestBodyCredit:
+          OnRequestBodyCredit(frame.request_body_credit);
+          break;
+        case PageMessage::kUploadProgress:
+          OnUploadProgress(frame.upload_progress);
           break;
         default:
           NOTREACHED();
@@ -774,6 +851,33 @@ void PageRequests::ProcessRequestBodyCredit(const PageCredit& credit) {
     const RequestContextScope context_scope(
         isolate, open->timed ? &open->timed->context : nullptr);
     open->client->OnRequestBodyCredit();
+  }
+}
+
+void PageRequests::OnUploadProgress(const PageUploadProgress& progress) {
+  Open* const open = Find(progress.number, "upload progress");
+  if (!open) {
+    return;
+  }
+  if (!open->reports_upload || open->started) {
+    refuse_.Run(base::StrCat({"upload progress of request ",
+                              base::NumberToString(progress.number),
+                              ", which hears of none"}));
+    return;
+  }
+  if (open->client) {
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    const v8::HandleScope handle_scope(isolate);
+    const RequestContextScope context_scope(
+        isolate, open->timed ? &open->timed->context : nullptr);
+    open->client->OnUploadProgress(progress.position, progress.size);
+  }
+  // MojoURLLoaderClient::OnUploadProgress() acknowledges it then. A script that
+  // heard of it may have let the request go.
+  if (const auto found = open_.find(progress.number);
+      found != open_.end() && found->second.client) {
+    sender_->SendForRequest(progress.number,
+                            EncodeUploadProgressTaken(progress.number));
   }
 }
 

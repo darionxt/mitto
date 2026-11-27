@@ -6,7 +6,7 @@ gains something a case needs, the replay here passes it on, and those gaps leave
 
 import time
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from mitto import RequestError, RequestKind, Session
 from mitto._errors import PageTimeoutError
@@ -66,31 +66,9 @@ _CLICK_NEXT = """new Promise((resolve) => {
   }).observe(next, {attributes: true});
 })"""
 
-_WORKER_ANSWERED = """new Promise((resolve, reject) => {
-  const worker = new Worker(urls.worker);
-  worker.onmessage = () => {
-    worker.terminate();
-    resolve();
-  };
-  worker.onerror = () => reject(new Error(urls.worker + " failed"));
-})"""
-# What the start page's script does for its worker of a blob: URL, whose script fetches with no URL of its own to name as
-# the referrer, and answers once that has ended, or says that it failed, which no error event would.
-_BLOB_WORKER_ANSWERED = """new Promise((resolve, reject) => {
-  const source = `fetch("${location.origin}${urls.worker_blob_fetch}")
-    .then((response) => response.text())
-    .then(() => postMessage("done"), (error) => postMessage("failed: " + error));`;
-  const worker = new Worker(URL.createObjectURL(new Blob([source], {type: "text/javascript"})));
-  worker.onmessage = (event) => {
-    worker.terminate();
-    if (event.data === "done") {
-      resolve();
-    } else {
-      reject(new Error("the fetch of the worker of a blob: URL " + event.data));
-    }
-  };
-  worker.onerror = () => reject(new Error("the worker of a blob: URL failed"));
-})"""
+# The start page's script asks for its cases one after another, up to its beacons, which a Page does not queue yet. There
+# it fails, and tells the server so, which is the last that the page asks for.
+_START_LAST_PATH = "/case/failed?" + quote("Error: Chrome did not queue every beacon")
 # How long a Page's document stays where it is before a replay takes it that it navigates no further.
 _SETTLED_SECONDS = 3.0
 # How often a replay looks for the request that ends a page that does not navigate.
@@ -122,18 +100,17 @@ class Replay:
         made_by_a_page: The issue that makes a Page make this request, for a case that only a page makes in a way that a
             caller cannot say, such as a navigation that no user started. No check replays it until that issue
             replays it through a Page and clears this.
-        through_page: Whether a Page makes the request, as the case's page made it: the Page opens at `page`, runs
-            `page_script`, if there is one, and for a navigation its document navigates until a navigation lands at
-            `lands_at`.
-        page_script: What the Page runs once its document has loaded, for a page whose own script would ask for much that
-            a Page does not do yet first: the step of that script that makes the request, which for a request that is no
-            navigation settles once the request has ended.
+        through_page: Whether a Page makes the request, as the case's page made it: the Page opens at `page`, stays until
+            the server has had a request for `until`, if there is one, runs `page_script`, if there is one, and for a
+            navigation its document navigates until a navigation lands at `lands_at`.
+        page_script: What the Page runs then, for a page whose own script stops at what a Page does not do yet: the step
+            of that script that makes the request.
         lands_at: The case whose page the navigation ends at, for a hop of a redirect, or nothing for the case itself.
         clicks: The paths of the pages, in order, where the person recording clicked the page's "next" link: once the
             Page's document is at each, the Page clicks it, with no user's activation, once the page shows it.
-        until: For a page that does not navigate, the path that its own script asks for last: the Page stays open until
-            the server has had a request for it, by when every other request of the page has ended, so that closing
-            the Page cancels none.
+        until: The path that the page's own script asks for last: the Page stays open until the server has had a request
+            for it, by when every other request of the page has ended, so that closing the Page, or a navigation, cancels
+            none.
     """
 
     kind: RequestKind
@@ -255,19 +232,17 @@ def _document_replays() -> dict[str, Replay]:
         "xhr_get": Replay(RequestKind.XHR, page=start),
         "xhr_get_cross_site": Replay(RequestKind.XHR, host=CROSS_SITE_HOST, page=start),
         "xhr_post_text": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start),
-        "xhr_get_sync": Replay(RequestKind.XHR, page=start, made_by_a_page=283),
-        "xhr_post_text_sync": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start, made_by_a_page=283),
+        # Blink gives a synchronous request a priority that a caller cannot say.
+        "xhr_get_sync": Replay(RequestKind.XHR, page=start, through_page=True, until=_START_LAST_PATH),
+        "xhr_post_text_sync": Replay(
+            RequestKind.XHR, _POST, body=_TEXT, page=start, through_page=True, until=_START_LAST_PATH
+        ),
         "worker": Replay(RequestKind.WORKER, page=start),
-        # The start page's script reaches its workers only after much that a Page does not do yet, so the Page starts
-        # the worker itself, whose script asks for both.
-        "worker_import_scripts": Replay(
-            RequestKind.SCRIPT, page=start, through_page=True, page_script=_WORKER_ANSWERED
-        ),
-        "worker_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, page_script=_WORKER_ANSWERED),
+        # The worker's script asks for both.
+        "worker_import_scripts": Replay(RequestKind.SCRIPT, page=start, through_page=True, until=_START_LAST_PATH),
+        "worker_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, until=_START_LAST_PATH),
         "worker_module": Replay(RequestKind.WORKER, page=start),
-        "worker_blob_fetch": Replay(
-            RequestKind.FETCH, page=start, through_page=True, page_script=_BLOB_WORKER_ANSWERED
-        ),
+        "worker_blob_fetch": Replay(RequestKind.FETCH, page=start, through_page=True, until=_START_LAST_PATH),
         "beacon_text": Replay(RequestKind.BEACON, _POST, body=_TEXT, page=start),
         "beacon_blob": Replay(RequestKind.BEACON, _POST, body={"data": b"blob body"}, page=start),
         "beacon_form_data": Replay(
@@ -304,16 +279,16 @@ def _document_replays() -> dict[str, Replay]:
             credentials="include",
         ),
         "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start, mode="no-cors"),
-        # The start page asks for web fonts, modules, workers and beacons before its script sets location, so the
-        # Page takes that last step itself, once the module says that it has run, as the page's script waits for it.
-        # The window's load event does not wait for the module's import()s, and a navigation that commits while one
-        # is still open cancels it, which over HTTP/3 opens the QPACK decoder stream that Chrome's run never opened.
-        # Each later page navigates on its own: a click, a refresh, location.
+        # The start page's script sets location after its beacons, so the Page takes that last step itself, once the
+        # script has got to them, after the module and all else that it waits for. A navigation that commits while a
+        # request is still open cancels it, which over HTTP/3 opens the QPACK decoder stream that Chrome's run never
+        # opened. Each later page navigates on its own: a click, a refresh, location.
         "navigation_location": Replay(
             RequestKind.NAVIGATION,
             page=start,
             through_page=True,
-            page_script="void moduleRan.then(() => { location.href = urls.navigation_location; })",
+            until=_START_LAST_PATH,
+            page_script="location.href = urls.navigation_location; 0",
         ),
         "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"], through_page=True),
         "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"], through_page=True),
@@ -549,12 +524,10 @@ def _replay_through_page(session: Session, server: CaptureServer, run: Run, case
     if steps.page is None:
         raise ValueError(f"{case} names no page to open")
     page_url = server.url(run.route, host=steps.page_host or run.host, path=steps.page)
-    if steps.until is not None:
-        with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS):  # pyright: ignore[reportPrivateUsage]
-            _wait_for_request(server, run, steps.until)
-        return
     lands_at = _PATHS[steps.lands_at or case]
     with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        if steps.until is not None:
+            _wait_for_request(server, run, steps.until)
         if steps.page_script is not None:
             page.evaluate(steps.page_script, timeout=_PAGE_TIMEOUT_SECONDS)
         if steps.kind is not RequestKind.NAVIGATION:
