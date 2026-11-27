@@ -39,6 +39,7 @@
 #include "net/base/io_buffer.h"
 #include "net/base/is_potentially_trustworthy.h"
 #include "net/base/isolation_info.h"
+#include "net/base/load_flags.h"
 #include "net/base/mime_sniffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
@@ -54,6 +55,7 @@
 #include "net/cookies/cookie_util.h"
 #include "net/cookies/site_for_cookies.h"
 #include "net/http/http_content_disposition.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "url/origin.h"
 #include "url/scheme_host_port.h"
@@ -61,6 +63,26 @@
 
 namespace mitto {
 namespace {
+
+// The load flags of a fetch()'s cache mode, as Blink's
+// WebURLRequest::GetLoadFlagsForWebUrlRequest() gives them.
+// Upstream: third_party/blink/renderer/platform/exported/web_url_request.cc
+int CacheLoadFlags(PageCacheMode cache_mode) {
+  switch (cache_mode) {
+    case PageCacheMode::kDefault:
+      return net::LOAD_NORMAL;
+    case PageCacheMode::kNoStore:
+      return net::LOAD_DISABLE_CACHE | net::LOAD_BYPASS_CACHE;
+    case PageCacheMode::kReload:
+      return net::LOAD_BYPASS_CACHE;
+    case PageCacheMode::kNoCache:
+      return net::LOAD_VALIDATE_CACHE;
+    case PageCacheMode::kForceCache:
+      return net::LOAD_SKIP_CACHE_VALIDATION;
+    case PageCacheMode::kOnlyIfCached:
+      return net::LOAD_ONLY_FROM_CACHE | net::LOAD_SKIP_CACHE_VALIDATION;
+  }
+}
 
 // Whether `key` and `value`, if any, are as Blink's CachedStorageArea writes
 // them: for localStorage a byte that says Latin-1 or UTF-16 and then its code
@@ -1083,6 +1105,12 @@ class PageHost::Request final : public RequestClient {
   uint64_t number() const { return number_; }
   bool is_navigation() const { return checks().is_navigation; }
   bool is_top_level_navigation() const { return checks().top_level; }
+  // Whether the library follows its redirects, as it does unless a fetch()'s
+  // redirect mode says otherwise.
+  bool follows_redirects() const { return follows_redirects_; }
+  void set_follows_redirects(bool follows_redirects) {
+    follows_redirects_ = follows_redirects;
+  }
   // The URL the request started at.
   const GURL& first_url() const { return first_url_; }
   // A navigation whose response the Page makes no document of, such as a
@@ -1405,6 +1433,7 @@ class PageHost::Request final : public RequestClient {
   std::optional<Sniffing> sniffing_;
   ResponseChecks response_checks_;
   // A keepalive request's place among those in flight.
+  bool follows_redirects_ = true;
   std::unique_ptr<KeepaliveShare> keepalive_share_;
   uint64_t context_ = kNoDocument;
   GURL response_url_;
@@ -1602,6 +1631,7 @@ void PageHost::StartRequest(uint64_t number,
   auto request =
       std::make_unique<Request>(*this, number, document_origin, url, checks);
   request->set_context(context_id);
+  request->set_follows_redirects(options.follow_redirects);
   if (body_channel) {
     request->set_body_channel(body_channel);
   }
@@ -1788,7 +1818,27 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   // A navigation that the document starts sends Sec-Fetch-User only with the
   // user's activation, which the browser checks the renderer's word for.
   options.fetch->has_user_activation = asked.user_activation;
-  options.validate_cache = asked.reload;
+  options.cache_load_flags = asked.reload ? net::LOAD_VALIDATE_CACHE
+                                          : CacheLoadFlags(asked.cache_mode);
+  // A window's request of the default cache mode with a conditional line
+  // validates what the cache holds, as FrameFetchContext's
+  // ResourceRequestCachePolicy() makes it kValidateCache, so //net sends
+  // Cache-Control: max-age=0, or the script's line in its place. A worker's
+  // FetchContext leaves the default.
+  // Upstream: third_party/blink/renderer/core/loader/frame_fetch_context.cc
+  if (!context.is_worker && !asked.reload &&
+      asked.cache_mode == PageCacheMode::kDefault &&
+      std::ranges::any_of(lines, [](const auto& entry) {
+        return IsConditionalHeader(entry.first);
+      })) {
+    options.cache_load_flags |= net::LOAD_VALIDATE_CACHE;
+  }
+  // A redirect that is not followed is the response, which the Page makes a
+  // network error of, or an opaque-redirect filtered response, as Chrome's
+  // CorsURLLoader and Blink's FetchManager split the work.
+  if (asked.redirect_mode != PageRedirectMode::kFollow) {
+    options.follow_redirects = false;
+  }
   ApplyPageRequest(asked, headers, options);
   if (context.is_worker) {
     PutOriginAfterUserAgent(headers);
@@ -2184,9 +2234,12 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
     response.timing = PageLoadTimingOf(event.load_timing);
     response.timing_allow_passed = request.timing_allow_passed();
     response.opaque = request.opaque();
-    if (response.opaque) {
-      // FetchResponseData::InitFromResourceResponse(): one from the HTTP cache
-      // came before its request started.
+    // FetchResponseData::InitFromResourceResponse() pads an opaque response
+    // and an opaque redirect's.
+    if (response.opaque ||
+        (!request.follows_redirects() &&
+         net::HttpResponseHeaders::IsRedirectResponseCode(event.status))) {
+      // One from the HTTP cache came before its request started.
       const bool was_cached =
           !event.load_timing.request_start_time.is_null() &&
           event.response_time < event.load_timing.request_start_time;

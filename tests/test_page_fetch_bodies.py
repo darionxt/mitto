@@ -7,7 +7,10 @@ value is what Chrome 157.0.8103.79 gave for the same script, in a page of its ow
 names the Page program, as tests/test_page_program.py does.
 """
 
+import base64
+import contextlib
 import dataclasses
+import hashlib
 import http.server
 import os
 import subprocess
@@ -383,6 +386,57 @@ MEMBERS = {
 }
 
 
+# What RequestInit's cache, redirect and integrity members do that a Page shows without a server, each with what Chrome
+# 157.0.8103.79 gave for it.
+MODES = {
+    "a Request's cache, redirect and integrity": (
+        "const r = new Request('https://example.test/', { cache: 'no-cache', redirect: 'manual', integrity: 'sha256-abc' });"
+        " const s = new Request('https://example.test/', { cache: 'only-if-cached', mode: 'same-origin', redirect: 'error' });"
+        " return [r.cache, r.redirect, r.integrity, new Request(r).cache, new Request(r).integrity, r.clone().redirect,"
+        " new Request(r, { method: 'GET' }).cache, s.cache, s.redirect].join()",
+        "value: no-cache,manual,sha256-abc,no-cache,sha256-abc,manual,no-cache,only-if-cached,error",
+    ),
+    "the values that cache and redirect take": (
+        "return [() => new Request('https://example.test/', { cache: 'only-if-cached' }),"
+        " () => new Request('https://example.test/', { cache: 'only-if-cached', mode: 'no-cors' }),"
+        " () => new Request('https://example.test/', { cache: 'bogus' }),"
+        " () => new Request('https://example.test/', { redirect: 'bogus' }),"
+        " () => new Request(new Request('https://example.test/', { cache: 'force-cache' }), { mode: 'no-cors' }).cache]"
+        ".map((t) => { try { return String(t()); } catch (e) { return e.name + ': ' + e.message; } }).join(' / ')",
+        "value: TypeError: Failed to construct 'Request': 'only-if-cached' can be set only with 'same-origin' mode / TypeError: Failed to construct 'Request': 'only-if-cached' can be set only with 'same-origin' mode / TypeError: Failed to construct 'Request': Failed to read the 'cache' property from 'RequestInit': The provided value 'bogus' is not a valid enum value of type RequestCache. / TypeError: Failed to construct 'Request': Failed to read the 'redirect' property from 'RequestInit': The provided value 'bogus' is not a valid enum value of type RequestRedirect. / force-cache",
+    ),
+    "integrity of data: and blob: URLs": (
+        "const good = 'sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=';"
+        " const strong = 'sha256-bad sha384-ywB1P0WjXou1oD1pmsZQBycsMqsO3tFjGotgWkP/W+2AhgcroefMI1i67KE0yCWn';"
+        " const url = URL.createObjectURL(new Blob(['abc']));"
+        " const tries = [['data:,abc', good], ['data:,abc', 'sha256-AAAA'], ['data:,abc', strong], ['data:,abc', 'md5-x'],"
+        " ['data:,abc', 'sha256-AAAA sha512-'], [url, good], [url, 'sha384-AAAA']];"
+        " const out = []; for (const [u, integrity] of tries) { out.push(await fetch(u, { integrity }).then((r) => r.text(),"
+        " (e) => e.name + ': ' + e.message)); } return out.join(' / ')",
+        "value: abc / TypeError: Failed to fetch / abc / abc / TypeError: Failed to fetch / abc / TypeError: Failed to fetch",
+    ),
+    "when a response that integrity checks settles": (
+        "const p = fetch('data:,abc', { integrity: 'sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=' })"
+        ".then((r) => { log.push('response'); return readAll(r.body); }).then((chunks) => log.push('chunks ' + chunks.length));"
+        " setTimeout(() => log.push('timeout'), 0); await p; return log.join()",
+        "value: timeout,response,chunks 1",
+    ),
+    "a no-cors request's body type": (
+        "const bodies = () => [new Blob(['x'], { type: 'application/json' }), new Blob(['x'], { type: 'text/plain' }),"
+        " new Blob(['x']), new Blob(['x'], { type: 'text/plain;a=\"(\"' }), 'x', new URLSearchParams('a=b')];"
+        " const out = [];"
+        " for (const mode of ['no-cors', 'cors']) out.push(mode + ' ' + bodies().map((body) =>"
+        " new Request('https://example.com/', { method: 'POST', mode, body }).headers.get('content-type')).join(', '));"
+        " out.push(String(new Request('https://example.com/', { method: 'POST', mode: 'no-cors',"
+        " headers: { 'Content-Type': 'application/json' }, body: 'x' }).headers.get('content-type')));"
+        " return out.join('; ')",
+        "value: no-cors , text/plain, , , text/plain;charset=UTF-8, application/x-www-form-urlencoded;charset=UTF-8; cors"
+        ' application/json, text/plain, , text/plain;a="(", text/plain;charset=UTF-8,'
+        " application/x-www-form-urlencoded;charset=UTF-8; text/plain;charset=UTF-8",
+    ),
+}
+
+
 @pytest.fixture(scope="module")
 def program() -> Path:
     value = os.environ.get(_PROGRAM_ENV_VAR)
@@ -419,6 +473,11 @@ def test_request_and_response_members_do_what_chrome_does(program: Path, script:
     assert _evaluate(program, script) == chrome
 
 
+@pytest.mark.parametrize(("script", "chrome"), MODES.values(), ids=MODES.keys())
+def test_cache_redirect_and_integrity_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, script) == chrome
+
+
 @pytest.fixture
 def page_url(native_library: Any) -> Iterator[str]:
     """The URL of an empty page on 127.0.0.1, whose /referer gives any origin the Referer line that came, /requests says
@@ -430,13 +489,18 @@ def page_url(native_library: Any) -> Iterator[str]:
         pytest.skip("no Page program beside the library")
 
     cached_requests: list[str] = []
+    preflights: list[str] = []
+    holding, release = threading.Event(), threading.Event()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
-            body = b"<!doctype html><title>t</title><body>"
-            self.send_response(200)
+            body = _PAGE
+            redirects = self.path.startswith("/redirect")
+            self.send_response(302 if redirects else 200)
+            if redirects:
+                self.send_header("Location", "/x")
             if self.path == "/referer":
                 body = self.headers.get("Referer", "none").encode()
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -450,10 +514,33 @@ def page_url(native_library: Any) -> Iterator[str]:
                 body = str(len(cached_requests)).encode()
             if self.path.startswith("/names"):
                 body = ",".join(name for name in self.headers if name.lower() not in {"host", "connection"}).encode()
+            if self.path == "/cors":
+                self.send_header("Access-Control-Allow-Origin", "*")
+            if self.path == "/holding":
+                body = b"1" if holding.is_set() else b"0"
+            if self.path == "/release":
+                release.set()
+            if self.path == "/preflights":
+                body = ",".join(preflights).encode()
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if self.path == "/held":
+                # The start of the body, and the rest once the page says so.
+                self.wfile.write(body[:8])
+                holding.set()
+                release.wait(_TIMEOUT_SECONDS)
+                body = body[8:]
+            with contextlib.suppress(OSError):
+                self.wfile.write(body)
+
+        def do_OPTIONS(self) -> None:
+            preflights.append(f"{self.headers.get('Pragma')} {self.headers.get('Cache-Control')}")
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "x-p")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.end_headers()
 
         def log_message(self, format: str, *args: Any) -> None:
             pass
@@ -461,6 +548,7 @@ def page_url(native_library: Any) -> Iterator[str]:
     server = QuietServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_port}/"
+    release.set()
     server.shutdown()
     server.server_close()
 
@@ -928,12 +1016,19 @@ def test_body_reads_are_of_the_realm_chrome_has_them_of(page_url: str, name: str
         assert page.evaluate(wrapped, timeout=_TIMEOUT_SECONDS) == expected
 
 
-_MEMBERS_PRELUDE = """
+_PAGE = b"<!doctype html><title>t</title><body>"
+
+_MEMBERS_PRELUDE = (
+    f"""
+const PAGE_INTEGRITY = "sha256-{base64.b64encode(hashlib.sha256(_PAGE).digest()).decode()}";
+"""
+    + """
 const opaque = (init) => fetch(location.origin.replace("127.0.0.1", "localhost") + "/x", { mode: "no-cors", ...init });
 const settle = (p) => p.then((v) => "fulfilled " + v, (e) => "rejected " + e.name + ": " + e.message);
 const members = (r) => ["method", "destination", "referrer", "referrerPolicy", "mode", "credentials", "cache",
     "redirect", "integrity", "keepalive", "isHistoryNavigation", "isReloadNavigation", "duplex"].map((m) => r[m]).join();
 """
+)
 
 # Scripts of a page of its own origin, with what Chrome 157.0.8103.79 gave for each.
 _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
@@ -989,6 +1084,103 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
         return new Promise((resolve) => { worker.onmessage = (event) => resolve(event.data); });
         """,
         "null,true,about:client",
+    ),
+    "a fetch that the promise's resolution aborts": (
+        """
+        const out = [];
+        for (const init of [{}, { integrity: PAGE_INTEGRITY }]) {
+            const controller = new AbortController(); let runs = 0;
+            Object.defineProperty(Response.prototype, "then", {
+                configurable: true, get() { ++runs; controller.abort(); return undefined; } });
+            const got = await fetch("/x", { signal: controller.signal, ...init }).then((r) => r, (e) => e);
+            delete Response.prototype.then;
+            out.push(runs, got instanceof Response, await settle(got.text()));
+        }
+        return out.join("; ");
+        """,
+        "2; true; rejected AbortError: signal is aborted without reason; "
+        "2; true; rejected AbortError: signal is aborted without reason",
+    ),
+    "an initial about:blank frame's fetches of its parent's origin": (
+        """
+        const f = document.createElement("iframe"); document.body.append(f); const out = [];
+        for (const init of [{ mode: "same-origin" }, { mode: "no-cors", redirect: "manual" },
+                            { mode: "no-cors", redirect: "error" }])
+            out.push(await settle(f.contentWindow.fetch(location.origin + "/x", init).then((r) => r.type)));
+        return out.join("; ");
+        """,
+        "fulfilled basic; fulfilled basic; fulfilled basic",
+    ),
+    "integrity that nothing can check": (
+        """
+        const cross = location.origin.replace("127.0.0.1", "localhost"); const out = [];
+        const type = (r) => r.type;
+        for (const integrity of ["md5-x", " ", PAGE_INTEGRITY, ""])
+            out.push(await settle(fetch(cross + "/x", { mode: "no-cors", integrity }).then(type)),
+                     await settle(fetch("/x", { integrity }).then(type)),
+                     await settle(fetch("/redirect", { redirect: "manual", integrity }).then(type)));
+        return out.join("; ");
+        """,
+        "; ".join(
+            ["rejected TypeError: Failed to fetch; fulfilled basic; rejected TypeError: Failed to fetch"] * 3
+            + ["fulfilled opaque; fulfilled basic; fulfilled opaqueredirect"]
+        ),
+    ),
+    "the timeline's entries of redirects that are not followed": (
+        """
+        await fetch("/redirect?manual", { redirect: "manual" });
+        await fetch("/redirect?error", { redirect: "error" }).catch(() => null);
+        await fetch("/redirect?follow").then((r) => r.text());
+        return ["manual", "error", "follow"].map((mode) => {
+            const entry = performance.getEntriesByName(location.origin + "/redirect?" + mode)[0];
+            return [entry.responseStatus, entry.contentType, entry.transferSize > 0, entry.responseStart > 0].join();
+        }).join(" / ");
+        """,
+        "0,,false,false / 0,,false,false / 200,text/html,true,true",
+    ),
+    "a blob of another origin whose redirect is not followed": (
+        """
+        const worker = new Worker("data:text/javascript," + encodeURIComponent(
+            "postMessage(URL.createObjectURL(new Blob(['x'])))"));
+        const url = await new Promise((resolve) => { worker.onmessage = (event) => resolve(event.data); });
+        const out = [];
+        for (const redirect of ["follow", "manual", "error"]) {
+            const controller = new AbortController();
+            const fetched = fetch(url, { mode: "no-cors", redirect, signal: controller.signal });
+            controller.abort();
+            out.push(await settle(fetched));
+        }
+        return out.join("; ");
+        """,
+        "rejected AbortError: signal is aborted without reason; rejected TypeError: Failed to fetch; "
+        "rejected TypeError: Failed to fetch",
+    ),
+    "a stream that asks the cache alone": (
+        """
+        const stream = () => new ReadableStream({ start(c) { c.enqueue(new Uint8Array(1)); c.close(); } });
+        const init = () => ({ method: "POST", body: stream(), duplex: "half", mode: "same-origin", cache: "only-if-cached" });
+        const r = new Request("/x", init());
+        const direct = init(); const fetched = fetch("/x", direct);
+        return [r.mode, r.cache, await settle(fetch(r)), direct.body.locked, await settle(fetched)].join("; ");
+        """,
+        "cors; only-if-cached; rejected TypeError: Failed to execute 'fetch' on 'Window': "
+        "'only-if-cached' can be set only with 'same-origin' mode; true; rejected TypeError: Failed to fetch",
+    ),
+    "the preflights of cache modes": (
+        """
+        const url = location.origin.replace("127.0.0.1", "localhost") + "/cors"; const out = [];
+        for (const cache of ["default", "default", "reload", "no-store", "no-cache", "force-cache", "default"])
+            await fetch(url, { headers: { "x-p": "1" }, cache });
+        return await (await fetch("/preflights")).text();
+        """,
+        "None None,no-cache no-cache,no-cache no-cache,None max-age=0",
+    ),
+    "a Request's integrity that is no Unicode": (
+        """
+        const r = new Request("/", { integrity: "sha256-\\ud800 x" });
+        return [r.integrity === "sha256-\\ud800 x", r.clone().integrity === r.integrity, new Request(r).integrity.length].join();
+        """,
+        "true,true,10",
     ),
     "a line that came twice, from a cache": (
         """
@@ -1126,6 +1318,22 @@ _PAGE_SCRIPTS: dict[str, tuple[str, str]] = {
         """,
         "here/ref,about:client,here/relative,,about:client,about:client",
     ),
+    "the modes of fetches of an about:blank and a srcdoc frame of the page's origin": (
+        """
+        const out = [];
+        for (const srcdoc of ["", "<p>s</p>"]) {
+            const f = document.createElement("iframe"); if (srcdoc) f.srcdoc = srcdoc; document.body.append(f);
+            if (srcdoc) await new Promise((resolve) => { f.onload = resolve; });
+            for (const mode of ["same-origin", "cors", "no-cors"]) {
+                out.push(await f.contentWindow.fetch(location.origin + "/x", { mode }).then((r) => r.type + " " + r.status,
+                    (e) => e.message));
+            }
+            f.remove();
+        }
+        return out.join("; ");
+        """,
+        "basic 200; basic 200; basic 200; basic 200; basic 200; basic 200",
+    ),
 }
 
 
@@ -1235,3 +1443,53 @@ def test_a_cache_put_whose_bodys_frame_goes_keeps_nothing(page_url: str, monkeyp
         session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
     ):
         assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == 0
+
+
+def test_an_integrity_check_goes_with_a_frame_that_goes_while_it_reads(page_url: str) -> None:
+    # As Chrome 157 gave it: a frame that goes fails its fetch, though the body would pass.
+    script = """
+      (async () => {
+        const f = document.createElement("iframe"); document.body.append(f);
+        const settled = [];
+        f.contentWindow.fetch(location.origin + "/held", { integrity: PAGE_INTEGRITY })
+            .then(() => settled.push("ok"), (e) => settled.push(e.message));
+        while (await (await fetch("/holding")).text() !== "1") await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        f.remove();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const before = settled.join();
+        await fetch("/release");
+        const mine = await fetch("/x", { integrity: PAGE_INTEGRITY }).then(() => "ok", (e) => e.message);
+        return [before, settled.length, mine].join("/");
+      })()
+    """
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        evaluated = page.evaluate(_MEMBERS_PRELUDE + script, timeout=_TIMEOUT_SECONDS)
+        assert evaluated == "Failed to fetch/1/ok"
+
+
+def test_a_fetch_that_page_code_aborts_as_a_chunk_reads_errors_its_stream(page_url: str) -> None:
+    # Resolving a read reads the result's `then`, whose getter aborts the fetch under the stream's enqueue. The read
+    # has its chunk, and the next one the abort's reason.
+    script = """
+      (async () => {
+        const controller = new AbortController(); const { signal } = controller;
+        const reader = (await fetch("/held", { signal })).body.getReader();
+        Object.defineProperty(Object.prototype, "then", { configurable: true, get() {
+            if (this.done === false && !signal.aborted) controller.abort();
+            return undefined;
+        } });
+        const first = await reader.read().then((step) => step.value.length, (e) => e.name);
+        const second = await reader.read().then((step) => step.done, (e) => e.name);
+        delete Object.prototype.then;
+        return [first, second].join();
+      })()
+    """
+    with (
+        mitto.Session() as session,
+        session._open_page(page_url, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "8,AbortError"

@@ -47,6 +47,11 @@ class Response final : public bindings::ScriptWrappable, public BodyMixin {
     // Response.error()'s, a network error: status 0, no URL, no header lines
     // and a null body.
     kError,
+    // A redirect that a fetch of redirect mode manual did not follow: status
+    // 0, no header lines and a null body, but its URL, as the Fetch
+    // Standard's opaque-redirect filtered response, with the redirect behind
+    // it.
+    kOpaqueRedirect,
   };
 
   // `new Response(body, init)`.

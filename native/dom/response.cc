@@ -178,9 +178,14 @@ Response* Response::CreateFetched(ResponseType type,
                                   BodyStreamBuffer* body) {
   Response* const response = bindings::MakeGarbageCollected<Response>();
   response->type_ = type;
-  if (type == ResponseType::kOpaque) {
-    // Blink's CreateOpaqueFilteredResponse(): the response goes behind an
-    // empty view.
+  if (type == ResponseType::kOpaque || type == ResponseType::kOpaqueRedirect) {
+    // Blink's CreateOpaqueFilteredResponse() and
+    // CreateOpaqueRedirectFilteredResponse(): the response goes behind an
+    // empty view, which keeps its URL for a redirect.
+    if (type == ResponseType::kOpaqueRedirect) {
+      response->url_ = url;
+      response->redirected_ = redirected;
+    }
     response->internal_response_ =
         CreateFetched(ResponseType::kDefault, status, std::move(status_text),
                       std::move(url), redirected, headers, body);
@@ -309,6 +314,8 @@ std::u16string Response::Type() const {
       return u"opaque";
     case ResponseType::kError:
       return u"error";
+    case ResponseType::kOpaqueRedirect:
+      return u"opaqueredirect";
   }
 }
 

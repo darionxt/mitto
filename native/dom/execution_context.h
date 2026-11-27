@@ -331,6 +331,9 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // The resource that a link preloaded as fetch which `request` takes, if
   // any, as Blink's MatchPreload() gives it.
   Resource* MatchFetchPreload(const Request& request);
+  // Says in the console that a fetch() of `url` of mode no-cors would not
+  // follow a redirect, which a cross-origin one may not ask for.
+  void AddRedirectModeError(const GURL& url);
 
   // Runs a callback that queueMicrotask() queued, from its microtask.
   static void RunQueuedMicrotask(void* data);

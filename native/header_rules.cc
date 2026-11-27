@@ -217,6 +217,28 @@ bool IsCorsSafelistedResponseHeaderName(std::string_view name) {
   return false;
 }
 
+bool HasLocation(std::string_view headers) {
+  for (const std::string_view line : base::SplitStringPiece(
+           headers, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(": ");
+    if (colon != std::string_view::npos && colon + 2 < line.size() &&
+        base::EqualsCaseInsensitiveASCII(line.substr(0, colon), "location")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IsConditionalHeader(std::string_view name) {
+  static constexpr std::array<std::string_view, 5> kConditional = {
+      "if-match", "if-modified-since", "if-none-match", "if-range",
+      "if-unmodified-since"};
+  return std::ranges::any_of(
+      kConditional, [name](std::string_view conditional) {
+        return base::EqualsCaseInsensitiveASCII(name, conditional);
+      });
+}
+
 std::string HeaderField(std::string_view headers, std::string_view name) {
   std::vector<std::string_view> values;
   for (const std::string_view line : base::SplitStringPiece(

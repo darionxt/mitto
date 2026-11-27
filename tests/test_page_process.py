@@ -257,7 +257,7 @@ def _fetch_request(
     kind's own, and `referrer` the referrer that it names, none for the document's own."""
     return (
         f"struct.pack('<QQBB', {document}, {number}, {kind}, {flags}) "
-        f"+ struct.pack('<BBBBBQ', *{fixed}, {target}) "
+        f"+ struct.pack('<BBBBBBBQ', *{fixed}, 0, 0, {target}) "
         f"+ struct.pack('<I', {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
         f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} "
         f"+ struct.pack('<I', {len(referrer)}) + b'{referrer}' + b'\\x00'"
