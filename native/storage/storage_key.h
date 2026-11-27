@@ -1,5 +1,6 @@
 // What a page's storage is keyed by, as Chrome keys it: blink::StorageKey,
-// without Mojo and the parts that only fenced and credentialless frames use.
+// without Mojo and the parts that only fenced frames use. A credentialless
+// frame's, of a nonce, is only ever serialized, by SerializeWithNonce().
 // The library works it out for each document from what the Session loaded,
 // and never takes a Page's word for it.
 //
@@ -82,8 +83,17 @@ class StorageKey {
 std::string SerializeUnderOpaqueTop(const url::Origin& origin,
                                     const base::UnguessableToken& top_nonce);
 
-// Whether `serialized` is such a key.
-bool IsSerializedUnderOpaqueTop(std::string_view serialized);
+// The key, as StorageKey::Serialize() writes them, of `origin`'s storage in a
+// credentialless frame, StorageKey::CreateWithNonce()'s: Chrome writes the
+// nonce of the top-level document's credentialless frames, `nonce`, after "^1"
+// and "^2", whatever the top-level site. No document under another top-level
+// one has such a key, so a Session keeps its IndexedDB and Cache API in memory.
+std::string SerializeWithNonce(const url::Origin& origin,
+                               const base::UnguessableToken& nonce);
+
+// Whether `serialized` is one of those two, which only the frames under one
+// top-level document have.
+bool IsSerializedForOneTopDocument(std::string_view serialized);
 
 }  // namespace mitto
 

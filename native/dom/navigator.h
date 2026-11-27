@@ -1,7 +1,8 @@
 // The HTML Standard's Navigator, a window's `navigator`, with what the
 // Session's Persona says of the browser, its user agent, client hints and
 // languages, and what its Machine says of the computer: processors, memory and
-// touch points, and the PDF viewer's plugins. Its other members are Known Gaps.
+// touch points, and the PDF viewer's plugins, and sendBeacon(). Its other
+// members are Known Gaps.
 //
 // Upstream: third_party/blink/renderer/core/frame/navigator.cc
 // Upstream: third_party/blink/renderer/core/frame/navigator_id.cc
@@ -13,6 +14,9 @@
 // Upstream: third_party/blink/renderer/modules/plugins/navigator_plugins.cc
 // Upstream: third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc
 // Upstream: device/gamepad/public/cpp/gamepads.h
+// Upstream: third_party/blink/renderer/modules/beacon/navigator_beacon.cc
+// Upstream: third_party/blink/renderer/core/loader/ping_loader.cc
+// Upstream: third_party/blink/renderer/core/loader/beacon_data.cc
 
 #ifndef MITTO_DOM_NAVIGATOR_H_
 #define MITTO_DOM_NAVIGATOR_H_
@@ -24,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/page_messages.h"
@@ -109,7 +114,8 @@ class Navigator final : public bindings::ScriptWrappable {
   bool HasPublicKeyRequest() const;
   // How many of navigator.geolocation's requests wait on a timer.
   size_t GeolocationTimerCount() const;
-  // A new array each time, of kItemsLengthCap nulls: no gamepad is there.
+  // A new array each time, of kItemsLengthCap nulls: no gamepad is there. It
+  // throws where the document's permissions policy withholds them.
   std::vector<bindings::ScriptWrappable*> GetGamepads(
       bindings::ExceptionState& exception_state) const;
   // The same promise each time, which resolves from a task of its own with
@@ -123,6 +129,16 @@ class Navigator final : public bindings::ScriptWrappable {
   // number, as content::cpu_performance gives it for an AMD or Intel CPU of
   // none of the models it singles out.
   uint16_t CpuPerformance() const;
+  // Sends `data` to `url` in a POST that outlives the document, as Blink's
+  // NavigatorBeacon does, and returns whether it went: false for a detached
+  // window, and for one past the keepalive quota of the document's requests.
+  bool SendBeacon(
+      const std::u16string& url,
+      const std::optional<
+          bindings::
+              ReadableStreamOrBlobOrArrayBufferOrArrayBufferViewOrFormDataOrURLSearchParamsOrUSVString>&
+          data,
+      bindings::ExceptionState& exception_state);
 
  private:
   const cppgc::Member<Window> window_;

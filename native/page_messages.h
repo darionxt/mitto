@@ -268,6 +268,11 @@ enum class PageMessage : uint32_t {
   // To the Page: how much more of the body of a request whose body streams
   // the Session takes, as PageCredit says, once //net has taken as much.
   kRequestBodyCredit = 162,
+  // To the Session: the number of a deferred request, as a 64-bit number,
+  // which the Session sends now, as Blink's DeferredLoader asks the browser's
+  // FetchLaterLoader to once fetchLater()'s activateAfter has passed. Nothing
+  // of it comes back.
+  kSendDeferredRequest = 220,
   // To the Page: what the Permissions-Policy and Feature-Policy headers of a
   // navigation's response say, as PagePermissionsPolicy says, just before the
   // response starts, for a response that has any.
@@ -292,6 +297,12 @@ enum class PageMessage : uint32_t {
   // To the Session: the ID of a document that the back/forward cache kept
   // and that goes, a 64-bit number.
   kDocumentEvicted = 285,
+  // To the Session: the attributes of the frame whose document it names, as
+  // Chrome's renderer reports an iframe's with DidChangeIframeAttributes(): a
+  // byte of flags, 1 for credentialless. The Page sends it once the frame's
+  // initial about:blank is made, if its element has an attribute, and on each
+  // change after, and the frame's navigations take the last.
+  kFrameAttributes = 250,
   // To the Page: whether the document that a navigation's response makes is
   // cross-origin isolated, and its embedder policy, as PageIsolation says, just
   // before the response starts, as Chrome's browser gives the renderer the
@@ -712,6 +723,10 @@ struct PageRequest {
   // sendBeacon() make one: the Session finishes it after the document or the
   // Page has gone.
   bool keepalive = false;
+  // fetchLater()'s request, which is keepalive too: the Session holds it
+  // until a kSendDeferredRequest, its document goes or its Page ends, and
+  // the Page hears nothing of it.
+  bool deferred = false;
   // A synchronous request, which Blink gives the highest priority.
   bool synchronous = false;
   // A request that sends no Referer at all, as fetch()'s referrer: "" asks.
@@ -867,7 +882,9 @@ enum class PageLocalNavigationKind : uint8_t {
 inline constexpr char kErrorPageUrl[] = "chrome-error://chromewebdata/";
 
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
-// source, a byte, the parent, a 64-bit number, then for a navigation's response
+// source, a byte, a byte of flags, 1 for a sandboxed origin and 2 for a
+// credentialless document, the parent, a 64-bit number, then for a navigation's
+// response
 // the navigation's number, for an about:blank the initiator and the document
 // that it replaces, and for a srcdoc document or an error page the document
 // that it replaces, each a 64-bit number, and for a data: or blob: URL's
@@ -892,6 +909,10 @@ struct PageDocumentCommitted {
   // Whether a sandbox makes its origin opaque, as it does that of every
   // document under it.
   bool sandboxed_origin = false;
+  // Whether it is credentialless, as each document under it is, as its policy
+  // container's is_credentialless says. The Page sends it for a document of
+  // no network, and the library works it out for a navigation's response.
+  bool credentialless = false;
 };
 
 // Where a dedicated worker's script comes from.
@@ -1266,6 +1287,8 @@ struct FrameFromPage {
   std::string cookie_line;
   // kCancel.
   uint64_t cancelled = 0;
+  // kSendDeferredRequest.
+  uint64_t deferred_to_send = 0;
   // kCookieStoreGet.
   PageCookieStoreGet cookie_store_get;
   // kCookieStoreSet.
@@ -1282,6 +1305,8 @@ struct FrameFromPage {
   PageStorageBucketCall storage_bucket_call;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
+  // kFrameAttributes: whether the frame's element is credentialless.
+  bool frame_credentialless = false;
   // kWorkerStarted.
   PageWorkerStarted worker_started;
   // kContextGone.
@@ -1415,6 +1440,7 @@ std::string EncodeKnownGap(std::string_view name);
 // first.
 std::string EncodeRequest(uint64_t document, const PageRequest& request);
 std::string EncodeCancel(uint64_t number);
+std::string EncodeSendDeferredRequest(uint64_t number);
 std::string EncodeCredit(const PageCredit& credit);
 // `part`'s bytes are at most kBodyWindow bytes.
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part);
@@ -1463,6 +1489,7 @@ std::string EncodeStorageBuckets(uint64_t document,
 std::string EncodeStorageBucketsAnswer(const PageStorageBucketAnswer& answer);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
+std::string EncodeFrameAttributes(uint64_t document, bool credentialless);
 std::string EncodeWorkerStarted(const PageWorkerStarted& started);
 std::string EncodeContextGone(uint64_t context);
 // `url` is at most kMaxPayloadSize - 8 bytes.

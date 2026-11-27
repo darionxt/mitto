@@ -402,6 +402,32 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             id="script-kept-alive",
         ),
         pytest.param(
+            "deferred-without-keepalive",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=128)})",
+            "the library refused a message from the Page: a deferred request that is not a keepalive fetch of a known "
+            "body",
+            id="deferred-without-keepalive",
+        ),
+        pytest.param(
+            "deferred-of-a-worker",
+            f"{_HELLO}\n{_DATA_WORKER}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:2/', document=2, flags=136)})",
+            "the library refused a message from the Page: a deferred request of a worker",
+            id="deferred-of-a-worker",
+        ),
+        pytest.param(
+            "deferred-to-an-insecure-url",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://example.test/', flags=136)})",
+            "the library refused a message from the Page: a deferred request to a URL that is not potentially trustworthy",
+            id="deferred-to-an-insecure-url",
+        ),
+        pytest.param(
+            "unasked-deferred-send",
+            f"{_HELLO}\nsend(220, struct.pack('<Q', 7))",
+            "the library refused a message from the Page: a send of deferred request 7, which the Page has not asked "
+            "for",
+            id="unasked-deferred-send",
+        ),
+        pytest.param(
             "fetch-with-a-target",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', target=5)})",
             "the library refused a message from the Page: a target that only a frame's navigation names, and always names",
@@ -452,7 +478,7 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
         ),
         pytest.param(
             "document-of-an-unknown-flag",
-            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 2, 1))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBBQ', 2, 0, 4, 1))",
             "the library refused a message from the Page: a document that is not valid",
             id="document-of-an-unknown-flag",
         ),

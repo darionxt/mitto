@@ -168,6 +168,38 @@ _FAKE_PAGE_OF_A_WORKER_THAT_POSTS_AS_IT_ENDS = _FAKE_PAGE_HELPERS + textwrap.ded
     """
 )
 
+# A top-level document that asks the Session to hold two deferred requests of 1,000 KiB, past three times what Blink's
+# quotas let a document queue, and then to send both.
+_FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    def deferred(number, url):
+        return (
+            struct.pack("<QQBB", 2, number, 2, 136)
+            + struct.pack("<BBBBBBBQ", 0, 0, 0, 0, 0, 0, 0, 0)
+            + sized(url.encode()) + sized(b"POST") + sized(b"") + sized(b"")
+            + b"\\x01" + b"a" * (1000 * 1024)
+        )
+
+    hello()
+    send(70, struct.pack("<QBBQ", 1, 0, 0, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    while True:
+        message_type, payload = receive()
+        if message_type == 4:
+            call = struct.unpack_from("<Q", payload)[0]
+            break
+    send(8, deferred(1, "{first}"))
+    send(8, deferred(2, "{second}"))
+    send(220, struct.pack("<Q", 2))
+    send(220, struct.pack("<Q", 1))
+    send(5, struct.pack("<QB", call, 0) + b"0")
+    while channel.recv(65536):
+        pass
+    """
+)
+
 # A frame's about:blank, of the top-level document's HTTP origin, that says a navigation within it gave it an HTTP URL of
 # that origin, which no about:blank may take.
 _FAKE_PAGE_OF_A_LOCAL_URL = _FAKE_PAGE_HELPERS + textwrap.dedent(
@@ -199,6 +231,21 @@ _FAKE_PAGE_OF_A_BLOCKED_DOCUMENT = _FAKE_PAGE_HELPERS + textwrap.dedent(
     send(70, struct.pack("<QBBQ", 5, 0, 0, 4))
     send(72, struct.pack("<QQB", 5, {initiator}, {kind}))
     send(70, struct.pack("<QBBQQQ", 6, {source}, 0, 4, {initiator}, 5) + b"{url}")
+    while channel.recv(65536):
+        pass
+    """
+)
+
+# A top-level document, its initial about:blank with the flags of `top`, and then what `steps` does with its frames'
+# documents' credentialless bits and attributes.
+_FAKE_PAGE_OF_CREDENTIALLESS_DOCUMENTS = _FAKE_PAGE_HELPERS + textwrap.dedent(
+    """\
+    hello()
+    send(70, struct.pack("<QBBQ", 1, 0, {top}, 0))
+    wait_for_end(0)
+    send(70, struct.pack("<QBBQQ", 2, 1, 0, 0, 0))
+    send(12, struct.pack("<Q", 2))
+    {steps}
     while channel.recv(65536):
         pass
     """
@@ -508,6 +555,20 @@ def test_an_about_blank_takes_no_http_url_from_a_navigation_within_it(tmp_path: 
     assert printed == "the library refused a message from the Page: a same-document navigation to another origin"
 
 
+def test_a_deferred_request_past_what_the_session_holds_goes_nowhere(tmp_path: Path, top: _Server) -> None:
+    # A document queues no more than the 512 KiB that Blink's quota gives a top-level control document, counted as
+    # FetchLaterUtil counts each request, a string body by its UTF-16 length, so the Session holds no more than three
+    # times that for it, as UTF-8 may take, and drops one more without a word: a send of it sends nothing.
+    program = _FAKE_PAGE_OF_TOO_MANY_DEFERRED_BYTES.format(
+        python=sys.executable, first=top.url("/later-first"), second=top.url("/later-second")
+    )
+
+    printed = _run_fake_page(tmp_path, program, _SESSION_THAT_WAITS, top.url("/page"), top.url("/wait-post"))
+
+    assert printed == "posted"
+    assert [path for path, _ in top.posted] == ["/later-first"]
+
+
 @pytest.mark.parametrize(
     ("kind", "source", "url"),
     [pytest.param(0, 2, "", id="about-blank"), pytest.param(1, 5, "data:,a", id="data-url")],
@@ -566,6 +627,125 @@ def test_a_sandboxed_document_binds_no_storage(tmp_path: Path, top: _Server) -> 
     assert (
         printed == "the library refused a message from the Page: a storage area of a document that has no storage key"
     )
+
+
+_FRAME = 'send(70, struct.pack("<QBBQ", 3, 0, {flags}, 2))'
+_ATTRIBUTES = 'send(250, struct.pack("<QB", {document}, {attributes}))'
+_NAVIGATE = 'send(8, request(2, 1, 11, "{frame}", target=3))'
+_COMMIT = 'wait_for_end(1); send(70, struct.pack("<QBBQQ", 4, 1, {flags}, 2, 1))'
+_UNDER = 'send(70, struct.pack("<QBBQ", 5, 0, 0, 4))'
+_ABOUT_BLANK = 'send(72, struct.pack("<QQB", 3, 2, 0))'
+_BLANK_COMMIT = 'send(70, struct.pack("<QBBQQQ", 4, 2, {flags}, 2, 2, 3))'
+_CREDENTIALLESS = (
+    "the library refused a message from the Page: a document that is not credentialless under a credentialless one"
+)
+_OF_THE_TOP = "the library refused a message from the Page: a frame's attributes of the top-level document"
+
+
+@pytest.mark.parametrize(
+    ("top_flags", "steps", "printed"),
+    [
+        pytest.param(
+            2,
+            [],
+            "the library refused a message from the Page: a top-level document that is credentialless",
+            id="top-level",
+        ),
+        pytest.param(
+            0,
+            [_FRAME.format(flags=0), _NAVIGATE, _COMMIT.format(flags=2)],
+            "the library refused a message from the Page: a document whose flags its source does not take",
+            id="bit-on-a-response",
+        ),
+        pytest.param(
+            0,
+            [
+                _FRAME.format(flags=0),
+                _ATTRIBUTES.format(document=3, attributes=1),
+                _ABOUT_BLANK,
+                _BLANK_COMMIT.format(flags=2),
+                _UNDER,
+            ],
+            _CREDENTIALLESS,
+            id="under-a-credentialless-document",
+        ),
+        pytest.param(
+            0,
+            [
+                _FRAME.format(flags=2),
+                'send(70, struct.pack("<QBBQ", 4, 0, 0, 3))',
+                _ATTRIBUTES.format(document=2, attributes=0),
+            ],
+            _OF_THE_TOP,
+            id="under-a-credentialless-initial-about-blank",
+        ),
+        pytest.param(0, [_ATTRIBUTES.format(document=2, attributes=1)], _OF_THE_TOP, id="attributes-of-the-top"),
+        pytest.param(
+            0,
+            [_FRAME.format(flags=0), _ATTRIBUTES.format(document=3, attributes=2)],
+            "the library refused a message from the Page: a frame's attributes that are not valid",
+            id="attributes-not-valid",
+        ),
+        pytest.param(
+            0,
+            [
+                _FRAME.format(flags=0),
+                _ATTRIBUTES.format(document=3, attributes=1),
+                _NAVIGATE,
+                _COMMIT.format(flags=0),
+                _UNDER,
+            ],
+            _CREDENTIALLESS,
+            id="attribute-as-the-navigation-starts",
+        ),
+        pytest.param(
+            0,
+            [_FRAME.format(flags=0), _ABOUT_BLANK, _BLANK_COMMIT.format(flags=2)],
+            "the library refused a message from the Page: a document that is not as credentialless as its navigation",
+            id="about-blank-unlike-its-start",
+        ),
+        pytest.param(
+            0,
+            [
+                _FRAME.format(flags=0),
+                _ATTRIBUTES.format(document=3, attributes=1),
+                _ABOUT_BLANK,
+                _ATTRIBUTES.format(document=3, attributes=0),
+                _BLANK_COMMIT.format(flags=2),
+                _ATTRIBUTES.format(document=2, attributes=0),
+            ],
+            _OF_THE_TOP,
+            id="about-blank-as-it-started",
+        ),
+        pytest.param(
+            0,
+            [
+                _FRAME.format(flags=0),
+                _NAVIGATE,
+                _ATTRIBUTES.format(document=3, attributes=1),
+                _COMMIT.format(flags=0),
+                _UNDER,
+                _ATTRIBUTES.format(document=2, attributes=0),
+            ],
+            _OF_THE_TOP,
+            id="attribute-after-the-navigation-starts",
+        ),
+    ],
+)
+def test_the_library_holds_a_pages_credentialless_documents_to_their_frames(
+    tmp_path: Path, top: _Server, top_flags: int, steps: list[str], printed: str
+) -> None:
+    # A navigation's response is credentialless as its frame's element was when it started, as the Page last said with
+    # message 250, or as its parent is, which the library works out itself; a document of no network says so, and none
+    # under a credentialless one, or at the top, may say otherwise, as Chrome's RenderFrameHostImpl has them. The last
+    # case ends with a refusal of its own, which shows that nothing before it was refused.
+    program = _FAKE_PAGE_OF_CREDENTIALLESS_DOCUMENTS.format(
+        python=sys.executable,
+        top=top_flags,
+        steps="\n".join(steps).replace("{frame}", top.url("/frame-page")),
+    )
+
+    assert _run_fake_page(tmp_path, program, _SESSION_OF_AN_ENDED_PAGE, top.url("/page")) == printed
 
 
 _KEYS = 'struct.pack("<QBQQBB", {document}, 8, 2, 1, 0, 0)'

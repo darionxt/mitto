@@ -105,6 +105,9 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   const std::optional<url::Origin>& blob_url_origin() const {
     return blob_url_origin_;
   }
+  // The length of its body as Blink's FetchRequestData::BufferByteLength()
+  // holds it, which fetchLater() counts: its init's body's, or its input's.
+  uint64_t body_length() const { return body_length_; }
   // Takes its body for fetch(), as Blink's FetchRequestData::Pass() does,
   // leaving it a body that is closed, locked and disturbed; null for a null
   // body.
@@ -119,6 +122,7 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
   std::string method_ = "GET";
   cppgc::Member<mitto::Headers> headers_;
   cppgc::Member<BodyStreamBuffer> body_buffer_;
+  uint64_t body_length_ = 0;
   FetchMode mode_ = FetchMode::kCors;
   FetchCredentialsMode credentials_ = FetchCredentialsMode::kSameOrigin;
   std::string referrer_ = kClientReferrer;
@@ -144,10 +148,13 @@ class Request final : public bindings::ScriptWrappable, public BodyMixin {
 // interfaces go, gives the UTF-8 of String(value) and a Content-Type of
 // text/plain;charset=UTF-8. Returns null if
 // String() threw, or after throwing for a buffer larger than Blink takes.
+// `length`, if given, gets the body's length as Blink's ExtractBody() records
+// it: a string's in UTF-16 code units, and every other body's in bytes.
 BodyStreamBuffer* ExtractBody(v8::Isolate* isolate,
                               v8::Local<v8::Value> value,
                               std::optional<std::string>* content_type,
-                              bindings::ExceptionState& exception_state);
+                              bindings::ExceptionState& exception_state,
+                              uint64_t* length = nullptr);
 
 }  // namespace mitto
 

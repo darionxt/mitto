@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_request_headers.h"
 #include "net/url_request/referrer_policy.h"
@@ -106,6 +107,15 @@ struct FetchParams {
   // one. The default permissions policy then lets the request have no client
   // hint beyond those that go by default.
   bool cross_origin_ancestor = false;
+  // For a request of a credentialless document, or a frame's navigation that
+  // makes one, the nonce of the top-level document's credentialless frames,
+  // which its IsolationInfo takes, as RenderFrameHostImpl::ComputeNonce()
+  // gives it: //net then keys its cookies, connections and cache entries by it.
+  std::optional<base::UnguessableToken> nonce;
+  // For a request of a worker of a data: URL with a nonce: its creator's
+  // frame's origin, which its IsolationInfo takes for the frame's, where its
+  // opaque origin stays the request's initiator.
+  std::optional<url::Origin> isolation_frame_origin;
   // A dedicated worker's request, which sends no client hints.
   bool from_worker = false;
   // Whether the document or worker that asks has the embedder policy

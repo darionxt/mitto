@@ -1,6 +1,8 @@
 // Permissions' PermissionStatus: the state of a permission that
 // navigator.permissions.query() gives, and its name as Blink writes it. A
-// Page's states never change, so its change event never fires.
+// query gives its state to what earlier ones of the kind made, as they share
+// Blink's PermissionStatusListener, with no change event, and nothing else
+// changes a Page's states.
 //
 // Upstream: third_party/blink/renderer/modules/permissions/permission_status.h
 // Upstream: third_party/blink/renderer/modules/permissions/permission_status.cc
@@ -10,27 +12,33 @@
 
 #include <string>
 
+#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "mitto/dom/event_target.h"
 
 namespace mitto {
 
 class PermissionStatus final : public EventTarget {
  public:
-  static PermissionStatus* Create(const std::u16string& name,
-                                  const std::u16string& state);
+  // The state of a kind of permission, as the latest query of it was answered.
+  using SharedState = base::RefCountedData<std::u16string>;
 
-  PermissionStatus(const std::u16string& name, const std::u16string& state);
+  static PermissionStatus* Create(const std::u16string& name,
+                                  scoped_refptr<SharedState> state);
+
+  PermissionStatus(const std::u16string& name,
+                   scoped_refptr<SharedState> state);
   ~PermissionStatus() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
   std::u16string Name() const { return name_; }
-  std::u16string State() const { return state_; }
+  std::u16string State() const { return state_->data; }
 
  private:
   const std::u16string name_;
-  const std::u16string state_;
+  const scoped_refptr<SharedState> state_;
 };
 
 }  // namespace mitto

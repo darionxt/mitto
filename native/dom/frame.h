@@ -71,6 +71,10 @@ class Frame {
   // What counts the navigations that the frame's documents start, which it
   // keeps across them, as Blink's Frame::navigation_rate_limiter().
   virtual NavigationRateLimiter& GetNavigationRateLimiter() = 0;
+  // HTMLIFrameElement::DidChangeAttributes(): the frame's element has become
+  // credentialless or no longer is, which holds from the frame's next
+  // navigation on.
+  virtual void DidChangeCredentialless() = 0;
 
   // The frame's window in the process of `viewer`'s documents, another than
   // its own document's, the same for as long as a message holds it.

@@ -29,6 +29,15 @@ class Frame;
 class PermissionsPolicy;
 class Window;
 
+// Blink's mojom::DeferredFetchPolicy: the quota of fetchLater() that a frame's
+// element reserves for its documents, none, the normal 64 KiB or the minimal
+// 8 KiB.
+enum class DeferredFetchPolicy {
+  kDisabled,
+  kDeferredFetch,
+  kDeferredFetchMinimal
+};
+
 class HTMLFrameOwnerElement : public HTMLElement {
  public:
   ~HTMLFrameOwnerElement() override;
@@ -47,6 +56,9 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // What its sandbox attribute withholds from the documents that its frame
   // navigates to, which is an iframe's alone.
   SandboxFlags GetSandboxFlags() const { return sandbox_flags_; }
+  // Whether it is an iframe whose credentialless attribute makes the documents
+  // that its frame navigates to credentialless.
+  bool IsCredentialless() const { return credentialless_; }
   // What it lets a document that its frame navigates to inherit of its own
   // document's permissions policy, which an iframe's allow says.
   const ParsedPolicy& GetContainerPolicy() const { return container_policy_; }
@@ -54,6 +66,15 @@ class HTMLFrameOwnerElement : public HTMLElement {
   PermissionsPolicy* FeaturePolicy();
   // The frame goes, as its documents have unloaded: the element holds none.
   void ClearContentFrame() { content_frame_ = nullptr; }
+  // The quota of fetchLater() that the element reserves, as its FramePolicy's
+  // deferred_fetch_policy holds it, which a navigation that its frame's
+  // parent starts sets and a document of the parent's origin clears.
+  DeferredFetchPolicy GetDeferredFetchPolicy() const {
+    return deferred_fetch_policy_;
+  }
+  void SetDeferredFetchPolicy(DeferredFetchPolicy policy) {
+    deferred_fetch_policy_ = policy;
+  }
   // HTMLFrameOwnerElement::DispatchLoad(): load at the element, once its
   // frame's window's load event has been dispatched.
   void DispatchLoad();
@@ -106,9 +127,11 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // The name the frame gets when the element makes it: its name, or its ID.
   std::u16string frame_name_;
   SandboxFlags sandbox_flags_ = SandboxFlags::kNone;
+  bool credentialless_ = false;
   ParsedPolicy container_policy_;
   // An iframe's featurePolicy.
   cppgc::Member<PermissionsPolicy> feature_policy_;
+  DeferredFetchPolicy deferred_fetch_policy_ = DeferredFetchPolicy::kDisabled;
 };
 
 }  // namespace mitto

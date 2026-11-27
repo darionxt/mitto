@@ -4,9 +4,11 @@
 #include <utility>
 
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator_ua_data.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
@@ -76,17 +78,20 @@ std::u16string NavigatorUAData::Platform() const {
 v8::Local<v8::Promise> NavigatorUAData::GetHighEntropyValues(
     const std::vector<std::u16string>& hints) const {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  // The receiver's document or worker asks, whose promise it is.
+  const v8::Context::Scope receiver_scope(
+      bindings::ReceiverRealmScope::CreationContext(isolate));
   v8::Local<v8::Promise::Resolver> resolver;
   if (!v8::Promise::Resolver::New(isolate->GetCurrentContext())
            .ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
-  // The low-entropy values always, then each hint asked for. A top-level
-  // page's permissions policy allows its own origin
-  // ch-ua-high-entropy-values. A UADataValues writes its members in their
+  // The low-entropy values always, then each hint asked for, if the context's
+  // permissions policy allows them. A UADataValues writes its members in their
   // sorted order.
-  auto asked = [&hints](std::u16string_view hint) {
-    return std::ranges::find(hints, hint) != hints.end();
+  const bool allowed = ExecutionContext::Current().AllowsHighEntropyValues();
+  auto asked = [&hints, allowed](std::u16string_view hint) {
+    return allowed && std::ranges::find(hints, hint) != hints.end();
   };
   std::vector<std::pair<std::string_view, v8::Local<v8::Value>>> members;
   if (asked(u"architecture")) {

@@ -103,6 +103,9 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
     // Whether it is cross-origin isolated: its creator's capability, but for
     // a worker of a data: URL, as DedicatedWorkerGlobalScope has it.
     bool cross_origin_isolated = false;
+    // What its creator's permissions policy passes on to it of
+    // ch-ua-high-entropy-values.
+    bool allows_high_entropy_values = true;
     // Whether it begins frames for requestAnimationFrame(), as a worker that
     // a window starts does, from the frame's compositor.
     bool begin_frames = false;

@@ -131,6 +131,20 @@ inline constexpr size_t kMaxKeepaliveRequests = 2048;
 inline constexpr size_t kMaxKeepaliveRequestsPerPage = 256;
 inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
 
+// How many bytes of fetchLater() requests one document, and one Page, may hold
+// at once, counted by their URLs without the fragment, their methods,
+// referrers, header lines and bodies: three times what Blink's quotas let a
+// document queue, no more than the 512 KiB of a top-level control document,
+// and a frame tree, those 512 KiB and the 64 KiB that an iframe's allow may
+// give each of a page's at most 1,000 frames, since a string body counts there
+// by its UTF-16 length and comes as UTF-8, of up to three bytes for each unit.
+// One more is dropped.
+// Upstream: third_party/blink/renderer/core/fetch/fetch_later_util.h
+// Upstream: third_party/blink/renderer/core/page/page.cc
+inline constexpr size_t kMaxDeferredBytesPerDocument = 3 * 512 * 1024;
+inline constexpr size_t kMaxDeferredBytesPerPage =
+    3 * (512 * 1024 + 1000 * 64 * 1024);
+
 // What a Page's Session gives it, on the network thread: its requests and its
 // cookies.
 class PageNetwork {
@@ -333,13 +347,16 @@ class PageHost final : public PageChannel::Delegate {
   // that the Page gave it.
   // Where a document's frame is in the frame tree: the top-level document's
   // origin, and whether a document from this one up is of another site, or of
-  // another origin, than the top-level one. A worker is in its creator's
+  // another origin, than the top-level one, and for a credentialless document,
+  // the nonce of the top-level document's credentialless frames, which
+  // partitions its requests, cookies and storage. A worker is in its creator's
   // frame.
   struct FrameTree {
     url::Origin top_frame_origin;
     bool is_top_level = true;
     bool cross_site = false;
     bool cross_origin = false;
+    std::optional<base::UnguessableToken> nonce;
   };
 
   struct Context {
@@ -372,6 +389,14 @@ class PageHost final : public PageChannel::Delegate {
     // CrossOriginIsolatedCapability(), with its cross-origin-isolated
     // feature, which its permissions policy says.
     bool cross_origin_isolated = false;
+    // Whether a document is credentialless, as each under it is, and a
+    // worker's creator: its policy container's is_credentialless, fixed as
+    // its navigation started.
+    bool credentialless = false;
+    // For a frame's document: whether its frame's element is credentialless,
+    // as the Page last said with message 250, which the frame's next
+    // navigation takes, as Chrome's FrameTreeNode keeps it for the frame.
+    bool frame_credentialless = false;
     // What the headers of a document's response say of its permissions policy,
     // which PermissionsPolicyHeaders::Allows() answers.
     PermissionsPolicyHeaders policy_headers;
@@ -408,6 +433,7 @@ class PageHost final : public PageChannel::Delegate {
   void OnGetCookies(uint64_t question, const CookieContext& context);
   void OnSetCookie(const std::string& line, const CookieContext& context);
   void OnCancel(uint64_t number);
+  void OnSendDeferredRequest(uint64_t number);
   // A fetch()'s body that streams from the Page, which a request of
   // `options.stream_body` reads.
   void OnRequestBodyPart(const PageRequestBodyPart& part);
@@ -430,6 +456,8 @@ class PageHost final : public PageChannel::Delegate {
   // A document that the Page has made, which takes the place of the
   // top-level one, or of its frame's document, or is a frame's first one.
   void OnDocumentCommitted(const PageDocumentCommitted& committed);
+  // What the Page says of the attributes of the frame of a document.
+  void OnFrameAttributes(uint64_t document, bool credentialless);
   // A dedicated worker that a context has started.
   void OnWorkerStarted(const PageWorkerStarted& started);
   // A context that goes while its parent stays.
@@ -616,6 +644,36 @@ class PageHost final : public PageChannel::Delegate {
                     scoped_refptr<RequestChannel> body_channel,
                     FetchChecks checks);
 
+  // fetchLater()'s request, which waits until the Page asks for it, its
+  // document goes or the Page ends, as Chrome's FetchLaterLoader waits in the
+  // browser, with what StartRequest() then takes.
+  struct DeferredRequest {
+    DeferredRequest();
+    DeferredRequest(DeferredRequest&&);
+    DeferredRequest& operator=(DeferredRequest&&);
+    ~DeferredRequest();
+
+    uint64_t context_id = 0;
+    url::Origin document_origin;
+    GURL url;
+    net::HttpRequestHeaders headers;
+    RequestOptions options;
+    std::optional<std::vector<char>> body;
+    FetchChecks checks;
+    // What it holds against kMaxDeferredBytesPerPage.
+    size_t bytes = 0;
+  };
+  // Whether one more keepalive request of `url` and `headers` is past what
+  // the network service allows in flight, of the Session or of the Page.
+  bool IsPastKeepaliveLimits(const GURL& url,
+                             const net::HttpRequestHeaders& headers) const;
+  // Starts the deferred request numbered `number`, if one waits, and lets it
+  // go on without the Page, which hears nothing of it, as the browser answers
+  // a FetchLaterLoader's request to nobody.
+  void SendDeferredRequest(uint64_t number);
+  // Sends the deferred requests of the contexts `ids`, or of every context.
+  void SendDeferredRequests(const std::set<uint64_t>* ids);
+
   // What a Request hears of its job.
   void OnResponseStarted(Request& request, RequestEvent event);
   void OnBodyRead(Request& request, size_t size);
@@ -648,28 +706,36 @@ class PageHost final : public PageChannel::Delegate {
   static bool DocumentHasCookies(const GURL& document_url);
   // The partition of the cookies of a frame of `frame_origin` under a
   // top-level frame of `top_frame_origin`, with `site_for_cookies`, as
-  // Chrome's RestrictedCookieManager has it.
+  // Chrome's RestrictedCookieManager has it, and `nonce` for a credentialless
+  // document's.
   static std::optional<net::CookiePartitionKey> FramePartitionKey(
       const url::Origin& top_frame_origin,
       const url::Origin& frame_origin,
-      const net::SiteForCookies& site_for_cookies);
+      const net::SiteForCookies& site_for_cookies,
+      const std::optional<base::UnguessableToken>& nonce);
   // Keeps `context`, a document or a worker that the Page has made, as `id`.
   void AddContext(uint64_t id, Context context);
+  // The top-level document over context `id`, or `id` itself.
+  uint64_t TopDocumentOf(uint64_t id) const;
+  // The nonce of the credentialless frames under top-level document `top`,
+  // made at the first, as Chrome's PageImpl keeps one for each main document.
+  const base::UnguessableToken& CredentiallessNonce(uint64_t top);
 
   // The storage key of `context`, as Chrome works it out for a frame with
   // third-party storage partitioning, which it turns on: the document's
   // origin, the site of the top-level document and whether a document from
   // this one up is of another site. None for a document of an opaque origin, or
   // one that is not of an HTTP or HTTPS URL, which have no storage, and for a
-  // document under a top-level one of an opaque origin, whose key no other
-  // top-level document ever has.
+  // document under a top-level one of an opaque origin, or a credentialless
+  // one, whose key no other top-level document ever has.
   static std::optional<StorageKey> CalculateStorageKey(const Context& context);
 
   // The storage key of context `id`'s IndexedDB and Cache API, as
   // StorageKey::Serialize() writes it: CalculateStorageKey()'s, or for a
-  // context under a top-level document of an opaque origin one of that
-  // document's own, which the Session keeps in memory. None for a context of
-  // an opaque origin, or one that is not of an HTTP or HTTPS URL.
+  // credentialless context one of its frame tree's nonce, or for a context
+  // under a top-level document of an opaque origin one of that document's own,
+  // which the Session keeps in memory. None for a context of an opaque origin,
+  // or one that is not of an HTTP or HTTPS URL.
   std::optional<std::string> ContextSerializedStorageKey(uint64_t id);
 
   // Lets go of every storage area that the Page bound.
@@ -727,6 +793,8 @@ class PageHost final : public PageChannel::Delegate {
     // makes.
     CrossOriginEmbedderPolicy coep;
     bool cross_origin_isolated = false;
+    // Whether the document is credentialless, as the navigation started.
+    bool credentialless = false;
     PermissionsPolicyHeaders policy_headers;
   };
   std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
@@ -740,6 +808,8 @@ class PageHost final : public PageChannel::Delegate {
     url::Origin origin;
     CrossOriginEmbedderPolicy coep;
     GURL cookie_url;
+    // Whether its document is credentialless, as it started.
+    bool credentialless = false;
   };
   std::map<uint64_t, AboutBlankNavigation> about_blank_navigations_;
   // The responses of the scripts of workers that the Page has and has not
@@ -855,6 +925,13 @@ class PageHost final : public PageChannel::Delegate {
   // What stands for the opaque origin of each top-level document whose frames
   // have asked for IndexedDB or the Cache API, by that document's ID.
   std::map<uint64_t, base::UnguessableToken> opaque_top_nonces_;
+  // The nonce of each top-level document whose frames are credentialless, by
+  // that document's ID, and their localStorage and sessionStorage, by the
+  // nonce, which stay in memory for as long as the Page.
+  std::map<uint64_t, base::UnguessableToken> credentialless_nonces_;
+  std::map<std::pair<base::UnguessableToken, PageStorageKind>,
+           std::unique_ptr<SessionStorageNamespace>>
+      credentialless_storage_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;
@@ -862,6 +939,13 @@ class PageHost final : public PageChannel::Delegate {
   // once it has, or with the Page.
   std::vector<base::WeakPtr<RunningRequest>> sending_jobs_;
   uint64_t last_request_number_ = kNavigationRequest;
+  // The deferred requests that wait, by number.
+  std::map<uint64_t, DeferredRequest> deferred_requests_;
+  // The bytes that they hold, in all and by the ID of the context that asked.
+  size_t deferred_bytes_ = 0;
+  std::map<uint64_t, size_t> deferred_bytes_of_context_;
+  // Takes a deferred request's bytes off what they hold.
+  void ForgetDeferredBytes(const DeferredRequest& deferred);
   // The Page's keepalive requests in flight, with those that have outlived
   // their documents.
   const scoped_refptr<KeepaliveInFlight> keepalive_in_flight_ =

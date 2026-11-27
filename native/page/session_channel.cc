@@ -384,6 +384,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kSetCookie:
       case PageMessage::kLoaded:
       case PageMessage::kCancel:
+      case PageMessage::kSendDeferredRequest:
       case PageMessage::kKnownGap:
       case PageMessage::kCookieStoreGet:
       case PageMessage::kCookieStoreSet:
@@ -411,6 +412,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kDocumentStored:
       case PageMessage::kDocumentRestored:
       case PageMessage::kDocumentEvicted:
+      case PageMessage::kFrameAttributes:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }

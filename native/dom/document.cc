@@ -444,15 +444,22 @@ v8::Local<v8::Promise> Document::HasStorageAccess() const {
            .ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
-  // Blink answers false for an opaque origin and outside a secure context, and
-  // otherwise whether the document's cookies are enabled, which they are in a
-  // new profile. The top-level about:blank, whose scripts are those of the
-  // standalone program, has a page's.
+  // Blink answers false for an opaque origin, a credentialless document and
+  // outside a secure context, and otherwise whether the document's cookies are
+  // enabled, which they are in a new profile. The top-level about:blank, whose
+  // scripts are those of the standalone program, has a page's.
   const bool access = window_ &&
                       !(GetOrigin().opaque() && window_->IsInFrame()) &&
-                      window_->IsSecureContextForBindings();
+                      !credentialless_ && window_->IsSecureContextForBindings();
   ResolveFromTask(isolate, resolver, v8::Boolean::New(isolate, access));
   return resolver->GetPromise();
+}
+
+const base::UnguessableToken& Document::CredentiallessNonce() const {
+  if (!credentialless_nonce_) {
+    credentialless_nonce_ = base::UnguessableToken::Create();
+  }
+  return *credentialless_nonce_;
 }
 
 PermissionsPolicy* Document::FeaturePolicy() {
@@ -490,13 +497,17 @@ bool Document::IsFeatureEnabled(std::string_view feature) {
          GetPermissionsPolicyState().IsEnabled(PolicyFeatureNamed(feature));
 }
 
-bool Document::IsFeatureEnabledOrReport(std::string_view feature) {
+bool Document::IsFeatureEnabledOrReport(std::string_view feature,
+                                        std::string_view message) {
   const bool enabled = IsFeatureEnabled(feature);
-  if (!enabled && window_) {
+  if (!enabled && window_ && window_->HasContext()) {
     window_->AddConsoleMessage(
         ConsoleLevel::kError,
-        base::StrCat({"Permissions policy violation: ", feature,
-                      " is not allowed in this document."}));
+        base::StrCat(
+            {"Permissions policy violation: ",
+             message.empty()
+                 ? base::StrCat({feature, " is not allowed in this document."})
+                 : std::string(message)}));
   }
   return enabled;
 }

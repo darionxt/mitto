@@ -1,9 +1,10 @@
 // The Keyboard Map API's Keyboard, navigator.keyboard: getLayoutMap(), as
-// Chrome's browser answers it for a top-level page. Locking the keyboard is a
-// Known Gap.
+// Chrome's browser answers it for a page and its frames. Locking the keyboard
+// is a Known Gap.
 //
 // Upstream: third_party/blink/renderer/modules/keyboard/keyboard.cc
 // Upstream: third_party/blink/renderer/modules/keyboard/keyboard_layout.cc
+// Upstream: content/browser/keyboard_lock/keyboard_lock_service_impl.cc
 
 #ifndef MITTO_DOM_KEYBOARD_H_
 #define MITTO_DOM_KEYBOARD_H_
