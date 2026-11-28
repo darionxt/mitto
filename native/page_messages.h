@@ -273,6 +273,13 @@ enum class PageMessage : uint32_t {
   // FetchLaterLoader to once fetchLater()'s activateAfter has passed. Nothing
   // of it comes back.
   kSendDeferredRequest = 220,
+  // To the Page: how far the body of an XMLHttpRequest has gone, as
+  // PageUploadProgress says.
+  kUploadProgress = 221,
+  // To the Session: the number of the XMLHttpRequest whose last
+  // kUploadProgress the Page has taken, as Blink acknowledges each report,
+  // before which the Session sends no other but the last.
+  kUploadProgressTaken = 222,
   // To the Page: what the Permissions-Policy and Feature-Policy headers of a
   // navigation's response say, as PagePermissionsPolicy says, just before the
   // response starts, for a response that has any.
@@ -687,14 +694,16 @@ enum class PageRedirectMode : uint8_t {
 // not say its URL.
 //
 // Its payload is the number, as a 64-bit number, the Kind, as a byte, a byte
-// of flags, 2 for a navigation that the user activated, 4 for a navigation
-// that reloads, 8 for a request that outlives its document, 16 for a
-// synchronous one and 32 for one with no referrer, then a byte each of the
-// mode, the credentials mode, the referrer policy, the priority, whether it
-// is incremental, the cache mode and the redirect mode, the target as a
-// 64-bit number, the URL, the method, the header lines and the referrer, each
-// after its size as a 32-bit number, and then a byte that is 1 if a body
-// follows, which is the rest.
+// of flags, 1 for an XHR that forces a CORS preflight, 2 for a navigation that
+// the user activated, 4 for a navigation that reloads, 8 for a request that
+// outlives its document, 16 for a synchronous one, 32 for one with no
+// referrer, 64 for one whose body streams and 128 for a deferred one, then a
+// byte each of the mode, the credentials mode, the referrer policy, the
+// priority, whether it is incremental, the cache mode and the redirect mode,
+// the target as a 64-bit number, the URL, the method, the header lines and the
+// referrer, each after its size as a 32-bit number, and then a byte that is 1
+// if a body follows, which is the rest, and 2 if it does and the Page wants to
+// hear how it goes.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -749,6 +758,12 @@ struct PageRequest {
   // In UTF-8: a URL of the document's origin that Referer starts from, as
   // fetch()'s referrer asks, or empty for the document's own URL.
   std::string referrer;
+  // Whether the Page wants to hear how the body goes, with kUploadProgress, as
+  // only an asynchronous XHR may.
+  bool reports_upload = false;
+  // An XHR to another origin that makes a CORS preflight whatever its method
+  // and lines, as one whose upload has listeners does.
+  bool force_preflight = false;
   // A fetch whose body streams in parts after it, kRequestBodyPart and
   // kRequestBodyEnded, as a ReadableStream gives it: no body here, a method
   // with a body, and no keepalive.
@@ -760,6 +775,15 @@ struct PageRequest {
 struct PageCredit {
   uint64_t number = 0;
   uint32_t bytes = 0;
+};
+
+// How far the body of an XMLHttpRequest's request has gone, of which the Page
+// hears each 100 ms while it makes progress.
+struct PageUploadProgress {
+  uint64_t number = 0;
+  // Of `size` bytes, which is not 0.
+  uint64_t position = 0;
+  uint64_t size = 0;
 };
 
 // The next part of a body that streams to the Session: at most as many bytes
@@ -1315,6 +1339,8 @@ struct FrameFromPage {
   PageRequestBodyPart request_body_part;
   // kRequestBodyEnded.
   PageRequestBodyEnded request_body_ended;
+  // kUploadProgressTaken.
+  uint64_t upload_progress_taken = 0;
   // kSameDocumentNavigation: the document's new URL.
   std::string same_document_url;
   // kAboutBlankNavigation: the document that started it, and what it is.
@@ -1386,6 +1412,8 @@ struct FrameFromSession {
   PageStorageBucketAnswer storage_bucket_answer;
   // kRequestBodyCredit.
   PageCredit request_body_credit;
+  // kUploadProgress.
+  PageUploadProgress upload_progress;
   // kIsolation.
   PageIsolation isolation;
   // kRestore: the number of the traversal request.
@@ -1446,6 +1474,8 @@ std::string EncodeCredit(const PageCredit& credit);
 std::string EncodeRequestBodyPart(const PageRequestBodyPart& part);
 std::string EncodeRequestBodyEnded(const PageRequestBodyEnded& ended);
 std::string EncodeRequestBodyCredit(const PageCredit& credit);
+std::string EncodeUploadProgress(const PageUploadProgress& progress);
+std::string EncodeUploadProgressTaken(uint64_t number);
 std::string EncodeIsolation(const PageIsolation& isolation);
 std::string EncodePermissionsPolicy(const PagePermissionsPolicy& policy);
 std::string EncodeGetCookies(uint64_t document, uint64_t question);

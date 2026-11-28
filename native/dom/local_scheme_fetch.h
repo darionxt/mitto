@@ -67,6 +67,8 @@ class LocalSchemeFetch final : public FetchController {
   // the URL's bytes and type, with no body for HEAD, or ERR_INVALID_URL for a
   // URL that does not parse.
   static Answer AnswerDataUrl(const GURL& url, std::string_view method);
+  // The same with the URL decoded now, for a synchronous request.
+  static Answer DecodeDataUrl(const GURL& url, std::string_view method);
   // What the browser's BlobURLLoader gives for `url`, which names `blob`, or
   // nothing that the Request found when it was made: ERR_FILE_NOT_FOUND for
   // no blob, ERR_METHOD_NOT_SUPPORTED for any method but GET, and for a Range
@@ -97,9 +99,6 @@ class LocalSchemeFetch final : public FetchController {
   void Cancel() override;
 
  private:
-  // What AnswerDataUrl() gives once the URL is decoded.
-  static Answer DecodeDataUrl(const GURL& url, std::string_view method);
-
   LocalSchemeFetch(Answer answer,
                    std::unique_ptr<FetchClient> client,
                    ExecutionContext& context);

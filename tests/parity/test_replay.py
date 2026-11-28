@@ -97,7 +97,7 @@ def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of
     waiting = {name: replay.made_by_a_page for name, replay in REPLAYS.items() if replay.made_by_a_page is not None}
 
     assert set(waiting) <= {case.name for case in DOCUMENT_CASES}
-    assert set(waiting.values()) <= {280, 283, 285, 291}
+    assert set(waiting.values()) <= {285, 291}
 
 
 def test_a_page_replays_its_own_navigations_its_traversal_its_workers_requests_and_what_its_markup_asks_for() -> None:
@@ -120,11 +120,29 @@ def test_a_page_replays_its_own_navigations_its_traversal_its_workers_requests_a
         "worker_import_scripts",
         "worker_fetch",
         "worker_blob_fetch",
+        "xhr_get_sync",
+        "xhr_post_text_sync",
         *markup,
     }
     assert all(REPLAYS[name].page is not None and REPLAYS[name].made_by_a_page is None for name in through)
-    # The document's page navigates nowhere, so its Page stays until its script has asked for all it does.
-    assert {name for name in through if REPLAYS[name].until is not None} == markup
+    # The document's page navigates nowhere, and the start page's script navigates last, so the Pages of what their
+    # scripts ask for stay until the script has asked for all it does, and the start page's navigation goes by itself.
+    assert {name for name in through if REPLAYS[name].until is not None} == {
+        "worker_import_scripts",
+        "worker_fetch",
+        "worker_blob_fetch",
+        "xhr_get_sync",
+        "xhr_post_text_sync",
+        *markup,
+    }
+    # The pages after the start page navigate on, which the replays of what its script asks for wait out.
+    assert {name for name in through if REPLAYS[name].settles} == {
+        "worker_import_scripts",
+        "worker_fetch",
+        "worker_blob_fetch",
+        "xhr_get_sync",
+        "xhr_post_text_sync",
+    }
     # Only the traversal clicks a page's links, where the person recording did.
     assert {name for name in through if REPLAYS[name].clicks} == {"navigation_history_back"}
 
@@ -133,7 +151,7 @@ def test_a_check_skips_a_case_that_only_a_page_makes() -> None:
     def recorder(baseline: Baseline) -> dict[str, Json]:
         raise AssertionError(f"{baseline.case} was replayed")
 
-    baseline = Baseline(_RELEASE, "xhr_get_sync", HTTP2, {"request": None})
+    baseline = Baseline(_RELEASE, "frame_script", HTTP2, {"request": None})
 
     assert find_gaps([baseline], recorder) == []
 

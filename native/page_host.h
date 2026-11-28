@@ -440,6 +440,7 @@ class PageHost final : public PageChannel::Delegate {
   // the library loaded it as, never what the Page names.
   void OnRequest(PageRequest asked, uint64_t context_id);
   void OnCredit(const PageCredit& credit);
+  void OnUploadProgressTaken(uint64_t number);
   void OnGetCookies(uint64_t question, const CookieContext& context);
   void OnSetCookie(const std::string& line, const CookieContext& context);
   void OnCancel(uint64_t number);
@@ -624,6 +625,8 @@ class PageHost final : public PageChannel::Delegate {
     // A navigation of the top-level frame, which the caller hears of, and
     // whose COOP and COEP make the Page's agent cluster.
     bool top_level = false;
+    // Whether its response is sniffed, as a navigation's is.
+    bool sniffs = false;
     // A dedicated worker's script: its creator's embedder policy, which the
     // worker's has to be compatible with, as DedicatedWorkerHost::CheckCOEP()
     // holds it.

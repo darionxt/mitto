@@ -29,7 +29,11 @@ bool BytesOfBufferSource(v8::Isolate* isolate,
                          bindings::ExceptionState& exception_state,
                          base::span<const uint8_t>* bytes);
 
-// A new ArrayBuffer of `bytes`.
+// A new ArrayBuffer of `bytes`, or none if there is no memory for it.
+v8::MaybeLocal<v8::ArrayBuffer> MaybeNewArrayBuffer(
+    v8::Isolate* isolate,
+    base::span<const uint8_t> bytes);
+// The same, where no memory ends the Page, as ArrayBuffer::New() does.
 v8::Local<v8::ArrayBuffer> NewArrayBuffer(v8::Isolate* isolate,
                                           base::span<const uint8_t> bytes);
 

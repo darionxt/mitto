@@ -3,13 +3,10 @@
 #include <stdint.h>
 
 #include <algorithm>
-#include <array>
 #include <iterator>
-#include <limits>
 #include <string>
 #include <utility>
 
-#include "base/containers/fixed_flat_set.h"
 #include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -22,7 +19,6 @@
 #include "net/base/network_handle.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cookies/site_for_cookies.h"
-#include "net/http/http_byte_range.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -59,29 +55,6 @@ constexpr std::string_view kAccessControlRequestMethod =
 constexpr std::string_view kAccessControlRequestHeaders =
     "Access-Control-Request-Headers";
 constexpr std::string_view kDefaultAcceptHeaderValue = "*/*";
-
-bool IsSimilarToDoubleABNF(std::string_view value) {
-  if (value.empty() || !base::IsAsciiDigit(value.front())) {
-    return false;
-  }
-  bool period_found = false;
-  bool digit_found_after_period = false;
-  for (const char c : value) {
-    if (base::IsAsciiDigit(c)) {
-      digit_found_after_period |= period_found;
-      continue;
-    }
-    if (c != '.' || period_found) {
-      return false;
-    }
-    period_found = true;
-  }
-  return !period_found || digit_found_after_period;
-}
-
-bool IsSimilarToIntABNF(std::string_view value) {
-  return !value.empty() && std::ranges::all_of(value, base::IsAsciiDigit<char>);
-}
 
 // network::IsSuccessfulStatus(): an ok status.
 bool IsSuccessfulStatus(int status) {
@@ -143,78 +116,6 @@ std::string CreateAccessControlRequestHeadersHeader(
 }
 
 }  // namespace
-
-bool IsCorsSafelistedHeader(std::string_view name, std::string_view value) {
-  if (value.size() > 128) {
-    return false;
-  }
-  static constexpr auto kSafeNames = base::MakeFixedFlatSet<std::string_view>({
-      "accept",
-      "accept-language",
-      "content-language",
-      "content-type",
-      "range",
-      "device-memory",
-      "dpr",
-      "width",
-      "viewport-width",
-      "rtt",
-      "downlink",
-      "ect",
-      "sec-ch-ua",
-      "sec-ch-ua-arch",
-      "sec-ch-ua-platform",
-      "sec-ch-ua-model",
-      "sec-ch-ua-mobile",
-      "sec-ch-ua-full-version",
-      "sec-ch-ua-platform-version",
-      "sec-ch-prefers-color-scheme",
-      "sec-ch-ua-bitness",
-      "sec-ch-viewport-height",
-      "sec-ch-device-memory",
-      "sec-ch-dpr",
-      "sec-ch-width",
-      "sec-ch-viewport-width",
-      "sec-ch-ua-full-version-list",
-      "sec-ch-ua-wow64",
-      "save-data",
-      "sec-ch-prefers-reduced-motion",
-      "sec-ch-ua-form-factors",
-      "sec-ch-prefers-reduced-transparency",
-  });
-  const std::string lower_name = base::ToLowerASCII(name);
-  if (!kSafeNames.contains(lower_name)) {
-    return false;
-  }
-  if (IsNoCorsSafelistedHeaderName(lower_name)) {
-    return IsNoCorsSafelistedHeader(lower_name, value);
-  }
-  if (lower_name == "range") {
-    const std::optional<net::HttpByteRange> range =
-        net::HttpUtil::ParseFetchSingleRange(value,
-                                             /*allow_whitespace=*/false);
-    return range && !range->IsSuffixByteRange() && range->IsValid() &&
-           range->first_byte_position() !=
-               std::numeric_limits<int64_t>::max() &&
-           range->last_byte_position() != std::numeric_limits<int64_t>::max();
-  }
-  if (lower_name == "device-memory" || lower_name == "dpr" ||
-      lower_name == "downlink") {
-    return IsSimilarToDoubleABNF(value);
-  }
-  if (lower_name == "width" || lower_name == "viewport-width" ||
-      lower_name == "rtt") {
-    return IsSimilarToIntABNF(value);
-  }
-  if (lower_name == "ect") {
-    return value == "slow-2g" || value == "2g" || value == "3g" ||
-           value == "4g";
-  }
-  if (lower_name == "save-data") {
-    return base::ToLowerASCII(value) == "on";
-  }
-  return true;
-}
 
 std::vector<std::string> CorsUnsafeNotForbiddenRequestHeaderNames(
     const net::HttpRequestHeaders& headers) {

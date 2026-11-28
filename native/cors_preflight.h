@@ -47,10 +47,6 @@ struct NetworkTrafficAnnotationTag;
 
 namespace mitto {
 
-// IsCorsSafelistedHeader() of the network service, which counts the client
-// hints that Chrome adds as safelisted beside the Fetch Standard's names.
-bool IsCorsSafelistedHeader(std::string_view name, std::string_view value);
-
 // The names of `headers`, in lower case and in their order, that are neither
 // forbidden nor CORS-safelisted. Past 1,024 bytes of safelisted values, the
 // safelisted names count too.

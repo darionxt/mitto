@@ -638,6 +638,7 @@ void DocumentParser::PrepareToStopParsing() {
   // the errors, before the document is interactive.
   if (xml_) {
     xml_->End();
+    document->SetWellFormed(!xml_->SawError());
   }
   document->SetReadiness(Document::Readiness::kInteractive);
   // Its readystatechange may have detached the parser.

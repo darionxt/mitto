@@ -1,4 +1,4 @@
-#include "mitto/dom/http_byte_range.h"
+#include "mitto/http_byte_range.h"
 
 #include <algorithm>
 #include <limits>

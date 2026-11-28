@@ -390,10 +390,42 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             id="fetch-with-activation",
         ),
         pytest.param(
-            "retired-flag",
+            "forced-preflight-of-a-fetch",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=1)})",
-            "the library refused a message from the Page: a request with flags that are not ones",
-            id="retired-flag",
+            "the library refused a message from the Page: a forced preflight of a request not an XHR",
+            id="forced-preflight-of-a-fetch",
+        ),
+        pytest.param(
+            "upload-of-a-fetch",
+            f"{_HELLO}\nsend(8, ({_fetch_request(1, 'http://127.0.0.1:1/', method='POST')})[:-1] + b'\\x02x')",
+            "the library refused a message from the Page: an upload to hear of, of a request not an asynchronous XHR",
+            id="upload-of-a-fetch",
+        ),
+        pytest.param(
+            "upload-of-a-synchronous-xhr",
+            f"{_HELLO}\nsend(8, ({_fetch_request(1, 'http://127.0.0.1:1/', method='POST', kind=8, flags=16)})"
+            "[:-1] + b'\\x02x')",
+            "the library refused a message from the Page: an upload to hear of, of a request not an asynchronous XHR",
+            id="upload-of-a-synchronous-xhr",
+        ),
+        pytest.param(
+            "unknown-body",
+            f"{_HELLO}\nsend(8, ({_fetch_request(1, 'http://127.0.0.1:1/', method='POST', kind=8)})[:-1] + b'\\x03x')",
+            "the library refused a message from the Page: a request that does not hold what it says",
+            id="unknown-body",
+        ),
+        pytest.param(
+            "unasked-upload-progress-taken",
+            f"{_HELLO}\nsend(222, struct.pack('<Q', 7))",
+            "the library refused a message from the Page: upload progress taken of request 7, which the Page has not asked "
+            "for",
+            id="unasked-upload-progress-taken",
+        ),
+        pytest.param(
+            "upload-progress-taken-of-no-size",
+            f"{_HELLO}\nsend(222, b'')",
+            "the library refused a message from the Page: a report of upload progress taken of 0 bytes",
+            id="upload-progress-taken-of-no-size",
         ),
         pytest.param(
             "script-kept-alive",

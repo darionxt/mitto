@@ -6,8 +6,13 @@
 #ifndef MITTO_HEADER_RULES_H_
 #define MITTO_HEADER_RULES_H_
 
+#include <optional>
+#include <set>
 #include <string>
 #include <string_view>
+#include <utility>
+
+#include "base/containers/span.h"
 
 namespace mitto {
 
@@ -62,6 +67,18 @@ bool IsNoCorsSafelistedHeader(std::string_view name, std::string_view value);
 // Upstream: services/network/public/cpp/cors/cors.cc
 bool IsCorsSafelistedContentType(std::string_view media_type);
 
+// Whether the line `name`: `value` needs no CORS preflight, which counts the
+// client hints that Chrome adds as safelisted beside the Fetch Standard's
+// names.
+// Upstream: services/network/public/cpp/cors/cors.cc
+bool IsCorsSafelistedHeader(std::string_view name, std::string_view value);
+
+// Whether `headers`, each a name and its value, need no CORS preflight. Past
+// 1,024 bytes of safelisted values, they do.
+// Upstream: third_party/blink/renderer/platform/loader/cors/cors.cc
+bool ContainsOnlyCorsSafelistedHeaders(
+    base::span<const std::pair<std::string, std::string>> headers);
+
 // The response header names that a script reads of a cross-origin response
 // beside those that Access-Control-Expose-Headers names.
 // Upstream: services/network/public/cpp/cors/cors.cc
@@ -86,6 +103,20 @@ bool HasLocation(std::string_view headers);
 // If-Unmodified-Since do.
 // Upstream: third_party/blink/renderer/platform/loader/fetch/resource_request.cc
 bool IsConditionalHeader(std::string_view name);
+
+// The names that Access-Control-Expose-Headers, whose value is `field`, lets a
+// script read of a response to a request of another origin, in lower case, "*"
+// among them, which stands for every name of a response without credentials,
+// as Blink's ExtractCorsExposedHeaderNamesList() has it.
+// Upstream: third_party/blink/renderer/platform/loader/cors/cors.cc
+std::set<std::string> CorsExposedHeaderNames(std::string_view field);
+
+// "type/subtype" of `media_type`, up to its first ";", or "," too if
+// `accept_comma_separated`, as written, if both are tokens.
+// Upstream: net/base/mime_util.cc
+std::optional<std::string> ExtractMimeTypeFromMediaType(
+    std::string_view media_type,
+    bool accept_comma_separated);
 
 }  // namespace mitto
 

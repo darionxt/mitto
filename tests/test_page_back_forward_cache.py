@@ -863,6 +863,213 @@ def test_a_freeze_listener_sends_keepalive_requests_only(session: mitto.Session,
     assert without_favicon(server.paths()) == ["/a", "/b", "/kept"]
 
 
+@pytest.mark.parametrize(
+    ("script", "kept"),
+    [
+        ("const x = new XMLHttpRequest(); x.open('GET', '/no-store'); x.onloadend = go; x.send();", False),
+        ("const x = new XMLHttpRequest(); x.open('GET', '/no-store', false); x.send(); go();", False),
+        (
+            "const link = document.createElement('link'); link.rel = 'preload'; link.as = 'fetch';"
+            " link.href = '/no-store'; link.crossOrigin = 'anonymous'; document.head.append(link);"
+            " setTimeout(() => { const x = new XMLHttpRequest(); x.open('GET', '/no-store'); x.onloadend = go;"
+            " x.send(); }, 300);",
+            False,
+        ),
+        # Its progress events end just before the navigation, which leaves nothing that runs in the kept page.
+        ("const x = new XMLHttpRequest(); x.open('GET', '/storable'); x.onloadend = go; x.send();", True),
+    ],
+    ids=["asynchronous", "synchronous", "preloaded", "storable"],
+)
+def test_an_xml_http_request_s_no_store_response_keeps_a_no_store_page_out(
+    session: mitto.Session, server: RecordingServer, script: str, kept: bool
+) -> None:
+    # Blink's ThreadableLoader::ResponseReceived() keeps a page out for an XMLHttpRequest's response as for a fetch()'s.
+    first = server.page("/ns", "<title>NS</title>" + _LOGGING, _NO_STORE)
+    second = server.page("/b", "<title>B</title>")
+    server.route("/no-store", b"", "text/plain", _NO_STORE)
+    server.route("/storable", b"abc", "text/plain")
+
+    with _open_page(session, first) as page:
+        page.evaluate(f"const go = () => {{ window.marker = 1; location.href = '/b'; }}; {script} 0")
+        assert _next_document(page).url == second
+        assert page.evaluate("sessionStorage.hide") == ("true," if kept else "false,")
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=kept)
+        assert page.evaluate("window.marker ?? null") == (1 if kept else None)
+
+
+def test_a_freeze_listener_s_xml_http_requests_fail_once_its_page_comes_back(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    ask = (
+        "const watch = (x, tag) => { for (const type of ['readystatechange', 'loadstart', 'error', 'load', 'loadend'])"
+        " x.addEventListener(type, () => log.push(`${tag} ${type} ${x.readyState}`)); return x; };"
+        "document.addEventListener('freeze', () => {"
+        " const x = watch(new XMLHttpRequest(), 'async'); x.open('POST', '/async'); x.send('a');"
+        " const y = watch(new XMLHttpRequest(), 'sync'); y.open('GET', '/sync', false);"
+        " try { y.send(); } catch (e) { log.push(`sync threw ${e.name}: ${e.message}`); } });"
+    )
+
+    with _open_page(session, first) as page:
+        page.evaluate(f"{ask} window.marker = 1; location.href = '/b'; 0")
+        assert _next_document(page).url == second
+        _wait(page, 200)
+        page.evaluate("history.back()")
+        assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+        _wait(page, 200)
+        # The asynchronous one fails from a task that waits for its page to come back, and the synchronous one at
+        # once, as ResourceFetcher refuses both.
+        assert page.evaluate("[window.marker, log]") == [
+            1,
+            [
+                *_KEPT_AND_BACK[:4],
+                "async readystatechange 1",
+                "async loadstart 1",
+                "sync readystatechange 1",
+                "sync threw NetworkError: Failed to execute 'send' on 'XMLHttpRequest': Failed to load"
+                f" '{server.url('/sync')}'.",
+                *_KEPT_AND_BACK[4:],
+                "async readystatechange 4",
+                "async error 4",
+                "async loadend 4",
+            ],
+        ]
+        refused = [message.text for message in page.console_messages if "onfreeze" in message.text]
+        assert refused == [
+            f"Only fetch keepalive is allowed during onfreeze: {server.url(path)}" for path in ("/async", "/sync")
+        ]
+    assert without_favicon(server.paths()) == ["/a", "/b"]
+
+
+# What sets the timeout of the request `x` as its page freezes, which falls due 300 ms later, as the timeout counts from
+# send(), so that how long the navigation takes before decides nothing.
+_TIMEOUT_AS_IT_FREEZES = (
+    "const sent = performance.now();"
+    " document.addEventListener('freeze', () => { x.timeout = Math.ceil(performance.now() - sent) + 300; });"
+)
+
+
+def test_an_xml_http_request_s_timeout_waits_while_its_page_is_kept(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    held = threading.Event()
+    server.routes["/held"] = Route(b"late", headers=[("Content-Type", "text/plain")], hold=held)
+
+    try:
+        with _open_page(session, first) as page:
+            page.evaluate(
+                "const x = new XMLHttpRequest(); for (const type of ['readystatechange', 'timeout', 'loadend'])"
+                " x.addEventListener(type, () => log.push(`${type} ${x.readyState}`)); x.open('GET', '/held');"
+                f" x.send(); {_TIMEOUT_AS_IT_FREEZES} window.marker = 1; location.href = '/b'; 0"
+            )
+            assert _next_document(page).url == second
+            # Its time comes while the cache keeps the page, and it fires once the page shows again.
+            _wait(page, 700)
+            page.evaluate("history.back()")
+            assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+            _wait(page, 100)
+            assert page.evaluate("[window.marker, log]") == [
+                1,
+                [
+                    "pageshow:false",
+                    "readystatechange 1",
+                    *_KEPT_AND_BACK[1:],
+                    "readystatechange 4",
+                    "timeout 4",
+                    "loadend 4",
+                ],
+            ]
+    finally:
+        held.set()
+
+
+@pytest.mark.parametrize(
+    ("timeout", "ending"),
+    [
+        # Due after the response has come: the response ends the request.
+        (_TIMEOUT_AS_IT_FREEZES, ["readystatechange 2", "readystatechange 3", "readystatechange 4", "load 4"]),
+        # Due already as the page freezes, which a task of no delay waits for: the timeout ends it. The page
+        # navigates 50 ms after send(), as the Chrome probe did, since a local navigation may take less than 1 ms.
+        (
+            "const due = performance.now() + 50; while (performance.now() < due);"
+            " document.addEventListener('freeze', () => { x.timeout = 1; });",
+            ["readystatechange 4", "timeout 4"],
+        ),
+    ],
+    ids=["due-after-the-response", "due-as-the-page-freezes"],
+)
+def test_what_ends_a_request_whose_response_came_while_its_page_was_kept(
+    session: mitto.Session, server: RecordingServer, timeout: str, ending: list[str]
+) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    held = threading.Event()
+    server.routes["/held"] = Route(b"late", headers=[("Content-Type", "text/plain")], hold=held)
+
+    try:
+        with _open_page(session, first) as page:
+            page.evaluate(
+                "const x = new XMLHttpRequest();"
+                " for (const type of ['readystatechange', 'load', 'timeout', 'loadend'])"
+                " x.addEventListener(type, () => log.push(`${type} ${x.readyState}`)); x.open('GET', '/held');"
+                f" x.send(); {timeout} window.marker = 1; location.href = '/b'; 0"
+            )
+            assert _next_document(page).url == second
+            # The response comes while the cache keeps the page.
+            assert server.wait_for_path("/held")
+            held.set()
+            _wait(page, 900)
+            page.evaluate("history.back()")
+            assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+            _wait(page, 100)
+            assert page.evaluate("[window.marker, log]") == [
+                1,
+                ["pageshow:false", "readystatechange 1", *_KEPT_AND_BACK[1:], *ending, "loadend 4"],
+            ]
+    finally:
+        held.set()
+
+
+def test_an_upload_s_progress_waits_while_its_page_is_kept(session: mitto.Session, server: RecordingServer) -> None:
+    first = server.page("/a", "<title>A</title>" + _LOGGING)
+    second = server.page("/b", "<title>B</title>")
+    # The server takes the rest of the body only once the cache keeps the page, so the progress of all that it takes,
+    # and the response, come while the page is kept.
+    reading = threading.Event()
+    server.routes["/upload"] = Route(b"ok", headers=[("Content-Type", "text/plain")], read_hold=reading)
+
+    try:
+        with _open_page(session, first) as page:
+            page.evaluate(
+                "const x = new XMLHttpRequest(); window.done = new Promise(r => x.addEventListener('loadend', r));"
+                " x.upload.addEventListener('progress', () => log.push('upload progress'));"
+                " x.upload.addEventListener('loadend', () => log.push('upload loadend'));"
+                " x.addEventListener('loadend', () => log.push('loadend ' + x.status)); x.open('POST', '/upload');"
+                " x.send(new Uint8Array(8000000)); setTimeout(() => { window.marker = 1; location.href = '/b'; }, 100);"
+                " 0"
+            )
+            assert _next_document(page).url == second
+            reading.set()
+            assert server.wait_for_path("/upload")
+            _wait(page, 300)
+            page.evaluate("history.back()")
+            assert _next_document(page) == PageNavigation(url=first, status=200, restored=True)
+            page.evaluate("done.then(() => 0)")
+            marker, log = page.evaluate("[window.marker, log]")
+    finally:
+        reading.set()
+    # What came of the upload while the page was kept comes once it shows again, as in Chrome.
+    after = log[log.index("pageshow:true") + 1 :]
+    assert marker == 1
+    assert "upload progress" in after
+    assert after[-2:] == ["upload loadend", "loadend 200"]
+    assert set(after[:-2]) == {"upload progress"}
+
+
 def test_the_performance_timeline_has_the_visibility_of_a_kept_page(
     session: mitto.Session, server: RecordingServer
 ) -> None:

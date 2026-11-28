@@ -373,9 +373,10 @@ std::u16string TextResourceDecoder::Decode(base::span<const uint8_t> data) {
     codec_ = NewTextCodec(encoding_);
   }
   // An XML document stops at the first byte that its encoding cannot decode.
-  std::u16string result =
-      codec_->Decode(data_for_decode, FlushBehavior::kDoNotFlush,
-                     content_type == ContentType::kXml, saw_error_);
+  std::u16string result = codec_->Decode(
+      data_for_decode, FlushBehavior::kDoNotFlush,
+      content_type == ContentType::kXml && !options_.use_lenient_xml_decoding,
+      saw_error_);
   buffer_.clear();
   return result;
 }
@@ -398,9 +399,10 @@ std::u16string TextResourceDecoder::Flush() {
   if (!codec_) {
     codec_ = NewTextCodec(encoding_);
   }
-  std::u16string result =
-      codec_->Decode(buffer_, FlushBehavior::kFetchEof,
-                     content_type == ContentType::kXml, saw_error_);
+  std::u16string result = codec_->Decode(
+      buffer_, FlushBehavior::kFetchEof,
+      content_type == ContentType::kXml && !options_.use_lenient_xml_decoding,
+      saw_error_);
   buffer_.clear();
   codec_.reset();
   // A byte order mark goes again when the body is decoded again.
