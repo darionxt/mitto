@@ -3,12 +3,15 @@
 #include <utility>
 #include <vector>
 
+#include "base/functional/bind.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/html_parser_idioms.h"
@@ -17,6 +20,7 @@
 #include "mitto/dom/window.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
 
 namespace mitto {
@@ -26,11 +30,22 @@ namespace {
 // The URL of a srcdoc document, which a frame with srcdoc shows.
 constexpr char16_t kSrcdocUrl[] = u"about:srcdoc";
 
+// DoesParentAllowLazyLoadingChildren(): what the element of the document's
+// frame says, and yes for a document of no frame's element.
+bool DoesParentAllowLazyLoadingChildren(const mitto::Document& document) {
+  const Window* const window = document.DefaultView();
+  const Frame* const frame = window ? window->GetFrame() : nullptr;
+  const HTMLFrameOwnerElement* const owner = frame ? frame->Owner() : nullptr;
+  return !owner || owner->ShouldLazyLoadChildren();
+}
+
 }  // namespace
 
 HTMLFrameOwnerElement::HTMLFrameOwnerElement(mitto::Document& document,
                                              const std::u16string& local_name)
-    : HTMLElement(document, local_name) {}
+    : HTMLElement(document, local_name),
+      should_lazy_load_children_(DoesParentAllowLazyLoadingChildren(document)) {
+}
 
 HTMLFrameOwnerElement::~HTMLFrameOwnerElement() = default;
 
@@ -156,6 +171,20 @@ void HTMLFrameOwnerElement::ParseFrameAttribute(
               name.local_name == u"allowpaymentrequest") &&
              HasHTMLTagName(u"iframe")) {
     UpdateContainerPolicy();
+  } else if (name.local_name == u"loading") {
+    // HTMLFrameOwnerElement::ParseAttribute(): eager, or anything but lazy in
+    // a page in front, loads a frame that waits now.
+    const bool eager =
+        new_value && base::EqualsCaseInsensitiveASCII(*new_value, u"eager");
+    const bool lazy =
+        new_value && base::EqualsCaseInsensitiveASCII(*new_value, u"lazy");
+    if (GetDocument().DefaultView() &&
+        (eager || !lazy || GetDocument().Hidden())) {
+      should_lazy_load_children_ = false;
+      if (IsLazyLoadPending()) {
+        LoadLazyFrameImmediately();
+      }
+    }
   } else if (name.local_name == u"credentialless" &&
              HasHTMLTagName(u"iframe")) {
     // HTMLIFrameElement::ParseAttribute(): its frame tells the browser of a
@@ -266,16 +295,97 @@ void HTMLFrameOwnerElement::OpenURL() {
   // An empty URL is about:blank's.
   const GURL url = url_.empty() ? GURL(url::kAboutBlankURL)
                                 : GetDocument().CompleteUrl(url_);
+  // loading=eager holds for the frames under the element's frame at once,
+  // whichever of its attributes the parser set first.
+  if (should_lazy_load_children_) {
+    const std::u16string* const loading = FindAttribute(u"loading");
+    if (loading && base::EqualsCaseInsensitiveASCII(*loading, u"eager")) {
+      should_lazy_load_children_ = false;
+    }
+  }
   UpdateContainerPolicy();
   if (!content_frame_) {
     content_frame_ = parent->CreateChildFrame(*this, frame_name_);
     if (!content_frame_) {
       return;
     }
-  } else if (!CanNavigate(*parent, *content_frame_, url)) {
+    // A frame that the element makes again, once it has had a lazy one, does
+    // not wait.
+    if (!has_lazy_load_observer_ && LazyLoadIfPossible(url)) {
+      return;
+    }
+  } else if (!CanNavigate(*parent, *content_frame_, url) ||
+             LazyLoadIfPossible(url)) {
     return;
   }
-  content_frame_->NavigateFromOwner(url);
+  content_frame_->NavigateFromOwner(url, ReferrerPolicyAttribute());
+}
+
+FetchReferrerPolicy HTMLFrameOwnerElement::ReferrerPolicyAttribute() const {
+  const std::u16string* const policy = FindAttribute(u"referrerpolicy");
+  return policy ? FetchReferrerPolicyFromString(*policy)
+                : FetchReferrerPolicy::kDefault;
+}
+
+bool HTMLFrameOwnerElement::LazyLoadIfPossible(const GURL& url) {
+  const std::u16string* const loading = FindAttribute(u"loading");
+  const bool loading_lazy =
+      loading && base::EqualsCaseInsensitiveASCII(*loading, u"lazy");
+  // IsFrameLazyLoadable(): an HTTP or HTTPS URL, from a document that runs
+  // scripts, of loading=lazy, or one that Blink's automatic lazy loading would
+  // take, of another origin than the document's where it may.
+  Window* const window = GetDocument().DefaultView();
+  if (!url.SchemeIsHTTPOrHTTPS() || !window ||
+      !window->CanExecuteScripts(/*about_to_execute=*/false)) {
+    return false;
+  }
+  if (!loading_lazy && (!should_lazy_load_children_ ||
+                        window->GetSecurityOrigin().IsSameOriginWith(
+                            url::Origin::Create(url)))) {
+    return false;
+  }
+  should_lazy_load_children_ = false;
+  CancelPendingLazyLoad();
+  has_lazy_load_observer_ = true;
+  // CheckAndRecordIfShouldLazilyLoadFrame(): only loading=lazy, in a page in
+  // front.
+  if (!loading_lazy || GetDocument().Hidden()) {
+    return false;
+  }
+  // LazyLoadFrameObserver::DeferLoadUntilNearViewport(): its intersection
+  // observer goes from the next rendering opportunity's post-lifecycle steps.
+  // A Page lays nothing out, so a frame that waits comes near the viewport
+  // then, as a lazy image does.
+  // It keeps its request as it was, with the referrer policy that the element
+  // had then.
+  lazy_load_url_ = url;
+  lazy_load_referrer_policy_ = ReferrerPolicyAttribute();
+  const uint64_t number = ++lazy_load_number_;
+  window->RequestPostLifecycleSteps(base::BindOnce(
+      [](const cppgc::WeakPersistent<HTMLFrameOwnerElement>& element,
+         uint64_t number) {
+        if (element && element->lazy_load_number_ == number &&
+            element->IsLazyLoadPending()) {
+          element->LoadLazyFrameImmediately();
+        }
+      },
+      cppgc::WeakPersistent<HTMLFrameOwnerElement>(this), number));
+  return true;
+}
+
+void HTMLFrameOwnerElement::LoadLazyFrameImmediately() {
+  const GURL url = *std::exchange(lazy_load_url_, std::nullopt);
+  ++lazy_load_number_;
+  // Its frame stays the one it waited in, as the element's disconnect cancels
+  // the wait.
+  if (content_frame_) {
+    content_frame_->NavigateFromOwner(url, lazy_load_referrer_policy_);
+  }
+}
+
+void HTMLFrameOwnerElement::CancelPendingLazyLoad() {
+  lazy_load_url_.reset();
+  ++lazy_load_number_;
 }
 
 void HTMLFrameOwnerElement::DisconnectContentFrame() {
@@ -283,6 +393,7 @@ void HTMLFrameOwnerElement::DisconnectContentFrame() {
   if (!frame) {
     return;
   }
+  CancelPendingLazyLoad();
   // The frame clears itself from the element as it goes.
   frame->Detach();
   content_frame_ = nullptr;

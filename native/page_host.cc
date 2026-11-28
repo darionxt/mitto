@@ -442,6 +442,27 @@ std::string HeadersForPage(std::string_view lines) {
   return kept;
 }
 
+// The warning of Chrome's browser on the parent's console for a frame's
+// navigation that CheckCredentialedSubresource() blocks.
+constexpr std::string_view kCredentialedSubresourceBlocked =
+    "Subresource requests whose URLs contain embedded credentials (e.g. "
+    "`https://user:pass@host/`) are blocked. See "
+    "https://www.chromestatus.com/feature/5669008342777856 for more details.";
+
+// NavigationRequest::CheckCredentialedSubresource(): whether a frame's
+// navigation to `url`, whose parent's document is at `parent_url`, is blocked:
+// one with a username or a password, unless the parent's URL is of its origin
+// with the same ones.
+// Upstream: content/browser/renderer_host/navigation_request.cc
+bool BlocksCredentialedSubresource(const GURL& url, const GURL& parent_url) {
+  if (!url.has_username() && !url.has_password()) {
+    return false;
+  }
+  return !url::IsSameOriginWith(parent_url, url) ||
+         parent_url.username() != url.username() ||
+         parent_url.password() != url.password();
+}
+
 }  // namespace
 
 PageRequestTemplate::PageRequestTemplate() = default;
@@ -956,6 +977,9 @@ class PageHost::ResponseChecks {
   // Whether a hop has gone to another origin than the document's, which
   // makes the response tainting cors.
   bool cors() const { return cors_; }
+  // Whether a redirect of a frame's navigation to a URL with credentials
+  // ended it.
+  bool credentialed_redirect() const { return credentialed_redirect_; }
 
   // Whether the response that `event` describes passes: net::OK, or the net
   // error that ends the request.
@@ -968,6 +992,15 @@ class PageHost::ResponseChecks {
     if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
         BlockedByParentResourcePolicy(event)) {
       return net::ERR_BLOCKED_BY_RESPONSE;
+    }
+    // NavigationRequest::OnRequestRedirected(): then each redirect of a
+    // frame's navigation is held to CheckCredentialedSubresource().
+    if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
+        checks_.parent_committed_url &&
+        BlocksCredentialedSubresource(GURL(event.new_url),
+                                      *checks_.parent_committed_url)) {
+      credentialed_redirect_ = true;
+      return net::ERR_ABORTED;
     }
     // NavigationRequest::WillRedirectRequest(): a frame's navigation that a
     // redirect takes to the URL of two of the frame's ancestors' documents,
@@ -1124,6 +1157,7 @@ class PageHost::ResponseChecks {
   GURL last_url_;
   bool cors_ = false;
   bool tainted_ = false;
+  bool credentialed_redirect_ = false;
 };
 
 // One request of a Page's, which hears how its job goes and sends that to the
@@ -1399,7 +1433,12 @@ class PageHost::Request final : public RequestClient {
 
   // RequestClient:
   int CheckResponse(const RequestEvent& event) override {
-    return response_checks_.Check(event);
+    const int net_error = response_checks_.Check(event);
+    // Chrome's browser warns the parent's console of it.
+    if (response_checks_.credentialed_redirect()) {
+      host_->WarnOfCredentialedSubresource();
+    }
+    return net_error;
   }
   void OnResponseEvent(RequestEvent event) override {
     CheckTimingAllowOrigin(event, document_origin());
@@ -1848,6 +1887,14 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     net_error = net::ERR_INVALID_URL;
   } else if (!url.SchemeIsHTTPOrHTTPS()) {
     net_error = net::ERR_UNKNOWN_URL_SCHEME;
+  } else if (frame_parent != kNoDocument &&
+             BlocksCredentialedSubresource(
+                 url, contexts_.at(frame_parent).LastCommittedUrl())) {
+    // NavigationRequest::BeginNavigationImpl(): a frame's navigation to a URL
+    // with credentials ends before it starts, and the frame keeps its
+    // document, as the parent's console is warned.
+    WarnOfCredentialedSubresource();
+    net_error = net::ERR_ABORTED;
   } else if (!request_template) {
     net_error = net::ERR_NOT_IMPLEMENTED;
   } else if (document_origin.opaque() && !context.is_worker &&
@@ -2042,6 +2089,12 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     worker_scripts_[asked.number] = {.creator = context_id};
     creator_embedder_policy = context.coep;
   }
+  // The URL that the parent's document last committed, which each redirect of
+  // a frame's navigation is held to as well.
+  std::optional<GURL> parent_committed_url;
+  if (frame_parent != kNoDocument) {
+    parent_committed_url = contexts_.at(frame_parent).LastCommittedUrl();
+  }
   FetchChecks checks{
       .cors = options_mode == RequestMode::kCors,
       .same_origin = options_mode == RequestMode::kSameOrigin,
@@ -2059,7 +2112,8 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .document_isolation_policy = contexts_.at(settings_id).dip,
       .frame_ancestor_urls = std::move(frame_ancestor_urls),
       .parent_embedder_policy = std::move(parent_embedder_policy),
-      .parent_origin = std::move(parent_origin)};
+      .parent_origin = std::move(parent_origin),
+      .parent_committed_url = std::move(parent_committed_url)};
   if (asked.deferred) {
     deferred_bytes_ += deferred_size;
     deferred_bytes_of_context_[context_id] += deferred_size;
@@ -3960,6 +4014,9 @@ void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
   // Document::open() sets no URL for an about:srcdoc opener.
   const bool changed = url != context.url && !url.IsAboutSrcdoc();
   if (changed) {
+    if (!context.url_before_open) {
+      context.url_before_open = context.url;
+    }
     context.url = url;
   }
   // The Page's URL is its top-level document's.
@@ -4013,6 +4070,7 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
     return;
   }
   document_url = new_url;
+  context.url_before_open.reset();
   // A traversal may go back to an entry of this URL.
   if (const auto found = records_.find(document); found != records_.end()) {
     NavigationRecord& record = found->second;
@@ -4868,6 +4926,14 @@ void PageHost::End(int32_t error, std::string message) {
 void PageHost::Push(PageEvent event) {
   events_->Push(std::move(event));
   ready_->Add(handle_, MITTO_READY_PAGE);
+}
+
+void PageHost::WarnOfCredentialedSubresource() {
+  PageEvent event;
+  event.type = MITTO_PAGE_EVENT_CONSOLE;
+  event.level = static_cast<int32_t>(ConsoleLevel::kWarning);
+  event.message = std::string(kCredentialedSubresourceBlocked);
+  PushReport(std::move(event));
 }
 
 void PageHost::PushReport(PageEvent event) {
