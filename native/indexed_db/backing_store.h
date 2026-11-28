@@ -1,9 +1,10 @@
 // What IndexedDB keeps for one storage key, as Chrome's on-disk store keeps
 // it: every database of the key in one ordered store, each object store's
-// records by key, each index's entries by index key and then primary key, and
-// the metadata. A transaction's writes stay with it until it commits them,
-// all at once, so that transactions on other object stores run beside it and
-// one that aborts leaves nothing behind, as with LevelDB.
+// records by key, the blobs of each that has any by its key, each index's
+// entries by index key and then primary key, and the metadata. A transaction's
+// writes stay with it until it commits them, all at once, so that transactions
+// on other object stores run beside it and one that aborts leaves nothing
+// behind, as with LevelDB.
 //
 // Keys are laid out so that the store's byte order is the order of IndexedDB
 // keys: a database's entries under its number, an object store's under its
@@ -51,7 +52,7 @@ class IndexedDbBackingStore {
     const IDBKey& key() const { return key_; }
     const IDBKey& primary_key() const { return primary_key_; }
     // The record's value: empty for a cursor of keys only.
-    const std::string& value() const { return value_; }
+    const IndexedDbValue& value() const { return value_; }
 
     // Moves to the next entry, or to the next at or past `key` and
     // `primary_key` when they are valid, and returns whether there is one.
@@ -102,9 +103,12 @@ class IndexedDbBackingStore {
     std::string position_;
     IDBKey key_;
     IDBKey primary_key_;
-    std::string value_;
+    IndexedDbValue value_;
     // Whether it has gone past the last entry.
     bool past_end_ = false;
+    // Whether it only passes the entry that it goes to, whose value nothing
+    // reads.
+    bool passing_ = false;
   };
 
   class Transaction {
@@ -129,13 +133,13 @@ class IndexedDbBackingStore {
                      const IndexedDbIndexMetadata& index);
     bool DeleteIndex(int64_t object_store_id, int64_t index_id);
 
-    std::optional<std::string> GetRecord(int64_t object_store_id,
-                                         const IDBKey& key);
+    std::optional<IndexedDbValue> GetRecord(int64_t object_store_id,
+                                            const IDBKey& key);
     bool KeyExistsInObjectStore(int64_t object_store_id, const IDBKey& key);
     // Writes the record and replaces the index entries it had.
     void PutRecord(int64_t object_store_id,
                    const IDBKey& key,
-                   const std::string& value);
+                   IndexedDbValue value);
     // Adds index entries of a record, as an index writer does.
     void PutIndexEntries(int64_t object_store_id,
                          int64_t index_id,
@@ -172,6 +176,7 @@ class IndexedDbBackingStore {
 
     // The store's entries, with what this has written over them.
     std::optional<std::string> Get(const std::string& key);
+    bool Has(const std::string& key);
     std::optional<KvStore::Entry> Seek(const std::string& key,
                                        const std::string& lower,
                                        const std::string& upper,
@@ -182,6 +187,8 @@ class IndexedDbBackingStore {
     void Remove(std::string key);
     // Removes every entry in [lower, upper).
     void RemoveRange(const std::string& lower, const std::string& upper);
+    // Removes the blobs of the record of `encoded_key`, if it has any.
+    void RemoveBlobs(int64_t object_store_id, const std::string& encoded_key);
     // Removes the index entries of a record, from its back references.
     void RemoveIndexEntries(int64_t object_store_id, const IDBKey& key);
 

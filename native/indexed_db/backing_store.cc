@@ -6,6 +6,8 @@
 
 #include "base/check.h"
 #include "base/containers/span.h"
+#include "base/memory/ref_counted.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/pickle.h"
 
 namespace mitto {
@@ -24,6 +26,7 @@ constexpr char kIndexMetadataType = 0x02;
 constexpr char kRecordType = 0x10;
 constexpr char kIndexEntryType = 0x11;
 constexpr char kBackReferenceType = 0x12;
+constexpr char kBlobsType = 0x13;
 
 // What comes after every encoding that a key starts with: greater than any
 // type byte of the sortable encoding, so a bound of a key and this lies past
@@ -84,6 +87,10 @@ std::string IndexEntryPrefix(int64_t database_id,
 
 std::string BackReferencePrefix(int64_t database_id, int64_t store_id) {
   return DatabasePrefix(database_id) + kBackReferenceType + BigEndian(store_id);
+}
+
+std::string BlobsPrefix(int64_t database_id, int64_t store_id) {
+  return DatabasePrefix(database_id) + kBlobsType + BigEndian(store_id);
 }
 
 std::string NameKey(const std::u16string& name) {
@@ -244,6 +251,45 @@ IndexEntries ReadBackReference(const std::optional<std::string>& value) {
   return entries;
 }
 
+std::string BlobsValue(const std::vector<IndexedDbBlob>& blobs) {
+  base::Pickle pickle;
+  pickle.WriteUInt64(blobs.size());
+  for (const IndexedDbBlob& blob : blobs) {
+    pickle.WriteString(blob.uuid);
+    pickle.WriteString(blob.type);
+    pickle.WriteString(blob.bytes());
+  }
+  return std::string(pickle.AsStringView());
+}
+
+// The blobs share `value`.
+std::vector<IndexedDbBlob> ReadBlobs(std::string value) {
+  const auto storage =
+      base::MakeRefCounted<base::RefCountedString>(std::move(value));
+  const std::string_view bytes = storage->as_string();
+  base::PickleIterator iterator =
+      base::PickleIterator::WithData(base::as_byte_span(bytes));
+  uint64_t count = 0;
+  if (!iterator.ReadUInt64(&count)) {
+    return {};
+  }
+  std::vector<IndexedDbBlob> blobs;
+  for (uint64_t i = 0; i < count; ++i) {
+    IndexedDbBlob& blob = blobs.emplace_back();
+    std::string_view own;
+    if (!iterator.ReadString(&blob.uuid) || !iterator.ReadString(&blob.type) ||
+        !iterator.ReadStringPiece(&own)) {
+      return {};
+    }
+    blob.size = own.size();
+    blob.storage = storage;
+    if (!own.empty()) {
+      blob.offset = static_cast<size_t>(own.data() - bytes.data());
+    }
+  }
+  return blobs;
+}
+
 }  // namespace
 
 IndexedDbBackingStore::IndexedDbBackingStore(std::unique_ptr<KvStore> kv)
@@ -262,7 +308,8 @@ IndexedDbBackingStore::GetDatabaseNamesAndVersions() {
     from = entry->key + '\0';
     const IDBKey name = DecodeSortableIDBKey(
         std::string_view(entry->key).substr(prefix.size()));
-    const std::optional<int64_t> database_id = ReadInt64Value(entry->value);
+    const std::optional<int64_t> database_id =
+        ReadInt64Value(std::string(entry->value));
     if (name.type() != IDBKeyType::kString || !database_id) {
       continue;
     }
@@ -424,6 +471,13 @@ std::optional<std::string> IndexedDbBackingStore::Transaction::Get(
   return store_->kv_->Get(key);
 }
 
+bool IndexedDbBackingStore::Transaction::Has(const std::string& key) {
+  if (const auto written = writes_.find(key); written != writes_.end()) {
+    return written->second.has_value();
+  }
+  return store_->kv_->Has(key);
+}
+
 std::optional<KvStore::Entry> IndexedDbBackingStore::Transaction::Seek(
     const std::string& key,
     const std::string& lower,
@@ -543,6 +597,7 @@ bool IndexedDbBackingStore::Transaction::DeleteObjectStore(
     int64_t object_store_id) {
   for (const std::string& prefix :
        {RecordPrefix(database_id_, object_store_id),
+        BlobsPrefix(database_id_, object_store_id),
         IndexEntriesOfStorePrefix(database_id_, object_store_id),
         BackReferencePrefix(database_id_, object_store_id),
         IndexMetadataPrefix(database_id_, object_store_id)}) {
@@ -569,17 +624,39 @@ bool IndexedDbBackingStore::Transaction::DeleteIndex(int64_t object_store_id,
   return true;
 }
 
-std::optional<std::string> IndexedDbBackingStore::Transaction::GetRecord(
+std::optional<IndexedDbValue> IndexedDbBackingStore::Transaction::GetRecord(
     int64_t object_store_id,
     const IDBKey& key) {
-  return Get(RecordPrefix(database_id_, object_store_id) +
-             EncodeSortableIDBKey(key));
+  const std::string encoded = EncodeSortableIDBKey(key);
+  std::optional<std::string> bits =
+      Get(RecordPrefix(database_id_, object_store_id) + encoded);
+  if (!bits) {
+    return std::nullopt;
+  }
+  IndexedDbValue value;
+  value.bits = std::move(*bits);
+  if (std::optional<std::string> blobs =
+          Get(BlobsPrefix(database_id_, object_store_id) + encoded)) {
+    value.blobs = ReadBlobs(std::move(*blobs));
+  }
+  return value;
 }
 
 bool IndexedDbBackingStore::Transaction::KeyExistsInObjectStore(
     int64_t object_store_id,
     const IDBKey& key) {
-  return GetRecord(object_store_id, key).has_value();
+  return Has(RecordPrefix(database_id_, object_store_id) +
+             EncodeSortableIDBKey(key));
+}
+
+void IndexedDbBackingStore::Transaction::RemoveBlobs(
+    int64_t object_store_id,
+    const std::string& encoded_key) {
+  const std::string blobs =
+      BlobsPrefix(database_id_, object_store_id) + encoded_key;
+  if (Has(blobs)) {
+    Remove(blobs);
+  }
 }
 
 void IndexedDbBackingStore::Transaction::RemoveIndexEntries(
@@ -598,10 +675,17 @@ void IndexedDbBackingStore::Transaction::RemoveIndexEntries(
 
 void IndexedDbBackingStore::Transaction::PutRecord(int64_t object_store_id,
                                                    const IDBKey& key,
-                                                   const std::string& value) {
+                                                   IndexedDbValue value) {
   RemoveIndexEntries(object_store_id, key);
-  Put(RecordPrefix(database_id_, object_store_id) + EncodeSortableIDBKey(key),
-      value);
+  const std::string encoded = EncodeSortableIDBKey(key);
+  if (value.blobs.empty()) {
+    RemoveBlobs(object_store_id, encoded);
+  } else {
+    Put(BlobsPrefix(database_id_, object_store_id) + encoded,
+        BlobsValue(value.blobs));
+  }
+  Put(RecordPrefix(database_id_, object_store_id) + encoded,
+      std::move(value.bits));
 }
 
 void IndexedDbBackingStore::Transaction::PutIndexEntries(
@@ -644,6 +728,7 @@ uint32_t IndexedDbBackingStore::Transaction::DeleteRange(
     if (record_key.IsValid()) {
       RemoveIndexEntries(object_store_id, record_key);
     }
+    RemoveBlobs(object_store_id, key.substr(prefix.size()));
     Remove(std::move(key));
   }
   return static_cast<uint32_t>(keys.size());
@@ -653,6 +738,7 @@ void IndexedDbBackingStore::Transaction::ClearObjectStore(
     int64_t object_store_id) {
   for (const std::string& prefix :
        {RecordPrefix(database_id_, object_store_id),
+        BlobsPrefix(database_id_, object_store_id),
         IndexEntriesOfStorePrefix(database_id_, object_store_id),
         BackReferencePrefix(database_id_, object_store_id)}) {
     RemoveRange(prefix, PrefixEnd(prefix));
@@ -851,9 +937,9 @@ bool IndexedDbBackingStore::Cursor::Take(const std::string& kv_key) {
     return false;
   }
   position_ = kv_key;
-  value_.clear();
-  if (!key_only_) {
-    std::optional<std::string> value =
+  value_ = IndexedDbValue();
+  if (!key_only_ && !passing_) {
+    std::optional<IndexedDbValue> value =
         transaction_->GetRecord(object_store_id_, primary_key_);
     if (!value) {
       return false;
@@ -918,13 +1004,16 @@ void IndexedDbBackingStore::Cursor::SetPosition(Position position) {
   position_ = std::move(position.kv_key);
   key_ = std::move(position.key);
   primary_key_ = std::move(position.primary_key);
-  value_.clear();
+  value_ = IndexedDbValue();
   past_end_ = false;
 }
 
 bool IndexedDbBackingStore::Cursor::Advance(uint32_t count) {
   for (uint32_t i = 0; i < count; ++i) {
-    if (!Continue()) {
+    passing_ = i + 1 < count;
+    const bool found = Continue();
+    passing_ = false;
+    if (!found) {
       return false;
     }
   }

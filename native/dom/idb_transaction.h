@@ -180,11 +180,11 @@ class IDBTransaction final : public EventTarget {
                          const IDBKeyPath& key_path,
                          bool auto_increment);
   void DeleteObjectStore(int64_t object_store_id);
-  // Puts `value`, as SerializedScriptValue wrote it, with `primary_key` and
-  // its index keys, and hands the answer to `request`'s OnPut(), or an error
-  // at once for a put too large for the Session to take.
+  // Puts `value` with `primary_key` and its index keys, and hands the answer
+  // to `request`'s OnPut(), or an error at once for a put too large for the
+  // Session to take.
   void Put(int64_t object_store_id,
-           std::string value,
+           IndexedDbValue value,
            IDBKey primary_key,
            IndexedDbPutMode put_mode,
            std::vector<IndexedDbIndexKeys> index_keys,

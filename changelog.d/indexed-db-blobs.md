@@ -1,0 +1,1 @@
+- A Page, whose API stays private, keeps the blobs and files of a value in IndexedDB, as Chrome does, where they read back as empty: with their type, size, name and time, for every Page of the Session and in its storage directory, before the transaction commits, and still after the record or the database has gone ([runtime.md](docs/runtime.md#indexeddb)).

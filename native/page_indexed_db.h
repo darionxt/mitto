@@ -101,8 +101,13 @@ class PageIndexedDb {
   std::map<uint64_t, std::unique_ptr<IndexedDbConnection>> connections_;
   // The context that opened each connection.
   std::map<uint64_t, uint64_t> connection_contexts_;
-  // The connection of each transaction that has not finished.
-  std::map<uint64_t, uint64_t> transactions_;
+  struct Transaction {
+    uint64_t connection = 0;
+    // The blobs of its next put.
+    IndexedDbBlobs put_blobs;
+  };
+  // Each transaction that has not finished.
+  std::map<uint64_t, Transaction> transactions_;
   std::map<uint64_t, std::unique_ptr<IndexedDbCursor>> cursors_;
   // The getAll() calls that a chunk too large for a frame ended, whose other
   // chunks go unsent.

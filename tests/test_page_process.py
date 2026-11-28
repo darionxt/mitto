@@ -264,6 +264,19 @@ def _fetch_request(
     )
 
 
+_BLOB_UUID = "0b5ee7a1-9c1c-4c1f-8f35-0d7a5f9c2e11"
+
+
+def _put_of_a_blob(uuid: str, type_: str) -> str:
+    """The Python expression of document 1's IndexedDB put of a value that names a blob of 1 byte, which a fake Page
+    program sends."""
+    return (
+        "struct.pack('<QBQQQ', 1, 22, 1, 1, 1) + struct.pack('<I', 1) + b'x' + struct.pack('<I', 1) "
+        f"+ struct.pack('<I', {len(uuid)}) + b'{uuid}' + struct.pack('<I', {len(type_)}) + {type_.encode()!r} "
+        "+ struct.pack('<QBdBI', 1, 5, 1.0, 0, 0)"
+    )
+
+
 # The hello, and the Page's initial about:blank, document 1.
 _HELLO = "hello()\nsend(70, struct.pack('<QBBQ', 1, 0, 0, 0))"
 # A worker of a data: URL that document 1 started, as context 2.
@@ -737,6 +750,32 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
             f"{_HELLO}\n{_DATA_WORKER}\nsend(140, struct.pack('<QBB', 2, 1, 1) + b'http://a.test/')",
             "the library refused a message from the Page: message type 140 of a worker, which only a document sends",
             id="worker-hints",
+        ),
+        # A put that names no transaction goes nowhere, with its blob's bytes, so only what comes after is refused.
+        pytest.param(
+            "blob",
+            f"{_HELLO}\nsend(42, struct.pack('<QBQB', 1, 31, 1, 1) + b'b')\n"
+            f"send(42, {_put_of_a_blob(_BLOB_UUID, 'a/b')})\nsend(77, b'')",
+            "the library refused a message from the Page: message type 77 is unknown",
+            id="blob",
+        ),
+        pytest.param(
+            "blob-part",
+            f"{_HELLO}\nsend(42, struct.pack('<QBQB', 1, 31, 1, 2) + b'b')",
+            "the library refused a message from the Page: an IndexedDB call that is not valid",
+            id="blob-part",
+        ),
+        pytest.param(
+            "blob-uuid",
+            f"{_HELLO}\nsend(42, {_put_of_a_blob(_BLOB_UUID.upper(), 'a/b')})",
+            "the library refused a message from the Page: an IndexedDB call that is not valid",
+            id="blob-uuid",
+        ),
+        pytest.param(
+            "blob-type",
+            f"{_HELLO}\nsend(42, {_put_of_a_blob(_BLOB_UUID, 'a/b' + chr(10))})",
+            "the library refused a message from the Page: an IndexedDB call that is not valid",
+            id="blob-type",
         ),
         pytest.param(
             "page-refuses",

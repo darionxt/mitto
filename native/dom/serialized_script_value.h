@@ -97,10 +97,10 @@ class SerializedScriptValue {
 
   // A value that went as its bytes, as Chrome's CloneableMessage carries
   // them, without the WebAssembly modules and the SharedArrayBuffers, which
-  // stay in their agent cluster. One from a context of the same Page has
-  // `blob_data_handles`, the blobs it carries, as Chrome's browser hands them
-  // over. One from another process has none, so its blobs read as empty: a
-  // Known Gap.
+  // stay in their agent cluster. One from a context of the same Page, or from
+  // IndexedDB, has `blob_data_handles`, the blobs it carries, as Chrome's
+  // browser hands them over. A message from another Page has none, so its
+  // blobs read as empty: a Known Gap.
   static SerializedScriptValue FromWireData(
       std::vector<uint8_t> data,
       BlobDataHandleMap blob_data_handles = BlobDataHandleMap());

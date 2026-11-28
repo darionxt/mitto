@@ -16,6 +16,7 @@ bool EndsCall(const PageIndexedDbCallback& callback) {
   switch (callback.op) {
     case IndexedDbCallbackOp::kBlocked:
     case IndexedDbCallbackOp::kUpgradeNeeded:
+    case IndexedDbCallbackOp::kBlob:
       return false;
     case IndexedDbCallbackOp::kGetAllResult:
       return callback.done;
@@ -26,18 +27,22 @@ bool EndsCall(const PageIndexedDbCallback& callback) {
 
 // What a call that cannot be sent hears instead, as an error of its own: the
 // error that Blink's IDBTransaction::Put() gives one too large for a Mojo
-// message, with the size of a frame. Like Blink's, the Session does not count
-// it among the errors it sent.
+// message, with the size of a frame, or of the blobs that a put may hold. Like
+// Blink's, the Session does not count it among the errors it sent.
 PageIndexedDbCallback TooLargeAnswer(const PageIndexedDbCall& call) {
+  uint64_t size = call.value.BlobsSize();
+  size_t max = kMaxIndexedDbBlobsSize;
+  if (size <= max) {
+    size = EncodeIndexedDbCall(call).size();
+    max = kMaxPayloadSize - sizeof(uint64_t);
+  }
   PageIndexedDbCallback answer;
   answer.call = call.call;
   answer.error = IndexedDbException::kUnknownError;
   answer.message =
       base::StrCat({u"The serialized keys and/or value are too large (size=",
-                    base::NumberToString16(EncodeIndexedDbCall(call).size()),
-                    u" bytes, max=",
-                    base::NumberToString16(kMaxPayloadSize - sizeof(uint64_t)),
-                    u" bytes)."});
+                    base::NumberToString16(size), u" bytes, max=",
+                    base::NumberToString16(max), u" bytes)."});
   switch (call.op) {
     case IndexedDbCallOp::kPut:
       answer.op = IndexedDbCallbackOp::kPutResult;
@@ -141,12 +146,19 @@ void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
   if (call.op == IndexedDbCallOp::kOpen) {
     sender_->AddIndexedDbConnection(host_, call.connection);
   }
+  SendIndexedDbBlobs(call.value, [this, &call](IndexedDbBlobPart part) {
+    PageIndexedDbCall blob;
+    blob.op = IndexedDbCallOp::kPutBlob;
+    blob.transaction = call.transaction;
+    blob.blob_part = std::move(part);
+    Send(blob);
+  });
   const uint64_t number =
       sender_->SendIndexedDbCall(host_, [this, &call](uint64_t number) {
         call.call = number;
         return EncodeIndexedDb(document_, call);
       });
-  calls_.emplace(number, std::move(answer));
+  calls_[number].answer = std::move(answer);
   if (call.op == IndexedDbCallOp::kOpen) {
     opens_.emplace(number, call.connection);
   }
@@ -248,8 +260,19 @@ void SessionIndexedDb::OnCallback(uint64_t host,
     return;
   }
   const uint64_t call = callback.call;
+  IndexedDbBlobs& blobs = found->second.blobs;
+  if (callback.op == IndexedDbCallbackOp::kBlob) {
+    if (!blobs.Add(std::move(callback.blob_part))) {
+      refuse_.Run("a part of an IndexedDB blob that continues none");
+    }
+    return;
+  }
+  if (!blobs.PutInto(callback.Values())) {
+    refuse_.Run("an IndexedDB value whose blobs did not come");
+    return;
+  }
   const bool ends = EndsCall(callback);
-  Answer answer = ends ? std::move(found->second) : found->second;
+  Answer answer = ends ? std::move(found->second.answer) : found->second.answer;
   if (ends) {
     calls_.erase(found);
     sender_->ForgetIndexedDbCall(call);

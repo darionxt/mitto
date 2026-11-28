@@ -29,7 +29,7 @@ PageIndexedDbCallback CursorEnded() {
 
 size_t EntrySize(const IndexedDbBackingStore::Cursor& cursor) {
   return cursor.key().SizeEstimate() + cursor.primary_key().SizeEstimate() +
-         cursor.value().size();
+         cursor.value().Size();
 }
 
 }  // namespace
@@ -89,7 +89,7 @@ PageIndexedDbCallback IndexedDbCursor::CurrentEntry() {
   answer.primary_keys.push_back(cursor_->primary_key());
   if (!key_only_) {
     IndexedDbReturnValue value;
-    value.bits = cursor_->value();
+    value.value = cursor_->value();
     answer.values.push_back(std::move(value));
   }
   return answer;
@@ -200,8 +200,8 @@ bool IndexedDbCursor::PrefetchOperation(uint32_t count,
     answer.primary_keys.push_back(cursor_->primary_key());
     if (!key_only_) {
       IndexedDbReturnValue value;
-      value.bits = cursor_->value();
-      size_estimate += value.bits.size();
+      value.value = cursor_->value();
+      size_estimate += value.value.Size();
       answer.values.push_back(std::move(value));
     }
     size_estimate +=
