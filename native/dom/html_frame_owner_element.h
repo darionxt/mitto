@@ -27,6 +27,7 @@
 namespace mitto {
 
 class Document;
+enum class FetchReferrerPolicy;
 class Frame;
 class PermissionsPolicy;
 class Window;
@@ -135,6 +136,9 @@ class HTMLFrameOwnerElement : public HTMLElement {
   bool LazyLoadIfPossible(const GURL& url);
   // LazyLoadFrameObserver::LoadImmediately(): the navigation that waits goes.
   void LoadLazyFrameImmediately();
+  // HTMLFrameOwnerElement::ReferrerPolicyAttribute(): the referrer policy that
+  // referrerpolicy gives the navigation that the element starts.
+  FetchReferrerPolicy ReferrerPolicyAttribute() const;
   bool IsLazyLoadPending() const { return lazy_load_url_.has_value(); }
 
   raw_ptr<Frame> content_frame_ = nullptr;
@@ -158,6 +162,8 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // The URL that the frame's navigation waits with, and the number of the
   // wait, which a later one or a cancel takes the place of.
   std::optional<GURL> lazy_load_url_;
+  // Value-initialized, FetchReferrerPolicy::kDefault.
+  FetchReferrerPolicy lazy_load_referrer_policy_{};
   uint64_t lazy_load_number_ = 0;
 };
 

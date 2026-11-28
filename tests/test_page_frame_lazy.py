@@ -1,8 +1,8 @@
 """Tests of lazy frames and of credentials in a frame's URL, on a local server.
 
 Each case is a page whose script logs its own events, its frames' load events and what their documents tell it, while the server keeps
-which children it was asked for. The expected values are what headless Chrome for Testing 157.0.8103.79 gave for the same pages, the
-same each time, five times for the lazy frames and twice for the credentials, with the console of the latter.
+which children it was asked for, with their Referer lines. The expected values are what headless Chrome for Testing 157.0.8103.79 gave
+for the same pages, the same each time, twice or more, with the console for the credentials.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ from tests.local_server import QuietServer
 
 _TIMEOUT_SECONDS = 120
 _GRACE_SECONDS = 0.3
+# How long the server holds the rest of a gated page's body at most.
+_GATE_SECONDS = 10
 _HEAD = """<!doctype html><script>
 const said = [];
 const log = (text) => said.push(text);
@@ -37,61 +39,78 @@ const where = (frame) => {
 };
 </script>"""
 _CHILD = "<!doctype html><script>parent.postMessage('child ran ' + location.search, '*');</script>"
-# Where the server waits 300 ms in a page's body, so that the page's first rendering opportunity comes while it parses, as Chrome's comes
-# before DOMContentLoaded for a page whose body comes at once.
-_PAUSE = "<!--pause-->"
+# Where the server holds the rest of a page's body until the page fetches /release, so that what the page waits for happens while it
+# parses, as it does in Chrome, whose first rendering opportunity comes before DOMContentLoaded.
+_GATE = "<!--gate-->"
+_RELEASE = "; fetch('/release')"
 
 
-def _frame(name: str, extra: str = "", src: str | None = None) -> str:
+def _frame(name: str, extra: str = "", src: str | None = None, then: str = "") -> str:
     source = src if src is not None else f"/child?{name}"
-    return f"<iframe id={name} {extra} src='{source}' onload=\"log('frame load {name} ' + where(this))\"></iframe>"
+    return (
+        f"<iframe id={name} {extra} src='{source}' onload=\"log('frame load {name} ' + where(this)){then}\"></iframe>"
+    )
 
 
 _LAZY: dict[str, tuple[str, list[str], list[str]]] = {
     "parsed": (
-        _frame("a", "loading=lazy")
+        _frame("a", "loading=lazy", then=_RELEASE)
         + "<script>log('script ' + where(document.querySelector('iframe')))</script>"
-        + _PAUSE,
+        + _GATE,
         ["script about:blank", "frame load a /child?a", "DOMContentLoaded", "parent load"],
-        ["/child?a"],
+        ["/child?a referer http://A/parsed"],
     ),
     "eager": (
         _frame("a", "loading=lazy")
         + "<script>document.querySelector('iframe').loading = 'eager'; log('set eager')</script>",
         ["set eager", "DOMContentLoaded", "frame load a /child?a", "parent load"],
-        ["/child?a"],
+        ["/child?a referer http://A/eager"],
     ),
     "removed": (
         _frame("a", "loading=lazy")
         + "<script>document.querySelector('iframe').removeAttribute('loading'); log('removed loading')</script>",
         ["removed loading", "DOMContentLoaded", "frame load a /child?a", "parent load"],
-        ["/child?a"],
+        ["/child?a referer http://A/removed"],
     ),
     "navigated": (
         _frame("a", "loading=lazy")
         + "<script>document.querySelector('iframe').contentWindow.location.href = '/child?b'; log('navigated')</script>",
         ["navigated", "DOMContentLoaded", "frame load a /child?b", "parent load"],
-        ["/child?b"],
+        ["/child?b referer http://A/navigated"],
     ),
     "src": (
-        _frame("a", "loading=lazy")
+        _frame("a", "loading=lazy", then=_RELEASE)
         + "<script>document.querySelector('iframe').src = '/child?b'; log('src b')</script>"
-        + _PAUSE,
+        + _GATE,
         ["src b", "frame load a /child?b", "DOMContentLoaded", "parent load"],
-        ["/child?b"],
+        ["/child?b referer http://A/src"],
+    ),
+    "nosrc": (
+        _frame("a", "loading=lazy")
+        + "<script>document.querySelector('iframe').removeAttribute('src');"
+        + " log('no src ' + where(document.querySelector('iframe')))</script>",
+        ["frame load a about:blank", "no src about:blank", "DOMContentLoaded", "parent load"],
+        [],
+    ),
+    "policy": (
+        _frame("a", "loading=lazy referrerpolicy=no-referrer", then=_RELEASE)
+        + "<script>document.querySelector('iframe').referrerPolicy = 'unsafe-url'; log('unsafe-url')</script>"
+        + _GATE,
+        ["unsafe-url", "frame load a /child?a", "DOMContentLoaded", "parent load"],
+        ["/child?a"],
     ),
     "inserted": (
         "<body><script>addEventListener('load', () => {"
         f" document.body.insertAdjacentHTML('beforeend', `{_frame('a', 'loading=lazy')}`); log('inserted');"
         " requestAnimationFrame(() => log('raf')); });</script>",
         ["DOMContentLoaded", "parent load", "inserted", "raf", "frame load a /child?a"],
-        ["/child?a"],
+        ["/child?a referer http://A/inserted"],
     ),
     "detached": (
         _frame("a", "loading=lazy") + "<script>const f = document.querySelector('iframe'); f.remove(); log('removed');"
         " setTimeout(() => { document.body.append(f); log('back'); }, 200);</script>",
         ["removed", "DOMContentLoaded", "parent load", "back", "frame load a /child?a"],
-        ["/child?a"],
+        ["/child?a referer http://A/detached"],
     ),
     "srcdoc": (
         "<iframe loading=lazy srcdoc='<script>parent.postMessage(`srcdoc ran`, `*`)</script>'"
@@ -107,12 +126,14 @@ _LAZY: dict[str, tuple[str, list[str], list[str]]] = {
     "noscript": (
         "<iframe sandbox src='/inner' onload=\"log('frame load inner')\"></iframe>",
         ["DOMContentLoaded", "frame load inner", "parent load"],
-        ["/inner", "/child?innerchild"],
+        ["/inner referer http://A/noscript", "/child?innerchild"],
     ),
     "nested": (
-        _frame("outer", "loading=lazy") + _PAUSE,
+        "<script>addEventListener('message', ({data}) => { if (data === 'deep load') fetch('/release'); });</script>"
+        + _frame("outer", "loading=lazy")
+        + _GATE,
         ["frame load outer /child?outer", "deep load", "DOMContentLoaded", "parent load"],
-        ["/child?outer", "/child?deep"],
+        ["/child?outer referer http://A/nested", "/child?deep referer http://A/child?outer"],
     ),
 }
 
@@ -120,6 +141,29 @@ _WARNING = (
     "Subresource requests whose URLs contain embedded credentials (e.g. `https://user:pass@host/`) are blocked. See "
     "https://www.chromestatus.com/feature/5669008342777856 for more details."
 )
+# The cases of credentials, by name: whether the page's own URL has u:p, then what it logs, its frame f's URL at the end, what the
+# server was asked for, and whether the console has Chrome's warning.
+_CREDENTIALS: dict[str, tuple[bool, list[str], str, list[str], bool]] = {
+    "same": (False, ["parent load"], "about:blank", [], True),
+    "user": (False, ["parent load"], "about:blank", [], True),
+    "redirected": (False, ["parent load"], "about:blank", ["/redirect?redirected referer http://A/redirected"], True),
+    "location": (
+        False,
+        ["frame load f /child?location", "set location", "parent load"],
+        "/child?location",
+        ["/child?location referer http://A/location"],
+        True,
+    ),
+    "named": (False, ["opened", "parent load"], "/child?named", ["/child?named referer http://A/named"], True),
+    "samecreds": (
+        True,
+        ["frame load f /child?samecreds", "parent load"],
+        "/child?samecreds",
+        ["/child?samecreds referer http://A/samecreds"],
+        False,
+    ),
+    "opened": (True, ["opened", "parent load"], "/opened", [], True),
+}
 
 
 class _Server(QuietServer):
@@ -128,6 +172,7 @@ class _Server(QuietServer):
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.asked: list[str] = []
+        self.release = threading.Event()
         self.a = f"127.0.0.1:{self.server_port}"
         self.b = f"localhost:{self.server_port}"
 
@@ -145,6 +190,11 @@ class _Server(QuietServer):
             " }, {once: true});</script>",
             "named": "<iframe id=f name=target src='/child?named'></iframe><script>document.getElementById('f').addEventListener("
             f"'load', () => {{ open('http://u:p@{a}/child?named2', 'target'); log('opened'); }}, {{once: true}});</script>",
+            "samecreds": _frame("f", src=f"http://u:p@{a}/child?samecreds"),
+            "opened": "<iframe id=f></iframe><script>const d = document.getElementById('f').contentDocument; d.open();"
+            f" d.write(`<iframe src='http://u:p@{a}/child?opened'"
+            " onload=\"parent.postMessage('grandchild load', '*')\"></iframe>`);"
+            " d.close(); log('opened');</script>",
         }[name]
 
 
@@ -155,7 +205,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         assert isinstance(self.server, _Server)
         path, _, query = self.path.partition("?")
         if path in ("/child", "/inner", "/redirect"):
-            self.server.asked.append(self.path)
+            referer = self.headers["Referer"]
+            # The Referer, whole, with A for the server's host.
+            self.server.asked.append(self.path + (f" referer {referer.replace(self.server.a, 'A')}" if referer else ""))
+        if path == "/release":
+            self.server.release.set()
         if path == "/redirect":
             self.send_response(302)
             self.send_header("Location", f"http://user:pass@{self.server.a}/child?{query}")
@@ -171,6 +225,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             body = _CHILD
         elif path == "/inner":
             body = "<!doctype html><iframe loading=lazy src='/child?innerchild'></iframe>"
+        elif path == "/release":
+            body = ""
         else:
             body = _HEAD + self.server.page(path[1:])
         data = body.encode()
@@ -178,12 +234,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        first, pause, rest = data.partition(_PAUSE.encode())
+        first, gate, rest = data.partition(_GATE.encode())
         self.wfile.write(first)
         self.wfile.flush()
-        if pause:
-            time.sleep(0.3)
-        self.wfile.write(pause + rest)
+        if gate:
+            self.server.release.wait(_GATE_SECONDS)
+        self.wfile.write(gate + rest)
 
     def log_message(self, format: str, *args: Any) -> None:
         pass
@@ -199,15 +255,16 @@ def page_program(native_library: Any) -> None:
 
 
 @contextlib.contextmanager
-def _page_of(name: str) -> Generator[tuple[Any, _Server]]:
-    """Open the case `name` and give its Page and the server."""
+def _page_of(name: str, *, credentials: bool = False) -> Generator[tuple[Any, _Server]]:
+    """Open the case `name`, at a URL with u:p if `credentials`, and give its Page and the server."""
     server = _Server()
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    url = f"http://{server.a}/{name}"
+    url = f"http://{'u:p@' if credentials else ''}{server.a}/{name}"
     try:
         with mitto.Session() as session, session._open_page(url, timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
             yield page, server
     finally:
+        server.release.set()
         server.shutdown()
         server.server_close()
 
@@ -235,32 +292,13 @@ def test_a_lazy_frame_loads_as_chrome_s_does(name: str) -> None:
 
 
 @pytest.mark.usefixtures("page_program")
-@pytest.mark.parametrize(
-    ("name", "said", "asked"),
-    [
-        ("same", ["parent load", "at end f about:blank"], []),
-        ("user", ["parent load", "at end f about:blank"], []),
-        ("redirected", ["parent load", "at end f about:blank"], ["/redirect?redirected"]),
-        (
-            "location",
-            [
-                "frame load f /child?location",
-                "set location",
-                "parent load",
-                "at end f /child?location",
-            ],
-            ["/child?location"],
-        ),
-        ("named", ["opened", "parent load", "at end f /child?named"], ["/child?named"]),
-    ],
-)
-def test_a_frame_goes_to_no_url_with_credentials(name: str, said: list[str], asked: list[str]) -> None:
-    with _page_of(name) as (page, server):
-        logged = [line for line in _said_once_settled(page, len(said)) if line != "DOMContentLoaded"]
-        logged += [
-            f"at end f {where}"
-            for where in page.evaluate("[where(document.getElementById('f'))]", timeout=_TIMEOUT_SECONDS)
-        ]
+@pytest.mark.parametrize("name", list(_CREDENTIALS))
+def test_a_frame_goes_to_a_url_with_credentials_as_chrome_lets_it(name: str) -> None:
+    credentials, said, at_end, asked, warned = _CREDENTIALS[name]
+    with _page_of(name, credentials=credentials) as (page, server):
+        # DOMContentLoaded comes in each, where Chrome's recording did not log it.
+        logged = [line for line in _said_once_settled(page, len(said) + 1) if line != "DOMContentLoaded"]
         assert logged == said
+        assert page.evaluate("where(document.getElementById('f'))", timeout=_TIMEOUT_SECONDS) == at_end
         assert server.asked == asked
-        assert [message.text for message in page.console_messages] == [_WARNING]
+        assert [message.text for message in page.console_messages] == ([_WARNING] if warned else [])

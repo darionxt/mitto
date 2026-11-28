@@ -11,6 +11,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/frame.h"
 #include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/html_parser_idioms.h"
@@ -317,7 +318,13 @@ void HTMLFrameOwnerElement::OpenURL() {
              LazyLoadIfPossible(url)) {
     return;
   }
-  content_frame_->NavigateFromOwner(url);
+  content_frame_->NavigateFromOwner(url, ReferrerPolicyAttribute());
+}
+
+FetchReferrerPolicy HTMLFrameOwnerElement::ReferrerPolicyAttribute() const {
+  const std::u16string* const policy = FindAttribute(u"referrerpolicy");
+  return policy ? FetchReferrerPolicyFromString(*policy)
+                : FetchReferrerPolicy::kDefault;
 }
 
 bool HTMLFrameOwnerElement::LazyLoadIfPossible(const GURL& url) {
@@ -349,7 +356,10 @@ bool HTMLFrameOwnerElement::LazyLoadIfPossible(const GURL& url) {
   // observer goes from the next rendering opportunity's post-lifecycle steps.
   // A Page lays nothing out, so a frame that waits comes near the viewport
   // then, as a lazy image does.
+  // It keeps its request as it was, with the referrer policy that the element
+  // had then.
   lazy_load_url_ = url;
+  lazy_load_referrer_policy_ = ReferrerPolicyAttribute();
   const uint64_t number = ++lazy_load_number_;
   window->RequestPostLifecycleSteps(base::BindOnce(
       [](const cppgc::WeakPersistent<HTMLFrameOwnerElement>& element,
@@ -369,7 +379,7 @@ void HTMLFrameOwnerElement::LoadLazyFrameImmediately() {
   // Its frame stays the one it waited in, as the element's disconnect cancels
   // the wait.
   if (content_frame_) {
-    content_frame_->NavigateFromOwner(url);
+    content_frame_->NavigateFromOwner(url, lazy_load_referrer_policy_);
   }
 }
 

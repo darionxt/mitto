@@ -977,9 +977,9 @@ class PageHost::ResponseChecks {
     // NavigationRequest::OnRequestRedirected(): then each redirect of a
     // frame's navigation is held to CheckCredentialedSubresource().
     if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
-        !checks_.frame_ancestor_urls.empty() &&
+        checks_.parent_committed_url &&
         BlocksCredentialedSubresource(GURL(event.new_url),
-                                      checks_.frame_ancestor_urls.front())) {
+                                      *checks_.parent_committed_url)) {
       credentialed_redirect_ = true;
       return net::ERR_ABORTED;
     }
@@ -1833,8 +1833,8 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   } else if (!url.SchemeIsHTTPOrHTTPS()) {
     net_error = net::ERR_UNKNOWN_URL_SCHEME;
   } else if (frame_parent != kNoDocument &&
-             BlocksCredentialedSubresource(url,
-                                           contexts_.at(frame_parent).url)) {
+             BlocksCredentialedSubresource(
+                 url, contexts_.at(frame_parent).LastCommittedUrl())) {
     // NavigationRequest::BeginNavigationImpl(): a frame's navigation to a URL
     // with credentials ends before it starts, and the frame keeps its
     // document, as the parent's console is warned.
@@ -2013,6 +2013,12 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     worker_scripts_[asked.number] = {.creator = context_id};
     creator_embedder_policy = context.coep;
   }
+  // The URL that the parent's document last committed, which each redirect of
+  // a frame's navigation is held to as well.
+  std::optional<GURL> parent_committed_url;
+  if (frame_parent != kNoDocument) {
+    parent_committed_url = contexts_.at(frame_parent).LastCommittedUrl();
+  }
   FetchChecks checks{
       .cors = options_mode == RequestMode::kCors,
       .same_origin = options_mode == RequestMode::kSameOrigin,
@@ -2025,7 +2031,8 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .embedder_policy = contexts_.at(settings_id).coep,
       .frame_ancestor_urls = std::move(frame_ancestor_urls),
       .parent_embedder_policy = std::move(parent_embedder_policy),
-      .parent_origin = std::move(parent_origin)};
+      .parent_origin = std::move(parent_origin),
+      .parent_committed_url = std::move(parent_committed_url)};
   if (asked.deferred) {
     deferred_bytes_ += deferred_size;
     deferred_bytes_of_context_[context_id] += deferred_size;
@@ -3866,6 +3873,9 @@ void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
   // Document::open() sets no URL for an about:srcdoc opener.
   const bool changed = url != context.url && !url.IsAboutSrcdoc();
   if (changed) {
+    if (!context.url_before_open) {
+      context.url_before_open = context.url;
+    }
     context.url = url;
   }
   // The Page's URL is its top-level document's.
@@ -3919,6 +3929,7 @@ void PageHost::OnSameDocumentNavigation(uint64_t document,
     return;
   }
   document_url = new_url;
+  context.url_before_open.reset();
   // A traversal may go back to an entry of this URL.
   if (const auto found = records_.find(document); found != records_.end()) {
     NavigationRecord& record = found->second;

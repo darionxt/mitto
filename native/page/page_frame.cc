@@ -387,7 +387,12 @@ Frame* PageFrame::CreateChildFrame(HTMLFrameOwnerElement& owner,
   return &child;
 }
 
-void PageFrame::NavigateFromOwner(const GURL& url) {
+void PageFrame::NavigateFromOwner(const GURL& url,
+                                  FetchReferrerPolicy referrer_policy) {
+  // LocalFrame::Navigate(): any navigation that the element starts takes the
+  // place of one that its loading=lazy deferred, the synchronous one to
+  // about:blank too.
+  CancelOwnerLazyLoad();
   // RenderFrameImpl::BeginNavigation(): the first navigation of a frame on
   // its initial about:blank to about:blank, which its element starts from a
   // document of its origin, commits at once.
@@ -406,14 +411,7 @@ void PageFrame::NavigateFromOwner(const GURL& url) {
   FrameLoadRequest request;
   request.url = url;
   request.origin_window = parent_->window_.Get();
-  // HTMLFrameOwnerElement::ReferrerPolicyAttribute(): the iframe's
-  // referrerpolicy, for the navigation's referrer.
-  if (HTMLFrameOwnerElement* const owner = owner_.Get()) {
-    if (const std::u16string* const policy =
-            owner->FindAttribute(u"referrerpolicy")) {
-      request.referrer_policy = FetchReferrerPolicyFromString(*policy);
-    }
-  }
+  request.referrer_policy = referrer_policy;
   Navigate(*window_, request, FrameLoadType::kStandard);
 }
 
@@ -721,6 +719,7 @@ void PageFrame::RemoveChild(PageFrame& child) {
 }
 
 void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
+  CancelOwnerLazyLoad();
   navigated_ = true;
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);

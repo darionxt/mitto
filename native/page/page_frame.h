@@ -123,7 +123,8 @@ class PageFrame final : public NavigationClient, public Frame {
   bool IsLoading() const override;
   Frame* CreateChildFrame(HTMLFrameOwnerElement& owner,
                           std::u16string name) override;
-  void NavigateFromOwner(const GURL& url) override;
+  void NavigateFromOwner(const GURL& url,
+                         FetchReferrerPolicy referrer_policy) override;
   void Detach() override;
   NavigationRateLimiter& GetNavigationRateLimiter() override;
   void DidChangeCredentialless() override;
