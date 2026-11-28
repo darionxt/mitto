@@ -209,6 +209,10 @@ struct PageFrame::StoredDocument {
   uint64_t browsing_instance = 0;
   // The frame's name, which Chrome's frame of the page keeps with it.
   std::u16string name;
+  // Whether the page's own frame opened it, as its renderer keeps the opener
+  // that it had: a stored page has no frames, so nothing else of its browsing
+  // instance has.
+  bool opened_itself = false;
   // The microtasks of the context, which wait in a queue of their own once the
   // task that stored it has ended, as kBackForwardCachePauseMicrotasks pauses
   // those of a frozen page's agent.
@@ -300,6 +304,8 @@ void PageFrame::Start(const PageConnection& connection) {
     document.SetInCredentiallessPartition(in_partition);
     document.SetInSandboxedProcess(
         parent_ && parent_->window_->GetDocument().IsInSandboxedProcess());
+    document.SetCanNavigateTop(
+        parent_->window_->GetDocument().CanNavigateTop());
     ApplyPermissionsPolicy(document, GURL(), PendingContainerPolicy());
     // Its about base URL is its creator's base URL, as Blink's
     // DocumentInit::WithFallbackBaseURL() gives it, and its cookie URL its
@@ -593,6 +599,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   document->SetCredentialless(navigation.credentialless);
   document->SetInCredentiallessPartition(navigation.credentialless);
   document->SetInSandboxedProcess(navigation.sandboxed_process);
+  document->SetCanNavigateTop(CanNavigateTop(origin, navigation.sandbox));
   ApplyPermissionsPolicy(*document, url, navigation.container_policy);
   DidShowDocument(*window_);
   WarnIfSandboxIneffective();
@@ -748,6 +755,7 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   document->SetOrigin(origin);
   document->SetSandboxFlags(old_document.GetSandboxFlags());
   document->SetInSandboxedProcess(old_document.IsInSandboxedProcess());
+  document->SetCanNavigateTop(old_document.CanNavigateTop());
   ApplyPermissionsPolicy(*document, url, PendingContainerPolicy());
   if (origin.GetURL().SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(&runner_->cookie_jar());
@@ -797,6 +805,14 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   if (IgnoresLeavingDocument() || leaving_ == Leaving::kStays) {
     return;
   }
+  // BlockedSchemeNavigationThrottle: the browser cancels it, and the top-level
+  // document's console says so.
+  if (request.url.SchemeIsFileSystem() && !TraversalWaits()) {
+    Top().DomWindow()->AddConsoleMessage(
+        ConsoleLevel::kError,
+        base::StrCat({"Not allowed to navigate to filesystem URL: ",
+                      request.url.spec()}));
+  }
   if (parent_) {
     // The newest navigation of a frame takes the place of a srcdoc or an
     // about:blank that waits, whatever its URL. A frame's navigation to a
@@ -811,6 +827,14 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       CheckParentLoadSoon();
       return;
     }
+  }
+  if (parent_ && request.url.IsAboutSrcdoc() && !MayShowSrcdoc(request)) {
+    // It fails with ERR_INVALID_URL.
+    StopAllLoaders();
+    provisional_sandbox_ = PendingSandboxFlags();
+    provisional_container_policy_ = PendingContainerPolicy();
+    CommitErrorPageSoon(provisional_sandbox_, provisional_container_policy_);
+    return;
   }
   if (parent_ && (request.url.IsAboutSrcdoc() || request.url.IsAboutBlank())) {
     // A srcdoc or an about:blank goes through Chrome's browser and commits
@@ -972,10 +996,23 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   page_request.user_activation = request.user_activation;
   page_request.reload = request.reload;
   page_request.referrer_policy = ToPageReferrerPolicy(request.referrer_policy);
+  if (request.names_referrer && request.initiator_referrer.is_empty()) {
+    page_request.referrer_policy = PageReferrerPolicy::kNoReferrer;
+  } else if (request.names_referrer) {
+    page_request.referrer = request.initiator_referrer.spec();
+  }
   // A worker's thread may number a request in between, so the loader learns
   // its number once the request has it.
   provisional_->SetNumber(runner_->requests().StartNavigation(
       request.initiator, std::move(page_request), *provisional_));
+}
+
+bool PageFrame::MayShowSrcdoc(const NavigationRequest& request) const {
+  const Document& document = window_->GetDocument();
+  return request.initiator_origin ==
+             parent_->window_->GetDocument().GetOrigin() ||
+         (GURL(document.UrlForBinding()).IsAboutSrcdoc() &&
+          request.initiator_origin.IsSameOriginWith(document.GetOrigin()));
 }
 
 bool PageFrame::IsSelfReferential(const GURL& url) const {
@@ -1625,6 +1662,12 @@ Document* PageFrame::CommitNavigation(
   } else {
     current_ = std::move(committing);
   }
+  // A page of another browsing instance than the one it leaves, as
+  // RenderFrameHostManager::ShouldProactivelySwapBrowsingInstance() swaps
+  // it for the back/forward cache, has nothing of that one open it.
+  if (!parent_ && next_browsing_instance != browsing_instance_) {
+    SetOpener(nullptr);
+  }
   Document& document =
       CommitDocument(current_->number(), url, navigation_start, connection,
                      isolation, policy_headers, xml_content_type);
@@ -1758,6 +1801,7 @@ void PageFrame::RestoreDocument(DocumentLoader& loader) {
   worker_starter_ = std::move(stored->worker_starter);
   chrome_object_data_ = stored->chrome_object_data;
   name_ = std::move(stored->name);
+  SetOpener(stored->opened_itself ? this : nullptr);
   current_ = std::move(stored->loader);
   browsing_instance_ = stored->browsing_instance;
   MemoryInfo::SetProcessLockedToSite(true);
@@ -1954,6 +1998,7 @@ void PageFrame::StoreDocument(std::unique_ptr<DocumentLoader> loader) {
           : 0;
   stored->entry = history().CurrentRootRef();
   stored->name = name_;
+  stored->opened_itself = Opener() == this;
   stored->context = std::move(context_);
   stored->window = window_.Get();
   window_ = nullptr;
@@ -2332,6 +2377,7 @@ Document& PageFrame::CommitDocument(
   document->SetCredentialless(credentialless);
   document->SetInCredentiallessPartition(credentialless);
   document->SetInSandboxedProcess(IsOriginSandboxed(sandbox));
+  document->SetCanNavigateTop(CanNavigateTop(origin, sandbox));
   ApplyPermissionsPolicy(*document, url, provisional_container_policy_,
                          std::move(declared));
   // Blink's Document::CookieURL() is the URL it was made at, which a
@@ -2393,6 +2439,21 @@ bool PageFrame::AllowsIsolation(const url::Origin& origin,
       container_policy, origin, /*unload_deprecated=*/false, headerless,
       declared);
   return state.IsEnabled(PolicyFeatureNamed("cross-origin-isolated"));
+}
+
+bool PageFrame::CanNavigateTop(const url::Origin& origin,
+                               SandboxFlags sandbox) const {
+  if (!parent_) {
+    return true;
+  }
+  const PageFrame* top = parent_;
+  while (top->parent_) {
+    top = top->parent_;
+  }
+  return origin.IsSameOriginWith(top->window_->GetSecurityOrigin()) ||
+         (parent_->window_->GetDocument().CanNavigateTop() &&
+          sandbox != SandboxFlags::kNone &&
+          (sandbox & SandboxFlags::kTopNavigation) == SandboxFlags::kNone);
 }
 
 ParsedPolicy PageFrame::PendingContainerPolicy() const {

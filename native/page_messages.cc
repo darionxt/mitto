@@ -210,6 +210,8 @@ bool IsKnown(uint32_t type) {
           type <= static_cast<uint32_t>(PageMessage::kContextGone)) ||
          (type >= static_cast<uint32_t>(PageMessage::kRequestBodyPart) &&
           type <= static_cast<uint32_t>(PageMessage::kRequestBodyCredit)) ||
+         (type >= static_cast<uint32_t>(PageMessage::kUploadProgress) &&
+          type <= static_cast<uint32_t>(PageMessage::kUploadProgressTaken)) ||
          type == static_cast<uint32_t>(PageMessage::kNetworkHint) ||
          (type >= static_cast<uint32_t>(PageMessage::kStorageBuckets) &&
           type <= static_cast<uint32_t>(PageMessage::kStorageBucketsAnswer)) ||
@@ -234,19 +236,17 @@ bool IsRequestKind(uint8_t kind) {
          kind <= static_cast<uint8_t>(PageRequestKind::kPrefetch);
 }
 
-// The flags of a request.
-// 1 was a fetch of mode same-origin, which the mode says now.
+// The flags of a request, which take every bit of their byte: a new flag needs
+// a byte of its own. 1 was a fetch of mode same-origin, which the mode says
+// now.
+constexpr uint8_t kForcePreflightFlag = 1;
 constexpr uint8_t kUserActivationFlag = 2;
 constexpr uint8_t kReloadFlag = 4;
 constexpr uint8_t kKeepaliveFlag = 8;
 constexpr uint8_t kSynchronousFlag = 16;
 constexpr uint8_t kNoReferrerFlag = 32;
 constexpr uint8_t kStreamsBodyFlag = 64;
-// The flags byte's last free bit.
 constexpr uint8_t kDeferredFlag = 128;
-constexpr uint8_t kRequestFlags =
-    kUserActivationFlag | kReloadFlag | kKeepaliveFlag | kSynchronousFlag |
-    kNoReferrerFlag | kStreamsBodyFlag | kDeferredFlag;
 
 // The last value of each byte of a request's fixed part.
 constexpr uint8_t kLastRequestMode = static_cast<uint8_t>(PageRequestMode::kCors);
@@ -866,9 +866,7 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   }
   request.kind = static_cast<PageRequestKind>(kind);
   const uint8_t flags = static_cast<uint8_t>(bytes[9]);
-  if (flags & ~kRequestFlags) {
-    return base::unexpected("a request with flags that are not ones");
-  }
+  request.force_preflight = flags & kForcePreflightFlag;
   request.user_activation = flags & kUserActivationFlag;
   request.reload = flags & kReloadFlag;
   request.keepalive = flags & kKeepaliveFlag;
@@ -903,7 +901,7 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   std::string_view referrer;
   if (!TakeSized(bytes, url) || !TakeSized(bytes, method) ||
       !TakeSized(bytes, headers) || !TakeSized(bytes, referrer) ||
-      bytes.empty() || static_cast<uint8_t>(bytes[0]) > 1 ||
+      bytes.empty() || static_cast<uint8_t>(bytes[0]) > 2 ||
       (bytes[0] == 0 && bytes.size() != 1)) {
     return base::unexpected("a request that does not hold what it says");
   }
@@ -920,8 +918,9 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
     return base::unexpected(base::StrCat({"a request with ", *why}));
   }
   request.headers = std::string(headers);
-  if (bytes[0] == 1) {
+  if (bytes[0] != 0) {
     request.body = std::string(bytes.substr(1));
+    request.reports_upload = bytes[0] == 2;
   }
   const bool without_body = base::EqualsCaseInsensitiveASCII(method, "GET") ||
                             base::EqualsCaseInsensitiveASCII(method, "HEAD");
@@ -965,6 +964,14 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   }
   if (request.synchronous && request.kind != PageRequestKind::kXhr) {
     return base::unexpected("a synchronous request that is not an XHR");
+  }
+  if (request.force_preflight && request.kind != PageRequestKind::kXhr) {
+    return base::unexpected("a forced preflight of a request not an XHR");
+  }
+  if (request.reports_upload &&
+      (request.kind != PageRequestKind::kXhr || request.synchronous)) {
+    return base::unexpected(
+        "an upload to hear of, of a request not an asynchronous XHR");
   }
   if (request.no_referrer && !request.referrer.empty()) {
     return base::unexpected("a request with no referrer and a referrer");
@@ -1452,6 +1459,22 @@ base::expected<PageStorageEvent, std::string> ReadStorageEvent(
     return base::unexpected("a storage event that is not valid");
   }
   return event;
+}
+
+base::expected<PageUploadProgress, std::string> ReadUploadProgress(
+    std::string_view bytes) {
+  if (bytes.size() != 24) {
+    return base::unexpected(
+        WrongSize("report of upload progress", bytes.size()));
+  }
+  PageUploadProgress progress;
+  progress.number = DecodeUint64(bytes.substr(0, 8));
+  progress.position = DecodeUint64(bytes.substr(8, 8));
+  progress.size = DecodeUint64(bytes.substr(16, 8));
+  if (progress.size == 0 || progress.position > progress.size) {
+    return base::unexpected("an upload past the end of its body");
+  }
+  return progress;
 }
 
 base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
@@ -2038,7 +2061,8 @@ std::string EncodeKnownGap(std::string_view name) {
 std::string EncodeRequest(uint64_t document, const PageRequest& request) {
   const char fixed[] = {
       static_cast<char>(request.kind),
-      static_cast<char>((request.user_activation ? kUserActivationFlag : 0) |
+      static_cast<char>((request.force_preflight ? kForcePreflightFlag : 0) |
+                        (request.user_activation ? kUserActivationFlag : 0) |
                         (request.reload ? kReloadFlag : 0) |
                         (request.keepalive ? kKeepaliveFlag : 0) |
                         (request.synchronous ? kSynchronousFlag : 0) |
@@ -2053,7 +2077,7 @@ std::string EncodeRequest(uint64_t document, const PageRequest& request) {
       static_cast<char>(request.cache_mode),
       static_cast<char>(request.redirect_mode),
   };
-  const char has_body = request.body ? 1 : 0;
+  const char has_body = !request.body ? 0 : request.reports_upload ? 2 : 1;
   return EncodeDocumentFrame(
       PageMessage::kRequest, document,
       base::StrCat(
@@ -2112,6 +2136,17 @@ std::string EncodeRequestBodyCredit(const PageCredit& credit) {
   return EncodeFrame(
       PageMessage::kRequestBodyCredit,
       base::StrCat({EncodeUint64(credit.number), EncodeUint32(credit.bytes)}));
+}
+
+std::string EncodeUploadProgress(const PageUploadProgress& progress) {
+  return EncodeFrame(PageMessage::kUploadProgress,
+                     base::StrCat({EncodeUint64(progress.number),
+                                   EncodeUint64(progress.position),
+                                   EncodeUint64(progress.size)}));
+}
+
+std::string EncodeUploadProgressTaken(uint64_t number) {
+  return EncodeFrame(PageMessage::kUploadProgressTaken, EncodeUint64(number));
 }
 
 std::string EncodeGetCookies(uint64_t document, uint64_t question) {
@@ -2802,6 +2837,13 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.request_body_ended = *ended;
       return frame;
     }
+    case PageMessage::kUploadProgressTaken:
+      if (payload.size() != 8) {
+        return base::unexpected(
+            WrongSize("report of upload progress taken", payload.size()));
+      }
+      frame.upload_progress_taken = DecodeUint64(payload);
+      return frame;
     case PageMessage::kDocumentCommitted: {
       base::expected<PageDocumentCommitted, std::string> committed =
           ReadDocumentCommitted(payload);
@@ -3013,6 +3055,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kIndexedDbCallback:
     case PageMessage::kStorageBucketsAnswer:
     case PageMessage::kRequestBodyCredit:
+    case PageMessage::kUploadProgress:
     case PageMessage::kPermissionsPolicy:
     case PageMessage::kIsolation:
     case PageMessage::kRestore:
@@ -3178,6 +3221,15 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.request_body_credit = *credit;
       return frame;
     }
+    case PageMessage::kUploadProgress: {
+      base::expected<PageUploadProgress, std::string> progress =
+          ReadUploadProgress(payload);
+      if (!progress.has_value()) {
+        return base::unexpected(std::move(progress).error());
+      }
+      frame.upload_progress = *progress;
+      return frame;
+    }
     case PageMessage::kPermissionsPolicy: {
       base::expected<PagePermissionsPolicy, std::string> policy =
           ReadPermissionsPolicy(payload);
@@ -3261,6 +3313,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kNetworkHint:
     case PageMessage::kRequestBodyPart:
     case PageMessage::kRequestBodyEnded:
+    case PageMessage::kUploadProgressTaken:
     case PageMessage::kTraversalRequest:
     case PageMessage::kRecordsReleased:
     case PageMessage::kDocumentStored:

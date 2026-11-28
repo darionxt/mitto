@@ -94,6 +94,15 @@ scoped_refptr<BlobDataHandle> BlobUrlRegistry::Resolve(const GURL& url) const {
   return found == entries_.end() ? nullptr : found->second.blob;
 }
 
+url::Origin BlobUrlRegistry::OriginOf(const GURL& url) const {
+  const url::Origin origin = url::Origin::Create(url);
+  if (!origin.opaque()) {
+    return origin;
+  }
+  const std::optional<Entry> entry = ResolveEntry(url.GetWithoutRef());
+  return entry ? entry->origin : origin;
+}
+
 std::optional<BlobUrlRegistry::Entry> BlobUrlRegistry::ResolveEntry(
     const GURL& url) const {
   base::AutoLock lock(lock_);

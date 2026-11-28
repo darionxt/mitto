@@ -49,6 +49,8 @@ source_set("header_rules") {
   sources = [
     "header_rules.cc",
     "header_rules.h",
+    "http_byte_range.cc",
+    "http_byte_range.h",
   ]
   deps = [ "//base" ]
 }
@@ -231,6 +233,8 @@ shared_library("mitto_core") {
     "sec_header_helpers.h",
     "session_settings.cc",
     "session_settings.h",
+    "upload_progress_tracker.cc",
+    "upload_progress_tracker.h",
     "socks5_auth_exchange.cc",
     "socks5_auth_exchange.h",
     "socks5_auth_socket_factory.cc",

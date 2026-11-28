@@ -1,14 +1,15 @@
 // A range of bytes that a Range header asks for, as //net's HttpByteRange
 // holds it, and the Fetch Standard's single-range parser, as //net's
 // HttpUtil::ParseFetchSingleRange() runs it for a blob: URL's loader in
-// Chrome's browser. The Page program has no //net, so this ports them.
+// Chrome's browser and for the CORS safelist. The Page program has no //net, so
+// this ports them.
 //
 // Upstream: net/http/http_byte_range.h
 // Upstream: net/http/http_byte_range.cc
 // Upstream: net/http/http_util.cc
 
-#ifndef MITTO_DOM_HTTP_BYTE_RANGE_H_
-#define MITTO_DOM_HTTP_BYTE_RANGE_H_
+#ifndef MITTO_HTTP_BYTE_RANGE_H_
+#define MITTO_HTTP_BYTE_RANGE_H_
 
 #include <stdint.h>
 
@@ -54,4 +55,4 @@ std::optional<HttpByteRange> ParseFetchSingleRange(
 
 }  // namespace mitto
 
-#endif  // MITTO_DOM_HTTP_BYTE_RANGE_H_
+#endif  // MITTO_HTTP_BYTE_RANGE_H_

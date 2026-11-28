@@ -11,12 +11,14 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "base/memory/raw_ref.h"
+#include "base/time/time.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/page/page_requests.h"
 
@@ -55,12 +57,19 @@ class PageFetcher final : public Fetcher {
   // Fetcher:
   void Fetch(FetchRequestData request,
              std::unique_ptr<FetchClient> client) override;
+  void FetchSynchronously(FetchRequestData request,
+                          base::TimeDelta timeout,
+                          FetchClient& client) override;
   bool HasFinishedResponse(std::string_view url) const override;
   void PrefetchDns(const GURL& url) override;
   void Preconnect(const GURL& url, bool allow_credentials) override;
 
  private:
   class Request;
+
+  // The Session's request for `data`, or nothing for one that takes more than
+  // a frame holds, a Known Gap.
+  static std::optional<PageRequest> ToPageRequest(FetchRequestData& data);
 
   // Destroys request `number` and its client.
   void Finished(uint64_t number);

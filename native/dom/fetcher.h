@@ -14,6 +14,8 @@
 #include <string>
 #include <string_view>
 
+#include "base/time/time.h"
+
 class GURL;
 
 namespace mitto {
@@ -36,6 +38,9 @@ enum class FetchDestination {
   // Not the Fetch Standard's: what a link with rel prefetch asks for, whose
   // destination is empty, of the Request Kind prefetch.
   kPrefetch,
+  // Not the Fetch Standard's: an XMLHttpRequest's, whose destination is empty,
+  // of the Request Kind xhr.
+  kXhr,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.
@@ -184,6 +189,13 @@ struct FetchRequestData {
   // Whether its body streams, as the FetchClient sends it through its
   // FetchController, from when the Session starts reading it.
   bool streams_body = false;
+  // Whether a request to another origin needs a CORS preflight, whatever its
+  // method and lines: mode cors-with-forced-preflight, for an XMLHttpRequest
+  // whose upload has listeners.
+  bool force_preflight = false;
+  // Whether the client hears how the body goes, as an asynchronous
+  // XMLHttpRequest's does whose upload a script has asked for.
+  bool report_upload_progress = false;
   // The request's mode and credentials mode, if not those of its destination.
   std::optional<FetchMode> mode;
   std::optional<FetchCredentialsMode> credentials;
@@ -240,6 +252,9 @@ struct FetchResponseHead {
   std::string headers;
   // An opaque response's padding, which the Cache API counts beside its size.
   int64_t padding = 0;
+  // How long the body is, if that is known of it without a Content-Length, as
+  // of a data: URL's.
+  std::optional<uint64_t> expected_length;
 };
 
 // What a request can be told while it runs.
@@ -290,12 +305,22 @@ class FetchClient {
   // then, as FetchLaterManager::ContextDestroyed() processes each loader
   // before any script runs again.
   virtual void OnDocumentGone() {}
+  // For an XMLHttpRequest with a body: `position` of its `size` bytes have
+  // gone.
+  virtual void OnUploadProgress(uint64_t position, uint64_t size) {}
 };
 
 class Fetcher {
  public:
   virtual void Fetch(FetchRequestData request,
                      std::unique_ptr<FetchClient> client) = 0;
+  // The same for an XMLHttpRequest that is synchronous: this thread waits, and
+  // runs nothing else, until the request has ended, or `timeout` has passed,
+  // if it is not zero, which ends it with ERR_TIMED_OUT, or the thread's
+  // worker ends, of which `client` does not hear.
+  virtual void FetchSynchronously(FetchRequestData request,
+                                  base::TimeDelta timeout,
+                                  FetchClient& client) = 0;
   // Whether a response at `url`, after its redirects, has come whole, which a
   // later request may name as its referrer, as the Session allows it.
   virtual bool HasFinishedResponse(std::string_view url) const = 0;

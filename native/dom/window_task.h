@@ -9,6 +9,7 @@
 
 #include "base/functional/callback.h"
 #include "base/functional/function_ref.h"
+#include "base/time/time.h"
 #include "mitto/dom/event_loop.h"
 #include "v8/include/v8-forward.h"
 
@@ -25,6 +26,13 @@ void PostWindowTask(Window* window, TaskType type, base::OnceClosure task);
 void PostTaskInContext(ExecutionContext* context,
                        TaskType type,
                        base::OnceClosure task);
+// The same, once `delay` has passed. One whose delay passes while the
+// back/forward cache keeps the window runs once it has come back, after what
+// its resume and pageshow listeners post.
+void PostDelayedTaskInContext(ExecutionContext* context,
+                              TaskType type,
+                              base::OnceClosure task,
+                              base::TimeDelta delay);
 
 // Runs `run` now in `window`'s context, and returns whether the window still
 // had its context. Nothing holds microtasks back around it: as in Blink, the

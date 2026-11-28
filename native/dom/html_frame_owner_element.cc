@@ -10,6 +10,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/frame.h"
+#include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/permissions_policy_parser.h"
@@ -271,6 +272,8 @@ void HTMLFrameOwnerElement::OpenURL() {
     if (!content_frame_) {
       return;
     }
+  } else if (!CanNavigate(*parent, *content_frame_, url)) {
+    return;
   }
   content_frame_->NavigateFromOwner(url);
 }

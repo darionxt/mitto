@@ -3248,6 +3248,36 @@ mitto_bindings_interfaces = [
     made_by_known_gaps = true
   },
   {
+    name = "XMLHttpRequest"
+    file = "xml_http_request"
+
+    # The bindings run its event handler attribute.
+    missing = [
+      "onreadystatechange",
+      "setPrivateToken",
+      "setAttributionReporting",
+    ]
+  },
+  {
+    name = "XMLHttpRequestEventTarget"
+    file = "xml_http_request_event_target"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onloadstart",
+      "onprogress",
+      "onabort",
+      "onerror",
+      "onload",
+      "ontimeout",
+      "onloadend",
+    ]
+  },
+  {
+    name = "XMLHttpRequestUpload"
+    file = "xml_http_request_upload"
+  },
+  {
     name = "WritableStreamDefaultController"
     file = "writable_stream_default_controller"
   },

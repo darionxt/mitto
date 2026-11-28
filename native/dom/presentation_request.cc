@@ -10,6 +10,7 @@
 #include "mitto/bindings/v8_presentation_request.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/presentation_availability.h"
+#include "mitto/dom/sandbox_flags.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
 #include "net/base/url_util.h"
@@ -57,6 +58,13 @@ PresentationRequest* PresentationRequest::Create(
 PresentationRequest* PresentationRequest::Create(
     const std::vector<std::u16string>& urls,
     bindings::ExceptionState& exception_state) {
+  if (Window::Current().GetDocument().IsSandboxed(
+          SandboxFlags::kPresentationController)) {
+    exception_state.ThrowDOMException(
+        "SecurityError",
+        "The document is sandboxed and lacks the 'allow-presentation' flag.");
+    return nullptr;
+  }
   const GURL document(
       base::UTF16ToUTF8(Window::Current().GetDocument().UrlForBinding()));
   std::vector<GURL> parsed_urls;

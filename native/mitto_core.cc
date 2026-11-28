@@ -79,6 +79,7 @@
 #include "mitto/storage/storage_context.h"
 #include "mitto/storage_quota.h"
 #include "mitto/stub_resolver_config_reader.h"
+#include "mitto/upload_progress_tracker.h"
 #include "net/base/auth.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/elements_upload_data_stream.h"
@@ -448,7 +449,7 @@ class RequestJob final : public net::URLRequest::Delegate,
                                     request_->referrer_policy()))) {
       return;
     }
-    request_->Start();
+    StartRequest();
   }
 
   // RunningRequest:
@@ -513,6 +514,13 @@ class RequestJob final : public net::URLRequest::Delegate,
   void Cancel() { Finish(net::ERR_ABORTED); }
 
   void FailBody() override { Finish(net::ERR_FAILED); }
+
+  // RunningRequest:
+  void UploadProgressTaken() override {
+    if (upload_progress_tracker_) {
+      upload_progress_tracker_->OnAckReceived();
+    }
+  }
 
   // BodyStream::Delegate:
   void OnBodyWanted() override { client_->OnBodyWanted(); }
@@ -623,6 +631,7 @@ class RequestJob final : public net::URLRequest::Delegate,
       Finish(net::ERR_ABORTED);
       return;
     }
+    CompleteUpload();
     // A response from a cache comes with no connection.
     connect_timer_.Stop();
     read_timer_.Stop();
@@ -709,6 +718,9 @@ class RequestJob final : public net::URLRequest::Delegate,
       request->SetLoadFlags(request->load_flags() |
                             net::LOAD_SKIP_CACHE_VALIDATION);
     }
+    if (options_.ignore_limits) {
+      request->SetLoadFlags(request->load_flags() | net::LOAD_IGNORE_LIMITS);
+    }
     return request;
   }
 
@@ -742,6 +754,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   // navigation's, whose rules have said what it goes on with.
   void RestartRequest(FetchRules::Restart restart) {
     const bool for_critical_ch = restart.for_critical_ch;
+    upload_progress_tracker_.reset();
     std::unique_ptr<net::URLRequest> old_request = std::move(request_);
     const bool has_body = old_request->has_upload();
     request_ =
@@ -761,7 +774,7 @@ class RequestJob final : public net::URLRequest::Delegate,
       critical_ch_restart_ = base::TimeTicks::Now();
       restarted_for_critical_ch_ = true;
     }
-    request_->Start();
+    StartRequest();
   }
 
   // What a preflight for this request asks about, where it is about to go.
@@ -837,7 +850,31 @@ class RequestJob final : public net::URLRequest::Delegate,
                                        redirect.modified_headers);
       return;
     }
+    StartRequest();
+  }
+
+  // Starts the request, whose client hears of its upload if it asked to.
+  void StartRequest() {
+    if (options_.report_upload_progress) {
+      upload_progress_tracker_ = std::make_unique<UploadProgressTracker>(
+          *request_, base::BindRepeating(&RequestJob::OnUploadProgress,
+                                         base::Unretained(this)));
+    }
     request_->Start();
+  }
+
+  void OnUploadProgress(const net::UploadProgress& progress) {
+    if (client_) {
+      client_->OnUploadProgress(progress.position(), progress.size());
+    }
+  }
+
+  // The response has started, or the request ends.
+  void CompleteUpload() {
+    if (upload_progress_tracker_) {
+      upload_progress_tracker_->OnUploadCompleted();
+      upload_progress_tracker_.reset();
+    }
   }
 
   // Pushes an event of `type` that describes the response so far.
@@ -1045,6 +1082,7 @@ class RequestJob final : public net::URLRequest::Delegate,
       totals.received_bytes =
           static_cast<int64_t>(request_->GetTotalReceivedBytes().InBytes());
     }
+    CompleteUpload();
     // Deleting the request from its delegate's callback is allowed.
     preflight_.reset();
     request_.reset();
@@ -1115,6 +1153,8 @@ class RequestJob final : public net::URLRequest::Delegate,
   // The stream body, which `request_` owns and drops on a 303.
   base::WeakPtr<BodyStream> body_stream_;
   std::unique_ptr<net::URLRequest> request_;
+  // Of `request_`, which outlives it.
+  std::unique_ptr<UploadProgressTracker> upload_progress_tracker_;
   // When the first request started, and when a navigation last restarted for
   // Critical-CH, if no redirect has come since, for the navigation's timing.
   base::TimeTicks first_request_start_;

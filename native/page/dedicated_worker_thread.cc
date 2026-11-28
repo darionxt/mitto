@@ -288,6 +288,7 @@ void DedicatedWorkerThread::Scope::Start() {
           },
           scheduler_->TaskRunner(TaskType::kNetworking),
           base::Unretained(this)));
+  requests_->SetAbortSynchronousRequests(thread_->abort_synchronous_load());
   fetcher_ =
       std::make_unique<PageFetcher>(*requests_, PageFetcher::Kind::kWorker);
   scope_->SetFetcher(fetcher_.get());
@@ -595,6 +596,9 @@ void DedicatedWorkerThread::Scope::OnResponse(FrameFromSession frame) {
     case PageMessage::kRequestBodyCredit:
       requests_->OnRequestBodyCredit(frame.request_body_credit);
       return;
+    case PageMessage::kUploadProgress:
+      requests_->OnUploadProgress(frame.upload_progress);
+      return;
     default:
       NOTREACHED();
   }
@@ -692,8 +696,7 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
   request.priority = kHighestPriority;
   request.incremental = kIncremental;
   ImportedScriptClient client;
-  requests_->StartSynchronous(std::move(request), client,
-                              thread_->abort_synchronous_load());
+  requests_->StartSynchronous(std::move(request), client);
   return client.Take();
 }
 

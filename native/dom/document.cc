@@ -59,6 +59,7 @@
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/node_lists_node_data.h"
+#include "mitto/dom/page_dismissal_scope.h"
 #include "mitto/dom/page_transition_event.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/performance_timing_confidence.h"
@@ -586,6 +587,7 @@ bool Document::DispatchBeforeUnloadEvent() {
   if (load_event_progress_ == LoadEventProgress::kBeforeUnloadEventInProgress) {
     return false;
   }
+  const PageDismissalScope in_page_dismissal;
   BeforeUnloadEvent* const event = BeforeUnloadEvent::Create();
   {
     const base::AutoReset<LoadEventProgress> in_progress(
@@ -639,6 +641,7 @@ void Document::DispatchUnloadEvents() {
   const auto frame_went = [this, framed] {
     return !window_ || (framed && !window_->GetFrame());
   };
+  const PageDismissalScope in_page_dismissal;
   load_event_progress_ = LoadEventProgress::kPageHideInProgress;
   window_->DispatchEventWithTarget(
       PageTransitionEvent::CreateTrusted(u"pagehide", /*persisted=*/false),
@@ -781,10 +784,15 @@ std::u16string Document::BodyAttribute(std::u16string_view name) const {
   return value ? *value : u"";
 }
 
+bool Document::IsFrameSet() const {
+  const HTMLElement* const body = Body();
+  return IsHTMLDocument() && body && body->HasHTMLTagName(u"frameset");
+}
+
 void Document::SetBodyAttribute(std::u16string_view name,
                                 const std::u16string& value) {
   HTMLElement* const body = Body();
-  if (!body || (IsHTMLDocument() && body->HasHTMLTagName(u"frameset"))) {
+  if (!body || IsFrameSet()) {
     return;
   }
   const std::u16string* const current = body->FindAttribute(name);

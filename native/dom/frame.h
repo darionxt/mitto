@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "base/memory/raw_ref.h"
+#include "base/memory/weak_ptr.h"
 #include "mitto/dom/sandbox_flags.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -96,6 +97,11 @@ class Frame {
   // there already, if a duplicate is to be discarded.
   bool AddPolicyMessage(const std::string& text, bool discard_duplicate);
 
+  // The frame whose script opened this one's name with window.open(), while it
+  // is there, or null, which window.opener reads.
+  Frame* Opener() const;
+  void SetOpener(Frame* opener);
+
   // Blink's LocalFrame::IsNavigationAllowed(): no navigation of the frame
   // starts while a FrameNavigationDisabler holds it.
   bool IsNavigationAllowed() const { return navigation_disable_count_ == 0; }
@@ -117,6 +123,8 @@ class Frame {
   std::deque<size_t> policy_messages_;
   // One for each process, for the frame's document now.
   std::vector<cppgc::WeakPersistent<RemoteWindow>> remote_windows_;
+  base::WeakPtr<Frame> opener_;
+  base::WeakPtrFactory<Frame> opener_factory_{this};
 };
 
 // Blink's FrameNavigationDisabler: while a frame's document commits, a script

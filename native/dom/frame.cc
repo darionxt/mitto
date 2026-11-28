@@ -60,6 +60,18 @@ void Frame::DidShowDocument(Window& window) {
                 });
 }
 
+Frame* Frame::Opener() const {
+  // A frame that has gone, whose window has lost it, opens nothing any more.
+  return opener_ && opener_->DomWindow() &&
+                 opener_->DomWindow()->GetFrame() == opener_.get()
+             ? opener_.get()
+             : nullptr;
+}
+
+void Frame::SetOpener(Frame* opener) {
+  opener_ = opener ? opener->opener_factory_.GetWeakPtr() : nullptr;
+}
+
 bool Frame::AddPolicyMessage(const std::string& text, bool discard_duplicate) {
   constexpr size_t kMaxMessages = 1000;
   const size_t hash = base::FastHash(text);

@@ -8,6 +8,20 @@
 #include "v8/include/v8-isolate.h"
 
 namespace mitto {
+namespace {
+
+// Copies `bytes` to `buffer`, a new one of their size.
+void CopyToArrayBuffer(base::span<const uint8_t> bytes,
+                       v8::Local<v8::ArrayBuffer> buffer) {
+  if (!bytes.empty()) {
+    // SAFETY: the new buffer holds bytes.size() bytes.
+    UNSAFE_BUFFERS(
+        base::span(static_cast<uint8_t*>(buffer->Data()), bytes.size()))
+        .copy_from(bytes);
+  }
+}
+
+}  // namespace
 
 bool BytesOfBufferSource(v8::Isolate* isolate,
                          v8::Local<v8::Value> chunk,
@@ -53,16 +67,22 @@ bool BytesOfBufferSource(v8::Isolate* isolate,
   return false;
 }
 
+v8::MaybeLocal<v8::ArrayBuffer> MaybeNewArrayBuffer(
+    v8::Isolate* isolate,
+    base::span<const uint8_t> bytes) {
+  v8::Local<v8::ArrayBuffer> buffer;
+  if (!v8::ArrayBuffer::MaybeNew(isolate, bytes.size()).ToLocal(&buffer)) {
+    return v8::MaybeLocal<v8::ArrayBuffer>();
+  }
+  CopyToArrayBuffer(bytes, buffer);
+  return buffer;
+}
+
 v8::Local<v8::ArrayBuffer> NewArrayBuffer(v8::Isolate* isolate,
                                           base::span<const uint8_t> bytes) {
   const v8::Local<v8::ArrayBuffer> buffer =
       v8::ArrayBuffer::New(isolate, bytes.size());
-  if (!bytes.empty()) {
-    // SAFETY: the new buffer holds bytes.size() bytes.
-    UNSAFE_BUFFERS(
-        base::span(static_cast<uint8_t*>(buffer->Data()), bytes.size()))
-        .copy_from(bytes);
-  }
+  CopyToArrayBuffer(bytes, buffer);
   return buffer;
 }
 

@@ -38,12 +38,14 @@ def png(width: int, height: int) -> bytes:
 
 @dataclass
 class Route:
-    """What the server answers for one path. With `hold`, it answers only once that is set."""
+    """What the server answers for one path. With `hold`, it answers only once that is set. With `read_hold`, it reads the
+    first 64 KiB of a request's body, and the rest only once that is set."""
 
     body: bytes = b""
     status: int = 200
     headers: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     hold: threading.Event | None = None
+    read_hold: threading.Event | None = None
 
 
 class RecordingServer:
@@ -74,6 +76,18 @@ class RecordingServer:
                 self.send_header("Content-Length", str(len(route.body)))
                 self.end_headers()
                 self.wfile.write(route.body)
+
+            def do_POST(self) -> None:
+                # The body is read before the answer, which is as for a GET.
+                left = int(self.headers.get("Content-Length") or 0)
+                route = server.routes.get(self.path)
+                first = True
+                while left > 0:
+                    left -= len(self.rfile.read(min(left, 65536))) or left
+                    if first and route is not None and route.read_hold is not None:
+                        route.read_hold.wait(TIMEOUT_SECONDS)
+                    first = False
+                self.do_GET()
 
             def log_message(self, format: str, *args: Any) -> None:
                 pass

@@ -172,9 +172,17 @@ struct RequestOptions {
   // LOAD_SKIP_CACHE_VALIDATION. No option of the C API's sets it.
   bool skip_cache_validation = false;
 
+  // A Page's synchronous request, which goes past the limits of connections,
+  // since the Page's thread, which waits for it, may be what holds them:
+  // //net's LOAD_IGNORE_LIMITS, at `priority` HIGHEST. No option of the C API's
+  // sets it.
+  bool ignore_limits = false;
+
   // A stream body follows, of `stream_body_size` bytes if that is known, as
   // mitto_request_start() describes.
   bool stream_body = false;
+  // The client hears how the upload of the body goes.
+  bool report_upload_progress = false;
   std::optional<uint64_t> stream_body_size;
 
   // What each timer allows, as mitto_request_start() describes. nullopt runs no

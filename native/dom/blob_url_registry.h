@@ -76,6 +76,9 @@ class BlobUrlRegistry {
   std::optional<Entry> ResolveEntry(const GURL& url) const;
   // The blob that `url` names, without its fragment, or null.
   scoped_refptr<BlobDataHandle> Resolve(const GURL& url) const;
+  // SecurityOrigin::Create() of `url`, a blob: URL: a blob:null URL's is the
+  // origin of the context that made it, while it is registered.
+  url::Origin OriginOf(const GURL& url) const;
 
  private:
   mutable base::Lock lock_;

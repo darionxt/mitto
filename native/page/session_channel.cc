@@ -226,6 +226,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kResponseBody:
       case PageMessage::kResponseEnded:
       case PageMessage::kRequestBodyCredit:
+      case PageMessage::kUploadProgress:
         if (!started_) {
           Refuse("a response came before the start");
           return;
@@ -380,6 +381,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCredit:
       case PageMessage::kRequestBodyPart:
       case PageMessage::kRequestBodyEnded:
+      case PageMessage::kUploadProgressTaken:
       case PageMessage::kGetCookies:
       case PageMessage::kSetCookie:
       case PageMessage::kLoaded:
@@ -520,6 +522,9 @@ class SessionLink final : public PageChannel::Delegate
         return;
       case PageMessage::kRequestBodyCredit:
         runner_->OnRequestBodyCredit(frame.request_body_credit);
+        return;
+      case PageMessage::kUploadProgress:
+        runner_->OnUploadProgress(frame.upload_progress);
         return;
       case PageMessage::kPermissionsPolicy:
         runner_->OnPermissionsPolicy(std::move(frame.permissions_policy));

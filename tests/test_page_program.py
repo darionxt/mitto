@@ -796,6 +796,8 @@ _COOKIE_STORE_COOKIES = 22
 _COOKIE_STORE_STORED = 23
 _COOKIE_STORE_CHANGE = 24
 _BROADCAST_RECEIVED = 26
+_UPLOAD_PROGRESS = 221
+_UPLOAD_PROGRESS_TAKEN = 222
 _PERMISSIONS_POLICY = 251
 _ISOLATION = 300
 _BODY_WINDOW = 64 * 1024
@@ -1511,6 +1513,81 @@ def test_a_no_store_fetchs_body_gets_credit_only_once_a_script_reads_it(session:
     assert session.close() == 0
 
 
+def test_an_xml_http_request_hears_how_its_body_goes(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    script = """
+      window.log = [];
+      const xhr = new XMLHttpRequest();
+      for (const type of ['loadstart', 'progress', 'load', 'loadend']) {
+        xhr.upload.addEventListener(type, (e) => log.push(`${type} ${e.loaded}/${e.total}`));
+      }
+      xhr.addEventListener('progress', (e) => log.push(`response ${e.loaded}/${e.total}`));
+      xhr.open('POST', '/upload');
+      xhr.send('0123456789');
+      null
+    """
+    session.send(_EVALUATE, struct.pack("<Q", 1) + script.encode())
+    message_type, payload = session.receive()
+    # Kind xhr, with a forced preflight because the upload has listeners, and no other flag, and a body whose upload the
+    # Page hears of.
+    assert (message_type, payload[8:18]) == (_REQUEST, struct.pack("<QBB", 1, 8, 1))
+    assert payload.endswith(b"\x020123456789")
+    assert session.evaluated() == (1, False, "null")
+
+    for position in (4, 10):
+        session.send(_UPLOAD_PROGRESS, struct.pack("<QQQ", 1, position, 10))
+        assert session.receive() == (_UPLOAD_PROGRESS_TAKEN, struct.pack("<Q", 1))
+    _respond(session, 1, "http://www.example.test/upload", "text/plain", headers="Content-Length: 2\n")
+    _body(session, 1, b"ok")
+    _end(session, 1)
+    session.send(_EVALUATE, struct.pack("<Q", 2) + b"log.join()")
+
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 2))
+    assert session.evaluated() == (
+        2,
+        False,
+        '"loadstart 0/10,progress 4/10,progress 10/10,load 10/10,loadend 10/10,response 2/2"',
+    )
+    assert session.close() == 0
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        pytest.param(b"fetch('/a', {method: 'POST', body: 'x'}); null", id="fetch"),
+        pytest.param(b"const xhr = new XMLHttpRequest(); xhr.open('POST', '/a'); xhr.send('x'); null", id="no upload"),
+        pytest.param(
+            b"const xhr = new XMLHttpRequest(); xhr.open('POST', '/a'); xhr.upload; xhr.send(); null", id="no body"
+        ),
+    ],
+)
+def test_a_page_refuses_the_upload_progress_of_a_request_that_asked_for_none(session: _Session, script: bytes) -> None:
+    session.start()
+    _loaded(session)
+    session.send(_EVALUATE, struct.pack("<Q", 1) + script)
+    message_type, payload = session.receive()
+    assert message_type == _REQUEST
+    assert payload.endswith((b"\x01x", b"\x00"))
+    assert session.evaluated() == (1, False, "null")
+
+    session.send(_UPLOAD_PROGRESS, struct.pack("<QQQ", 1, 1, 1))
+
+    assert session.refusal() == "upload progress of request 1, which hears of none"
+
+
+def test_a_page_refuses_the_upload_progress_of_a_synchronous_request(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    script = b"const xhr = new XMLHttpRequest(); xhr.open('POST', '/a', false); xhr.upload; xhr.send('x'); null"
+    session.send(_EVALUATE, struct.pack("<Q", 1) + script)
+    assert session.receive()[0] == _REQUEST
+
+    session.send(_UPLOAD_PROGRESS, struct.pack("<QQQ", 1, 1, 1))
+
+    assert session.refusal() == "upload progress of request 1, which hears of none"
+
+
 def test_a_fetchs_body_gets_credit_once_blink_would_buffer_it(session: _Session) -> None:
     session.start()
     _loaded(session)
@@ -1668,6 +1745,27 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
             id="body-of-no-request",
         ),
         pytest.param(_RESPONSE_ENDED, _ended(5), "the end of request 5, which is not in progress", id="end"),
+        pytest.param(
+            _UPLOAD_PROGRESS,
+            struct.pack("<QQQ", 5, 1, 2),
+            "upload progress of request 5, which is not in progress",
+            id="upload-of-no-request",
+        ),
+        pytest.param(
+            _UPLOAD_PROGRESS,
+            struct.pack("<QQQ", 1, 3, 2),
+            "an upload past the end of its body",
+            id="upload-past-its-end",
+        ),
+        pytest.param(
+            _UPLOAD_PROGRESS, struct.pack("<QQQ", 1, 0, 0), "an upload past the end of its body", id="upload-of-nothing"
+        ),
+        pytest.param(
+            _UPLOAD_PROGRESS,
+            struct.pack("<QQ", 1, 1),
+            "a report of upload progress of 16 bytes",
+            id="upload-of-no-size",
+        ),
         pytest.param(
             _COOKIES, struct.pack("<Q", 1) + b"a=b", "cookies for question 1, which no script waits for", id="cookies"
         ),

@@ -4,14 +4,20 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "base/containers/fixed_flat_set.h"
+#include "base/containers/span.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
+#include "mitto/http_byte_range.h"
 
 namespace mitto {
 namespace {
@@ -69,24 +75,27 @@ bool IsCorsUnsafeRequestHeaderByte(char c) {
          u == 0x7f;
 }
 
-// net::ExtractMimeTypeFromMediaType(), without accepting a comma-separated
-// list: the type and subtype before any parameters, if both are tokens.
-// Upstream: net/base/mime_util.cc
-std::optional<std::string> ExtractMimeType(std::string_view media_type) {
-  const std::vector<std::string_view> components =
-      base::SplitStringPiece(media_type.substr(0, media_type.find(';')), "/",
-                             base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
-  if (components.size() != 2) {
-    return std::nullopt;
+bool IsSimilarToDoubleABNF(std::string_view value) {
+  if (value.empty() || !base::IsAsciiDigit(value.front())) {
+    return false;
   }
-  const std::string_view type =
-      base::TrimWhitespaceASCII(components[0], base::TRIM_LEADING);
-  const std::string_view subtype =
-      base::TrimWhitespaceASCII(components[1], base::TRIM_TRAILING);
-  if (!IsHttpToken(type) || !IsHttpToken(subtype)) {
-    return std::nullopt;
+  bool period_found = false;
+  bool digit_found_after_period = false;
+  for (const char c : value) {
+    if (base::IsAsciiDigit(c)) {
+      digit_found_after_period |= period_found;
+      continue;
+    }
+    if (c != '.' || period_found) {
+      return false;
+    }
+    period_found = true;
   }
-  return base::StrCat({type, "/", subtype});
+  return !period_found || digit_found_after_period;
+}
+
+bool IsSimilarToIntABNF(std::string_view value) {
+  return !value.empty() && std::ranges::all_of(value, base::IsAsciiDigit<char>);
 }
 
 }  // namespace
@@ -202,10 +211,95 @@ bool IsCorsSafelistedContentType(std::string_view media_type) {
     return false;
   }
   const std::optional<std::string> mime_type =
-      ExtractMimeType(base::ToLowerASCII(media_type));
+      ExtractMimeTypeFromMediaType(base::ToLowerASCII(media_type),
+                                   /*accept_comma_separated=*/false);
   return mime_type &&
          (*mime_type == "application/x-www-form-urlencoded" ||
           *mime_type == "multipart/form-data" || *mime_type == "text/plain");
+}
+
+bool IsCorsSafelistedHeader(std::string_view name, std::string_view value) {
+  if (value.size() > 128) {
+    return false;
+  }
+  static constexpr auto kSafeNames = base::MakeFixedFlatSet<std::string_view>({
+      "accept",
+      "accept-language",
+      "content-language",
+      "content-type",
+      "range",
+      "device-memory",
+      "dpr",
+      "width",
+      "viewport-width",
+      "rtt",
+      "downlink",
+      "ect",
+      "sec-ch-ua",
+      "sec-ch-ua-arch",
+      "sec-ch-ua-platform",
+      "sec-ch-ua-model",
+      "sec-ch-ua-mobile",
+      "sec-ch-ua-full-version",
+      "sec-ch-ua-platform-version",
+      "sec-ch-prefers-color-scheme",
+      "sec-ch-ua-bitness",
+      "sec-ch-viewport-height",
+      "sec-ch-device-memory",
+      "sec-ch-dpr",
+      "sec-ch-width",
+      "sec-ch-viewport-width",
+      "sec-ch-ua-full-version-list",
+      "sec-ch-ua-wow64",
+      "save-data",
+      "sec-ch-prefers-reduced-motion",
+      "sec-ch-ua-form-factors",
+      "sec-ch-prefers-reduced-transparency",
+  });
+  const std::string lower_name = base::ToLowerASCII(name);
+  if (!kSafeNames.contains(lower_name)) {
+    return false;
+  }
+  if (IsNoCorsSafelistedHeaderName(lower_name)) {
+    return IsNoCorsSafelistedHeader(lower_name, value);
+  }
+  if (lower_name == "range") {
+    const std::optional<HttpByteRange> range =
+        ParseFetchSingleRange(value, /*allow_whitespace=*/false);
+    return range && !range->IsSuffixByteRange() && range->IsValid() &&
+           range->first_byte_position() !=
+               std::numeric_limits<int64_t>::max() &&
+           range->last_byte_position() != std::numeric_limits<int64_t>::max();
+  }
+  if (lower_name == "device-memory" || lower_name == "dpr" ||
+      lower_name == "downlink") {
+    return IsSimilarToDoubleABNF(value);
+  }
+  if (lower_name == "width" || lower_name == "viewport-width" ||
+      lower_name == "rtt") {
+    return IsSimilarToIntABNF(value);
+  }
+  if (lower_name == "ect") {
+    return value == "slow-2g" || value == "2g" || value == "3g" ||
+           value == "4g";
+  }
+  if (lower_name == "save-data") {
+    return base::ToLowerASCII(value) == "on";
+  }
+  return true;
+}
+
+bool ContainsOnlyCorsSafelistedHeaders(
+    base::span<const std::pair<std::string, std::string>> headers) {
+  constexpr size_t kSafeListValueSizeMax = 1024;
+  size_t safe_list_value_size = 0;
+  for (const auto& [name, value] : headers) {
+    if (!IsCorsSafelistedHeader(name, value)) {
+      return false;
+    }
+    safe_list_value_size += value.size();
+  }
+  return safe_list_value_size <= kSafeListValueSizeMax;
 }
 
 bool IsCorsSafelistedResponseHeaderName(std::string_view name) {
@@ -320,6 +414,47 @@ bool CacheControlContainsNoStore(std::string_view raw_value) {
     }
   }
   return no_store;
+}
+
+std::set<std::string> CorsExposedHeaderNames(std::string_view field) {
+  // HTTPHeaderNameListParser: one element that is not a name, and not empty,
+  // leaves the list with no name.
+  std::set<std::string> names;
+  for (const std::string_view element : base::SplitStringPiece(
+           field, ",", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL)) {
+    const std::string_view name =
+        base::TrimString(element, " \t", base::TRIM_ALL);
+    if (name.empty()) {
+      continue;
+    }
+    if (!IsHttpToken(name)) {
+      return {};
+    }
+    names.insert(base::ToLowerASCII(name));
+  }
+  return names;
+}
+
+std::optional<std::string> ExtractMimeTypeFromMediaType(
+    std::string_view media_type,
+    bool accept_comma_separated) {
+  size_t end = media_type.find(';');
+  if (accept_comma_separated) {
+    end = std::min(end, media_type.find(','));
+  }
+  media_type = media_type.substr(0, end);
+  const size_t slash = media_type.find('/');
+  if (slash == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const std::string_view type = base::TrimWhitespaceASCII(
+      media_type.substr(0, slash), base::TRIM_LEADING);
+  const std::string_view subtype = base::TrimWhitespaceASCII(
+      media_type.substr(slash + 1), base::TRIM_TRAILING);
+  if (!IsHttpToken(type) || !IsHttpToken(subtype)) {
+    return std::nullopt;
+  }
+  return base::StrCat({type, "/", subtype});
 }
 
 }  // namespace mitto

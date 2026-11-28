@@ -56,6 +56,10 @@ class RequestClient {
   // C API sends one.
   virtual void OnBodyWanted() {}
 
+  // `position` of the `size` bytes of the body have gone, if the request's
+  // options ask for that (RequestOptions::report_upload_progress).
+  virtual void OnUploadProgress(uint64_t position, uint64_t size) {}
+
   // What the request took, just before OnFinished().
   virtual void OnTotals(const RequestTotals& totals) {}
 
@@ -102,6 +106,8 @@ class RunningRequest {
   // body's source failed, as a data pipe's producer that closes with an
   // error fails the upload in Chrome's network service.
   virtual void FailBody() = 0;
+  // The client has taken what OnUploadProgress() last told.
+  virtual void UploadProgressTaken() = 0;
 
  protected:
   virtual ~RunningRequest() = default;
