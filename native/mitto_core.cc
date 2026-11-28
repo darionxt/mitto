@@ -1378,7 +1378,6 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
       settings.storage_directory, std::move(storage_directory_lock));
   session->quota_manager = std::make_unique<StorageQuota>(
       settings.storage_directory,
-      settings.storage_directory.value_or(base::GetHomeDir()),
       base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}),
       session->storage->blocking_task_runner());
   session->cache_storage_context = std::make_unique<CacheStorageContext>(

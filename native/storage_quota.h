@@ -99,12 +99,10 @@ class StorageQuota {
   };
 
   // `directory` is where the Session keeps its storage, which keeps the
-  // buckets, or nullopt for storage in memory. The disk that holds `disk`,
-  // the directory or else the user's home folder, sets the quota.
-  // `file_runner` reads the size of the disk, and `database_runner` reads and
-  // writes the buckets.
+  // buckets, or nullopt for storage in memory. The disk that holds it, or
+  // else the user's home folder, sets the quota. `file_runner` finds and reads
+  // the size of that disk, and `database_runner` reads and writes the buckets.
   StorageQuota(std::optional<base::FilePath> directory,
-               base::FilePath disk,
                scoped_refptr<base::SequencedTaskRunner> file_runner,
                scoped_refptr<base::SequencedTaskRunner> database_runner);
   StorageQuota(const StorageQuota&) = delete;
@@ -194,7 +192,6 @@ class StorageQuota {
   void EvictExpiredBuckets();
 
   const std::optional<base::FilePath> directory_;
-  const base::FilePath disk_;
   const scoped_refptr<base::SequencedTaskRunner> file_runner_;
   const scoped_refptr<base::SequencedTaskRunner> database_runner_;
   StorageBuckets buckets_;

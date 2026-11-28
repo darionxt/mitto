@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "base/barrier_closure.h"
+#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/system/sys_info.h"
@@ -33,6 +34,18 @@ int64_t ReportedQuotaExtra(std::optional<int64_t> total_disk) {
     return 10 * kGiB;
   }
   return (*total_disk / kGiB + (*total_disk % kGiB != 0)) * kGiB;
+}
+
+// The size of the disk whose quota a profile's storage has: the one that holds
+// the storage directory, or, without one, the user's home folder, where a
+// profile would be, or the nearest folder above it that exists. It blocks.
+std::optional<int64_t> TotalDiskSpaceOfStorage(
+    const std::optional<base::FilePath>& directory) {
+  base::FilePath path = directory ? *directory : base::GetHomeDir();
+  while (!directory && !base::PathExists(path) && path != path.DirName()) {
+    path = path.DirName();
+  }
+  return base::SysInfo::AmountOfTotalDiskSpace(path);
 }
 
 bool HasExpired(const BucketInfo& bucket) {
@@ -66,11 +79,9 @@ StorageQuota::BucketInitParams::~BucketInitParams() = default;
 
 StorageQuota::StorageQuota(
     std::optional<base::FilePath> directory,
-    base::FilePath disk,
     scoped_refptr<base::SequencedTaskRunner> file_runner,
     scoped_refptr<base::SequencedTaskRunner> database_runner)
     : directory_(std::move(directory)),
-      disk_(std::move(disk)),
       file_runner_(std::move(file_runner)),
       database_runner_(database_runner),
       buckets_(directory_, std::move(database_runner)) {}
@@ -117,7 +128,7 @@ void StorageQuota::WhenQuotaKnown(base::OnceClosure done) {
   }
   asked_disk_ = true;
   file_runner_->PostTaskAndReplyWithResult(
-      FROM_HERE, base::BindOnce(&base::SysInfo::AmountOfTotalDiskSpace, disk_),
+      FROM_HERE, base::BindOnce(&TotalDiskSpaceOfStorage, directory_),
       base::BindOnce(&StorageQuota::DidGetTotalDiskSpace,
                      weak_factory_.GetWeakPtr()));
 }
