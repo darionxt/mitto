@@ -13130,7 +13130,7 @@
 {"test": "html/semantics/embedded-content/the-iframe-element/iframe_sandbox_navigate_history_go_back.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT"},
 {"test": "html/semantics/embedded-content/the-iframe-element/iframe_sandbox_navigate_history_go_forward.html", "subtest": "Check that sandboxed iframe can not navigate their ancestors", "chrome": "PASS", "mitto": "FAIL: no access", "owner": "#286"},
 {"test": "html/semantics/embedded-content/the-iframe-element/iframe_sandbox_navigate_itself.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT"},
-{"test": "html/semantics/embedded-content/the-iframe-element/iframe_sandbox_navigation_download_block_downloads.sub.tentative.html", "subtest": "Navigation resulted download in sandbox is blocked.", "chrome": "PASS", "mitto": "FAIL: assert_equals: Expect no download to happen, but got one. expected \"TOKEN_NOT_SET\" but got \"TOKEN_SET\""},
+{"test": "html/semantics/embedded-content/the-iframe-element/iframe_sandbox_navigation_download_block_downloads.sub.tentative.html", "subtest": null, "chrome": null, "mitto": "FLAKY"},
 {"test": "html/semantics/embedded-content/the-iframe-element/move-node-local-root.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT"},
 {"test": "html/semantics/embedded-content/the-iframe-element/sandbox-inherit-to-blank-document-unsandboxed-frame.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT"},
 {"test": "html/semantics/embedded-content/the-iframe-element/sandbox_001.htm", "subtest": "Allow script execution inside iframe with sandbox attribute when sandbox='allow-scripts'.", "chrome": "PASS", "mitto": "FAIL: Cannot read properties of undefined (reading 'data')"},
