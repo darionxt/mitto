@@ -124,9 +124,11 @@ bool Window::AccessCheckCallback(v8::Local<v8::Context> accessing_context,
   Window* const accessed =
       bindings::V8Window::ToWrappable(isolate, accessed_object);
   return accessing && accessing->HasDocument() && accessed &&
-         accessed->HasDocument() &&
-         accessing->GetSecurityOrigin().IsSameOriginWith(
-             accessed->GetSecurityOrigin());
+         accessed->HasDocument() && CanAccess(*accessing, *accessed);
+}
+
+bool Window::CanAccess(const Window& accessing, const Window& target) {
+  return accessing.AgentCluster() == target.AgentCluster();
 }
 
 Window::Window() = default;
@@ -284,10 +286,10 @@ Element* Window::FrameElement() const {
   if (!owner) {
     return nullptr;
   }
-  // [CheckSecurity=ReturnValue]: the element only for a caller of its
-  // document's origin.
-  if (!Window::Current().GetSecurityOrigin().IsSameOriginWith(
-          owner->GetDocument().GetOrigin())) {
+  // [CheckSecurity=ReturnValue]: the element only for a caller that may access
+  // its document's window.
+  const Window* const parent_window = frame_->Parent()->DomWindow();
+  if (!parent_window || !CanAccess(Window::Current(), *parent_window)) {
     return nullptr;
   }
   return owner;
@@ -595,7 +597,8 @@ void Window::AddPolicyMessage(ConsoleLevel level,
 
 RendererProcess Window::Process() const {
   return {GetSecurityOrigin(),
-          HasDocument() && GetDocument().IsInSandboxedProcess()};
+          HasDocument() && GetDocument().IsInSandboxedProcess(),
+          IsolatedByDocumentPolicy()};
 }
 
 bool Window::IsInFrame() const {

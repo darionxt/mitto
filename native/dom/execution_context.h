@@ -28,6 +28,7 @@
 #include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/agent_cluster_key.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
@@ -100,6 +101,11 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // an origin: a window's own, and for a worker its creator's, whose cluster
   // it is in whatever its own origin.
   virtual url::Origin AgentClusterOrigin() const = 0;
+  // Its agent cluster: of that origin, and apart from the rest of it where
+  // Document-Isolation-Policy isolates it.
+  AgentClusterKey AgentCluster() const {
+    return {AgentClusterOrigin(), isolated_by_document_policy_};
+  }
   // What its storage is keyed by (storage_key.h).
   virtual std::string StorageKey() const = 0;
   // `url` resolved against the context's base URL, as Blink's CompleteURL():
@@ -319,6 +325,15 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   void SetCrossOriginIsolatedCapability(bool capability) {
     cross_origin_isolated_capability_ = capability;
   }
+  // Whether Document-Isolation-Policy gave the context's agent cluster one of
+  // its own: a document's whose policy container's policy isolates, as
+  // Chrome's browser gives it a CrossOriginIsolationKey of its origin, and a
+  // dedicated worker's creator's. One of the same origin without it is in
+  // another agent cluster, and in another process.
+  void SetIsolatedByDocumentPolicy(bool isolated) {
+    isolated_by_document_policy_ = isolated;
+  }
+  bool IsolatedByDocumentPolicy() const { return isolated_by_document_policy_; }
   // ExecutionContext::SharedArrayBufferTransferAllowed(): whether the context
   // has SharedArrayBuffer and may post one. Chrome allows it beside
   // cross-origin isolation only through the reverse origin trial and the
@@ -368,6 +383,7 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // command line makes, as a file: page is.
   bool secure_context_ = true;
   bool cross_origin_isolated_capability_ = false;
+  bool isolated_by_document_policy_ = false;
   bool in_back_forward_cache_ = false;
   bool received_no_store_for_script_request_ = false;
   std::vector<HeldTask> held_tasks_;

@@ -801,14 +801,34 @@ struct PageRequestBodyEnded {
 };
 
 // Whether a document is cross-origin isolated, and by what, as the agent
-// cluster key that Chrome's browser commits a document with says.
+// cluster key that Chrome's browser commits a document with says: a bit for
+// each of the two.
 enum class PageCrossOriginIsolation : uint8_t {
   kNone = 0,
   // Cross-Origin-Opener-Policy "same-origin" with a
   // Cross-Origin-Embedder-Policy that is compatible with cross-origin
-  // isolation.
+  // isolation, which isolates its page's agent cluster.
   kCoopAndCoep = 1,
+  // The document's own Document-Isolation-Policy, which gives it an agent
+  // cluster of its own, of its origin, apart from one of the same origin
+  // without it, cross-origin isolated whatever its permissions policy says.
+  kDocumentIsolationPolicy = 2,
+  // Both, for a document of a page that COOP and COEP isolate, whose own
+  // policy gives it an agent cluster of its own.
+  kCoopAndCoepAndDocumentIsolationPolicy = 3,
 };
+
+// Whether the isolation is its page's agent cluster's, and whether it is the
+// document's own.
+inline bool IsolatesAgentCluster(PageCrossOriginIsolation isolation) {
+  return (static_cast<uint8_t>(isolation) &
+          static_cast<uint8_t>(PageCrossOriginIsolation::kCoopAndCoep)) != 0;
+}
+inline bool IsolatesByDocumentPolicy(PageCrossOriginIsolation isolation) {
+  return (static_cast<uint8_t>(isolation) &
+          static_cast<uint8_t>(
+              PageCrossOriginIsolation::kDocumentIsolationPolicy)) != 0;
+}
 
 // A document's enforced Cross-Origin-Embedder-Policy.
 enum class PageEmbedderPolicy : uint8_t {
@@ -822,8 +842,9 @@ enum class PageEmbedderPolicy : uint8_t {
 // opened the Page: its agent cluster's, the top-level document's, but none for
 // a frame's response whose Content-Security-Policy sandboxes it, kCoopAndCoep
 // for isolated, which the Page ANDs with the document's cross-origin-isolated
-// feature. And its embedder policy, which its frames' documents of no response
-// take from it.
+// feature, and kDocumentIsolationPolicy too for one that its own response's
+// policy isolates. And its embedder policy, which its frames' documents of no
+// response take from it.
 struct PageIsolation {
   uint64_t navigation = kNavigationRequest;
   PageCrossOriginIsolation isolation = PageCrossOriginIsolation::kNone;

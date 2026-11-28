@@ -74,6 +74,12 @@ class DocumentLoader final : public PageRequests::Client,
   void SetEmbedderPolicyIsolates(bool isolates) {
     embedder_policy_isolates_ = isolates;
   }
+  // For a data: URL's document: whether its initiator's document isolation
+  // policy, which it takes, isolates it, as no Session says of it.
+  void SetIsolatedByDocumentPolicy(bool isolated) {
+    isolation_ = isolated ? PageCrossOriginIsolation::kDocumentIsolationPolicy
+                          : PageCrossOriginIsolation::kNone;
+  }
   // Whether the initiator's policy container has a Content-Security-Policy
   // that a header gave, which hides the nonces of the document's elements.
   void SetInheritedHeaderCsp(bool header_csp) {
@@ -127,8 +133,9 @@ class DocumentLoader final : public PageRequests::Client,
   bool no_store_ = false;
   // Whether the document of the response is cross-origin isolated, which
   // its window's agent is, as Blink's agent cluster key from the browser
-  // says.
-  bool cross_origin_isolated_ = false;
+  // says, and whether by its page's agent cluster or its own document
+  // isolation policy.
+  PageCrossOriginIsolation isolation_ = PageCrossOriginIsolation::kNone;
   PermissionsPolicyHeaders policy_headers_;
   // Whether its embedder policy is compatible with cross-origin isolation.
   bool embedder_policy_isolates_ = false;

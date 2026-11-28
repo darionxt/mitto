@@ -371,7 +371,7 @@ void MessagePort::PostMessage(v8::Local<v8::Value> message,
   if (const ExecutionContext* const context = context_.Get();
       context && sent.message.IsLockedToAgentCluster()) {
     sent.sender_origin = context->GetSecurityOrigin();
-    sent.sender_agent_cluster = context->AgentClusterOrigin();
+    sent.sender_agent_cluster = context->AgentCluster();
   }
   // PostMessageHelper::CreateUserActivationSnapshot(): only a window's.
   sent.user_activation =
@@ -600,8 +600,7 @@ MessageEvent* MessagePort::CreateMessageEvent(TransferableMessage& message) {
   if ((message.message.IsOriginCheckRequired() &&
        !message.sender_origin.IsSameOriginWith(context->GetSecurityOrigin())) ||
       (message.message.IsLockedToAgentCluster() &&
-       !message.sender_agent_cluster.IsSameOriginWith(
-           context->AgentClusterOrigin()))) {
+       message.sender_agent_cluster != context->AgentCluster())) {
     return MessageEvent::CreateError(/*origin=*/std::nullopt);
   }
   const std::vector<cppgc::Persistent<MessagePort>> ports =

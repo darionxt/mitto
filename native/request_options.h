@@ -119,8 +119,9 @@ struct FetchParams {
   // A dedicated worker's request, which sends no client hints.
   bool from_worker = false;
   // Whether the document or worker that asks has the embedder policy
-  // "credentialless", which sends and keeps no credentials on a request of
-  // mode no-cors to another origin.
+  // "credentialless" or the document isolation policy
+  // "isolate-and-credentialless", either of which sends and keeps no
+  // credentials on a request of mode no-cors to another origin.
   bool credentialless_client = false;
 
   // The names of the headers that are the caller's, in lower case.

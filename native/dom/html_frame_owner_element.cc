@@ -64,12 +64,12 @@ mitto::Document* HTMLFrameOwnerElement::ContentDocument() const {
     return nullptr;
   }
   // The HTML Standard's contentDocument: null unless the document's origin is
-  // same origin-domain with the current settings object's. Without
-  // document.domain (#286), that is the same origin.
+  // same origin-domain with the current settings object's, and, as
+  // [CheckSecurity=ReturnValue] asks BindingSecurity, of its agent cluster,
+  // which Chrome has in another process otherwise.
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   if (isolate && isolate->InContext() &&
-      !Window::Current().GetSecurityOrigin().IsSameOriginWith(
-          window->GetDocument().GetOrigin())) {
+      !Window::CanAccess(Window::Current(), *window)) {
     return nullptr;
   }
   return &window->GetDocument();

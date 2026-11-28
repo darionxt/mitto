@@ -23,10 +23,14 @@ class Window;
 
 // The process that Chrome has a document in: its site's, where an opaque origin
 // counts as the one it was made for, or, with kIsolateSandboxedIframes, its
-// origin's own for the documents that a sandbox gives an opaque origin.
+// origin's own for the documents that a sandbox gives an opaque origin, or
+// its origin's own for one that Document-Isolation-Policy isolates, as the
+// AgentClusterKey of its SiteInfo is then keyed by its origin with a
+// CrossOriginIsolationKey.
 struct RendererProcess {
   url::Origin origin;
   bool sandboxed = false;
+  bool isolated_by_document_policy = false;
 };
 
 // Whether the two are one process. Known Gap: a document that asks for a

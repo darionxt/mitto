@@ -85,6 +85,7 @@ class BroadcastChannelService {
     Connection(uint64_t id,
                std::string key,
                bool opaque,
+               bool isolated_by_document_policy,
                scoped_refptr<base::SingleThreadTaskRunner> runner,
                std::string name,
                BroadcastChannel* channel);
@@ -97,6 +98,10 @@ class BroadcastChannelService {
     // opaque, whose messages stay in the Page.
     std::string key;
     bool opaque;
+    // Whether Document-Isolation-Policy isolates the channel's agent cluster,
+    // which Chrome has in a process of its own, so that a value locked to it
+    // is an error in a channel of the same key without it.
+    bool isolated_by_document_policy;
     // Where the channel receives, on its thread.
     scoped_refptr<base::SingleThreadTaskRunner> runner;
     // In UTF-8, as the name reaches Chrome's browser.

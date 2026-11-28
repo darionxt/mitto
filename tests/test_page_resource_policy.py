@@ -1,9 +1,10 @@
 """Tests of Cross-Origin-Resource-Policy and credentialless requests in Pages that a Session opened, on local servers.
 
 A page on one server asks another, of another origin on the same host, for what it holds: the Session holds each response
-of a request of mode no-cors to its Cross-Origin-Resource-Policy, with the embedder policy of the document or worker that
-asked, as Chrome's network service does, and a document whose embedder policy is credentialless sends no credentials on
-such a request. What each page sees is held to what Chrome 157 gave for the same pages (docs/runtime.md, "Cross-origin
+of a request of mode no-cors to its Cross-Origin-Resource-Policy, with the embedder policy and the document isolation
+policy of the document or worker that asked, as Chrome's network service does, and a document whose embedder policy is
+credentialless, or whose document isolation policy is isolate-and-credentialless, sends no credentials on such a
+request. What each page sees is held to what Chrome 157 gave for the same pages (docs/runtime.md, "Cross-origin
 isolation").
 """
 
@@ -31,6 +32,10 @@ def _corp(value: str) -> list[_Header]:
 
 def _coep(value: str) -> _Header:
     return ("Cross-Origin-Embedder-Policy", value)
+
+
+def _dip(value: str) -> _Header:
+    return ("Document-Isolation-Policy", value)
 
 
 @pytest.fixture
@@ -152,6 +157,50 @@ def test_coep_require_corp_blocks_a_no_cors_response_with_no_policy(
         outcomes = [_fetch(page, other.url(path)) for path in ("/none", "/cross-origin")]
 
     assert outcomes == [_FAILED, "opaque"]
+
+
+def test_document_isolation_policy_holds_a_no_cors_response_as_coep_does(
+    session: mitto.Session, server: RecordingServer, other: RecordingServer
+) -> None:
+    # isolate-and-require-corp holds one with no policy to same-origin, and isolate-and-credentialless sends such a
+    # request no credentials, so needs no policy of it, as Chrome for Testing 157 gave, and a page's worker is held to
+    # its creator's.
+    target = other.url("/none")
+    server.route(
+        "/worker.js",
+        f"fetch('{target}', {{mode: 'no-cors'}}).then((r) => postMessage(r.type), (e) => postMessage(String(e)));".encode(),
+        _JS,
+    )
+    worker = "new Promise((resolve) => { new Worker('/worker.js').onmessage = (e) => resolve(e.data); })"
+
+    with _open_page(session, server.page("/", _BLANK, [_dip("isolate-and-require-corp")])) as page:
+        require_corp = [_fetch(page, other.url(path)) for path in ("/none", "/cross-origin", "/same-origin")]
+        from_worker = page.evaluate(worker, timeout=TIMEOUT_SECONDS)
+    with _open_page(session, server.page("/cl", _BLANK, [_dip("isolate-and-credentialless")])) as page:
+        credentialless = [
+            _fetch(page, other.url(path), "{mode: 'no-cors', credentials: 'include'}")
+            for path in ("/none", "/same-origin")
+        ]
+
+    assert require_corp == [_FAILED, "opaque", _FAILED]
+    assert from_worker == _FAILED
+    assert credentialless == ["opaque", _FAILED]
+
+
+def test_isolate_and_credentialless_sends_no_credentials_on_a_no_cors_request_to_another_origin(
+    session: mitto.Session, server: RecordingServer, other: RecordingServer
+) -> None:
+    url = server.page("/", _BLANK, [_dip("isolate-and-credentialless"), ("Set-Cookie", "who=mitto")])
+
+    with _open_page(session, url) as page:
+        outcomes = [
+            _fetch(page, other.url("/none"), "{mode: 'no-cors', credentials: 'include'}"),
+            _fetch(page, other.url("/cors"), "{mode: 'cors', credentials: 'include'}"),
+        ]
+
+    assert outcomes == ["opaque", _FAILED]
+    assert _value(other.headers_of("/none")[0], "Cookie") is None
+    assert _value(other.headers_of("/cors")[0], "Cookie") == "who=mitto"
 
 
 def test_coep_credentialless_sends_no_credentials_on_a_no_cors_request_to_another_origin(
@@ -281,14 +330,23 @@ _CACHE_MATCH = """caches.open('c').then(async (cache) => {
 })"""
 
 
-@pytest.mark.parametrize("policy", ["require-corp", "credentialless"])
+@pytest.mark.parametrize(
+    "policy",
+    [
+        pytest.param(_coep("require-corp"), id="require-corp"),
+        pytest.param(_coep("credentialless"), id="credentialless"),
+        pytest.param(_dip("isolate-and-require-corp"), id="isolate-and-require-corp"),
+        pytest.param(_dip("isolate-and-credentialless"), id="isolate-and-credentialless"),
+    ],
+)
 def test_the_cache_api_holds_an_opaque_response_to_its_policy_under_an_embedder_policy(
-    session: mitto.Session, server: RecordingServer, other: RecordingServer, policy: str
+    session: mitto.Session, server: RecordingServer, other: RecordingServer, policy: _Header
 ) -> None:
     # CacheStorageDispatcherHost holds what Cache.match(), Cache.matchAll() and CacheStorage.match() give to the
-    # context's embedder policy: an opaque response without a policy that lets the context have it fails the whole call,
-    # and keys() gives requests alone. Chrome takes every opaque response that it stored as one whose request sent
-    # credentials, so credentialless holds them as require-corp does (Chrome for Testing 157).
+    # context's embedder policy, or its document isolation policy: an opaque response without a policy that lets the
+    # context have it fails the whole call, and keys() gives requests alone. Chrome takes every opaque response that it
+    # stored as one whose request sent credentials, so credentialless holds them as require-corp does (Chrome for
+    # Testing 157).
     store = f"""caches.open('c').then(async (cache) => {{
         for (const [key, url, init] of [
             ['/none', '{other.url("/none")}', {{mode: 'no-cors'}}],
@@ -310,7 +368,7 @@ def test_the_cache_api_holds_an_opaque_response_to_its_policy_under_an_embedder_
     plain_url = server.page("/plain", _BLANK)
     with _open_page(session, plain_url) as page:
         assert page.evaluate(store, timeout=TIMEOUT_SECONDS) == "stored"
-    with _open_page(session, server.page("/held", _BLANK, [_coep(policy)])) as page:
+    with _open_page(session, server.page("/held", _BLANK, [policy])) as page:
         held = page.evaluate(_CACHE_MATCH, timeout=TIMEOUT_SECONDS)
     with _open_page(session, plain_url) as page:
         plain = page.evaluate(_CACHE_MATCH, timeout=TIMEOUT_SECONDS)
