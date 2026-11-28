@@ -10,7 +10,7 @@ Pages keep data in the browser: `localStorage` and `sessionStorage` on 80.6% of 
 
 - **The Session runs it.** The native core keeps `localStorage`, `sessionStorage`, IndexedDB and the Cache API, as Chrome's browser and storage service do. The Page keeps Blink's side of each and asks over the channel, naming its document or worker, and the library works out the storage key from that, as Chrome's browser does. Two Pages of one Session share one state, as two tabs of a profile do.
 - **Where it is kept.** `Session(storage=path)` names a directory, which the native core writes as it writes `cache=`. `localStorage` and IndexedDB go into SQLite, which is Chrome 157's store for both in memory and the store that its rollouts move both to on disk. The Cache API goes into `//net`'s disk cache, the simple backend, as Chrome has it. An IndexedDB transaction is written when it commits, and `localStorage` in Chrome's batches. One Session at a time has the directory, in any process.
-- **Without a directory.** The same stores in memory until the Session closes, as Chrome's Incognito keeps them, with Incognito's quota, drawn from the Machine's memory and held below the Host's.
+- **Without a directory.** The same stores in memory until the Session closes, and then gone, but otherwise as a normal window's: with the quota of a profile on disk, from the disk that holds the user's home folder, and IndexedDB's locks and value rules of a profile on disk. Amended on 2026-11-28 by the owner's decision, where it was Incognito's quota, drawn from memory: stable Chrome 157's normal window is the reference, and Incognito's quota with a profile's locks is no Chrome that exists. The disk is the Host's, where a profile would sit, not a field of the Machine, as `estimate()` shows a page only the usage plus the smaller of 10 GiB and the disk's size rounded up to a GiB, so the size of a disk of 10 GiB or more is not exposed, as with a directory.
 - **Its Machine.** The directory names the Machine whose storage it is. A Session that opens on it claims that Machine, and a Session of another Machine fails to open, as with `cookie_file`.
 - **What is not saved.** `sessionStorage` lives as long as its Page, since no later Session restores a Page.
 - **The cookie file** stays at version 2.
@@ -27,7 +27,7 @@ Pages keep data in the browser: `localStorage` and `sessionStorage` on 80.6% of 
 
 - SQLite and `//sql` join the build and the source export, with slices on every Host.
 - A caller who wants storage kept names a directory beside `cookie_file`. Until the Runtime ships, it stays private, as `Session(_storage=path)`, and no release writes anything new.
-- `estimate()` reports the usage plus 10 GiB, and the usage counts what mitto's stores hold, which differs from what Chrome's LevelDB files hold. Nothing is evicted.
-- IndexedDB follows the lock scheme and value wrapping of Chrome's store on disk, not Incognito's, whatever holds its bytes.
+- A write is held to a profile's quota, 75% of a pool of 80% of the disk that holds the directory, or the user's home folder without one. `estimate()` reports the usage plus 10 GiB, or plus a smaller disk's size rounded up to a GiB, and the usage counts what mitto's stores hold, which differs from what Chrome's LevelDB files hold. Nothing is evicted.
+- IndexedDB follows the lock scheme and value wrapping of Chrome's store on disk, as a normal window has them, not Incognito's, whatever holds its bytes.
 - The Page's messages gain a family for each kind, each with a case in `page_messages_fuzzer`.
 - The roadmap's M8 line no longer saves `sessionStorage`.

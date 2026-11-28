@@ -1373,7 +1373,7 @@ class Session:
                 no responses.
             storage: The absolute path of a directory where the native core keeps what this Session's Pages store, as
                 Chrome's storage service does for a profile, for later Sessions too. None keeps it in memory until this
-                Session closes, as Chrome's Incognito mode does.
+                Session closes, with a normal window's quota and rules.
             network_quality: What the rtt and downlink of a request made for a page are worked out from on each hop, with
                 Chrome's noise for its host. None leaves them as the request's headers say.
 

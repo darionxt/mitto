@@ -5,11 +5,12 @@
 // StorageBucket's estimate() say. DOM storage has a quota of its own and
 // counts for none of it, as in Chrome.
 //
-// The quota enforced is Chrome's: on disk, 75% of a pool of 80% of the disk
-// that holds the Session's storage; in memory, Incognito's, a third of a pool
-// of a random 15% to 20% of the memory. What estimate() reports is the usage
-// and 10 GiB more, on a disk of 10 GiB or more and always in memory, as
-// kStaticStorageQuota has it, or a bucket's own quota.
+// The quota enforced is that of a Chrome profile on disk, as a normal window
+// has it: 75% of a pool of 80% of the disk that holds the Session's storage
+// directory, or, for a Session without one, whose storage lives in memory, of
+// the disk that holds the user's home folder, where a profile would be. What
+// estimate() reports is the usage and 10 GiB more, on a disk of 10 GiB or
+// more, as kStaticStorageQuota has it, or a bucket's own quota.
 //
 // Upstream: storage/browser/quota/quota_settings.cc
 // Upstream: storage/browser/quota/quota_manager_impl.cc
@@ -97,12 +98,11 @@ class StorageQuota {
     kInvalidExpiration,
   };
 
-  // `directory` is where the Session keeps its storage, whose disk sets the
-  // quota and which keeps the buckets, or nullopt for storage in memory,
-  // whose quota `physical_memory` sets. `file_runner` reads the size of the
-  // disk, and `database_runner` reads and writes the buckets.
+  // `directory` is where the Session keeps its storage, which keeps the
+  // buckets, or nullopt for storage in memory. The disk that holds it, or
+  // else the user's home folder, sets the quota. `file_runner` finds and reads
+  // the size of that disk, and `database_runner` reads and writes the buckets.
   StorageQuota(std::optional<base::FilePath> directory,
-               uint64_t physical_memory,
                scoped_refptr<base::SequencedTaskRunner> file_runner,
                scoped_refptr<base::SequencedTaskRunner> database_runner);
   StorageQuota(const StorageQuota&) = delete;

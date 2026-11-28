@@ -8,6 +8,7 @@ its own, which tests/data/storage_buckets_cases.json keeps.
 
 import http.server
 import json
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -258,3 +259,44 @@ def test_a_deleted_bucket_leaves_nothing_in_the_storage_directory(server_origin:
     with closing(sqlite3.connect(storage / "IndexedDB")) as database:
         assert database.execute("SELECT COUNT(*) FROM entries").fetchone() == (0,)
     assert list((storage / "CacheStorage").iterdir()) == []
+
+
+# A storage key opens 100 buckets, each by a name of its own, in a Session without a storage directory, which holds them
+# in memory but to a profile's quota on disk, as Chrome's normal window does: QuotaManagerImpl lets a key have as many
+# buckets as its quota holds of kTypicalBucketUsage, 20 MiB. Chrome for Testing 157.0.8103.79 with its field-trial config
+# off opened all 100 in a new profile, and 44 in Incognito, whose quota is drawn from memory, before "QuotaExceededError:
+# Too many buckets created."
+_HUNDRED_BUCKETS = """
+(async () => {
+  let opened = 0;
+  let failure = null;
+  for (let i = 0; i < 100; ++i) {
+    try {
+      await navigator.storageBuckets.open(`b${i}`);
+      ++opened;
+    } catch (e) {
+      failure = `${e.name}: ${e.message}`;
+      break;
+    }
+  }
+  const keys = (await navigator.storageBuckets.keys()).length;
+  for (let i = 0; i < opened; ++i) await navigator.storageBuckets.delete(`b${i}`);
+  return {opened, failure, keys};
+})()
+"""
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_session_without_a_storage_directory_has_a_profile_s_quota(server_origin: str) -> None:
+    # A key's quota, 75% of a pool of 80% of the disk that holds the home folder, or the nearest folder above it that
+    # exists, has to hold the default bucket and 100 more of 20 MiB.
+    home = Path.home()
+    while not home.exists() and home != home.parent:
+        home = home.parent
+    per_key_quota = int(int(shutil.disk_usage(home).total * 0.8) * 0.75)
+    if per_key_quota // (20 * 1024 * 1024) < 101:
+        pytest.skip("the disk that holds the home folder is too small for 101 buckets of 20 MiB")
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        outcome = page.evaluate(_HUNDRED_BUCKETS, timeout=_TIMEOUT_SECONDS)
+
+    assert outcome == {"opened": 100, "failure": None, "keys": 100}

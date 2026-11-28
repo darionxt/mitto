@@ -39,7 +39,6 @@
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/system/sys_info.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -1372,13 +1371,13 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     base::TimeTicks doh_probes_start_time) {
   auto session = std::make_unique<MittoSession>();
   session->http_cache_directory_lock = std::move(http_cache_directory_lock);
-  // In the Session's storage directory, or in memory, with Incognito's quota,
-  // without one.
+  // In the Session's storage directory, or in memory without one, with a
+  // profile's quota either way, from the disk that holds the directory or the
+  // user's home folder, as a normal window has it.
   session->storage = std::make_unique<StorageContext>(
       settings.storage_directory, std::move(storage_directory_lock));
   session->quota_manager = std::make_unique<StorageQuota>(
       settings.storage_directory,
-      base::SysInfo::AmountOfTotalPhysicalMemory().InBytes(),
       base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}),
       session->storage->blocking_task_runner());
   session->cache_storage_context = std::make_unique<CacheStorageContext>(

@@ -2,8 +2,8 @@
 // profile's in the table `buckets` of its file QuotaManager: a row for each
 // bucket, with the ID that the Session gave it, its storage key, its name and
 // the policies that the page asked for. A Session with a storage directory
-// keeps them in the file QuotaManager there, and one without in memory, as
-// Incognito does. It blocks, so it lives on a sequence that may.
+// keeps them in the file QuotaManager there, and one without in memory until
+// it closes. It blocks, so it lives on a sequence that may.
 //
 // Upstream: storage/browser/quota/quota_database.cc
 
