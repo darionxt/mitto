@@ -74,7 +74,12 @@ class SessionIndexedDb final : public IndexedDbHost {
   // connections, transactions and cursors of the documents before, whose
   // numbers are smaller, goes unsent.
   uint64_t first_number_ = 0;
-  std::map<uint64_t, Answer> calls_;
+  struct Call {
+    Answer answer;
+    // The blobs of the values that answer it next.
+    IndexedDbBlobs blobs;
+  };
+  std::map<uint64_t, Call> calls_;
   std::map<uint64_t, Answer> listeners_;
   // The connection of each open that waits for its end, whose route the
   // Session's callbacks take from when the open goes.

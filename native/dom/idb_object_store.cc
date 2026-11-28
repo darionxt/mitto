@@ -6,8 +6,10 @@
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/memory/ref_counted.h"
+#include "base/numerics/safe_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_idb_object_store.h"
+#include "mitto/dom/blob_data.h"
 #include "mitto/dom/dom_string_list.h"
 #include "mitto/dom/idb_any.h"
 #include "mitto/dom/idb_cursor.h"
@@ -87,6 +89,23 @@ class IndexPopulator final : public IDBRequest::NativeSuccessListener {
   const scoped_refptr<const IDBObjectStoreMetadata> store_metadata_;
   const scoped_refptr<const IDBIndexMetadata> index_metadata_;
 };
+
+// What a put hands the Session: the value's bytes, and the blobs that they
+// name.
+IndexedDbValue IDBValueOf(const SerializedScriptValue& serialized) {
+  IndexedDbValue value;
+  const std::vector<uint8_t>& wire_data = serialized.wire_data();
+  value.bits.assign(wire_data.begin(), wire_data.end());
+  for (const auto& [uuid, handle] : serialized.blob_data_handles()) {
+    IndexedDbBlob& blob = value.blobs.emplace_back();
+    blob.uuid = uuid;
+    blob.type = handle->GetType();
+    blob.storage = handle->storage();
+    blob.offset = handle->offset();
+    blob.size = base::checked_cast<size_t>(handle->size());
+  }
+  return value;
+}
 
 }  // namespace
 
@@ -433,10 +452,8 @@ IDBRequest* IDBObjectStore::DoPut(IndexedDbPutMode put_mode,
   IDBRequest* const request = IDBRequest::Create(source, transaction_.Get());
   // Chrome's IDBValueWrapper wraps a value over 64 KiB into a Blob here; the
   // Session takes values whole.
-  const std::vector<uint8_t>& wire_data = serialized->wire_data();
-  transaction_->Put(Id(), std::string(wire_data.begin(), wire_data.end()),
-                    key ? *key : IDBKey(), put_mode, std::move(index_keys),
-                    request);
+  transaction_->Put(Id(), IDBValueOf(*serialized), key ? *key : IDBKey(),
+                    put_mode, std::move(index_keys), request);
   return request;
 }
 

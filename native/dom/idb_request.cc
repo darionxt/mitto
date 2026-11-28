@@ -550,7 +550,7 @@ void IDBRequest::SendResultValue(IndexedDbReturnValue value) {
   }
   if (pending_cursor_) {
     // An empty value: the cursor continued past its end.
-    DCHECK(value.bits.empty());
+    DCHECK(value.value.bits.empty());
     pending_cursor_->Close();
     pending_cursor_.Clear();
   }
