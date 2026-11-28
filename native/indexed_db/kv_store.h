@@ -34,11 +34,13 @@ class KvStore {
   virtual ~KvStore() = default;
 
   virtual std::optional<std::string> Get(std::string_view key) = 0;
+  virtual bool Has(std::string_view key) const = 0;
   // The first entry at or after `key` (or at or before it, `reverse`), within
-  // [`lower`, `upper`), or nullopt.
+  // [`lower`, `upper`), or nullopt. Its value lives until
+  // what gave it changes.
   struct Entry {
     std::string key;
-    std::string value;
+    std::string_view value;
   };
   virtual std::optional<Entry> Seek(std::string_view key,
                                     std::string_view lower,
@@ -64,6 +66,7 @@ class MemoryKvStore final : public KvStore {
   ~MemoryKvStore() override;
 
   std::optional<std::string> Get(std::string_view key) override;
+  bool Has(std::string_view key) const override;
   std::optional<Entry> Seek(std::string_view key,
                             std::string_view lower,
                             std::string_view upper,

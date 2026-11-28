@@ -2,7 +2,8 @@
 
 It needs an origin that is not opaque, and so a Page that a Session opened on 127.0.0.1, with a native library and the
 Page program beside it. The expected values of tests/indexed_db_cases.js are what Chrome 157 gave for the same script
-on the same kind of page, headless on macOS (157.0.8103.51), which tests/data/indexed_db_cases.json keeps.
+on the same kind of page, headless on macOS (157.0.8103.51), which tests/data/indexed_db_cases.json keeps, and so are
+those of tests/indexed_db_blob_cases.js (157.0.8103.79), which gave the same in a page and in a dedicated worker.
 """
 
 import http.server
@@ -24,6 +25,10 @@ _TIMEOUT_SECONDS = 120
 _BLANK = b"<!doctype html><title>i</title><body>"
 _TESTS = Path(__file__).parent
 _SAVED_STORAGE_CLIENT = _TESTS / "saved_storage_client.py"
+# The blob cases, whose value is a promise, and a worker that posts what they settle with.
+_BLOB_CASES = (_TESTS / "indexed_db_blob_cases.js").read_text(encoding="utf-8").strip().removesuffix(";")
+_BLOB_WORKER_PATH = "/blob-cases.js"
+_BLOB_WORKER = f"{_BLOB_CASES}.then(postMessage);".encode()
 
 # Writes a database of two versions, with a store, an index and a key generator, and gives what IndexedDB's part of
 # navigator.storage.estimate() says.
@@ -37,7 +42,8 @@ new Promise((resolve, reject) => {
   r.onsuccess = () => {
     const tx = r.result.transaction('s', 'readwrite');
     const s = tx.objectStore('s');
-    s.put({name: 'é and 日本', bytes: new Uint8Array([1, 2, 3])});
+    s.put({name: 'é and 日本', bytes: new Uint8Array([1, 2, 3]),
+      file: new File(['of é'], 'kept.txt', {type: 'a/b', lastModified: 9})});
     for (let i = 0; i < 100; ++i) s.put({name: `n${i}`, i});
     tx.oncomplete = async () => {
       r.result.close();
@@ -63,8 +69,11 @@ _READ = """
     const first = s.index('by_name').get('é and 日本');
     const count = s.count();
     const last = s.get(101);
-    last.onsuccess = () => resolve([count.result, first.result.name, [...first.result.bytes], last.result.i]);
+    last.onsuccess = () => resolve([count.result, first.result.name, [...first.result.bytes], first.result.file,
+      last.result.i]);
   });
+  const file = read[3];
+  read[3] = [file.name, file.type, file.lastModified, file.size, await file.text()];
   // The key generator goes on from where it was.
   const next = await new Promise((resolve) => {
     const put = db.transaction('s', 'readwrite').objectStore('s').put({name: 'next'});
@@ -86,17 +95,19 @@ def page_program(native_library: Any) -> None:
 
 @pytest.fixture
 def server_origin() -> Iterator[str]:
-    """The origin of a local server on 127.0.0.1 with a blank page at every path."""
+    """The origin of a local server on 127.0.0.1 with a blank page at every path, but for the blob cases' worker."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
+            is_worker = self.path == _BLOB_WORKER_PATH
+            body = _BLOB_WORKER if is_worker else _BLANK
             self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", str(len(_BLANK)))
+            self.send_header("Content-Type", "text/javascript; charset=utf-8" if is_worker else "text/html")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(_BLANK)
+            self.wfile.write(body)
 
         def log_message(self, format: str, *args: Any) -> None:
             pass
@@ -120,6 +131,27 @@ def test_indexed_db_stores_reads_and_fails_as_chrome_s(server_origin: str) -> No
     assert outcome == expected
 
 
+@pytest.mark.parametrize(
+    "script",
+    [
+        pytest.param(_BLOB_CASES, id="page"),
+        pytest.param(
+            f"new Promise((resolve, reject) => {{ const worker = new Worker('{_BLOB_WORKER_PATH}');"
+            " worker.onmessage = (e) => resolve(e.data); worker.onerror = (e) => reject(e.message); })",
+            id="worker",
+        ),
+    ],
+)
+@pytest.mark.usefixtures("page_program")
+def test_indexed_db_keeps_blobs_as_chrome_s(server_origin: str, script: str) -> None:
+    expected = json.loads((_TESTS / "data" / "indexed_db_blob_cases.json").read_text(encoding="utf-8"))
+
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        outcome = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+
+    assert outcome == expected
+
+
 @pytest.mark.usefixtures("page_program")
 def test_the_pages_of_a_session_share_its_databases(server_origin: str) -> None:
     with mitto.Session() as session:
@@ -127,7 +159,8 @@ def test_the_pages_of_a_session_share_its_databases(server_origin: str) -> None:
             writer.evaluate(
                 "new Promise((resolve, reject) => {"
                 " const r = indexedDB.open('shared', 3);"
-                " r.onupgradeneeded = () => r.result.createObjectStore('s').put({kept: true}, 'k');"
+                " r.onupgradeneeded = () => { const s = r.result.createObjectStore('s'); s.put({kept: true}, 'k');"
+                " s.put(new File(['of another'], 'f', {type: 'a/b', lastModified: 1}), 'f'); };"
                 " r.onsuccess = () => { r.result.close(); resolve(); }; r.onerror = () => reject(r.error); })",
                 timeout=_TIMEOUT_SECONDS,
             )
@@ -135,13 +168,15 @@ def test_the_pages_of_a_session_share_its_databases(server_origin: str) -> None:
             outcome = reader.evaluate(
                 "new Promise((resolve, reject) => {"
                 " const r = indexedDB.open('shared');"
-                " r.onsuccess = () => { const g = r.result.transaction('s').objectStore('s').get('k');"
-                " g.onsuccess = () => resolve([r.result.version, g.result]); };"
+                " r.onsuccess = () => { const s = r.result.transaction('s').objectStore('s');"
+                " const g = s.get('k'); const f = s.get('f');"
+                " f.onsuccess = async () => resolve([r.result.version, g.result, f.result.name, f.result.type,"
+                " f.result.lastModified, await f.result.text()]); };"
                 " r.onerror = () => reject(r.error); })",
                 timeout=_TIMEOUT_SECONDS,
             )
 
-    assert outcome == [3, {"kept": True}]
+    assert outcome == [3, {"kept": True}, "f", "a/b", 1, "of another"]
 
 
 @pytest.mark.usefixtures("page_program")
@@ -342,9 +377,45 @@ def test_a_storage_directory_brings_databases_back_in_another_process(server_ori
         101,
         "é and 日本",
         [1, 2, 3],
+        ["kept.txt", "a/b", 9, 5, "of é"],
         99,
         102,
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_the_blobs_of_a_record_that_goes_go_with_it(server_origin: str) -> None:
+    script = """(async () => {
+        const open = (version, upgrade) => new Promise((resolve) => {
+            const r = indexedDB.open('blobs', version);
+            r.onupgradeneeded = () => upgrade(r.result);
+            r.onsuccess = () => resolve(r.result);
+        });
+        const usage = async () => ((await navigator.storage.estimate()).usageDetails.indexedDB ?? 0) >> 20;
+        let db = await open(1, (d) => { d.createObjectStore('s'); d.createObjectStore('other'); });
+        const write = (f) => new Promise((resolve) => {
+            const tx = db.transaction('s', 'readwrite');
+            f(tx.objectStore('s'));
+            tx.oncomplete = async () => resolve(await usage());
+        });
+        const put = (key) => write((s) => s.put({blob: new Blob([new Uint8Array(1 << 20)])}, key));
+        const seen = [await put(1), await put(1), await write((s) => s.put('none', 1)), await put(1),
+            await write((s) => s.delete(1)), await put(1), await put(2),
+            await write((s) => s.delete(IDBKeyRange.upperBound(1))), await write((s) => s.clear()), await put(3)];
+        db.close();
+        db = await open(2, (d) => d.deleteObjectStore('s'));
+        seen.push(await usage());
+        db.close();
+        db = await open(3, (d) => d.createObjectStore('s'));
+        seen.push(await put(1));
+        db.close();
+        await new Promise((resolve) => { indexedDB.deleteDatabase('blobs').onsuccess = resolve; });
+        seen.push(await usage());
+        return seen;
+    })()"""
+
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [1, 1, 0, 1, 0, 1, 2, 1, 0, 1, 0, 1, 0]
 
 
 @pytest.mark.usefixtures("page_program")

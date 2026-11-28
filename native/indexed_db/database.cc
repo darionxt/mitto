@@ -46,15 +46,15 @@ std::string ObjectStoreLockKey(int64_t database_id, int64_t object_store_id) {
 // ConvertValueToReturnValue(): a key that a key generator gave goes with the
 // value, for the Page to put into it.
 IndexedDbReturnValue ReturnValue(const IndexedDbObjectStoreMetadata& store,
-                                 std::string bits,
+                                 IndexedDbValue value,
                                  const IDBKey& primary_key) {
-  IndexedDbReturnValue value;
-  value.bits = std::move(bits);
+  IndexedDbReturnValue return_value;
+  return_value.value = std::move(value);
   if (store.auto_increment && !store.key_path.IsNull()) {
-    value.primary_key = primary_key;
-    value.key_path = store.key_path;
+    return_value.primary_key = primary_key;
+    return_value.key_path = store.key_path;
   }
-  return value;
+  return return_value;
 }
 
 size_t RecordSize(const IndexedDbRecord& record) {
@@ -64,7 +64,7 @@ size_t RecordSize(const IndexedDbRecord& record) {
   }
   if (record.value) {
     size +=
-        record.value->bits.size() + record.value->primary_key.SizeEstimate();
+        record.value->value.Size() + record.value->primary_key.SizeEstimate();
   }
   if (record.index_key) {
     size += record.index_key->SizeEstimate();
@@ -920,14 +920,17 @@ bool IndexedDbDatabase::GetOperation(int64_t object_store_id,
     }
     primary_key = cursor->primary_key();
   }
-  std::optional<std::string> value =
-      backing_store.GetRecord(object_store_id, primary_key);
-  if (!value) {
-    return empty();
-  }
   if (key_only) {
+    if (!backing_store.KeyExistsInObjectStore(object_store_id, primary_key)) {
+      return empty();
+    }
     answer.key = std::move(primary_key);
   } else {
+    std::optional<IndexedDbValue> value =
+        backing_store.GetRecord(object_store_id, primary_key);
+    if (!value) {
+      return empty();
+    }
     answer.value = ReturnValue(store, std::move(*value), primary_key);
   }
   std::move(reply).Run(std::move(answer));

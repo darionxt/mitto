@@ -10,6 +10,7 @@
 #include "base/notreached.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/blob_data.h"
 #include "mitto/dom/idb_cursor.h"
 #include "mitto/dom/idb_database.h"
 #include "mitto/dom/idb_key_conversion.h"
@@ -36,8 +37,14 @@ v8::Local<v8::Value> DeserializeIDBValue(v8::Isolate* isolate,
                                          const IndexedDbReturnValue& value) {
   // Values over 64 KiB come whole from the Session, where Chrome would have
   // wrapped them in a Blob that IDBRequestLoader unwraps before this.
+  BlobDataHandleMap blobs;
+  for (const IndexedDbBlob& blob : value.value.blobs) {
+    blobs.emplace(blob.uuid, BlobDataHandle::Create(blob.storage, blob.offset,
+                                                    blob.size, blob.type));
+  }
   const SerializedScriptValue serialized = SerializedScriptValue::FromWireData(
-      std::vector<uint8_t>(value.bits.begin(), value.bits.end()));
+      std::vector<uint8_t>(value.value.bits.begin(), value.value.bits.end()),
+      std::move(blobs));
   const v8::Local<v8::Value> v8_value = serialized.Deserialize(isolate);
   if (value.primary_key.type() != IDBKeyType::kNone &&
       !value.key_path.IsNull()) {

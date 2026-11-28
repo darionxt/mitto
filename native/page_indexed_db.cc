@@ -289,6 +289,7 @@ void PageIndexedDb::OnCall(PageIndexedDbCall call,
       return;
     case IndexedDbCallOp::kCreateObjectStore:
     case IndexedDbCallOp::kDeleteObjectStore:
+    case IndexedDbCallOp::kPutBlob:
     case IndexedDbCallOp::kPut:
     case IndexedDbCallOp::kSetIndexKeys:
     case IndexedDbCallOp::kSetIndexKeysDone:
@@ -340,7 +341,7 @@ void PageIndexedDb::OnFactoryCall(PageIndexedDbCall call,
     }
     connections_.emplace(call.connection, nullptr);
     connection_contexts_.emplace(call.connection, context);
-    transactions_.emplace(call.transaction, call.connection);
+    transactions_[call.transaction].connection = call.connection;
   }
   if (!bucket_live) {
     FailFactoryCall(std::move(call));
@@ -414,7 +415,7 @@ void PageIndexedDb::OnDatabaseCall(PageIndexedDbCall call,
         return;
       }
       if (connection.IsConnected()) {
-        transactions_.emplace(call.transaction, call.connection);
+        transactions_[call.transaction].connection = call.connection;
       }
       connection.CreateTransaction(call.transaction, call.scope, call.mode,
                                    call.durability);
@@ -495,7 +496,7 @@ void PageIndexedDb::OnDatabaseCall(PageIndexedDbCall call,
       connections_.erase(call.connection);
       connection_contexts_.erase(call.connection);
       std::erase_if(transactions_, [&call](const auto& entry) {
-        return entry.second == call.connection;
+        return entry.second.connection == call.connection;
       });
       // Closing aborts what the connection still runs, as a dropped remote
       // does.
@@ -523,7 +524,23 @@ void PageIndexedDb::OnTransactionCall(PageIndexedDbCall call) {
     case IndexedDbCallOp::kDeleteObjectStore:
       transaction->DeleteObjectStore(call.object_store_id);
       return;
+    case IndexedDbCallOp::kPutBlob:
+      if (transaction->mode() == IndexedDbTransactionMode::kReadOnly) {
+        transaction->connection().ReportBadMessage(
+            "Attempted to Put on readonly txn.");
+        return;
+      }
+      if (!transactions_.at(call.transaction)
+               .put_blobs.Add(std::move(call.blob_part))) {
+        RefuseCall("a part of an IndexedDB blob that no put holds");
+      }
+      return;
     case IndexedDbCallOp::kPut:
+      if (!transactions_.at(call.transaction)
+               .put_blobs.PutInto({&call.value})) {
+        RefuseCall("an IndexedDB put whose blobs did not come");
+        return;
+      }
       transaction->Put(call.object_store_id, std::move(call.value),
                        std::move(call.key), call.put_mode,
                        std::move(call.index_keys), ReplyTo(call.call));
@@ -592,7 +609,7 @@ IndexedDbTransaction* PageIndexedDb::FindTransaction(uint64_t transaction) {
   if (found == transactions_.end()) {
     return nullptr;
   }
-  const auto connection = connections_.find(found->second);
+  const auto connection = connections_.find(found->second.connection);
   if (connection == connections_.end() || !connection->second) {
     return nullptr;
   }
@@ -631,7 +648,7 @@ void PageIndexedDb::ForgetContexts(const std::set<uint64_t>& contexts) {
       connections_.erase(found);
     }
     std::erase_if(transactions_, [connection](const auto& entry) {
-      return entry.second == connection;
+      return entry.second.connection == connection;
     });
     it = connection_contexts_.erase(it);
   }
@@ -694,6 +711,16 @@ void PageIndexedDb::SendCallback(PageIndexedDbCallback callback) {
     error.message = u"The result is too large.";
     error.done = true;
     callback = std::move(error);
+  }
+  for (const IndexedDbValue* const value : callback.Values()) {
+    SendIndexedDbBlobs(*value, [this, &callback](IndexedDbBlobPart part) {
+      PageIndexedDbCallback blob;
+      blob.op = IndexedDbCallbackOp::kBlob;
+      blob.call = callback.call;
+      blob.blob_part = std::move(part);
+      send_.Run(EncodeFrame(PageMessage::kIndexedDbCallback,
+                            EncodeIndexedDbCallback(blob)));
+    });
   }
   send_.Run(EncodeFrame(PageMessage::kIndexedDbCallback,
                         EncodeIndexedDbCallback(callback)));

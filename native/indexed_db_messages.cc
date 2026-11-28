@@ -1,9 +1,13 @@
 #include "mitto/indexed_db_messages.h"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <utility>
 
+#include "base/memory/ref_counted.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/uuid.h"
 #include "mitto/message_coding.h"
 #include "mitto/page_messages.h"
 
@@ -11,6 +15,14 @@ namespace mitto {
 namespace {
 
 constexpr uint8_t kMaxIndexedDbException = 33;
+
+// How much of a blob travels at once.
+constexpr size_t kMaxBlobPart = 1 << 20;
+// What a message says of a blob, at least: a UUID, its size, the type's and
+// the blob's.
+constexpr size_t kLeastBlobSize = 36 + 2 * sizeof(uint32_t) + sizeof(uint64_t);
+// No message names more.
+constexpr size_t kMaxBlobs = kMaxPayloadSize / kLeastBlobSize;
 
 bool IsException(uint8_t value) {
   switch (static_cast<IndexedDbException>(value)) {
@@ -248,15 +260,64 @@ bool ReadMetadata(MessageReader& reader, IndexedDbDatabaseMetadata& metadata) {
   return true;
 }
 
+void WriteValue(MessageWriter& writer, const IndexedDbValue& value) {
+  writer.Sized(value.bits);
+  writer.U32(static_cast<uint32_t>(value.blobs.size()));
+  for (const IndexedDbBlob& blob : value.blobs) {
+    writer.Sized(blob.uuid);
+    writer.Sized(blob.type);
+    writer.U64(blob.size);
+  }
+}
+
+bool ReadValue(MessageReader& reader, IndexedDbValue& value) {
+  uint32_t count = 0;
+  if (!reader.Sized(value.bits) || !reader.Count(count, kLeastBlobSize)) {
+    return false;
+  }
+  value.blobs.resize(count);
+  for (IndexedDbBlob& blob : value.blobs) {
+    uint64_t size = 0;
+    if (!reader.Sized(blob.uuid) ||
+        !base::Uuid::ParseLowercase(blob.uuid).is_valid() ||
+        !reader.Sized(blob.type) ||
+        !std::ranges::all_of(blob.type,
+                             [](char c) { return c >= 0x20 && c <= 0x7E; }) ||
+        !reader.U64(size) ||
+        !base::IsValueInRangeForNumericType<size_t>(size)) {
+      return false;
+    }
+    blob.size = static_cast<size_t>(size);
+  }
+  return true;
+}
+
+void WriteBlobPart(MessageWriter& writer, const IndexedDbBlobPart& part) {
+  writer.Bool(part.starts);
+  writer.Raw(part.bytes);
+}
+
+bool ReadBlobPart(MessageReader& reader, IndexedDbBlobPart& part) {
+  if (!reader.Bool(part.starts)) {
+    return false;
+  }
+  const std::string_view bytes = reader.Rest();
+  if (bytes.size() > kMaxBlobPart) {
+    return false;
+  }
+  part.bytes = bytes;
+  return true;
+}
+
 void WriteReturnValue(MessageWriter& writer,
                       const IndexedDbReturnValue& value) {
-  writer.Sized(value.bits);
+  WriteValue(writer, value.value);
   WriteKey(writer, value.primary_key);
   WriteKeyPath(writer, value.key_path);
 }
 
 bool ReadReturnValue(MessageReader& reader, IndexedDbReturnValue& value) {
-  return reader.Sized(value.bits) &&
+  return ReadValue(reader, value.value) &&
          ReadValidOrNoneKey(reader, value.primary_key) &&
          ReadKeyPath(reader, value.key_path);
 }
@@ -397,6 +458,90 @@ IndexedDbIndexKeys& IndexedDbIndexKeys::operator=(IndexedDbIndexKeys&&) =
     default;
 IndexedDbIndexKeys::~IndexedDbIndexKeys() = default;
 
+IndexedDbBlob::IndexedDbBlob() = default;
+IndexedDbBlob::IndexedDbBlob(const IndexedDbBlob&) = default;
+IndexedDbBlob::IndexedDbBlob(IndexedDbBlob&&) = default;
+IndexedDbBlob& IndexedDbBlob::operator=(const IndexedDbBlob&) = default;
+IndexedDbBlob& IndexedDbBlob::operator=(IndexedDbBlob&&) = default;
+IndexedDbBlob::~IndexedDbBlob() = default;
+
+IndexedDbValue::IndexedDbValue() = default;
+IndexedDbValue::IndexedDbValue(const IndexedDbValue&) = default;
+IndexedDbValue::IndexedDbValue(IndexedDbValue&&) = default;
+IndexedDbValue& IndexedDbValue::operator=(const IndexedDbValue&) = default;
+IndexedDbValue& IndexedDbValue::operator=(IndexedDbValue&&) = default;
+IndexedDbValue::~IndexedDbValue() = default;
+
+uint64_t IndexedDbValue::BlobsSize() const {
+  uint64_t size = 0;
+  for (const IndexedDbBlob& blob : blobs) {
+    size += blob.size;
+  }
+  return size;
+}
+
+size_t IndexedDbValue::Size() const {
+  size_t size = bits.size() + base::checked_cast<size_t>(BlobsSize());
+  for (const IndexedDbBlob& blob : blobs) {
+    size += blob.uuid.size() + blob.type.size();
+  }
+  return size;
+}
+
+void SendIndexedDbBlobs(const IndexedDbValue& value,
+                        base::FunctionRef<void(IndexedDbBlobPart part)> send) {
+  for (const IndexedDbBlob& blob : value.blobs) {
+    std::string_view rest = blob.bytes();
+    bool starts = true;
+    do {
+      IndexedDbBlobPart part;
+      part.starts = starts;
+      part.bytes = rest.substr(0, kMaxBlobPart);
+      rest.remove_prefix(part.bytes.size());
+      starts = false;
+      send(std::move(part));
+    } while (!rest.empty());
+  }
+}
+
+IndexedDbBlobs::IndexedDbBlobs() = default;
+IndexedDbBlobs::IndexedDbBlobs(IndexedDbBlobs&&) = default;
+IndexedDbBlobs& IndexedDbBlobs::operator=(IndexedDbBlobs&&) = default;
+IndexedDbBlobs::~IndexedDbBlobs() = default;
+
+bool IndexedDbBlobs::Add(IndexedDbBlobPart part) {
+  size_ += part.bytes.size();
+  if (size_ > kMaxIndexedDbBlobsSize) {
+    return false;
+  }
+  if (part.starts) {
+    blobs_.push_back(std::move(part.bytes));
+    return blobs_.size() <= kMaxBlobs;
+  }
+  if (blobs_.empty()) {
+    return false;
+  }
+  blobs_.back().append(part.bytes);
+  return true;
+}
+
+bool IndexedDbBlobs::PutInto(const std::vector<IndexedDbValue*>& values) {
+  std::vector<std::string> blobs = std::exchange(blobs_, {});
+  size_ = 0;
+  auto next = blobs.begin();
+  for (IndexedDbValue* const value : values) {
+    for (IndexedDbBlob& blob : value->blobs) {
+      if (next == blobs.end() || next->size() != blob.size) {
+        return false;
+      }
+      blob.storage =
+          base::MakeRefCounted<base::RefCountedString>(std::move(*next));
+      ++next;
+    }
+  }
+  return next == blobs.end();
+}
+
 IndexedDbReturnValue::IndexedDbReturnValue() = default;
 IndexedDbReturnValue::IndexedDbReturnValue(const IndexedDbReturnValue&) =
     default;
@@ -424,6 +569,22 @@ PageIndexedDbCallback::PageIndexedDbCallback(PageIndexedDbCallback&&) = default;
 PageIndexedDbCallback& PageIndexedDbCallback::operator=(
     PageIndexedDbCallback&&) = default;
 PageIndexedDbCallback::~PageIndexedDbCallback() = default;
+
+std::vector<IndexedDbValue*> PageIndexedDbCallback::Values() {
+  std::vector<IndexedDbValue*> all;
+  if (value) {
+    all.push_back(&value->value);
+  }
+  for (IndexedDbRecord& record : records) {
+    if (record.value) {
+      all.push_back(&record.value->value);
+    }
+  }
+  for (IndexedDbReturnValue& entry : values) {
+    all.push_back(&entry.value);
+  }
+  return all;
+}
 
 std::string EncodeIndexedDbCall(const PageIndexedDbCall& call) {
   MessageWriter writer;
@@ -559,7 +720,7 @@ std::string EncodeIndexedDbCall(const PageIndexedDbCall& call) {
       writer.U64(call.call);
       writer.U64(call.transaction);
       writer.I64(call.object_store_id);
-      writer.Sized(call.value);
+      WriteValue(writer, call.value);
       WriteKey(writer, call.key);
       writer.Byte(static_cast<uint8_t>(call.put_mode));
       WriteIndexKeys(writer, call.index_keys);
@@ -596,6 +757,10 @@ std::string EncodeIndexedDbCall(const PageIndexedDbCall& call) {
     case IndexedDbCallOp::kCloseCursor:
       writer.U64(call.cursor);
       break;
+    case IndexedDbCallOp::kPutBlob:
+      writer.U64(call.transaction);
+      WriteBlobPart(writer, call.blob_part);
+      break;
   }
   return writer.Take();
 }
@@ -603,7 +768,8 @@ std::string EncodeIndexedDbCall(const PageIndexedDbCall& call) {
 bool IndexedDbCallFits(const PageIndexedDbCall& call) {
   // Its frame starts with the ID of the document that asks.
   return EncodeIndexedDbCall(call).size() <=
-         kMaxPayloadSize - sizeof(uint64_t);
+             kMaxPayloadSize - sizeof(uint64_t) &&
+         call.value.BlobsSize() <= kMaxIndexedDbBlobsSize;
 }
 
 base::expected<PageIndexedDbCall, std::string> ReadIndexedDbCall(
@@ -727,7 +893,8 @@ base::expected<PageIndexedDbCall, std::string> ReadIndexedDbCall(
       break;
     case IndexedDbCallOp::kPut:
       valid = reader.U64(call.call) && reader.U64(call.transaction) &&
-              reader.I64(call.object_store_id) && reader.Sized(call.value) &&
+              reader.I64(call.object_store_id) &&
+              ReadValue(reader, call.value) &&
               ReadValidOrNoneKey(reader, call.key) && reader.Byte(byte) &&
               byte <= static_cast<uint8_t>(IndexedDbPutMode::kCursorUpdate);
       call.put_mode = static_cast<IndexedDbPutMode>(byte);
@@ -762,6 +929,10 @@ base::expected<PageIndexedDbCall, std::string> ReadIndexedDbCall(
       break;
     case IndexedDbCallOp::kCloseCursor:
       valid = reader.U64(call.cursor);
+      break;
+    case IndexedDbCallOp::kPutBlob:
+      valid =
+          reader.U64(call.transaction) && ReadBlobPart(reader, call.blob_part);
       break;
   }
   if (!valid || !reader.AtEnd()) {
@@ -875,6 +1046,10 @@ std::string EncodeIndexedDbCallback(const PageIndexedDbCallback& callback) {
           WriteReturnValue(writer, callback.values[i]);
         }
       }
+      break;
+    case IndexedDbCallbackOp::kBlob:
+      writer.U64(callback.call);
+      WriteBlobPart(writer, callback.blob_part);
       break;
   }
   return writer.Take();
@@ -996,6 +1171,10 @@ base::expected<PageIndexedDbCallback, std::string> ReadIndexedDbCallback(
       }
       break;
     }
+    case IndexedDbCallbackOp::kBlob:
+      valid =
+          reader.U64(callback.call) && ReadBlobPart(reader, callback.blob_part);
+      break;
   }
   if (!valid || !reader.AtEnd()) {
     return base::unexpected("an IndexedDB callback that is not valid");
