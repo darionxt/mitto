@@ -61,6 +61,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
  public:
   // The execution context of the isolate's current context.
   static ExecutionContext& Current();
+  // That of the relevant realm of the current call's receiver, whose
+  // ScriptState Blink calls a member with that asks for one, and the current
+  // one for a call of none.
+  static ExecutionContext& OfReceiver();
   // The execution context of `context`, whose global object it is, or null
   // for a context of none: the one bound to it, or else its global proxy's.
   static ExecutionContext* From(v8::Isolate* isolate,
@@ -109,6 +113,10 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   virtual std::u16string Origin() const = 0;
   // WindowOrWorkerGlobalScope's isSecureContext.
   virtual bool IsSecureContextForBindings() const = 0;
+  // AllowedToCollectHighEntropyValues(): whether its permissions policy lets
+  // getHighEntropyValues() give them, which a window's console is told of if
+  // not.
+  virtual bool AllowsHighEntropyValues() = 0;
   // WindowOrWorkerGlobalScope's performance, made the first time.
   virtual mitto::Performance* Performance() = 0;
   // Where the context's Cache API reaches the Session, or null for a context

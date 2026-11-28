@@ -6,7 +6,7 @@
 // its ID, which the Session never gives another bucket.
 //
 // The buckets of a storage key under a top-level document of an opaque
-// origin stay in memory, as its storage does.
+// origin, or of a credentialless frame, stay in memory, as its storage does.
 
 #ifndef MITTO_STORAGE_STORAGE_BUCKETS_H_
 #define MITTO_STORAGE_STORAGE_BUCKETS_H_

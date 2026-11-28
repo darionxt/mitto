@@ -52,6 +52,9 @@ struct NavigationRequest {
   // gives it: its document's URL, or for a srcdoc document its parent's,
   // stripped for use as a referrer, and empty for an opaque origin.
   GURL initiator_referrer;
+  // Whether that, which is taken as the navigation starts, is another than the
+  // initiator has as it leaves, so its request names it, or names none.
+  bool names_referrer = false;
   // Whether the initiator is in a process for sandboxed documents, which an
   // about:blank that it commits is in too.
   bool initiator_in_sandboxed_process = false;

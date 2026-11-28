@@ -414,6 +414,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kDocumentStored:
       case PageMessage::kDocumentRestored:
       case PageMessage::kDocumentEvicted:
+      case PageMessage::kFrameAttributes:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }

@@ -8,6 +8,7 @@
 #include "mitto/bindings/v8_location.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/frame.h"
+#include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
 #include "url/gurl.h"
@@ -124,6 +125,15 @@ std::u16string FragmentOf(const ResolvedURL& url) {
   return fragment;
 }
 
+// The string that KURL keeps of `url` resolved against the document's base
+// URL, and of one that does not parse what the canonicalizer wrote of it, such
+// as "http://[/" for "http://[".
+std::u16string KurlString(Document& document, const std::u16string& url) {
+  return ResolvedURL(ResolvedURL(base::UTF8ToUTF16(document.BaseUrl().spec())),
+                     url)
+      .GetString();
+}
+
 }  // namespace
 
 void Location::SetLocation(const std::u16string& url,
@@ -141,27 +151,39 @@ void Location::SetLocation(const std::u16string& url,
                            ? entered->GetDocument()
                            : window_->GetDocument();
   const GURL completed = document.CompleteUrl(url);
+  // The incumbent window's frame has to be there, and may have to be allowed.
+  Window* const incumbent = Window::Incumbent();
+  Frame* const frame = window_->GetFrame();
+  if (incumbent && incumbent->HasDocument() && frame) {
+    if (!incumbent->GetFrame()) {
+      return;
+    }
+    if (!CanNavigate(*incumbent->GetFrame(), *frame, completed)) {
+      exception_state.ThrowDOMException(
+          "SecurityError",
+          base::StrCat({"The current window does not have permission to "
+                        "navigate the target frame to '",
+                        completed.is_valid()
+                            ? completed.spec()
+                            : base::UTF16ToUTF8(KurlString(document, url)),
+                        "'."}));
+      return;
+    }
+  }
   if (!completed.is_valid()) {
-    // The string that KURL keeps of a URL that does not parse, which is what
-    // the canonicalizer wrote of it, such as "http://[/" for "http://[".
-    const ResolvedURL resolved(
-        ResolvedURL(base::UTF8ToUTF16(document.BaseUrl().spec())), url);
     exception_state.ThrowDOMException(
         "SyntaxError",
-        base::StrCat({"'", base::UTF16ToUTF8(resolved.GetString()),
+        base::StrCat({"'", base::UTF16ToUTF8(KurlString(document, url)),
                       "' is not a valid URL."}));
     return;
   }
   FrameLoadRequest request;
   request.url = completed;
   request.reason = ClientNavigationReason::kFrameNavigation;
-  // A frame's navigation is the caller's: an about:blank that it commits
-  // takes the caller's origin and URL, and one through the Session names the
-  // caller's document as its Initiator. A top-level one stays its own
-  // document's.
-  Window* const incumbent = Window::Incumbent();
-  const Frame* const frame = window_->GetFrame();
-  if (incumbent && incumbent->HasDocument() && frame && frame->Parent()) {
+  // A navigation is the caller's: an about:blank that it commits takes the
+  // caller's origin and URL, and one through the Session names the caller's
+  // document as its Initiator.
+  if (incumbent && incumbent->HasDocument()) {
     request.origin_window = incumbent;
   }
   Navigate(*window_, request, type);

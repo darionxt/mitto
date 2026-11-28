@@ -149,7 +149,7 @@ void StorageBuckets::Remove(int64_t id) {
 }
 
 bool StorageBuckets::Kept(const std::string& storage_key) const {
-  return directory_.has_value() && !IsSerializedUnderOpaqueTop(storage_key);
+  return directory_.has_value() && !IsSerializedForOneTopDocument(storage_key);
 }
 
 }  // namespace mitto

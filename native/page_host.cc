@@ -1743,6 +1743,10 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     return;
   }
   uint64_t frame_parent = kNoDocument;
+  // IsDocumentToCommitAnonymous(): a frame's navigation makes a credentialless
+  // document where its frame's element is credentialless as it starts, or its
+  // parent's document is.
+  bool credentialless_navigation = false;
   if (asked.kind == PageRequestKind::kIframe) {
     const auto target = contexts_.find(asked.target);
     if (target == contexts_.end() || target->second.is_worker ||
@@ -1751,6 +1755,8 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       return;
     }
     frame_parent = target->second.parent;
+    credentialless_navigation = target->second.frame_credentialless ||
+                                contexts_.at(frame_parent).credentialless;
   }
   // The URLs of the frame's ancestors' documents, which each redirect of its
   // navigation is held to.
@@ -1900,6 +1906,11 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   RequestOptions options = request_template->options;
   options.method = asked.method;
   FillContextFetch(settings_id, frame_parent, *options.fetch);
+  // Its IsolationInfo has the nonce of the top-level document's credentialless
+  // frames, as RenderFrameHostImpl::ComputeNonce() gives it.
+  if (credentialless_navigation) {
+    options.fetch->nonce = CredentiallessNonce(TopDocumentOf(frame_parent));
+  }
   if (outside_settings) {
     options.fetch->destination = "worker";
     options.fetch->from_worker = true;
@@ -1998,15 +2009,18 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
   }
   options.report_upload_progress = asked.reports_upload;
   if (asked.kind == PageRequestKind::kIframe) {
-    frame_navigation_responses_[asked.number] = {.parent = frame_parent,
-                                                 .target = asked.target};
+    frame_navigation_responses_[asked.number] = {
+        .parent = frame_parent,
+        .target = asked.target,
+        .credentialless = credentialless_navigation};
   }
   // A frame's navigation is held to its parent's embedder policy, from the
   // parent's origin, as NavigationRequest::GetParentFrameOrOuterDocument()
-  // has them.
+  // has them, but a credentialless one, which EnforceCOEP() and
+  // CoepBlockIframe() let through.
   std::optional<CrossOriginEmbedderPolicy> parent_embedder_policy;
   url::Origin parent_origin;
-  if (asked.kind == PageRequestKind::kIframe) {
+  if (asked.kind == PageRequestKind::kIframe && !credentialless_navigation) {
     parent_embedder_policy = contexts_.at(frame_parent).coep;
     parent_origin = contexts_.at(frame_parent).origin;
   }
@@ -2417,11 +2431,15 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
     frame->second.url = GURL(event.url);
     frame->second.coep = coep;
     frame->second.cross_origin_isolated =
-        !SandboxesOrigin(event.headers) &&
-        FrameIsCrossOriginIsolated(frame->second.parent,
-                                   url::Origin::Create(frame->second.url));
-    isolation = IsolationOf(request.number(),
-                            frame->second.cross_origin_isolated, coep);
+        AgentIsCrossOriginIsolated(frame->second.parent);
+    // The Page ANDs the document's cross-origin-isolated feature. It cannot
+    // see a response whose Content-Security-Policy sandboxes its origin, which
+    // then has none, and hears not isolated for it, as for each document
+    // under it.
+    isolation = IsolationOf(
+        request.number(),
+        frame->second.cross_origin_isolated && !SandboxesOrigin(event.headers),
+        coep);
   }
   if (const auto script = worker_scripts_.find(request.number());
       script != worker_scripts_.end()) {
@@ -2637,13 +2655,15 @@ bool PageHost::DocumentHasCookies(const GURL& document_url) {
 std::optional<net::CookiePartitionKey> PageHost::FramePartitionKey(
     const url::Origin& top_frame_origin,
     const url::Origin& frame_origin,
-    const net::SiteForCookies& site_for_cookies) {
+    const net::SiteForCookies& site_for_cookies,
+    const std::optional<base::UnguessableToken>& nonce) {
   // RenderFrameHostImpl::GetIsolationInfoForSubresources(), which a frame's
-  // RestrictedCookieManager gets.
+  // RestrictedCookieManager gets. A nonce's partition holds none of the
+  // cookies outside it, and keeps those set in it, as //net has them.
   // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
   const net::IsolationInfo isolation_info = net::IsolationInfo::Create(
       net::IsolationInfo::RequestType::kOther, top_frame_origin, frame_origin,
-      site_for_cookies);
+      site_for_cookies, nonce);
   return net::CookiePartitionKey::FromNetworkIsolationKey(
       isolation_info.network_isolation_key(), isolation_info.site_for_cookies(),
       net::SchemefulSite(frame_origin), isolation_info.IsMainFrameRequest());
@@ -2835,8 +2855,14 @@ void PageHost::OnCookieStoreSet(PageCookieStoreSet set,
     answer(false);
     return;
   }
+  // RestrictedCookieManager::SetCanonicalCookie(): a credentialless
+  // document's nonce partition holds each cookie that it sets, partitioned or
+  // not, and so does each that it deletes.
   const std::optional<net::CookiePartitionKey> partition_key =
-      set.partitioned ? context.partition_key : std::nullopt;
+      set.partitioned ||
+              net::CookiePartitionKey::HasNonce(context.partition_key)
+          ? context.partition_key
+          : std::nullopt;
   const base::Time expiry =
       base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(set.expiry));
   net::CookieInclusionStatus status;
@@ -2984,8 +3010,8 @@ void PageHost::OnBroadcast(const PageBroadcast& broadcast,
         "another can share");
     return;
   }
-  // Nor does one under a top-level document of an opaque origin, whose key no
-  // other Page's context has.
+  // Nor does one under a top-level document of an opaque origin, or a
+  // credentialless one, whose key no other Page's context has.
   if (context.storage_key) {
     network_->BroadcastFromPage(*this, *context.storage_key, broadcast);
   }
@@ -3150,6 +3176,11 @@ std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
   if (context.storage_key) {
     return context.storage_key->Serialize();
   }
+  // A credentialless document's, StorageKey::CreateWithNonce(), which no
+  // document under another top-level one has.
+  if (context.frame_tree.nonce) {
+    return SerializeWithNonce(context.origin, *context.frame_tree.nonce);
+  }
   // A frame under a top-level document of an opaque origin, such as a data:
   // URL's, whose key has that origin's nonce, which no other top-level
   // document has, so that what it keeps stays among the frames under that one
@@ -3178,7 +3209,10 @@ std::optional<StorageKey> PageHost::CalculateStorageKey(
   if (tree.is_top_level) {
     return StorageKey::CreateFirstParty(context.origin);
   }
-  if (tree.top_frame_origin.opaque()) {
+  // A credentialless document's has its nonce (CalculateStorageKey()'s
+  // StorageKey::CreateWithNonce()), and so does one under an opaque origin,
+  // which ContextSerializedStorageKey() and OnStorageBind() give.
+  if (tree.nonce || tree.top_frame_origin.opaque()) {
     return std::nullopt;
   }
   return StorageKey::Create(
@@ -3191,6 +3225,7 @@ void PageHost::ReleaseStorage() {
   storage_areas_.clear();
   session_storage_.reset();
   opaque_top_storage_.clear();
+  credentialless_storage_.clear();
 }
 
 // What Chrome's browser checks when a renderer binds an area, in
@@ -3227,6 +3262,18 @@ void PageHost::OnStorageBind(const PageStorageBind& bind, uint64_t document) {
       }
       area = &session_storage_->Area(*storage_key);
     }
+  } else if (const std::optional<base::UnguessableToken>& nonce =
+                 context.frame_tree.nonce) {
+    // A credentialless document. Chrome keys its storage by the nonce of the
+    // top-level document's credentialless frames, so that what it writes
+    // stays among them, across their reloads. Here it stays in memory, for as
+    // long as the Page.
+    std::unique_ptr<SessionStorageNamespace>& storage =
+        credentialless_storage_[{*nonce, bind.kind}];
+    if (!storage) {
+      storage = std::make_unique<SessionStorageNamespace>();
+    }
+    area = &storage->Area(StorageKey::CreateFirstParty(context.origin));
   } else {
     // A frame under a top-level document of an opaque origin, such as a data:
     // URL's. Chrome keys its storage by that origin, which no other top-level
@@ -3345,7 +3392,7 @@ void PageHost::OnNetworkHint(const PageNetworkHint& hint, uint64_t document) {
   const net::NetworkAnonymizationKey key =
       net::IsolationInfo::Create(net::IsolationInfo::RequestType::kOther,
                                  tree.top_frame_origin, context.origin,
-                                 site_for_cookies)
+                                 site_for_cookies, tree.nonce)
           .network_anonymization_key();
   PreconnectManager& preconnect_manager = network_->preconnect_manager();
   switch (hint.type) {
@@ -3440,6 +3487,18 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   }
   Context context;
   context.parent = committed.parent;
+  // NavigationRequest's is_credentialless_, fixed as the navigation started:
+  // a navigation's response takes it from its request, and a document of no
+  // network from the Page, as a synchronous about:blank keeps its frame's
+  // initial one's, which the library holds to its parent's below. An error
+  // page has the default policies of ComputePoliciesForError(), and so none.
+  if (committed.credentialless &&
+      (committed.source == PageDocumentSource::kNavigationResponse ||
+       committed.source == PageDocumentSource::kErrorPage)) {
+    Refuse("a document whose flags its source does not take");
+    return;
+  }
+  context.credentialless = committed.credentialless;
   std::optional<int32_t> navigated_status;
   bool navigated_no_store = false;
   // How many of its navigation's responses had a COOP that was ignored.
@@ -3465,6 +3524,19 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         context.coep = parent.coep;
         context.cookie_url = CookieUrlOf(parent);
         context.cross_origin_isolated = parent.cross_origin_isolated;
+        // And its parent's policy container, which RenderFrameHostImpl makes
+        // credentialless for its element only once it hears of the attribute,
+        // after the frame is made: the Page's window.credentialless may say so
+        // from the attribute, while its requests and storage stay its
+        // parent's, as Chrome's InitialEmptyDocumentInCredentiallessIframe
+        // test has them.
+        if (parent.credentialless && !committed.credentialless) {
+          Refuse(
+              "a document that is not credentialless under a credentialless "
+              "one");
+          return;
+        }
+        context.credentialless = parent.credentialless;
       }
       context.url = GURL(url::kAboutBlankURL);
       break;
@@ -3506,6 +3578,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
         context.url = std::move(found->second.url);
         context.coep = found->second.coep;
         context.cross_origin_isolated = found->second.cross_origin_isolated;
+        context.credentialless = found->second.credentialless;
         context.policy_headers = std::move(found->second.policy_headers);
         replaced = found->second.target;
         frame_navigation_responses_.erase(found);
@@ -3552,6 +3625,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           Refuse("an about:blank whose navigation did not start");
           return;
         }
+        if (committed.credentialless != started->second.credentialless) {
+          Refuse("a document that is not as credentialless as its navigation");
+          return;
+        }
         context.origin = started->second.origin;
         context.coep = started->second.coep;
         context.cookie_url = started->second.cookie_url;
@@ -3583,6 +3660,10 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
           Refuse("a data: URL's document whose navigation did not start");
           return;
         }
+        if (committed.credentialless != started->second.credentialless) {
+          Refuse("a document that is not as credentialless as its navigation");
+          return;
+        }
         context.origin = url::Origin::Resolve(url, started->second.origin);
         context.coep = started->second.coep;
         about_blank_navigations_.erase(started);
@@ -3590,23 +3671,21 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
       }
       // NavigationRequest::CheckResponseAdherenceToCoep(), which the Page has
       // made: an error page in place of one that its parent's embedder policy
-      // blocks, which is an about:blank's or a data: URL's alone.
+      // blocks, which is an about:blank's or a data: URL's alone, and never a
+      // credentialless one's (CoepBlockIframe()).
       if ((committed.source == PageDocumentSource::kAboutBlank ||
            committed.source == PageDocumentSource::kDataUrl) &&
-          !top_level &&
+          !top_level && !context.credentialless &&
           CompatibleWithCrossOriginIsolated(
               contexts_.at(committed.parent).coep.value) &&
           !CompatibleWithCrossOriginIsolated(context.coep.value)) {
         Refuse("a document that its parent's embedder policy blocks");
         return;
       }
-      // Each document that a frame makes without the network is isolated by
-      // its origin, as one that the network gives is: one of its isolated
-      // parent's origin is, and an opaque one, an error page's or a data:
-      // URL's, is not.
+      // Each document that a frame makes without the network is in its page's
+      // agent cluster, as one that the network gives is.
       context.cross_origin_isolated =
-          !top_level &&
-          FrameIsCrossOriginIsolated(committed.parent, context.origin);
+          !top_level && AgentIsCrossOriginIsolated(committed.parent);
       replaced = committed.replaces;
       break;
     }
@@ -3625,11 +3704,25 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     Refuse("a document outside the sandbox of its parent");
     return;
   }
+  // A top-level document is never credentialless, and each document under a
+  // credentialless one is, as RenderFrameHostImpl has them.
+  if (context.credentialless && top_level) {
+    Refuse("a top-level document that is credentialless");
+    return;
+  }
+  if (!context.credentialless && !top_level &&
+      committed.source != PageDocumentSource::kErrorPage &&
+      contexts_.at(committed.parent).credentialless) {
+    Refuse("a document that is not credentialless under a credentialless one");
+    return;
+  }
   last_context_id_ = committed.document;
   if (!top_level) {
     // It takes the place of its frame's document, and of everything under
-    // that, whose messages all came before this.
-    if (contexts_.contains(replaced)) {
+    // that, whose messages all came before this, and keeps what its frame's
+    // element last said.
+    if (const auto old = contexts_.find(replaced); old != contexts_.end()) {
+      context.frame_credentialless = old->second.frame_credentialless;
       ForgetContexts(ContextsUnder(replaced));
     }
     AddContext(committed.document, std::move(context));
@@ -3788,6 +3881,11 @@ void PageHost::OnAboutBlankNavigation(uint64_t document,
   started.origin = initiator->second.origin;
   started.coep = initiator->second.coep;
   started.cookie_url = CookieUrlOf(initiator->second);
+  // IsDocumentToCommitAnonymous(), as the navigation starts.
+  const Context& frame = contexts_.at(document);
+  started.credentialless =
+      frame.frame_credentialless || (frame.parent != kNoDocument &&
+                                     contexts_.at(frame.parent).credentialless);
 }
 
 void PageHost::OnDocumentOpened(uint64_t document, uint64_t opener_id) {
@@ -4151,17 +4249,16 @@ CrossOriginEmbedderPolicy PageHost::FrameEmbedderPolicyOf(
   return EmbedderPolicyOf(PolicyHeadersOf(event.headers));
 }
 
-bool PageHost::FrameIsCrossOriginIsolated(uint64_t parent,
-                                          const url::Origin& origin) const {
-  // ExecutionContext::CrossOriginIsolatedCapability(): the agent cluster's
-  // isolation and the cross-origin-isolated feature, whose default allowlist
-  // is 'self', so a frame of its parent's origin has it where its parent has.
+bool PageHost::AgentIsCrossOriginIsolated(uint64_t parent) const {
+  // The browsing context group's WebExposedIsolationInfo, which isolates each
+  // agent cluster of an isolated top-level document's page, its frames' of
+  // another origin, of an opaque one and in a sandbox too; the Page ANDs each
+  // document's cross-origin-isolated feature (CrossOriginIsolatedCapability()).
   // A parent that went while its frame's navigation went on leaves the
   // navigation nothing to commit in, and isolates nothing.
   const auto parent_context = contexts_.find(parent);
   return parent_context != contexts_.end() &&
-         parent_context->second.cross_origin_isolated &&
-         parent_context->second.origin.IsSameOriginWith(origin);
+         parent_context->second.cross_origin_isolated;
 }
 
 void PageHost::FillContextFetch(uint64_t id,
@@ -4208,6 +4305,19 @@ void PageHost::FillContextFetch(uint64_t id,
   fetch.cross_site_ancestor =
       tree.cross_site || fetch.opaque_initiator.has_value();
   fetch.cross_origin_ancestor = tree.cross_origin;
+  // A credentialless document's requests are partitioned by its nonce, and so
+  // are its frames' navigations. A nonce's partition is its frame site's, which
+  // a worker of a data: URL takes from its creator's frame, as Chrome's
+  // DedicatedWorkerHost keys its subresources by its creator's frame, though
+  // it asks as its opaque origin.
+  fetch.nonce = tree.nonce;
+  if (fetch.nonce && context.is_worker && context.origin.opaque()) {
+    const Context* frame = &context;
+    while (frame->is_worker) {
+      frame = &contexts_.at(frame->parent);
+    }
+    fetch.isolation_frame_origin = frame->origin;
+  }
   fetch.from_worker = context.is_worker;
   fetch.credentialless_client =
       context.coep.value == CrossOriginEmbedderPolicyValue::kCredentialless;
@@ -4250,8 +4360,9 @@ PageHost::CookieContext PageHost::CookieContextOf(uint64_t id) const {
   cookies.site_for_cookies =
       tree.cross_site ? net::SiteForCookies()
                       : net::SiteForCookies::FromOrigin(tree.top_frame_origin);
-  cookies.partition_key = FramePartitionKey(
-      tree.top_frame_origin, context.origin, cookies.site_for_cookies);
+  cookies.partition_key =
+      FramePartitionKey(tree.top_frame_origin, context.origin,
+                        cookies.site_for_cookies, tree.nonce);
   return cookies;
 }
 
@@ -4271,6 +4382,8 @@ void PageHost::OnWorkerStarted(const PageWorkerStarted& started) {
   Context worker;
   worker.parent = started.creator;
   worker.is_worker = true;
+  // It is in its creator's frame, with its partition.
+  worker.credentialless = creator->credentialless;
   switch (started.source) {
     case PageWorkerSource::kScriptResponse: {
       // The script that its creator asked for, in mode same-origin, at the
@@ -4326,8 +4439,37 @@ void PageHost::AddContext(uint64_t id, Context context) {
     tree.cross_origin = tree.cross_origin ||
                         !context.origin.IsSameOriginWith(tree.top_frame_origin);
   }
+  if (context.credentialless && !tree.nonce) {
+    tree.nonce = CredentiallessNonce(TopDocumentOf(context.parent));
+  }
   context.storage_key = CalculateStorageKey(context);
   contexts_.emplace(id, std::move(context));
+}
+
+uint64_t PageHost::TopDocumentOf(uint64_t id) const {
+  while (contexts_.at(id).parent != kNoDocument) {
+    id = contexts_.at(id).parent;
+  }
+  return id;
+}
+
+const base::UnguessableToken& PageHost::CredentiallessNonce(uint64_t top) {
+  const auto [nonce, added] = credentialless_nonces_.try_emplace(top);
+  if (added) {
+    nonce->second = base::UnguessableToken::Create();
+  }
+  return nonce->second;
+}
+
+void PageHost::OnFrameAttributes(uint64_t document, bool credentialless) {
+  // Only a frame has an element, as RenderFrameHostImpl's
+  // DidChangeIframeAttributes() takes a main frame's for a bad message.
+  Context& context = contexts_.at(document);
+  if (context.parent == kNoDocument) {
+    Refuse("a frame's attributes of the top-level document");
+    return;
+  }
+  context.frame_credentialless = credentialless;
 }
 
 void PageHost::OnContextGone(uint64_t context_id) {
@@ -4494,6 +4636,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     case PageMessage::kDocumentCommitted:
       OnDocumentCommitted(frame->committed);
+      return;
+    case PageMessage::kFrameAttributes:
+      OnFrameAttributes(frame->document, frame->frame_credentialless);
       return;
     case PageMessage::kCacheStorage:
       OnCacheStorage(std::move(frame->cache_storage_call), frame->document,

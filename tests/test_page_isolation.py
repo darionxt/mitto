@@ -663,6 +663,212 @@ def test_a_frame_of_a_data_url_is_not_isolated(session: mitto.Session, server: R
         assert server.wait_for_path("/seen/data/false/undefined")
 
 
+# A frame that says, in a request, whether it is isolated, whether it has SharedArrayBuffer and whether its worker is
+# isolated, or "none" for one of an opaque origin, whose blob: worker is a Known Gap.
+_POLICY_FRAME = """<!doctype html><script>
+const say = (worker) => fetch(`/seen/LABEL/${crossOriginIsolated}/${typeof SharedArrayBuffer}/${worker}`);
+if (WORKER) {
+    const worker = new Worker(URL.createObjectURL(new Blob(['postMessage(crossOriginIsolated)'])));
+    worker.onmessage = (event) => say(event.data);
+} else {
+    say('none');
+}
+</script>"""
+_POLICY_HEADERS: list[_Header] = [_COEP, ("Cross-Origin-Resource-Policy", "cross-origin")]
+
+
+def test_a_frame_is_isolated_where_its_permissions_policy_lets_it(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # Each document of an isolated page is in its isolated agent cluster, and isolated where its permissions policy has
+    # the cross-origin-isolated feature, whose default allowlist is 'self': an iframe's allow gives it to a frame of
+    # another origin or of an opaque one, also in a sandbox, and 'none' or a response's Permissions-Policy take it
+    # away, as Chrome for Testing 157 gave for the same frames, localhost being another origin here.
+    frames = {
+        "fs": [],
+        "fx": [],
+        "fxa": [],
+        "fnone": [],
+        "fhdr": [("Permissions-Policy", "cross-origin-isolated=()")],
+        "fhdrx": [("Permissions-Policy", "cross-origin-isolated=*")],
+        "fn1": [],
+        "fn2": [],
+    }
+    for label, extra in frames.items():
+        body = _POLICY_FRAME.replace("LABEL", label).replace("WORKER", "true")
+        server.route(f"/{label}", body.encode(), "text/html", _POLICY_HEADERS + extra)
+    for label in ["fsb", "fsbs"]:
+        body = _POLICY_FRAME.replace("LABEL", label).replace("WORKER", "false")
+        server.route(f"/{label}", body.encode(), "text/html", _POLICY_HEADERS)
+    server.route(
+        "/nest",
+        b"<!doctype html><script>for (const src of ['/fn1', 'http://127.0.0.1:' + location.port + '/fn2']) {"
+        b" const f = document.createElement('iframe'); f.src = src; document.documentElement.appendChild(f); }"
+        b" fetch(`/seen/nest/${crossOriginIsolated}/${typeof SharedArrayBuffer}/none`);</script>",
+        "text/html",
+        _POLICY_HEADERS,
+    )
+    script = f"""(async () => {{
+        const other = 'http://localhost:' + location.port;
+        const make = (src, set) => {{
+            const frame = document.createElement('iframe');
+            if (set) set(frame);
+            frame.src = src;
+            document.documentElement.appendChild(frame);
+            return frame;
+        }};
+        make('/fs');
+        make(other + '/fx');
+        make(other + '/fxa', (f) => f.allow = 'cross-origin-isolated');
+        make('/fnone', (f) => f.allow = "cross-origin-isolated 'none'");
+        make('/fhdr');
+        make(other + '/fhdrx', (f) => f.allow = 'cross-origin-isolated');
+        make('/fsb', (f) => {{ f.sandbox = 'allow-scripts'; f.allow = 'cross-origin-isolated *'; }});
+        make('/fsbs', (f) => f.sandbox = 'allow-scripts');
+        make(other + '/nest', (f) => f.allow = 'cross-origin-isolated');
+        make("data:text/html,<script>fetch('{server.url("/seen/data/")}' + crossOriginIsolated + '/' +"
+            + " typeof SharedArrayBuffer + '/none', {{mode: 'no-cors'}}).catch(() => 0);</" + "script>",
+            (f) => f.allow = 'cross-origin-isolated *');
+        const srcdoc = make('about:srcdoc', (f) => f.srcdoc = '<p>x');
+        await new Promise((resolve) => srcdoc.onload = resolve);
+        return [crossOriginIsolated, srcdoc.contentWindow.crossOriginIsolated];
+    }})()"""
+    isolated = ["true", "function"]
+    not_isolated = ["false", "undefined"]
+    expected = {
+        "fs": [*isolated, "true"],
+        "fx": [*not_isolated, "false"],
+        "fxa": [*isolated, "true"],
+        "fnone": [*not_isolated, "false"],
+        "fhdr": [*not_isolated, "false"],
+        "fhdrx": [*isolated, "true"],
+        "fsb": [*isolated, "none"],
+        "fsbs": [*not_isolated, "none"],
+        "nest": [*isolated, "none"],
+        "fn1": [*isolated, "true"],
+        "fn2": [*not_isolated, "false"],
+        "data": [*isolated, "none"],
+    }
+    seen = {f"/seen/{label}/{'/'.join(values)}" for label, values in expected.items()}
+
+    with _open_page(session, server.page("/", _BLANK, _ISOLATING)) as page:
+        assert page.evaluate(script, timeout=TIMEOUT_SECONDS) == [True, True]
+        with server.requested:
+            assert server.requested.wait_for(
+                lambda: all(
+                    any(path.startswith(f"/seen/{label}/") for path, _ in server.requests) for label in expected
+                ),
+                TIMEOUT_SECONDS,
+            ), server.requests
+
+    assert {path for path in server.paths() if path.startswith("/seen/")} == seen
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [("Permissions-Policy", "cross-origin-isolated=()"), ("Feature-Policy", "cross-origin-isolated 'none'")],
+    ids=["permissions-policy", "feature-policy"],
+)
+def test_a_page_whose_policy_takes_the_feature_is_not_isolated(
+    session: mitto.Session, server: RecordingServer, policy: _Header
+) -> None:
+    # COOP and COEP isolate its agent cluster, but its permissions policy takes the cross-origin-isolated feature from
+    # the page, its frames and its workers, as Chrome for Testing 157 has it.
+    script = """(async () => {
+        const frame = document.createElement('iframe');
+        document.documentElement.appendChild(frame);
+        const worker = new Worker(URL.createObjectURL(new Blob(['postMessage(crossOriginIsolated)'])));
+        const isolated = await new Promise((resolve) => worker.onmessage = (event) => resolve(event.data));
+        return [crossOriginIsolated, typeof SharedArrayBuffer, frame.contentWindow.crossOriginIsolated,
+                typeof frame.contentWindow.SharedArrayBuffer, isolated, typeof performance.measureUserAgentSpecificMemory];
+    })()"""
+
+    assert _evaluate(session, server.page("/", _BLANK, [*_ISOLATING, policy]), script) == [
+        False,
+        "undefined",
+        False,
+        "undefined",
+        False,
+        "undefined",
+    ]
+
+
+_KEEPS_WINDOW = """(async () => {
+    const frame = document.createElement('iframe');
+    frame.src = 'PATH';
+    document.documentElement.appendChild(frame);
+    const before = frame.contentWindow;
+    before.foo = 1;
+    await new Promise((resolve) => frame.onload = resolve);
+    const after = frame.contentWindow;
+    return [after.crossOriginIsolated, after === before, after.foo, typeof after.SharedArrayBuffer];
+})()"""
+
+
+def _route_reused_frames(server: RecordingServer) -> None:
+    server.route(
+        "/rhdr",
+        b"<!doctype html><title>r</title>",
+        "text/html",
+        [*_POLICY_HEADERS, ("Permissions-Policy", "cross-origin-isolated=()")],
+    )
+    server.route("/rplain", _BLANK.encode(), "text/html", _POLICY_HEADERS)
+
+
+@pytest.mark.parametrize(("path", "isolated"), [("/rhdr", False), ("/rplain", True)])
+def test_a_frame_s_first_document_takes_its_own_isolation(
+    session: mitto.Session, server: RecordingServer, path: str, isolated: bool
+) -> None:
+    # A same-origin frame's first document is isolated as its own permissions policy says, in the frame's WindowProxy,
+    # also where a script reached the initial about:blank's window first, and a window that no script reached has
+    # what its context makes of that isolation, SharedArrayBuffer and measureUserAgentSpecificMemory or neither, as
+    # Chrome for Testing 157 gave.
+    _route_reused_frames(server)
+    reached = _evaluate(session, server.page("/", _BLANK, _ISOLATING), _KEEPS_WINDOW.replace("PATH", path))
+    untouched = _evaluate(
+        session,
+        server.page("/untouched", _BLANK, _ISOLATING),
+        f"""(async () => {{
+            const frame = document.createElement('iframe');
+            frame.src = '{path}';
+            document.documentElement.appendChild(frame);
+            await new Promise((resolve) => frame.onload = resolve);
+            const window = frame.contentWindow;
+            return [window.crossOriginIsolated, typeof window.SharedArrayBuffer,
+                    typeof window.performance.measureUserAgentSpecificMemory];
+        }})()""",
+    )
+
+    assert reached[:2] == [isolated, True]
+    exposed = "function" if isolated else "undefined"
+    assert untouched == [isolated, exposed, exposed]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(
+            "/rhdr",
+            marks=pytest.mark.xfail(
+                reason="a first document of another capability gets an inner window of its own", strict=True
+            ),
+        ),
+        "/rplain",
+    ],
+)
+def test_a_frame_keeps_its_initial_window_for_its_first_document(
+    session: mitto.Session, server: RecordingServer, path: str
+) -> None:
+    # The first document keeps the initial about:blank's inner window, with what a script set on it and the
+    # SharedArrayBuffer that its context was made with, as Blink's ShouldReuseDOMWindow() compares the agent cluster's
+    # isolation, also where the response's Permissions-Policy takes the feature (Chrome for Testing 157): a Known Gap
+    # there.
+    _route_reused_frames(server)
+    result = _evaluate(session, server.page("/", _BLANK, _ISOLATING), _KEEPS_WINDOW.replace("PATH", path))
+
+    assert result[2:] == [1, "function"]
+
+
 def test_a_frame_s_requests_are_held_to_its_own_embedder_policy(
     session: mitto.Session, server: RecordingServer
 ) -> None:

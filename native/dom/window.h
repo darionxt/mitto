@@ -88,6 +88,8 @@ class Window final : public WindowProperties, public ExecutionContext {
   static Window* Create();
   // The Window of the isolate's current context.
   static Window& Current();
+  // ExecutionContext::OfReceiver(), of a member that windows alone have.
+  static Window& OfReceiver();
   // The window of `context`, as ExecutionContext::From() finds it, or null
   // for a context of none or of a worker.
   static Window* From(v8::Isolate* isolate, v8::Local<v8::Context> context);
@@ -174,8 +176,17 @@ class Window final : public WindowProperties, public ExecutionContext {
                             bindings::ExceptionState& exception_state);
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
+  bool AllowsHighEntropyValues() override;
   // WindowOrWorkerGlobalScope::crossOriginIsolated().
   bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
+  // Whether its agent cluster is cross-origin isolated, its page's, which its
+  // capability ANDs with its document's cross-origin-isolated feature.
+  bool AgentCrossOriginIsolated() const { return agent_cross_origin_isolated_; }
+  void SetAgentCrossOriginIsolated(bool isolated) {
+    agent_cross_origin_isolated_ = isolated;
+  }
+  // LocalDOMWindow::credentialless(): its document's policy container's.
+  bool Credentialless() const;
   // Chrome keys agent clusters by origin by default.
   bool OriginAgentCluster() const { return true; }
   bool OffscreenBuffering() const { return true; }
@@ -330,6 +341,11 @@ class Window final : public WindowProperties, public ExecutionContext {
                         bool discard_duplicate);
   // Whether its frame is under another.
   bool IsInFrame() const;
+  // How many times the origin changes from its document's up to the top-level
+  // frame's, through each frame between.
+  size_t OriginChangesToTop() const;
+  // Frame::IsCrossOriginToOutermostMainFrame().
+  bool IsCrossOriginToTop() const;
   // The process that Chrome has its document in.
   RendererProcess Process() const;
   // What a navigation of the window's frame to another document asks the
@@ -420,6 +436,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   cppgc::Member<mitto::CookieStore> cookie_store_;
   cppgc::Member<mitto::CacheStorage> caches_;
   cppgc::Member<IDBFactory> indexed_db_;
+  bool agent_cross_origin_isolated_ = false;
   cppgc::Member<mitto::Storage> local_storage_;
   cppgc::Member<mitto::Storage> session_storage_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;

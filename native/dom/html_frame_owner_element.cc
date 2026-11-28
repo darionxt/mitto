@@ -10,6 +10,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/frame.h"
+#include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/permissions_policy_parser.h"
@@ -155,6 +156,17 @@ void HTMLFrameOwnerElement::ParseFrameAttribute(
               name.local_name == u"allowpaymentrequest") &&
              HasHTMLTagName(u"iframe")) {
     UpdateContainerPolicy();
+  } else if (name.local_name == u"credentialless" &&
+             HasHTMLTagName(u"iframe")) {
+    // HTMLIFrameElement::ParseAttribute(): its frame tells the browser of a
+    // change, for its next navigation.
+    const bool credentialless = new_value != nullptr;
+    if (credentialless != credentialless_) {
+      credentialless_ = credentialless;
+      if (content_frame_) {
+        content_frame_->DidChangeCredentialless();
+      }
+    }
   }
 }
 
@@ -260,6 +272,8 @@ void HTMLFrameOwnerElement::OpenURL() {
     if (!content_frame_) {
       return;
     }
+  } else if (!CanNavigate(*parent, *content_frame_, url)) {
+    return;
   }
   content_frame_->NavigateFromOwner(url);
 }

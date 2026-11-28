@@ -1,5 +1,10 @@
 #include "mitto/dom/html_anchor_element.h"
 
+#include <algorithm>
+#include <string>
+#include <string_view>
+
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -7,7 +12,9 @@
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/frame.h"
 #include "mitto/dom/frame_loader.h"
+#include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/text.h"
@@ -103,6 +110,18 @@ const std::u16string* BaseTarget(Document& document) {
   return nullptr;
 }
 
+// AnchorElementUtils::HasRel(): whether the link's rel has `token`.
+bool HasRel(const Element& link, std::u16string_view token) {
+  const std::u16string* const rel = link.FindAttribute(u"rel");
+  return rel &&
+         std::ranges::any_of(
+             base::SplitStringPiece(*rel, u" \t\n\f\r", base::KEEP_WHITESPACE,
+                                    base::SPLIT_WANT_NONEMPTY),
+             [&](std::u16string_view relation) {
+               return base::EqualsCaseInsensitiveASCII(relation, token);
+             });
+}
+
 }  // namespace
 
 void HTMLAnchorElementBase::HandleClick(Event& event) {
@@ -141,27 +160,44 @@ void HTMLAnchorElementBase::NavigateToHyperlink(const GURL& url) {
   if (!window) {
     return;
   }
-  // GetEffectiveTarget(): the target attribute, else the document's base
-  // target, which FrameTree::FindFrameForNavigationInternal() looks for:
-  // _self, _top, _parent and none name the Page's one frame. Any other name,
+  // GetEffectiveTarget(): the target attribute, else, or for an empty one, the
+  // document's base target, which FindFrameForNavigation() looks for, and a new
+  // window with a target that may hold markup left open. Any name of no frame,
   // _blank among them, opens a new window, which Chrome's pop-up blocker
-  // refuses to a click that the user did not make, and then nothing
-  // navigates.
-  const std::u16string* target = FindAttribute(u"target");
-  if (!target) {
-    target = BaseTarget(GetDocument());
+  // refuses to a click that the user did not make, and then nothing navigates.
+  // The Page program's own window has no frame, and names itself alone.
+  const std::u16string* const attribute = FindAttribute(u"target");
+  const bool named = attribute && !attribute->empty();
+  const std::u16string* const base =
+      named ? nullptr : BaseTarget(GetDocument());
+  std::u16string target = named ? *attribute : base ? *base : std::u16string();
+  if (target.find_first_of(u"\n\r\t") != std::u16string::npos &&
+      target.find(u'<') != std::u16string::npos) {
+    target = u"_blank";
   }
-  if (target && !target->empty() &&
-      !base::EqualsCaseInsensitiveASCII(*target, u"_self") &&
-      !base::EqualsCaseInsensitiveASCII(*target, u"_top") &&
-      !base::EqualsCaseInsensitiveASCII(*target, u"_parent")) {
+  Window* navigated = window;
+  if (Frame* const frame = window->GetFrame()) {
+    Frame* const found = FindFrameForNavigation(*frame, target, url);
+    navigated = found ? found->DomWindow() : nullptr;
+  } else if (!target.empty() &&
+             !base::EqualsCaseInsensitiveASCII(target, u"_self") &&
+             !base::EqualsCaseInsensitiveASCII(target, u"_top") &&
+             !base::EqualsCaseInsensitiveASCII(target, u"_parent")) {
+    navigated = nullptr;
+  }
+  if (!navigated) {
     return;
   }
   FrameLoadRequest request;
   request.url = url;
   request.reason = ClientNavigationReason::kAnchorClick;
   request.source_element = this;
-  Navigate(*window, request, FrameLoadType::kStandard);
+  request.origin_window = window;
+  // AnchorElementUtils::HandleRelAttribute().
+  if (HasRel(*this, u"noreferrer")) {
+    request.referrer_policy = FetchReferrerPolicy::kNoReferrer;
+  }
+  Navigate(*navigated, request, FrameLoadType::kStandard);
 }
 
 // static

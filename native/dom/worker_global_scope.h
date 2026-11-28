@@ -74,6 +74,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   // The worker's origin, its creator's, serialized.
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
+  bool AllowsHighEntropyValues() override;
   // WindowOrWorkerGlobalScope::crossOriginIsolated().
   bool CrossOriginIsolated() const { return CrossOriginIsolatedCapability(); }
   // WorkerPerformance, made the first time, which counts from when the worker
@@ -142,6 +143,10 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   void SetAgentClusterOrigin(url::Origin origin) {
     agent_cluster_origin_ = std::move(origin);
   }
+  // What its creator's permissions policy passes on to it.
+  void SetAllowsHighEntropyValues(bool allows) {
+    allows_high_entropy_values_ = allows;
+  }
   // Its creator's StorageKey(), or an opaque origin's own.
   void SetStorageKey(std::string key) { storage_key_ = std::move(key); }
   // What importScripts() fetches through. Without one, as in the Page program
@@ -182,6 +187,7 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   url::Origin outside_origin_;
   url::Origin agent_cluster_origin_;
   std::string storage_key_;
+  bool allows_high_entropy_values_ = true;
   bool closing_ = false;
 };
 

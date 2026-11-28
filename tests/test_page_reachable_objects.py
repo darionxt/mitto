@@ -72,16 +72,16 @@ def test_a_top_level_window_is_its_own_top_parent_and_frames_and_has_no_opener(p
     assert _evaluate(program, script) == [True, True, True, None, 0, False, ""]
 
 
-def test_setting_the_opener_shadows_it_unless_it_is_null(program: Path) -> None:
+def test_setting_the_opener_shadows_it(program: Path) -> None:
     script = """(() => {
         opener = null;
-        const kept = Object.getOwnPropertyDescriptor(window, "opener").get !== undefined;
+        const {value} = Object.getOwnPropertyDescriptor(window, "opener");
         opener = 5;
         const shadowed = Object.getOwnPropertyDescriptor(window, "opener");
-        return [kept, shadowed.value, shadowed.writable, shadowed.enumerable, shadowed.configurable];
+        return [value, shadowed.value, shadowed.writable, shadowed.enumerable, shadowed.configurable];
     })()"""
 
-    assert _evaluate(program, script) == [True, 5, True, True, True]
+    assert _evaluate(program, script) == [None, 5, True, True, True]
 
 
 def test_the_window_of_about_blank_has_an_opaque_origin_in_a_secure_context(program: Path) -> None:

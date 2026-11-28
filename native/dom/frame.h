@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "base/memory/raw_ref.h"
+#include "base/memory/weak_ptr.h"
 #include "mitto/dom/sandbox_flags.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -71,6 +72,10 @@ class Frame {
   // What counts the navigations that the frame's documents start, which it
   // keeps across them, as Blink's Frame::navigation_rate_limiter().
   virtual NavigationRateLimiter& GetNavigationRateLimiter() = 0;
+  // HTMLIFrameElement::DidChangeAttributes(): the frame's element has become
+  // credentialless or no longer is, which holds from the frame's next
+  // navigation on.
+  virtual void DidChangeCredentialless() = 0;
 
   // The frame's window in the process of `viewer`'s documents, another than
   // its own document's, the same for as long as a message holds it.
@@ -91,6 +96,11 @@ class Frame {
   // them until the frame navigates. False, and nothing kept, for one that is
   // there already, if a duplicate is to be discarded.
   bool AddPolicyMessage(const std::string& text, bool discard_duplicate);
+
+  // The frame whose script opened this one's name with window.open(), while it
+  // is there, or null, which window.opener reads.
+  Frame* Opener() const;
+  void SetOpener(Frame* opener);
 
   // Blink's LocalFrame::IsNavigationAllowed(): no navigation of the frame
   // starts while a FrameNavigationDisabler holds it.
@@ -113,6 +123,8 @@ class Frame {
   std::deque<size_t> policy_messages_;
   // One for each process, for the frame's document now.
   std::vector<cppgc::WeakPersistent<RemoteWindow>> remote_windows_;
+  base::WeakPtr<Frame> opener_;
+  base::WeakPtrFactory<Frame> opener_factory_{this};
 };
 
 // Blink's FrameNavigationDisabler: while a frame's document commits, a script

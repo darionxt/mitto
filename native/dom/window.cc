@@ -82,6 +82,13 @@ Window& Window::Current() {
 }
 
 // static
+Window& Window::OfReceiver() {
+  ExecutionContext& context = ExecutionContext::OfReceiver();
+  CHECK(context.IsWindow());
+  return static_cast<Window&>(context);
+}
+
+// static
 Window* Window::From(v8::Isolate* isolate, v8::Local<v8::Context> context) {
   ExecutionContext* const execution_context =
       ExecutionContext::From(isolate, context);
@@ -303,24 +310,35 @@ void Window::SetName(const std::u16string& name) {
 }
 
 v8::Local<v8::Value> Window::OpenerForBindings() const {
-  return v8::Null(v8::Isolate::GetCurrent());
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  mitto::Frame* const opener = frame_ ? frame_->Opener() : nullptr;
+  return opener ? opener->DomWindow()->ToV8(isolate)
+                : v8::Local<v8::Value>(v8::Null(isolate));
 }
 
-// DOMWindow::setOpenerForBindings(): null disowns the opener, which a window
-// that a Session opened has not, and any other value shadows the attribute
-// with a data property of the window.
+// DOMWindow::setOpenerForBindings(): any value shadows the attribute with a
+// data property of the window, and null disowns the opener.
 void Window::SetOpenerForBindings(v8::Local<v8::Value> opener,
                                   bindings::ExceptionState& exception_state) {
-  if (opener->IsNull()) {
+  if (!HasContext()) {
     return;
+  }
+  if (opener->IsNull() && frame_) {
+    frame_->SetOpener(nullptr);
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   v8::PropertyDescriptor descriptor(opener, /*writable=*/true);
   descriptor.set_enumerable(true);
   descriptor.set_configurable(true);
-  std::ignore = ToV8(isolate)->DefineProperty(
-      isolate->GetCurrentContext(),
-      v8::String::NewFromUtf8Literal(isolate, "opener"), descriptor);
+  bool defined = false;
+  if (ToV8(isolate)
+          ->DefineProperty(isolate->GetCurrentContext(),
+                           v8::String::NewFromUtf8Literal(isolate, "opener"),
+                           descriptor)
+          .To(&defined) &&
+      !defined) {
+    exception_state.ThrowTypeError("Cannot redefine the property.");
+  }
 }
 
 // The serialized origin of the window's document, "null" for an opaque one, as
@@ -331,6 +349,10 @@ std::u16string Window::Origin() const {
 
 bool Window::IsSecureContextForBindings() const {
   return IsSecureContext();
+}
+
+bool Window::Credentialless() const {
+  return GetDocument().IsCredentialless();
 }
 
 CrashReportContext* Window::CrashReport() {
@@ -580,6 +602,32 @@ bool Window::IsInFrame() const {
   return frame_ && frame_->Parent();
 }
 
+bool Window::AllowsHighEntropyValues() {
+  return GetDocument().IsFeatureEnabledOrReport(
+      "ch-ua-high-entropy-values",
+      "Collection of high-entropy user-agent client hints is disabled for this "
+      "document.");
+}
+
+size_t Window::OriginChangesToTop() const {
+  size_t changes = 0;
+  url::Origin origin = GetSecurityOrigin();
+  for (mitto::Frame* frame = frame_ ? frame_->Parent() : nullptr; frame;
+       frame = frame->Parent()) {
+    const url::Origin parent = frame->DomWindow()->GetSecurityOrigin();
+    if (!origin.IsSameOriginWith(parent)) {
+      ++changes;
+      origin = parent;
+    }
+  }
+  return changes;
+}
+
+bool Window::IsCrossOriginToTop() const {
+  return frame_ && !GetSecurityOrigin().IsSameOriginWith(
+                       frame_->Top().DomWindow()->GetSecurityOrigin());
+}
+
 bool Window::CanExecuteScripts(bool about_to_execute) {
   if (!HasDocument() || !GetDocument().IsSandboxed(SandboxFlags::kScripts)) {
     return true;
@@ -601,11 +649,19 @@ url::Origin Window::AgentClusterOrigin() const {
 
 std::string Window::StorageKey() const {
   std::vector<url::Origin> ancestors;
+  const Window* top = this;
   for (const mitto::Frame* ancestor = frame_ ? frame_->Parent() : nullptr;
        ancestor; ancestor = ancestor->Parent()) {
     if (const Window* const window = ancestor->DomWindow()) {
       ancestors.push_back(window->GetSecurityOrigin());
+      top = window;
     }
+  }
+  // A credentialless document's has the nonce of its top-level document's
+  // credentialless frames, as the Session keys its storage.
+  if (GetDocument().InCredentiallessPartition() && top != this) {
+    return SerializeStorageKeyWithNonce(
+        GetSecurityOrigin(), top->GetDocument().CredentiallessNonce());
   }
   return SerializeStorageKey(GetSecurityOrigin(), ancestors);
 }

@@ -25,6 +25,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/heap_vector.h"
@@ -211,6 +212,10 @@ class Document : public Node {
   // it, as they were when the navigation to it started.
   SandboxFlags GetSandboxFlags() const { return sandbox_flags_; }
   void SetSandboxFlags(SandboxFlags flags) { sandbox_flags_ = flags; }
+  // PolicyContainerPolicies::can_navigate_top_without_user_gesture, which the
+  // commit of the document decides.
+  bool CanNavigateTop() const { return can_navigate_top_; }
+  void SetCanNavigateTop(bool can) { can_navigate_top_ = can; }
   bool IsSandboxed(SandboxFlags flag) const {
     return (sandbox_flags_ & flag) != SandboxFlags::kNone;
   }
@@ -290,8 +295,10 @@ class Document : public Node {
                               ParsedPolicy declared);
   // ExecutionContext::IsFeatureEnabled().
   bool IsFeatureEnabled(std::string_view feature);
-  // The same, and the console reports the violation if not.
-  bool IsFeatureEnabledOrReport(std::string_view feature);
+  // The same, and the console reports the violation if not, with `message`
+  // unless it is empty, while the document's window remains.
+  bool IsFeatureEnabledOrReport(std::string_view feature,
+                                std::string_view message = {});
   // The document's own, the same object on every read.
   DOMImplementation* Implementation();
   Attr* CreateAttribute(const std::u16string& local_name,
@@ -592,6 +599,27 @@ class Document : public Node {
   void SetEmbedderPolicyIsolates(bool isolates) {
     embedder_policy_isolates_ = isolates;
   }
+  // Whether the document is credentialless, as its policy container's
+  // is_credentialless says, which Chrome's browser fixes as its navigation
+  // starts: its frame's element is credentialless, or its parent's document
+  // is. window.credentialless says so.
+  bool IsCredentialless() const { return credentialless_; }
+  void SetCredentialless(bool credentialless) {
+    credentialless_ = credentialless;
+  }
+  // Whether the nonce of the top-level document's credentialless frames keys
+  // its storage and requests, as Chrome's browser has
+  // RenderFrameHostImpl::IsCredentialless(): as credentialless, but for a
+  // frame's initial about:blank, which keeps its parent's, as the browser hears
+  // of the frame's element only after the frame is made.
+  bool InCredentiallessPartition() const { return credentialless_partition_; }
+  void SetInCredentiallessPartition(bool in_partition) {
+    credentialless_partition_ = in_partition;
+  }
+  // For a top-level document: the nonce of the credentialless frames under
+  // it, as Chrome's PageImpl keeps one for each main document, made at the
+  // first ask.
+  const base::UnguessableToken& CredentiallessNonce() const;
   // Whether a new entry of the document in the session history keeps its URL
   // from other documents' Navigation API entries, as Chrome's browser takes
   // it from the policy container: for a policy of no-referrer or origin that
@@ -718,6 +746,15 @@ class Document : public Node {
   bool LoadEventFinished() const {
     return load_event_progress_ >= LoadEventProgress::kLoadEventCompleted;
   }
+  bool LoadEventStillNeeded() const {
+    return load_event_progress_ == LoadEventProgress::kLoadEventNotRun;
+  }
+  // Blink's IsFrameSet(): an HTML document whose body is a frameset.
+  bool IsFrameSet() const;
+  // The load of the window's frame's element that a fragment navigation of
+  // another origin's document makes, which the next takes the place of.
+  uint64_t TakeOwnerLoad() { return ++owner_load_; }
+  uint64_t OwnerLoad() const { return owner_load_; }
   // Whether beforeunload, pagehide, the visibilitychange of unloading or
   // unload is being dispatched, while which no navigation starts.
   bool PageDismissalEventBeingDispatched() const;
@@ -910,6 +947,8 @@ class Document : public Node {
   std::optional<url::Origin> origin_;
   SandboxFlags sandbox_flags_ = SandboxFlags::kNone;
   bool is_in_sandboxed_process_ = false;
+  bool can_navigate_top_ = true;
+  uint64_t owner_load_ = 0;
   bool keeps_origin_of_earlier_url_ = false;
   // The first opaque origin that its URL gave, which it keeps.
   mutable std::optional<url::Origin> opaque_origin_;
@@ -980,6 +1019,9 @@ class Document : public Node {
   FetchReferrerPolicy policy_container_referrer_policy_ =
       FetchReferrerPolicy::kDefault;
   bool embedder_policy_isolates_ = false;
+  bool credentialless_ = false;
+  bool credentialless_partition_ = false;
+  mutable std::optional<base::UnguessableToken> credentialless_nonce_;
   HeapVector<Element> current_script_stack_;
   WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;

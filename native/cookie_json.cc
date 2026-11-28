@@ -408,6 +408,11 @@ CookieFilter& CookieFilter::operator=(CookieFilter&&) = default;
 CookieFilter::~CookieFilter() = default;
 
 bool CookieFilter::Matches(const net::CanonicalCookie& cookie) const {
+  // A cookie of a credentialless frame's nonce, which WriteCookies() leaves
+  // out, is no cookie of the Session's.
+  if (net::CookiePartitionKey::HasNonce(cookie.PartitionKey())) {
+    return false;
+  }
   return (!name || *name == cookie.Name()) &&
          (!domain || *domain == cookie.Domain()) &&
          (!path || *path == cookie.Path());

@@ -3,7 +3,10 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_screen_orientation.h"
+#include "mitto/dom/document.h"
+#include "mitto/dom/sandbox_flags.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/window.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 
@@ -45,6 +48,18 @@ v8::Local<v8::Promise> ScreenOrientation::Lock(
     const std::u16string& orientation,
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  Window& window = Window::OfReceiver();
+  if (!window.HasContext()) {
+    exception_state.ThrowDOMException(
+        "InvalidStateError", "The object is no longer associated to a window.");
+    return v8::Local<v8::Promise>();
+  }
+  if (window.GetDocument().IsSandboxed(SandboxFlags::kOrientationLock)) {
+    exception_state.ThrowDOMException(
+        "SecurityError",
+        "The window is sandboxed and lacks the 'allow-orientation-lock' flag.");
+    return v8::Local<v8::Promise>();
+  }
   v8::Local<v8::Promise::Resolver> resolver;
   if (!v8::Promise::Resolver::New(isolate->GetCurrentContext())
            .ToLocal(&resolver)) {

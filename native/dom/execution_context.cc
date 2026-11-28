@@ -15,6 +15,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/per_context_data.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/bindings/v8_worker_global_scope.h"
@@ -78,6 +79,14 @@ ExecutionContext& ExecutionContext::Current() {
   ExecutionContext* const context = From(isolate, isolate->GetCurrentContext());
   CHECK(context);
   return *context;
+}
+
+// static
+ExecutionContext& ExecutionContext::OfReceiver() {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  ExecutionContext* const context =
+      From(isolate, bindings::ReceiverRealmScope::CreationContext(isolate));
+  return context ? *context : Current();
 }
 
 // static

@@ -217,7 +217,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_NE(committed.document, mitto::kNoDocument);
           CHECK_NE(committed.document, committed.parent);
           // The byte of flags.
-          CHECK_EQ(payload[9], committed.sandboxed_origin ? 1 : 0);
+          CHECK_EQ(payload[9], (committed.sandboxed_origin ? 1 : 0) |
+                                   (committed.credentialless ? 2 : 0));
           // A navigation's response, a srcdoc and an error page name one more
           // ID, the number of the navigation or the document that it
           // replaces, and an about:blank, a data: or a blob: URL's document
@@ -269,6 +270,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kRecordsReleased:
           CHECK(!frame->released_records.empty());
           CHECK_EQ(mitto::EncodeRecordsReleased(frame->released_records)
+                       .substr(mitto::kFrameHeaderSize),
+                   payload);
+          break;
+        case mitto::PageMessage::kFrameAttributes:
+          CHECK_EQ(mitto::EncodeFrameAttributes(frame->document,
+                                                frame->frame_credentialless)
                        .substr(mitto::kFrameHeaderSize),
                    payload);
           break;
