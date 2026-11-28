@@ -354,13 +354,12 @@ void StartNavigation(Window& window,
     return;
   }
   if (url.SchemeIs(url::kJavaScriptScheme)) {
-    // Not one that a document of another origin starts, as a parent's of a
-    // frame that has navigated elsewhere, as Blink's FrameLoader checks the
-    // origin window can reach the frame's, nor one that a document without
-    // scripts starts.
+    // Not one that a document of another origin or agent cluster starts, as a
+    // parent's of a frame that has navigated elsewhere, as Blink's FrameLoader
+    // checks the origin window can reach the frame's, nor one that a document
+    // without scripts starts.
     if (request.origin_window &&
-        !request.origin_window->GetSecurityOrigin().IsSameOriginWith(
-            window.GetSecurityOrigin())) {
+        !Window::CanAccess(*request.origin_window, window)) {
       return;
     }
     // FrameLoader::AllowRequestForThisFrame(): nor with an element that now
@@ -388,10 +387,9 @@ void StartNavigation(Window& window,
   // which makes it one within the document, committed already. It fires only
   // where the window that starts the navigation can reach the frame's, as
   // FrameLoader::StartNavigation() has it, so a frame's document of another
-  // origin hears nothing of its parent's navigation.
+  // origin or agent cluster hears nothing of its parent's navigation.
   if (!request.origin_window ||
-      request.origin_window->GetSecurityOrigin().IsSameOriginWith(
-          window.GetSecurityOrigin())) {
+      Window::CanAccess(*request.origin_window, window)) {
     Navigation::NavigateParams params;
     params.url = url;
     params.load_type = type;

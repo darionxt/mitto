@@ -1505,3 +1505,39 @@ def test_a_window_that_document_isolation_policy_isolates_reads_clocks_of_5_micr
     assert _all_fine(clocks), clocks
     assert clocks["nowOffCoarse"] or clocks["hostCoarse"], clocks
     assert [clocks["eventsFollowNow"], clocks["framesOffCoarse"], clocks["measure"]] == [True, True, "function"]
+
+
+def test_a_parent_s_navigation_reaches_into_a_frame_of_its_document_isolation_alone(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A javascript: URL that the page gives a frame of its origin runs only where the frame is in its agent cluster, and
+    # a frame of another hears no navigate event of the page's navigation of it (Chrome for Testing 157).
+    child = (
+        b"<!doctype html><title>c</title><script>const say = (data) => postMessage.call(parent, data, '*');"
+        b" navigation.onnavigate = () => say('navigate'); say('ready');</script>"
+    )
+    server.route("/plain-child", child, "text/html")
+    server.route("/dip-child", child, "text/html", [_DIP])
+    server.route("/next", b"<!doctype html><script>postMessage.call(parent, 'next', '*');</script>", "text/html")
+    script = """(src) => new Promise((resolve) => {
+        const seen = [];
+        const frame = document.createElement('iframe');
+        addEventListener('message', (e) => {
+            seen.push(e.data);
+            if (e.data === 'ready' && seen.length === 1) {
+                frame.src = "javascript:void postMessage.call(parent, 'js', '*')";
+                setTimeout(() => { frame.src = '/next'; }, 300);
+            } else if (e.data === 'next') {
+                resolve(seen);
+            }
+        });
+        frame.src = src;
+        document.documentElement.appendChild(frame);
+    })"""
+
+    with _open_page(session, server.page("/", _BLANK, [_DIP])) as page:
+        plain = page.evaluate(f"({script})('/plain-child')", timeout=TIMEOUT_SECONDS)
+        isolated = page.evaluate(f"({script})('/dip-child')", timeout=TIMEOUT_SECONDS)
+
+    assert plain == ["ready", "next"]
+    assert [isolated[:2], isolated[-1]] == [["ready", "js"], "next"]

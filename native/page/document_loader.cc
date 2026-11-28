@@ -180,14 +180,14 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // type is HTML here, as the parser reads it, where Chrome's network service
   // sniffs one.
   // A frame's takes its parent's encoding as its default where the parent's
-  // origin can reach its own, and as the detector's hint where the parent's
-  // detector found it, as Blink's BuildTextResourceDecoder() does.
+  // window can reach its own, of its origin and agent cluster, and as the
+  // detector's hint where the parent's detector found it, as Blink's
+  // BuildTextResourceDecoder() does with a local parent alone.
   std::optional<ParentFrameEncoding> parent_encoding;
   if (const Frame* const parent = frame_->Parent()) {
     const Window* const parent_window = parent->DomWindow();
     if (parent_window && parent_window->HasDocument() &&
-        parent_window->GetSecurityOrigin().IsSameOriginWith(
-            document_->GetOrigin())) {
+        Window::CanAccess(*parent_window, *document_->DefaultView())) {
       const Document& parent_document = parent_window->GetDocument();
       parent_encoding = ParentFrameEncoding{
           base::UTF16ToUTF8(parent_document.CharacterSet()),
