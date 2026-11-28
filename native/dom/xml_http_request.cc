@@ -848,12 +848,9 @@ bool XMLHttpRequest::InitSend(bindings::ExceptionState& exception_state) {
   // sync-xhr only behind DocumentPolicySyncXHR, which Chrome 157 has off.
   ExecutionContext* const context = GetExecutionContext();
   if (!async_ && context->IsWindow() &&
-      !static_cast<Window*>(context)->GetDocument().IsFeatureEnabled(
-          "sync-xhr")) {
-    // Upstream: third_party/blink/renderer/core/frame/permissions_policy_violation_report_body.h
-    context->AddConsoleMessage(ConsoleLevel::kError,
-                               "Permissions policy violation: Synchronous "
-                               "requests are disabled by permissions policy.");
+      !static_cast<Window*>(context)->GetDocument().IsFeatureEnabledOrReport(
+          "sync-xhr",
+          "Synchronous requests are disabled by permissions policy.")) {
     HandleNetworkError();
     ThrowForLoadFailureIfNeeded(exception_state, "");
     return false;
