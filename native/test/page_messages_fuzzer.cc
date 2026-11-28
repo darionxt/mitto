@@ -100,6 +100,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                  frame->request.redirect_mode ==
                      mitto::PageRedirectMode::kFollow) ||
                 frame->request.kind == mitto::PageRequestKind::kFetch);
+          // Only an XMLHttpRequest forces a preflight, and only an asynchronous
+          // one with a body reports its upload.
+          CHECK(!frame->request.force_preflight ||
+                frame->request.kind == mitto::PageRequestKind::kXhr);
+          CHECK(!frame->request.reports_upload ||
+                (frame->request.kind == mitto::PageRequestKind::kXhr &&
+                 frame->request.body && !frame->request.synchronous));
           // Only a fetch's body streams, and then none comes with it.
           CHECK(!frame->request.streams_body ||
                 (frame->request.kind == mitto::PageRequestKind::kFetch &&
@@ -118,6 +125,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                        frame->request.referrer.size() +
                        frame->request.body.value_or("").size() + 50,
                    payload.size());
+          break;
+        case mitto::PageMessage::kUploadProgressTaken:
+          CHECK_EQ(payload.size(), 8u);
           break;
         case mitto::PageMessage::kCredit:
           CHECK_GT(frame->credit.bytes, 0u);
@@ -342,6 +352,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kIndexedDbCallback:
         case mitto::PageMessage::kStorageBucketsAnswer:
         case mitto::PageMessage::kRequestBodyCredit:
+        case mitto::PageMessage::kUploadProgress:
         case mitto::PageMessage::kPermissionsPolicy:
         case mitto::PageMessage::kIsolation:
         case mitto::PageMessage::kRestore:

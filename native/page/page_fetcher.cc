@@ -88,6 +88,19 @@ uint8_t ToPagePriority(FetchPriority priority) {
   }
 }
 
+FetchResponseHead ToFetchResponseHead(const PageResponseStarted& response) {
+  FetchResponseHead head;
+  head.status = response.status;
+  head.status_text = response.status_text;
+  head.url = response.url;
+  head.redirected = response.redirected;
+  head.cors = response.cors;
+  head.opaque = response.opaque;
+  head.headers = response.headers;
+  head.padding = response.padding;
+  return head;
+}
+
 }  // namespace
 
 PageReferrerPolicy ToPageReferrerPolicy(FetchReferrerPolicy policy) {
@@ -146,16 +159,8 @@ class PageFetcher::Request final : public PageRequests::Client,
   // PageRequests::Client:
   void OnResponseStarted(const PageResponseStarted& response) override {
     response_url_ = response.url;
-    FetchResponseHead head;
-    head.status = response.status;
-    head.status_text = response.status_text;
-    head.url = response.url;
-    head.redirected = response.redirected;
-    head.cors = response.cors;
-    head.opaque = response.opaque;
-    head.headers = response.headers;
-    head.padding = response.padding;
-    CallClient([&] { client_->OnResponseStarted(head); });
+    CallClient(
+        [&] { client_->OnResponseStarted(ToFetchResponseHead(response)); });
   }
   void OnResponseBody(std::string bytes) override {
     CallClient([&] { client_->OnResponseBody(std::move(bytes)); });
@@ -171,6 +176,9 @@ class PageFetcher::Request final : public PageRequests::Client,
   }
   void OnRequestBodyCredit() override {
     CallClient([&] { client_->OnBodyRoom(); });
+  }
+  void OnUploadProgress(uint64_t position, uint64_t size) override {
+    CallClient([&] { client_->OnUploadProgress(position, size); });
   }
 
   // FetchController:
@@ -253,7 +261,7 @@ namespace {
 // its destination, where a text module, whose Request Kind comes once Chrome
 // 155 leaves the Supported Window, and a CSS module, which M9's CSSOM makes,
 // send a JavaScript module's lines, Known Gaps; a classic script; an image;
-// a style sheet; a font; a favicon; a prefetch; or a fetch.
+// a style sheet; a font; a favicon; a prefetch; an XMLHttpRequest; or a fetch.
 PageRequestKind KindOf(const FetchRequestData& data) {
   if (data.is_beacon) {
     return PageRequestKind::kBeacon;
@@ -285,6 +293,8 @@ PageRequestKind KindOf(const FetchRequestData& data) {
       return PageRequestKind::kFavicon;
     case FetchDestination::kPrefetch:
       return PageRequestKind::kPrefetch;
+    case FetchDestination::kXhr:
+      return PageRequestKind::kXhr;
     case FetchDestination::kJson:
     case FetchDestination::kText:
     case FetchDestination::kWorker:
@@ -337,12 +347,8 @@ void PageFetcher::Abort() {
   }
 }
 
-void PageFetcher::Fetch(FetchRequestData data,
-                        std::unique_ptr<FetchClient> client) {
-  auto request = std::make_unique<Request>(*this, std::move(client),
-                                           data.keepalive, data.deferred);
-  Request& started = *request;
-  started.client().OnStarted(started);
+// static
+std::optional<PageRequest> PageFetcher::ToPageRequest(FetchRequestData& data) {
   // A request has to fit in one frame, so a body that leaves it no room, of
   // nearly 16 MiB, fails as a request that cannot be sent does: a Known Gap.
   // Beside its URL, method, header lines, referrer and body, the frame holds
@@ -355,28 +361,18 @@ void PageFetcher::Fetch(FetchRequestData data,
   const size_t size = 50 + data.url.size() + data.method.size() +
                       data.headers.size() +
                       (has_referrer ? data.referrer.size() : 0) + body_size;
-  // ResourceFetcher::StartLoad() fails a keepalive request whose body would
-  // take the document's keepalive bodies past their quota. fetchLater()'s
-  // goes around it, with a quota of its own.
-  const bool counts_as_keepalive = data.keepalive && !data.deferred;
-  const bool over_quota =
-      counts_as_keepalive && data.body &&
-      kKeepaliveInflightBytesQuota - keepalive_bytes_ < body_size;
-  if (size > kMaxPayloadSize || over_quota) {
-    started.client().OnResponseEnded(kFailed);
-    return;
-  }
-  if (counts_as_keepalive && data.body) {
-    started.set_keepalive_bytes(body_size);
-    keepalive_bytes_ += body_size;
+  if (size > kMaxPayloadSize) {
+    return std::nullopt;
   }
   PageRequest page_request;
   page_request.kind = KindOf(data);
   page_request.url = std::move(data.url);
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);
+  page_request.reports_upload = data.report_upload_progress && data.body;
   page_request.body = std::move(data.body);
   page_request.streams_body = data.streams_body;
+  page_request.force_preflight = data.force_preflight;
   if (data.mode) {
     page_request.mode = ToPageRequestMode(*data.mode);
   }
@@ -396,10 +392,88 @@ void PageFetcher::Fetch(FetchRequestData data,
   page_request.deferred = data.deferred;
   page_request.cache_mode = ToPageCacheMode(data.cache_mode);
   page_request.redirect_mode = ToPageRedirectMode(data.redirect_mode);
-  started.set_number(requests_->Start(std::move(page_request), started,
+  return page_request;
+}
+
+void PageFetcher::Fetch(FetchRequestData data,
+                        std::unique_ptr<FetchClient> client) {
+  auto request = std::make_unique<Request>(*this, std::move(client),
+                                           data.keepalive, data.deferred);
+  Request& started = *request;
+  started.client().OnStarted(started);
+  const size_t body_size = data.body ? data.body->size() : 0;
+  // ResourceFetcher::StartLoad() fails a keepalive request whose body would
+  // take the document's keepalive bodies past their quota. fetchLater()'s
+  // goes around it, with a quota of its own.
+  const bool counts_as_keepalive = data.keepalive && !data.deferred;
+  const bool over_quota =
+      counts_as_keepalive && data.body &&
+      kKeepaliveInflightBytesQuota - keepalive_bytes_ < body_size;
+  std::optional<PageRequest> page_request = ToPageRequest(data);
+  if (!page_request || over_quota) {
+    started.client().OnResponseEnded(kFailed);
+    return;
+  }
+  if (counts_as_keepalive && page_request->body) {
+    started.set_keepalive_bytes(body_size);
+    keepalive_bytes_ += body_size;
+  }
+  started.set_number(requests_->Start(*std::move(page_request), started,
                                       data.render_blocking,
                                       std::move(data.initiator_type)));
   open_.emplace(started.number(), std::move(request));
+}
+
+namespace {
+
+// What the Page's requests tell of a synchronous one, for the DOM's client.
+class SynchronousClient final : public PageRequests::Client {
+ public:
+  explicit SynchronousClient(FetchClient& client) : client_(client) {}
+
+  // The final URL of a response that came whole.
+  const std::optional<std::string>& finished_url() const {
+    return finished_url_;
+  }
+
+  void OnResponseStarted(const PageResponseStarted& response) override {
+    response_url_ = response.url;
+    client_->OnResponseStarted(ToFetchResponseHead(response));
+  }
+  void OnResponseBody(std::string bytes) override {
+    client_->OnResponseBody(std::move(bytes));
+  }
+  void OnResponseEnded(int net_error) override {
+    if (net_error == 0) {
+      finished_url_ = response_url_;
+    }
+    client_->OnResponseEnded(net_error);
+  }
+
+ private:
+  const raw_ref<FetchClient> client_;
+  std::optional<std::string> response_url_;
+  std::optional<std::string> finished_url_;
+};
+
+}  // namespace
+
+void PageFetcher::FetchSynchronously(FetchRequestData data,
+                                     base::TimeDelta timeout,
+                                     FetchClient& client) {
+  std::u16string initiator_type = std::move(data.initiator_type);
+  std::optional<PageRequest> page_request = ToPageRequest(data);
+  if (!page_request) {
+    client.OnResponseEnded(kFailed);
+    return;
+  }
+  page_request->synchronous = true;
+  SynchronousClient page_client(client);
+  requests_->StartSynchronous(*std::move(page_request), page_client, timeout,
+                              std::move(initiator_type));
+  if (page_client.finished_url()) {
+    finished_responses_.insert(*page_client.finished_url());
+  }
 }
 
 bool PageFetcher::HasFinishedResponse(std::string_view url) const {

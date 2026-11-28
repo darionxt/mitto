@@ -365,6 +365,11 @@ void ScriptRunner::OnRequestBodyCredit(PageCredit credit) {
                          base::Unretained(requests_.get()), credit));
 }
 
+void ScriptRunner::OnUploadProgress(PageUploadProgress progress) {
+  RunTask(base::BindOnce(&PageRequests::OnUploadProgress,
+                         base::Unretained(requests_.get()), progress));
+}
+
 void ScriptRunner::OnIsolation(PageIsolation isolation) {
   RunTask(base::BindOnce(&PageRequests::OnIsolation,
                          base::Unretained(requests_.get()), isolation));

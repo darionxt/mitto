@@ -380,12 +380,14 @@ void ApplyPageRequest(const PageRequest& asked,
   } else if (asked.referrer_policy != PageReferrerPolicy::kDocument) {
     fetch.referrer_policy = ToNetReferrerPolicy(asked.referrer_policy);
   }
-  if (asked.priority != 0) {
-    options.priority = static_cast<net::RequestPriority>(asked.priority - 1);
-  } else if (asked.synchronous) {
+  if (asked.synchronous) {
     // ResourceFetcher::ComputeLoadPriority(): a synchronous request is very
-    // high.
+    // high. XMLHttpRequest::CreateRequest() lets it past the limits, which only
+    // a request of that priority may go past.
     options.priority = net::HIGHEST;
+    options.ignore_limits = true;
+  } else if (asked.priority != 0) {
+    options.priority = static_cast<net::RequestPriority>(asked.priority - 1);
   }
   if (asked.incremental != 0) {
     options.priority_incremental = asked.incremental == 2;
@@ -698,16 +700,20 @@ PageIsolation IsolationOf(uint64_t navigation,
   return isolation;
 }
 
-// The MIME type of a response, lowercased, as net::HttpUtil::ParseContentType()
-// reads Content-Type, or "" for none.
+// The MIME type of a response, lowercased, as HttpResponseHeaders'
+// GetMimeTypeAndCharset() reads each value of Content-Type, or "" for none.
 std::string MimeTypeOf(const RequestEvent& event) {
   std::string mime_type;
   std::string charset;
   bool had_charset = false;
   if (const std::optional<std::string> content_type =
           HeaderValue(event.headers, "Content-Type")) {
-    net::HttpUtil::ParseContentType(*content_type, &mime_type, &charset,
-                                    &had_charset, nullptr);
+    net::HttpUtil::ValuesIterator values(*content_type, /*delimiter=*/',',
+                                         /*ignore_empty_values=*/true);
+    while (values.GetNext()) {
+      net::HttpUtil::ParseContentType(values.value(), &mime_type, &charset,
+                                      &had_charset, nullptr);
+    }
   }
   return mime_type;
 }
@@ -809,8 +815,9 @@ bool MakesDocument(const RequestEvent& event) {
   return mime_type.empty() || IsSupportedMimeType(mime_type);
 }
 
-// URLLoader's ShouldSniffContent() for a navigation, which asks for
-// kURLLoadOptionSniffMimeType: Chrome's network service holds back a
+// URLLoader's ShouldSniffContent() for a request that asks for
+// kURLLoadOptionSniffMimeType, as a navigation and all of Blink's but a fetch()
+// do: Chrome's network service holds back a
 // response whose MIME type net::ShouldSniffMimeType() would sniff, such as
 // text/plain or none, unless the first value of X-Content-Type-Options is
 // nosniff.
@@ -961,7 +968,7 @@ class PageHost::ResponseChecks {
                               }) >= 2) {
       return net::ERR_ABORTED;
     }
-    if (!AllowsByCors(event)) {
+    if (!AllowsByCors(event) || !AllowsRedirectLocation(event)) {
       return net::ERR_FAILED;
     }
     // URLLoader::OnReceivedRedirect() and OnResponseStarted(): each response
@@ -1067,6 +1074,18 @@ class PageHost::ResponseChecks {
       return allowed == origin && allow_credentials == "true";
     }
     return allowed && (*allowed == "*" || *allowed == origin);
+  }
+
+  // CorsURLLoader's CheckRedirectLocation(): a redirect of a request of mode
+  // cors to a URL with a user or a password is followed only within the
+  // document's origin.
+  bool AllowsRedirectLocation(const RequestEvent& event) const {
+    if (event.type != MITTO_EVENT_REDIRECT_FOLLOWED || !checks_.cors) {
+      return true;
+    }
+    const GURL to(event.new_url);
+    return (!to.has_username() && !to.has_password()) ||
+           (!cors_ && !tainted_ && document_origin_.IsSameOriginWith(to));
   }
 
   // Follows the request to its response at `url`, a redirect's or the last,
@@ -1324,7 +1343,19 @@ class PageHost::Request final : public RequestClient {
   void set_body_channel(scoped_refptr<RequestChannel> channel) {
     body_channel_ = std::move(channel);
   }
+  // The Page has taken the last report of the upload.
+  void TakeUploadProgress() {
+    if (job_) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE,
+          base::BindOnce(&RunningRequest::UploadProgressTaken, job_));
+    }
+  }
+
   bool streams_body() const { return body_channel_ != nullptr; }
+  // An XHR of whose upload the Page hears.
+  bool reports_upload() const { return reports_upload_; }
+  void set_reports_upload() { reports_upload_ = true; }
   // Whether the Page has ended the body that streams.
   bool page_ended_body() const { return page_ended_body_; }
   // Whether `size` more bytes of the body fit in the credit that the library
@@ -1372,6 +1403,13 @@ class PageHost::Request final : public RequestClient {
   void OnBodyRead(size_t size) override {
     reading_ = false;
     host_->OnBodyRead(*this, size);
+  }
+  void OnUploadProgress(uint64_t position, uint64_t size) override {
+    PageUploadProgress progress;
+    progress.number = number_;
+    progress.position = position;
+    progress.size = size;
+    host_->channel_->Send(EncodeUploadProgress(progress));
   }
   void OnTotals(const RequestTotals& totals) override { totals_ = totals; }
   void OnBodyWanted() override {
@@ -1462,6 +1500,7 @@ class PageHost::Request final : public RequestClient {
   uint32_t credit_ = kBodyWindow;
   bool started_ = false;
   bool reading_ = false;
+  bool reports_upload_ = false;
   // For the Performance Timeline.
   bool timing_allow_failed_ = false;
   bool timing_cross_origin_ = false;
@@ -1661,6 +1700,9 @@ void PageHost::StartRequest(uint64_t number,
   if (checks.is_navigation && options.fetch) {
     request->set_navigation_fetch(*options.fetch);
   }
+  if (options.report_upload_progress) {
+    request->set_reports_upload();
+  }
   Request& client = *request;
   requests_.emplace(number, std::move(request));
   client.set_job(network_->StartPageRequest(
@@ -1851,6 +1893,11 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       base::StrAppend(&same->second, {", ", value});
     }
   }
+  // Blink's TrimLWSAndCRLF(), for values that a combination leaves with a space
+  // at their end.
+  for (auto& [name, value] : lines) {
+    value = std::string(net::HttpUtil::TrimLWS(value));
+  }
   // The script's lines take the places of the Persona's lines of their names,
   // and the rest follow, until FetchRules puts a fetch()'s in the order of
   // Blink's HTTPHeaderMap. A Content-Type that the script does not give goes,
@@ -1928,6 +1975,16 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     }
   }
   const RequestMode options_mode = options.fetch->mode;
+  // CorsURLLoader::Start(): a request of mode cors to another origin goes
+  // without the URL's user and password.
+  if (options_mode == RequestMode::kCors &&
+      !document_origin.IsSameOriginWith(url) &&
+      (url.has_username() || url.has_password())) {
+    GURL::Replacements replacements;
+    replacements.ClearUsername();
+    replacements.ClearPassword();
+    url = url.ReplaceComponents(replacements);
+  }
   const CredentialsMode options_credentials = options.fetch->credentials_mode;
   std::optional<std::vector<char>> body;
   if (asked.body) {
@@ -1945,6 +2002,12 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     options.stream_body = true;
     options.fetch->force_preflight = true;
   }
+  // An XMLHttpRequest whose upload has listeners is of that mode too, as
+  // XMLHttpRequest::CreateRequest() makes it.
+  if (asked.force_preflight) {
+    options.fetch->force_preflight = true;
+  }
+  options.report_upload_progress = asked.reports_upload;
   if (asked.kind == PageRequestKind::kIframe) {
     frame_navigation_responses_[asked.number] = {
         .parent = frame_parent,
@@ -1974,6 +2037,10 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .keepalive = asked.keepalive,
       .is_navigation = is_navigation,
       .top_level = top_level,
+      // Of what a Page asks for beside navigations, only the response of an
+      // XHR shows a script that it was held back, and Blink has no fetch()
+      // sniffed.
+      .sniffs = asked.kind == PageRequestKind::kXhr,
       .creator_embedder_policy = std::move(creator_embedder_policy),
       .embedder_policy = contexts_.at(settings_id).coep,
       .frame_ancestor_urls = std::move(frame_ancestor_urls),
@@ -2162,6 +2229,26 @@ void PageHost::OnCredit(const PageCredit& credit) {
   request.ReadIfCredited();
 }
 
+void PageHost::OnUploadProgressTaken(uint64_t number) {
+  const auto found = requests_.find(number);
+  if (found == requests_.end()) {
+    // The request may have ended since the Page took it.
+    if (number > last_request_number_) {
+      Refuse(base::StrCat({"upload progress taken of request ",
+                           base::NumberToString(number),
+                           ", which the Page has not asked for"}));
+    }
+    return;
+  }
+  if (!found->second->reports_upload()) {
+    Refuse(
+        base::StrCat({"upload progress taken of request ",
+                      base::NumberToString(number), ", which reports none"}));
+    return;
+  }
+  found->second->TakeUploadProgress();
+}
+
 PageHost::Request* PageHost::RequestWithBodyStream(uint64_t number,
                                                    std::string_view what) {
   const auto found = requests_.find(number);
@@ -2211,7 +2298,7 @@ void PageHost::OnResponseStarted(Request& request, RequestEvent event) {
     DropNavigation(request, event);
     return;
   }
-  if (request.is_navigation()) {
+  if (request.is_navigation() || request.checks().sniffs) {
     if (std::string mime_type = MimeTypeOf(event);
         ShouldSniffContent(event, mime_type)) {
       request.HoldForSniffing(std::move(event), std::move(mime_type));
@@ -2248,7 +2335,7 @@ void PageHost::FinishSniffing(Request& request) {
   // download_utils::MustDownload() decides from the type that the network
   // service sniffed. Any other sniffed type reaches the Page as the
   // response's own.
-  if (!IsSupportedMimeType(sniffing.sniffed)) {
+  if (request.is_navigation() && !IsSupportedMimeType(sniffing.sniffed)) {
     // The Page never gets what was read.
     request.AddCredit(static_cast<uint32_t>(sniffing.body.size()));
     DropNavigation(request, sniffing.response);
@@ -4510,6 +4597,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       Push(std::move(event));
       return;
     }
+    case PageMessage::kUploadProgressTaken:
+      OnUploadProgressTaken(frame->upload_progress_taken);
+      return;
     case PageMessage::kCancel:
       OnCancel(frame->cancelled);
       return;
@@ -4630,6 +4720,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kIndexedDbCallback:
     case PageMessage::kStorageBucketsAnswer:
     case PageMessage::kRequestBodyCredit:
+    case PageMessage::kUploadProgress:
     case PageMessage::kPermissionsPolicy:
     case PageMessage::kIsolation:
     case PageMessage::kRestore:
