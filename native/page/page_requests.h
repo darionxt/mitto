@@ -324,11 +324,6 @@ class PageRequests {
                 PageRequest& request,
                 const SessionSender::ResponseRoute& route);
   uint64_t Send(uint64_t context, PageRequest& request);
-  // What the entry of a request that the context that runs makes now starts
-  // with.
-  static Timed TimedFor(const PageRequest& request,
-                        bool render_blocking,
-                        std::u16string initiator_type);
   // Adds the entry of a request that ended at `response_end`, with `ended`'s
   // totals if the Session said them.
   static void AddResourceTiming(Timed& timed,
