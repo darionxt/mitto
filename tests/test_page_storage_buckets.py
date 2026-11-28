@@ -288,9 +288,12 @@ _HUNDRED_BUCKETS = """
 
 @pytest.mark.usefixtures("page_program")
 def test_a_session_without_a_storage_directory_has_a_profile_s_quota(server_origin: str) -> None:
-    # A key's quota, 75% of a pool of 80% of the disk that holds the home folder, has to hold the default bucket and
-    # 100 more of 20 MiB.
-    per_key_quota = int(int(shutil.disk_usage(Path.home()).total * 0.8) * 0.75)
+    # A key's quota, 75% of a pool of 80% of the disk that holds the home folder, or the nearest folder above it that
+    # exists, has to hold the default bucket and 100 more of 20 MiB.
+    home = Path.home()
+    while not home.exists() and home != home.parent:
+        home = home.parent
+    per_key_quota = int(int(shutil.disk_usage(home).total * 0.8) * 0.75)
     if per_key_quota // (20 * 1024 * 1024) < 101:
         pytest.skip("the disk that holds the home folder is too small for 101 buckets of 20 MiB")
     with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
