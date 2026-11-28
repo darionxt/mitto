@@ -74,6 +74,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         match route:
             case "bytes":
                 self._answer(b"a" * int(name))
+            case "late":
+                # As /bytes, 150 ms later: past the 50 ms of Blink's progress throttle, whichever host runs it.
+                time.sleep(0.15)
+                self._answer(b"a" * int(name))
             case "echo":
                 self._answer(body)
             case "log":

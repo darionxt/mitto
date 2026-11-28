@@ -234,21 +234,24 @@
     };
     const actions = {
       open: (xhr) => xhr.open('GET', '/bytes/7'),
-      'open and send': (xhr) => { xhr.open('GET', '/bytes/7'); xhr.send(); },
+      'open and send': (xhr) => { xhr.open('GET', '/late/7'); xhr.send(); },
       abort: (xhr) => xhr.abort(),
       'abort and open': (xhr) => { xhr.abort(); xhr.open('GET', '/bytes/7'); },
     };
-    const one = async (type, is, act, url, responseType) => {
+    const one = async (type, is, act, sends, url, responseType) => {
       const xhr = new XMLHttpRequest();
       const log = [];
       let acted = false;
+      let sent = false;
       let done;
       const acts = new Promise((resolve) => done = resolve);
       const listener = () => {
         if (acted || !is(xhr)) return;
         acted = true;
         log.push('acts');
-        log.push(tried(() => act(xhr)));
+        const result = tried(() => act(xhr));
+        log.push(result);
+        sent = sends && result === 'ok';
         done();
       };
       if (type.startsWith('upload ')) xhr.upload.addEventListener(type.slice(7), listener);
@@ -259,8 +262,10 @@
       if (responseType === 'document') xhr.overrideMimeType('text/html');
       const finish = ended(xhr);
       xhr.send('<p>hello');
-      // Until the listener has acted, or the request has ended without, and nothing has come of it for a while.
+      // Until the listener has acted, or the request has ended without, then the request that it sent, if any, has
+      // its response, whose host may queue it behind the others, and nothing has come of it for a while.
       await Promise.race([acts, finish]);
+      for (const until = Date.now() + 5000; sent && xhr.readyState !== 4 && Date.now() < until;) await wait(50);
       for (let length = -1; length !== log.length; await wait(300)) length = log.length;
       const response = responseType === 'arraybuffer' ? xhr.response && xhr.response.byteLength
                        : responseType === 'document' ? xhr.response && xhr.response.body.innerHTML : xhr.responseText;
@@ -271,7 +276,8 @@
       await Promise.all(Object.entries(actions).map(async ([action, act]) => {
         const kinds = [['/echo', ''], ['/empty', ''], ['/echo', 'arraybuffer'], ['/echo', 'document'], ['/empty', 'document']];
         await Promise.all(kinds.map(async ([url, responseType]) => {
-          out[`${moment}, ${action}, ${url} ${responseType}`] = await one(type, is, act, url, responseType);
+          const sends = action === 'open and send';
+          out[`${moment}, ${action}, ${url} ${responseType}`] = await one(type, is, act, sends, url, responseType);
         }));
       }));
     }
