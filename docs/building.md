@@ -141,7 +141,7 @@ out/mitto/html_tokenizer_test mitto/test/html5lib_tokenizer mitto/test/html5lib_
 
 It runs each test once for each of its initial states, with its whole input in one piece and again one code unit at a time, and the two must give the same tokens and parse errors. It also checks the position that the tokenizer gives right after a start tag, which the tree builder hands a script element for the line and column its errors count from. [`native/test/html5lib_tokenizer_failures.txt`](../native/test/html5lib_tokenizer_failures.txt) lists the tests the tokenizer fails, under the reason for each. The program fails if a test it lists passes or one it does not list fails, and prints what it expected and what it got. `--print-failures` prints every test that fails in the form of the list.
 
-The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
+The build job of each Host in CI runs it, and the `asan` and `ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
 ### The media query tests
 
@@ -151,7 +151,7 @@ The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of
 out/mitto/media_query_test
 ```
 
-It prints each case that fails, with what it expected and what it got, and fails if any does. For Chromium 157.0.8103.39 all 712 cases pass. The release routine's [comparison of two releases](#compare-two-releases) shows when Blink changes those tests or the files that `native/css` ports, and their tables are copied again then. The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the sanitizer workflow run it too.
+It prints each case that fails, with what it expected and what it got, and fails if any does. For Chromium 157.0.8103.39 all 712 cases pass. The release routine's [comparison of two releases](#compare-two-releases) shows when Blink changes those tests or the files that `native/css` ports, and their tables are copied again then. The build job of each Host in CI runs it, and the `asan` and `ubsan` builds of the sanitizer workflow run it too.
 
 ## Build the Runtime
 
@@ -209,7 +209,7 @@ A test passes when it builds the tree it expects. One that builds another tree i
 
 These tests are html5lib-python 1.1's. The Engine Release's tree holds a newer copy of html5lib's tests in `third_party/blink/web_tests/html5lib/resources`, with what Chrome built for each beside them in `../generated/run-*-data-expected.txt`, which says where it fails. The program runs that copy too, with an empty list of failures, which shows what the tree builder builds where the two copies differ: on 2026-11-15, 1,773 of its 1,778 tests passed, and of the 5 that failed, one builds the tree that Chrome's results there record, and four expect a `selectedcontent` that the select element fills, which the parser does not. Chrome's results there come from its web tests, which turn on Blink's features that are experimental too, such as `InputInSelect`, so a test that Chrome fails there for one of those passes.
 
-The native job of CI runs it on every Host, and the `runtime-asan` and `runtime-ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
+The build job of each Host in CI runs it, and the `runtime-asan` and `runtime-ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
 ### V8's settings
 
@@ -424,7 +424,7 @@ These packages come from Google Storage and CIPD, Chromium's package store, rath
 
 ### In CI
 
-A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command, runs it again with `--config runtime` in the same directory for [the Runtime](#the-runtime-from-the-source-export), [builds a wheel](#build-a-wheel) from the library and the Page program and runs `pytest` against the installed wheel. Builds on Linux and macOS are from 14 runs from a cold cache for Chromium 157.0.8103.27, and on Windows from two for 157.0.8103.39, and disk use is from the first. The range is mostly the runners: the same `native/` took 21 and 27 minutes on macOS. On Linux and macOS, the tests and the whole jobs are from the runs of 2026-11-08 and 2026-11-09, when the suite had about 6,800 tests. On Windows, the tests are from four runs, and each whole job from two.
+A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command, runs it again with `--config runtime` in the same directory for [the Runtime](#the-runtime-from-the-source-export), [builds a wheel](#build-a-wheel) from the library and the Page program and runs `pytest` against the installed wheel. Since 2026-11-28 a job builds and another tests, with `web-platform-tests` beside the tests ([The jobs of a Host](#the-jobs-of-a-host)). Builds on Linux and macOS are from 14 runs from a cold cache for Chromium 157.0.8103.27, and on Windows from two for 157.0.8103.39, and disk use is from the first. The range is mostly the runners: the same `native/` took 21 and 27 minutes on macOS. On Linux and macOS, the tests and the whole jobs are from the runs of 2026-11-08 and 2026-11-09, when the suite had about 6,800 tests. On Windows, the tests are from four runs, and each whole job from two.
 
 | | Linux x86_64 | macOS arm64 | Windows x64 |
 | --- | --- | --- | --- |
@@ -499,6 +499,22 @@ With the Runtime and [its sanitizer builds](#sanitizer-builds-and-the-fuzz-targe
 No cache keeps the export itself, so every job that builds downloads it from its release asset. Since it carries the Runtime it is 34.3 MiB rather than 25.1 MiB, so each such job downloads 9.2 MiB more, beside the toolchain's 319 to 476 MiB, and unpacks 79 MiB more into the build's directory. The library's caches do not grow from it: the library and `out/mitto` are what they were, because the native core's build reads the same files. A new pin changes `tools/workspace/`, though, so as with any new export each cache gets a new key, and the first build on each runner, on `main` and in the pull request that pins it, starts from nothing.
 
 `xcode-27` is a preview image. Its default is Xcode 27.1 with the macOS 27.0 SDK, the SDK that Chromium's bots use. The Python jobs use it as well, because 9 of 90 jobs on `macos-latest` got no runner within 15 minutes and were cancelled, and none of 36 on `xcode-27` did.
+
+#### The jobs of a Host
+
+Since 2026-11-28 the native job of each Host is two jobs, so that `web-platform-tests`, which needs nothing but the wheel, runs beside the tests rather than after them ([#498](https://github.com/darionxt/mitto/issues/498)):
+
+| Job | Waits for | What it does |
+| --- | --- | --- |
+| `Build on <runner>` | "What the push changes", when that runs | Restores the caches, builds the library and the Runtime and saves the caches, as above. Runs the three tests of the build directories: html5lib's tokenizer, Blink's media queries and html5lib's tree construction. Builds the wheel, and keeps three artifacts: `wheel-<runner>`, `notices-<runner>`, and `core-test-<runner>`, which holds the C test program |
+| `Native core on <runner>` | That build | Takes those artifacts, installs the wheel into a new environment, and runs the tests from it, the tests that run alone and the tests of Pages through the C API, with the installed library beside the C test program. Its last step is `Passed on <commit>` |
+| `web-platform-tests on <runner>` | That build, or on [a push that changes only the list](#a-push-that-changes-only-the-list-of-differences) that Host's reuse job | Installs the wheel and runs [web-platform-tests](wpt.md#in-ci) |
+
+On Linux and macOS the test job's check is one that `main` requires, so the test job runs only once the build has passed. When the build fails, is cancelled or is skipped, the test job is skipped under the expression in its name, and `Native core on <runner>` is not passed ([Which checks `main` requires](#which-checks-main-requires)). An artifact keeps no file modes, so the test job makes the C test program executable again.
+
+Before the split, in the full run 46126743220 of 2026-11-28, whose builds all came from the caches, each native job kept its wheel within a minute of starting. Its tests then took 27.5, 29 and 31.5 minutes on Linux, macOS and Windows, and `web-platform-tests` started only after them and took 13 to 15 minutes, so the run took 48 minutes. Now the tests and `web-platform-tests` run at once, and a run takes about as long as the longest build and tests, which have been Windows'.
+
+At its peak a run now holds two runners of a Host where it held one: on macOS the tests and `web-platform-tests`, beside the two Python jobs while those last. GitHub runs at most five of this account's macOS jobs at once.
 
 ### Sanitizer builds and the fuzz target
 
@@ -578,7 +594,7 @@ When a job fails, the run's last job opens an issue titled "Nightly build from n
 
 #### A full run of a draft
 
-[`.github/workflows/full-run.yml`](../.github/workflows/full-run.yml) runs `ci.yml` by hand on a branch's head, such as a draft's, without marking the pull request ready for review: the native job and `web-platform-tests` on each Host, and the Python jobs. It is how a session has the wpt results of its draft, and so the list that goes with its code, before the pull request is at the head of the queue.
+[`.github/workflows/full-run.yml`](../.github/workflows/full-run.yml) runs `ci.yml` by hand on a branch's head, such as a draft's, without marking the pull request ready for review: the build, the tests and `web-platform-tests` on each Host, and the Python jobs. It is how a session has the wpt results of its draft, and so the list that goes with its code, before the pull request is at the head of the queue.
 
 ```bash
 gh workflow run full-run.yml --ref BRANCH
@@ -594,7 +610,7 @@ A push to a ready pull request to `main` that changes nothing but [`tests/wpt/di
 
 1. The push changes only that file, from the head before it to the head after it, without moving it, deleting it or making it a link.
 2. The pull request's last CI run on the head before it belongs to this pull request and this repository, not to a fork.
-3. Each native job of that run passed, and names the merge commit that it passed on, which is a merge of that head. Its last step names it, and GitHub's API gives it with the job's result.
+3. Each job of that run named `Native core on <Host>`, a test job or a reuse job, passed, and names the merge commit that it passed on, which is a merge of that head. Its last step names it, and GitHub's API gives it with the job's result.
 4. That merge commit and the one under test now differ in that file alone. So every other file is as it was when the wheels were tested, `ci.yml` and the Python code of the tests included, and `main` has not moved. A run that differed in anything else is a run of other code.
 5. The wheels of the three Hosts are still there. The reuse jobs take them by the IDs that this job read, so a run that is run again later cannot put another wheel in their place.
 
@@ -604,11 +620,11 @@ Anything else runs everything, as it always did, and so does an API that does no
 
 #### A pull request marked ready after its full run
 
-At the head of the queue a draft merges `main`, gets a [full run](#a-full-run-of-a-draft) on its head, and is marked ready once that run is green. When `main` has not moved since, the pull request's merge commit holds the same files as that head, and the run that marking it ready starts would build and test again what the full run has just passed. So that run takes the full run's results instead: the reuse jobs pass `Native core on <Host>` with the full run's wheels, without installing or testing them, and `web-platform-tests` does not run again. Since they only move each wheel from that run to this one, they all run on Linux, and the check of macOS waits for no macOS runner. The job "What the push changes" decides, in a few seconds:
+At the head of the queue a draft merges `main`, gets a [full run](#a-full-run-of-a-draft) on its head, and is marked ready once that run is green. When `main` has not moved since, the pull request's merge commit holds the same files as that head, and the run that marking it ready starts would build and test again what the full run has just passed. So that run takes the full run's results instead: the build and test jobs are skipped, the reuse jobs pass `Native core on <Host>` with the full run's wheels, without installing or testing them, and `web-platform-tests` does not run again. Since they only move each wheel from that run to this one, they all run on Linux, and the check of macOS waits for no macOS runner. The job "What the push changes" decides, in a few seconds:
 
 1. The merge commit under test merges the pull request's head, and holds the same tree as that head. So no file differs, `ci.yml` included, and `main` has not moved since the head last merged it.
 2. It takes the newest run of `full-run.yml`, started by hand, on this branch and on that head. A run by hand takes its workflows from the commit it runs on, so that run ran the workflows under test now.
-3. Each native job of that run, named `Full run / Native core on <Host>` there, passed, and its last step names that head.
+3. Each test job of that run, named `Full run / Native core on <Host>` there, passed, and its last step names that head.
 4. The wheels of the three Hosts are still there. The reuse jobs take them by ID, as on [a push that changes only the list](#a-push-that-changes-only-the-list-of-differences).
 
 Anything else runs everything, as it always did: `main` has moved since the head merged it, the head has no full run (as after a push that followed one), a native job of the full run failed, was cancelled or is still running, a wheel is gone, or the API does not answer. The job prints why, in its summary too, and when it takes the full run's results, it links that run there. A pull request opened as ready, or reopened, runs everything, and so does a push to a ready pull request unless it changes only the list.
@@ -617,7 +633,7 @@ The required checks then stand on a merge commit whose tree is the one that the 
 
 #### Which checks `main` requires
 
-`Native core on ubuntu-latest` and `Native core on xcode-27`, by name, from GitHub Actions. GitHub counts a job that a condition skips, or one that ends as neutral, as a pass of the check of its name. So no job that can be skipped may have one of those names without a matrix: a skipped job of a matrix keeps the expression in its name, `Native core on ${{ matrix.runner }}`, which no check asks for. Each native and reuse job has a matrix of one for this, and the job that a push does not use is skipped under that name. The same job in a matrix of one is also what lets each Host's `web-platform-tests` wait for that Host's native job alone.
+`Native core on ubuntu-latest` and `Native core on xcode-27`, by name, from GitHub Actions. GitHub counts a job that a condition skips, or one that ends as neutral, as a pass of the check of its name. So no job that can be skipped may have one of those names without a matrix: a skipped job of a matrix keeps the expression in its name, `Native core on ${{ matrix.runner }}`, which no check asks for. Each build, test and reuse job has a matrix of one for this, and the job that a push does not use is skipped under that name. A test job runs only once its Host's build job has passed, so a build that fails or is cancelled leaves `Native core on <Host>` unpassed, and so does one that is skipped, unless the Host's reuse job takes its place. The same jobs in a matrix of one are also what lets each Host's tests and `web-platform-tests` wait for that Host's build alone.
 
 #### Concurrency and the pull requests' caches
 
@@ -723,7 +739,7 @@ The Hosts link slightly different projects: only Linux links glog's symbolizer a
 uv run python -m tools.workspace.notices update /absolute/path/to/chromium-<tag>/src/out/mitto
 ```
 
-It says which entries changed, and drops an entry that no Host links any longer. The native job of each Host in CI keeps that Host's part as the artifact `notices-<runner>` of its run, so one machine can take the other Host's part from there:
+It says which entries changed, and drops an entry that no Host links any longer. The build job of each Host in CI, `Build on <runner>`, keeps that Host's part as the artifact `notices-<runner>` of its run, so one machine can take the other Host's part from there:
 
 ```bash
 gh run download <run-id> --name notices-ubuntu-latest --dir /absolute/path/to/new/directory
@@ -736,7 +752,7 @@ Measured for Chromium 157.0.8103.39, the notices are 0.6 MB, and they add 0.1 MB
 
 ### In CI
 
-The native job of each Host builds a wheel from the library and the Page program that it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. When it builds the library, it also prints this Host's part of the [third-party notices](#third-party-notices) from the same build, and keeps it next to the library in the cache and as an artifact. It installs the wheel into a new environment and runs the tests as above, with `MITTO_PAGE_PROGRAM` naming the Page program in the installed package, so that [`tests/test_page_program.py`](../tests/test_page_program.py) runs the one from the wheel. Building the wheel takes 12 seconds on Linux, 20 on Windows and 11 on macOS, or 50 when `dsymutil` reads the object files of a build that the job made, and keeping and installing it a few seconds more.
+The build job of each Host builds a wheel from the library and the Page program that it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. When it builds the library, it also prints this Host's part of the [third-party notices](#third-party-notices) from the same build, and keeps it next to the library in the cache and as an artifact. The test job of the Host, `Native core on <runner>`, takes both, installs the wheel into a new environment and runs the tests as above ([The jobs of a Host](#the-jobs-of-a-host)), with `MITTO_PAGE_PROGRAM` naming the Page program in the installed package, so that [`tests/test_page_program.py`](../tests/test_page_program.py) runs the one from the wheel. Building the wheel takes 12 seconds on Linux, 20 on Windows and 11 on macOS, or 50 when `dsymutil` reads the object files of a build that the job made, and keeping and installing it a few seconds more.
 
 Once, the wheels also passed their tests on the oldest system that their tags claim and that GitHub offers. The Linux wheel ran in an `amazonlinux:2` container on `ubuntu-latest`, with glibc 2.26. The macOS wheel ran on `macos-15`, with macOS 15.8: GitHub no longer offers `macos-14`, and never had an arm64 runner with macOS 13.
 

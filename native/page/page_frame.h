@@ -123,7 +123,8 @@ class PageFrame final : public NavigationClient, public Frame {
   bool IsLoading() const override;
   Frame* CreateChildFrame(HTMLFrameOwnerElement& owner,
                           std::u16string name) override;
-  void NavigateFromOwner(const GURL& url) override;
+  void NavigateFromOwner(const GURL& url,
+                         FetchReferrerPolicy referrer_policy) override;
   void Detach() override;
   NavigationRateLimiter& GetNavigationRateLimiter() override;
   void DidChangeCredentialless() override;
@@ -425,6 +426,9 @@ class PageFrame final : public NavigationClient, public Frame {
   // The about:blank or data: URL of type 72 that waited ends with no
   // document: the Session forgets what it took of the initiator for it.
   void EndLocalNavigation();
+  // FrameLoader::CommitNavigation(): a commit in the frame ends the wait of
+  // the navigation that its element's loading=lazy deferred.
+  void CancelOwnerLazyLoad();
   // NavigationRequest::CheckAboutSrcDoc(): whether `request`, for about:srcdoc,
   // is of a document of the parent's origin, whose srcdoc it is, or of the
   // frame's srcdoc document itself.

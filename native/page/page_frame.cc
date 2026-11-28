@@ -396,7 +396,12 @@ Frame* PageFrame::CreateChildFrame(HTMLFrameOwnerElement& owner,
   return &child;
 }
 
-void PageFrame::NavigateFromOwner(const GURL& url) {
+void PageFrame::NavigateFromOwner(const GURL& url,
+                                  FetchReferrerPolicy referrer_policy) {
+  // LocalFrame::Navigate(): any navigation that the element starts takes the
+  // place of one that its loading=lazy deferred, the synchronous one to
+  // about:blank too.
+  CancelOwnerLazyLoad();
   // RenderFrameImpl::BeginNavigation(): the first navigation of a frame on
   // its initial about:blank to about:blank, which its element starts from a
   // document of its origin, commits at once.
@@ -415,14 +420,7 @@ void PageFrame::NavigateFromOwner(const GURL& url) {
   FrameLoadRequest request;
   request.url = url;
   request.origin_window = parent_->window_.Get();
-  // HTMLFrameOwnerElement::ReferrerPolicyAttribute(): the iframe's
-  // referrerpolicy, for the navigation's referrer.
-  if (HTMLFrameOwnerElement* const owner = owner_.Get()) {
-    if (const std::u16string* const policy =
-            owner->FindAttribute(u"referrerpolicy")) {
-      request.referrer_policy = FetchReferrerPolicyFromString(*policy);
-    }
-  }
+  request.referrer_policy = referrer_policy;
   Navigate(*window_, request, FrameLoadType::kStandard);
 }
 
@@ -489,6 +487,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   }
   LocalNavigation navigation = std::move(*pending_local_navigation_);
   pending_local_navigation_.reset();
+  CancelOwnerLazyLoad();
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);
   const GURL& url = navigation.url;
@@ -734,6 +733,7 @@ void PageFrame::RemoveChild(PageFrame& child) {
 }
 
 void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
+  CancelOwnerLazyLoad();
   navigated_ = true;
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);
@@ -791,6 +791,12 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   DocumentParser& parser =
       document->OpenForNavigation(*empty_body_, DocumentParser::Kind::kHtml);
   parser.Finish();
+}
+
+void PageFrame::CancelOwnerLazyLoad() {
+  if (HTMLFrameOwnerElement* const owner = owner_.Get()) {
+    owner->CancelPendingLazyLoad();
+  }
 }
 
 void PageFrame::ExpectOpeningNavigation() {
@@ -1565,6 +1571,7 @@ Document* PageFrame::CommitNavigation(
     const PermissionsPolicyHeaders& policy_headers,
     const std::optional<std::u16string>& xml_content_type) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
+  CancelOwnerLazyLoad();
   Document& old_document = Window::Current().GetDocument();
   // The loader of the Page's opening navigation, which the library started,
   // and not one of a data: URL, which the Page answered itself.

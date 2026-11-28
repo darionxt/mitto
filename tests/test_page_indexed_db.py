@@ -131,6 +131,68 @@ def test_indexed_db_stores_reads_and_fails_as_chrome_s(server_origin: str) -> No
     assert outcome == expected
 
 
+# A put whose key passes Blink's 127 MiB between a put before it and one after it in the same task, under a listener of
+# the transaction's that cancels its error, and what Chrome for Testing 157 (157.0.8103.79) gave for it, headless on
+# macOS: IDBTransaction::Put() fails it at once, so its error event fires inside put(), a request.onerror set after put()
+# hears nothing, and the transaction is no longer active after it. The commit aborts, as Chrome's browser counts no
+# error that it sent.
+_TOO_LARGE_PUT = """
+(async () => {
+  const log = [];
+  const db = await new Promise((resolve, reject) => {
+    const o = indexedDB.open('too-large', 1);
+    o.onupgradeneeded = () => o.result.createObjectStore('s');
+    o.onsuccess = () => resolve(o.result);
+    o.onerror = () => reject(o.error);
+  });
+  const tx = db.transaction('s', 'readwrite');
+  tx.addEventListener('error', (e) => {
+    log.push(`tx error ${e.target.error.name} ${e.target.readyState}`);
+    e.preventDefault();
+  });
+  const s = tx.objectStore('s');
+  const before = s.put(1, 'before');
+  before.onsuccess = () => log.push('before success');
+  before.onerror = () => log.push(`before error ${before.error.name}`);
+  const big = s.put(2, 'x'.repeat(66 * 1024 * 1024));
+  log.push(`after put: readyState ${big.readyState}, error ${big.readyState === 'done' ? `${big.error.name} ${big.error.message}` : '-'}`);
+  big.onerror = () => log.push('request onerror');
+  big.onsuccess = () => log.push('request onsuccess');
+  try {
+    const after = s.put(3, 'after');
+    log.push('put after: asked');
+    after.onsuccess = () => log.push('after success');
+    after.onerror = () => log.push(`after error ${after.error.name}`);
+  } catch (e) {
+    log.push(`put after: ${e.name}`);
+  }
+  await new Promise((done) => {
+    tx.oncomplete = () => { log.push('complete'); done(); };
+    tx.onabort = () => { log.push(`abort ${tx.error && tx.error.name}`); done(); };
+  });
+  const keys = db.transaction('s').objectStore('s').getAllKeys();
+  await new Promise((done) => { keys.onsuccess = done; });
+  log.push(`kept ${JSON.stringify(keys.result)}`);
+  return log;
+})()
+"""
+_TOO_LARGE_PUT_AS_CHROME = [
+    "tx error UnknownError done",
+    "after put: readyState done, error UnknownError The serialized keys and/or value are too large"
+    " (size=138412067 bytes, max=133169152 bytes).",
+    "put after: TransactionInactiveError",
+    "before success",
+    "abort UnknownError",
+    "kept []",
+]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_put_too_large_by_its_key_fails_inside_put_as_chrome_s(server_origin: str) -> None:
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        assert page.evaluate(_TOO_LARGE_PUT, timeout=_TIMEOUT_SECONDS) == _TOO_LARGE_PUT_AS_CHROME
+
+
 @pytest.mark.parametrize(
     "script",
     [

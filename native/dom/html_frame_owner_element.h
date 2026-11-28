@@ -12,12 +12,14 @@
 #define MITTO_DOM_HTML_FRAME_OWNER_ELEMENT_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/permissions_policy_state.h"
 #include "mitto/dom/sandbox_flags.h"
+#include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
@@ -25,6 +27,7 @@
 namespace mitto {
 
 class Document;
+enum class FetchReferrerPolicy;
 class Frame;
 class PermissionsPolicy;
 class Window;
@@ -78,6 +81,13 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // HTMLFrameOwnerElement::DispatchLoad(): load at the element, once its
   // frame's window's load event has been dispatched.
   void DispatchLoad();
+  // HTMLFrameOwnerElement::CancelPendingLazyLoad(): the navigation that a lazy
+  // frame waits with goes, as any navigation of its frame takes its place.
+  void CancelPendingLazyLoad();
+  // HTMLFrameOwnerElement::ShouldLazyLoadChildren(): whether a frame under the
+  // element's frame's documents may wait without loading=lazy, which no frame
+  // does yet but where Blink's automatic lazy loading would let it.
+  bool ShouldLazyLoadChildren() const { return should_lazy_load_children_; }
 
   void Trace(cppgc::Visitor* visitor) const override;
 
@@ -119,6 +129,17 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // HTMLFrameOwnerElement::DisconnectContentFrame(): the element's frame
   // goes, with its documents.
   void DisconnectContentFrame();
+  // HTMLFrameOwnerElement::LazyLoadIfPossible(): whether the frame's
+  // navigation to `url` waits until the frame comes near the viewport, as a
+  // frame with loading=lazy does, for an HTTP or HTTPS URL of a document that
+  // runs scripts.
+  bool LazyLoadIfPossible(const GURL& url);
+  // LazyLoadFrameObserver::LoadImmediately(): the navigation that waits goes.
+  void LoadLazyFrameImmediately();
+  // HTMLFrameOwnerElement::ReferrerPolicyAttribute(): the referrer policy that
+  // referrerpolicy gives the navigation that the element starts.
+  FetchReferrerPolicy ReferrerPolicyAttribute() const;
+  bool IsLazyLoadPending() const { return lazy_load_url_.has_value(); }
 
   raw_ptr<Frame> content_frame_ = nullptr;
   // The URL the frame is to show, as src or srcdoc gives it, before it is
@@ -132,6 +153,18 @@ class HTMLFrameOwnerElement : public HTMLElement {
   // An iframe's featurePolicy.
   cppgc::Member<PermissionsPolicy> feature_policy_;
   DeferredFetchPolicy deferred_fetch_policy_ = DeferredFetchPolicy::kDisabled;
+  // DoesParentAllowLazyLoadingChildren(), then false once the element has
+  // lazy loaded its frame or said loading=eager.
+  bool should_lazy_load_children_;
+  // Whether the element has had a LazyLoadFrameObserver, which a frame that it
+  // makes later does not wait for, as Blink keeps the observer.
+  bool has_lazy_load_observer_ = false;
+  // The URL that the frame's navigation waits with, and the number of the
+  // wait, which a later one or a cancel takes the place of.
+  std::optional<GURL> lazy_load_url_;
+  // Value-initialized, FetchReferrerPolicy::kDefault.
+  FetchReferrerPolicy lazy_load_referrer_policy_{};
+  uint64_t lazy_load_number_ = 0;
 };
 
 }  // namespace mitto

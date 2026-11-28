@@ -25,6 +25,7 @@
 
 namespace mitto {
 
+enum class FetchReferrerPolicy;
 class HTMLFrameOwnerElement;
 class NavigationRateLimiter;
 class RemoteWindow;
@@ -61,8 +62,10 @@ class Frame {
   virtual Frame* CreateChildFrame(HTMLFrameOwnerElement& owner,
                                   std::u16string name) = 0;
   // FrameLoader::StartNavigation() for a navigation that the frame's element
-  // starts to `url`, as its src gives it, from its parent's window.
-  virtual void NavigateFromOwner(const GURL& url) = 0;
+  // starts to `url`, as its src gives it, from its parent's window, with the
+  // referrer policy that its referrerpolicy gave as the element asked.
+  virtual void NavigateFromOwner(const GURL& url,
+                                 FetchReferrerPolicy referrer_policy) = 0;
   // HTMLFrameOwnerElement::DisconnectContentFrame(): the frame's documents
   // unload, its window's context goes, and it leaves the frame tree, with
   // its own children. The frame lives on until the task ends, for a script

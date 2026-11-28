@@ -361,10 +361,20 @@ class PageHost final : public PageChannel::Delegate {
   };
 
   struct Context {
+    // The URL that Chrome's browser last committed for the document, which
+    // RenderFrameHostImpl::DidOpenDocumentInputStream() leaves where
+    // document.open() gives the document another.
+    const GURL& LastCommittedUrl() const {
+      return url_before_open ? *url_before_open : url;
+    }
+
     // A document's URL, as the library loaded it after its navigation's
     // redirects, or about:blank; a worker's script's final URL, or its blob:
     // or data: URL.
     GURL url;
+    // A document's URL as it was before document.open() gave it another,
+    // until a navigation within the document commits one.
+    std::optional<GURL> url_before_open;
     // A document's origin, its URL's, or for a frame's initial about:blank its
     // parent's; a worker's, its creator's, or an opaque one for data:.
     url::Origin origin;
@@ -653,6 +663,10 @@ class PageHost final : public PageChannel::Delegate {
     // hold each of its responses to.
     std::optional<CrossOriginEmbedderPolicy> parent_embedder_policy;
     url::Origin parent_origin;
+    // A frame's navigation: the URL that Chrome's browser last committed for
+    // its parent's document as it started, which
+    // CheckCredentialedSubresource() holds each redirect to.
+    std::optional<GURL> parent_committed_url;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
@@ -790,6 +804,9 @@ class PageHost final : public PageChannel::Delegate {
 
   void Push(PageEvent event);
   void PushReport(PageEvent event);
+  // The warning on a frame's parent's console that its navigation to a URL
+  // with credentials is blocked.
+  void WarnOfCredentialedSubresource();
 
   const scoped_refptr<PageEvents> events_;
   const scoped_refptr<PageProcess> process_;
