@@ -992,8 +992,13 @@ def test_an_xml_http_request_s_timeout_waits_while_its_page_is_kept(
     [
         # Due after the response has come: the response ends the request.
         (_TIMEOUT_AS_IT_FREEZES, ["readystatechange 2", "readystatechange 3", "readystatechange 4", "load 4"]),
-        # Due already as the page freezes, which a task of no delay waits for: the timeout ends it.
-        ("document.addEventListener('freeze', () => { x.timeout = 1; });", ["readystatechange 4", "timeout 4"]),
+        # Due already as the page freezes, which a task of no delay waits for: the timeout ends it. The page
+        # navigates 50 ms after send(), as the Chrome probe did, since a local navigation may take less than 1 ms.
+        (
+            "const due = performance.now() + 50; while (performance.now() < due);"
+            " document.addEventListener('freeze', () => { x.timeout = 1; });",
+            ["readystatechange 4", "timeout 4"],
+        ),
     ],
     ids=["due-after-the-response", "due-as-the-page-freezes"],
 )
