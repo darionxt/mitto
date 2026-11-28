@@ -604,6 +604,10 @@ void DedicatedWorkerThread::Scope::OnResponse(FrameFromSession frame) {
   }
 }
 
+// What the worker's Performance Timeline gives for the script of an
+// importScripts(), whose loader names no initiator.
+constexpr char16_t kImportedScriptInitiatorType[] = u"other";
+
 // What importScripts() hears of one script's request.
 class ImportedScriptClient final : public PageRequests::Client {
  public:
@@ -685,6 +689,12 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
   if (!url.SchemeIsHTTPOrHTTPS()) {
     return std::nullopt;
   }
+  // WorkerFetchContext::CanRequest().
+  if (scope_->BlocksCredentialedSubresource(url)) {
+    scope_->AddBlockedResourceTiming(url, kImportedScriptInitiatorType,
+                                     /*render_blocking=*/false);
+    return std::nullopt;
+  }
   // WorkerClassicScriptLoader::LoadSynchronously(): destination script, of
   // mode no-cors and credentials include, which a script's Request Kind has,
   // at the highest priority, as Blink gives a synchronous request. It loads
@@ -696,7 +706,8 @@ std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
   request.priority = kHighestPriority;
   request.incremental = kIncremental;
   ImportedScriptClient client;
-  requests_->StartSynchronous(std::move(request), client);
+  requests_->StartSynchronous(std::move(request), client, base::TimeDelta(),
+                              kImportedScriptInitiatorType);
   return client.Take();
 }
 

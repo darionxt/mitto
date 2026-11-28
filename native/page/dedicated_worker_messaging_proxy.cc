@@ -22,6 +22,7 @@
 #include "mitto/dom/window_task.h"
 #include "mitto/dom/worker.h"
 #include "mitto/page/page_fetcher.h"
+#include "mitto/url_user_info.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
 #include "v8/include/v8-isolate.h"
@@ -282,8 +283,12 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
       request.credentials = PageCredentialsMode::kInclude;
       break;
   }
-  script_request_ =
-      creator_.requests->StartWorkerScript(std::move(request), *this);
+  // WorkerMainScriptLoader starts with the URL of a module's request for a
+  // module worker, which has no user nor password, and times the script by
+  // it.
+  script_request_ = creator_.requests->StartWorkerScript(
+      std::move(request), *this,
+      (options.module ? WithoutUserInfo(url) : url).spec());
   script_requested_ = true;
 }
 
@@ -348,6 +353,9 @@ void DedicatedWorkerMessagingProxy::OnResponseStarted(
   }
   response_started_ = true;
   response_.url = GURL(response.url);
+  if (options_.module && !response.redirected) {
+    response_.url = WithoutUserInfo(response_.url);
+  }
   response_.status = response.status;
   response_.headers = response.headers;
   // DedicatedWorkerHost::DidStartScriptLoad(): the worker starts, and the

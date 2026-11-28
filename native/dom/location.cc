@@ -11,6 +11,7 @@
 #include "mitto/dom/frame_navigation.h"
 #include "mitto/dom/resolved_url.h"
 #include "mitto/dom/window.h"
+#include "mitto/url_user_info.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
@@ -52,7 +53,8 @@ GURL Location::Url() const {
 }
 
 std::u16string Location::Href() const {
-  return base::UTF8ToUTF16(Url().spec());
+  // KURL::StrippedForUseAsHref().
+  return base::UTF8ToUTF16(WithoutUserInfo(Url()).spec());
 }
 
 std::u16string Location::Origin() const {
@@ -102,7 +104,7 @@ std::u16string Location::Hash() const {
 }
 
 std::u16string Location::ToString() const {
-  return base::UTF8ToUTF16(Url().spec());
+  return Href();
 }
 
 namespace {

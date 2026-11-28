@@ -15,6 +15,7 @@
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/image_header.h"
 #include "mitto/dom/media_query_list.h"
+#include "mitto/dom/resource.h"
 #include "mitto/dom/window.h"
 #include "mitto/encoding/content_type.h"
 #include "mitto/header_rules.h"
@@ -26,6 +27,10 @@ namespace {
 
 // Of a body that is no image, as much as says so.
 constexpr size_t kMaxIconBytes = 1 << 20;
+
+// ImageDownloader's loader, whose WebAssociatedURLLoader names it "internal",
+// which the window's Performance Timeline gives as "other".
+constexpr char16_t kInitiatorType[] = u"other";
 
 // What the favicon service holds of the icon URLs that the Page fetched:
 // those that gave an image, and those that did not, which it skips, as
@@ -80,7 +85,10 @@ class FaviconClient final : public FetchClient {
       Fetched().images.insert(url);
       return;
     }
-    Fetched().failures.insert(url);
+    // A redirect that this document refuses, another may take.
+    if (net_error != kBlockedByClient) {
+      Fetched().failures.insert(url);
+    }
     FetchFrom(window_, std::move(candidates_), index_ + 1);
   }
 
@@ -108,9 +116,16 @@ void FetchFrom(const cppgc::WeakPersistent<Window>& window,
     if (Fetched().images.contains(url)) {
       return;
     }
-    if (!Fetched().failures.contains(url)) {
+    if (Fetched().failures.contains(url)) {
+      continue;
+    }
+    if (!active->BlocksCredentialedSubresource(candidates[index])) {
       break;
     }
+    // Another document may take it, which the favicon service has heard
+    // nothing of.
+    active->AddBlockedResourceTiming(candidates[index], kInitiatorType,
+                                     /*render_blocking=*/false);
   }
   if (index >= candidates.size()) {
     return;
@@ -125,9 +140,7 @@ void FetchFrom(const cppgc::WeakPersistent<Window>& window,
   request.method = "GET";
   request.url = url.spec();
   request.destination = FetchDestination::kFavicon;
-  // ImageDownloader's loader, whose WebAssociatedURLLoader names it
-  // "internal", which the window's Performance Timeline gives as "other".
-  request.initiator_type = u"other";
+  request.initiator_type = kInitiatorType;
   fetcher->Fetch(std::move(request), std::make_unique<FaviconClient>(
                                          window, std::move(candidates), index));
 }

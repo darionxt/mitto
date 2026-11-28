@@ -86,6 +86,9 @@ struct FetchParameters {
   // Performance Timeline gives as its initiator type: the local name of the
   // element that asks, "link" for a link's load, or "css" for an import.
   std::u16string initiator_name;
+  // Whether a style sheet that the document may not read asks for it, which
+  // gives it no entry.
+  bool from_origin_dirty_style_sheet = false;
 };
 
 // PreloadHelper::GetResourceTypeFromAsAttribute(), of what a Page fetches,

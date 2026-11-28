@@ -228,6 +228,9 @@ struct FetchRequestData {
   // what asks: an element's local name, "link", "css" or "other". Empty for
   // the kind's own, "script" for a script and "fetch" for anything else.
   std::u16string initiator_type;
+  // Whether it gets no entry, as what a style sheet that the document may not
+  // read asks for.
+  bool no_resource_timing = false;
 };
 
 // A response, after any redirects.

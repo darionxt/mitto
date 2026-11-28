@@ -366,7 +366,7 @@ void ImageLoader::UpdateFromElement(UpdateFromElementBehavior behavior) {
   const std::optional<std::u16string> source = ImageSourceURL();
   suppress_error_events_ = behavior == kUpdateSizeChanged;
   if (behavior == kUpdateIgnorePreviousError) {
-    failed_load_url_.clear();
+    ClearFailedUrl();
   }
   if (!failed_load_url_.empty() && source == failed_load_url_) {
     return;
@@ -461,7 +461,7 @@ void ImageLoader::DoUpdateFromElement(UpdateFromElementBehavior behavior,
     image_content_ = nullptr;
     image_complete_ = false;
     delay_until_image_notify_finished_.reset();
-    failed_load_url_.clear();
+    ClearFailedUrl();
     lazy_image_load_state_ = LazyImageLoadState::kDeferred;
     StartMonitoring();
     return;
@@ -490,7 +490,7 @@ void ImageLoader::DoUpdateFromElement(UpdateFromElementBehavior behavior,
     params.load_blocking =
         lazy_image_load_state_ != LazyImageLoadState::kFullImage;
     new_image_content = document.Fetcher().RequestResource(params);
-    failed_load_url_.clear();
+    ClearFailedUrl();
   } else {
     // A src that is no URL, as one of only spaces, fires error; none does
     // not.
@@ -581,9 +581,13 @@ void ImageLoader::NotifyFinished(Resource& resource) {
   DispatchDecodeRequestsIfComplete();
   if (resource.ErrorOccurred()) {
     CancelPendingLoadEvent();
-    // A CORS check that fails is an access check: the same URL does not load
-    // again until src changes.
-    if (resource.LoadFailed() && resource.Mode() == FetchMode::kCors) {
+    // A CORS check that fails is an access check, and so is what blocks a
+    // request: the same URL does not load again until src changes. What
+    // blocks a redirect is one too.
+    if (resource.NetError() == kBlockedByClient && !resource.IsBlocked()) {
+      redirect_blocked_ = true;
+    } else if (resource.LoadFailed() &&
+               (resource.Mode() == FetchMode::kCors || resource.IsBlocked())) {
       failed_load_url_ = base::UTF8ToUTF16(resource.Url().spec());
     }
     QueuePendingErrorEvent();
@@ -719,7 +723,7 @@ void ImageLoader::ElementDidMoveToNewDocument() {
   if (delay_until_image_notify_finished_) {
     delay_until_image_notify_finished_->DocumentChanged(document);
   }
-  failed_load_url_.clear();
+  ClearFailedUrl();
   ClearImage();
 }
 

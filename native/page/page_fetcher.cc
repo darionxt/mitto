@@ -421,6 +421,9 @@ void PageFetcher::Fetch(FetchRequestData data,
   started.set_number(requests_->Start(*std::move(page_request), started,
                                       data.render_blocking,
                                       std::move(data.initiator_type)));
+  if (data.no_resource_timing) {
+    requests_->DropResourceTiming(started.number());
+  }
   open_.emplace(started.number(), std::move(request));
 }
 

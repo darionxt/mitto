@@ -109,13 +109,19 @@ class PageRequests {
                  bool render_blocking = false,
                  std::u16string initiator_type = std::u16string());
 
+  // Gives request `number`, which has just started, no entry.
+  void DropResourceTiming(uint64_t number);
+
   // The same for a dedicated worker's script, which Chrome's browser fetches
   // and its WorkerMainScriptLoader times in the creator's timeline as
   // "other": from when the response started, with none of the request's own
-  // steps, nor its redirects, and only for an ok response that ends whole.
-  uint64_t StartWorkerScript(PageRequest request, Client& client);
-  // The same for a synchronous request, as importScripts() makes one, with no
-  // entry, and a synchronous XMLHttpRequest, with an entry of `initiator_type`:
+  // steps, nor its redirects, and only for an ok response that ends whole. Its
+  // entry is named by `entry_url`.
+  uint64_t StartWorkerScript(PageRequest request,
+                             Client& client,
+                             std::string_view entry_url);
+  // The same for a synchronous request, as importScripts() and a synchronous
+  // XMLHttpRequest make one, with an entry of `initiator_type` if any:
   // this thread waits for each part of its response and hands it to `client`,
   // which takes each part of the body as it comes, and returns once it has
   // ended, or once the worker of the thread ends, which cancels it, as does
@@ -231,6 +237,8 @@ class PageRequests {
     bool outside_settings = false;
     // Whether it is a dedicated worker's script (StartWorkerScript()).
     bool worker_script = false;
+    // Whether it gets no entry after all (DropResourceTiming()).
+    bool no_entry = false;
     std::optional<PageResponseStarted> response;
     uint64_t decoded_body_size = 0;
     // The window or worker that asked, whose timeline gets the entry while it
@@ -316,6 +324,11 @@ class PageRequests {
                 PageRequest& request,
                 const SessionSender::ResponseRoute& route);
   uint64_t Send(uint64_t context, PageRequest& request);
+  // What the entry of a request that the context that runs makes now starts
+  // with.
+  static Timed TimedFor(const PageRequest& request,
+                        bool render_blocking,
+                        std::u16string initiator_type);
   // Adds the entry of a request that ended at `response_end`, with `ended`'s
   // totals if the Session said them.
   static void AddResourceTiming(Timed& timed,
