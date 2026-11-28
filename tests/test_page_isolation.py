@@ -1541,3 +1541,62 @@ def test_a_parent_s_navigation_reaches_into_a_frame_of_its_document_isolation_al
 
     assert plain == ["ready", "next"]
     assert [isolated[:2], isolated[-1]] == [["ready", "js"], "next"]
+
+
+def test_a_frame_that_navigates_into_another_document_isolation_has_no_unload_times(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # A document of the old one's origin has its unload times, but not one that the policy puts in another agent cluster,
+    # which Chrome commits in another process (Chrome for Testing 157).
+    say = (
+        b"<!doctype html><script>onload = () => setTimeout(() => {"
+        b" const timing = performance.getEntriesByType('navigation')[0];"
+        b" postMessage.call(parent, [location.pathname, timing.unloadEventStart > 0, timing.unloadEventEnd > 0], '*');"
+        b" }, 0);</script>"
+    )
+    server.route("/a", say, "text/html")
+    server.route("/b", say, "text/html")
+    server.route("/b-dip", say, "text/html", [_DIP])
+    script = """(next) => new Promise((resolve) => {
+        const seen = [];
+        const frame = document.createElement('iframe');
+        addEventListener('message', function listen(e) {
+            seen.push(e.data);
+            if (seen.length === 1) {
+                frame.src = next;
+            } else {
+                removeEventListener('message', listen);
+                resolve(seen[1]);
+            }
+        });
+        frame.src = '/a';
+        document.documentElement.appendChild(frame);
+    })"""
+
+    with _open_page(session, server.page("/", _BLANK)) as page:
+        same = page.evaluate(f"({script})('/b')", timeout=TIMEOUT_SECONDS)
+        other = page.evaluate(f"({script})('/b-dip')", timeout=TIMEOUT_SECONDS)
+
+    assert [same, other] == [["/b", True, True], ["/b-dip", False, False]]
+
+
+def test_a_frame_whose_response_sandboxes_it_stays_out_of_its_parent_s_document_isolation(
+    session: mitto.Session, server: RecordingServer
+) -> None:
+    # Content-Security-Policy: sandbox gives Chrome's frame document an opaque origin, isolated in an agent cluster of its
+    # own, which its parent of the URL's origin cannot reach (Chrome for Testing 157). The Page does not make that
+    # origin yet, and gives the frame no isolation, as under COOP and COEP, but keeps it out of its parent's cluster.
+    server.route(
+        "/csp",
+        b"<!doctype html><title>c</title>",
+        "text/html",
+        [_DIP, ("Content-Security-Policy", "sandbox allow-scripts")],
+    )
+    script = """new Promise((resolve) => {
+        const frame = document.createElement('iframe');
+        frame.onload = () => resolve(frame.contentDocument === null);
+        frame.src = '/csp';
+        document.documentElement.appendChild(frame);
+    })"""
+
+    assert _evaluate(session, server.page("/", _BLANK, [_DIP]), script) is True

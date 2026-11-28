@@ -2376,11 +2376,15 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
     // then has none, and hears not isolated for it, as for each document
     // under it. A document isolation policy isolates it whatever its
     // permissions policy says, in an agent cluster of the origin that it
-    // commits.
+    // commits, which for such a response is an opaque one that the Page would
+    // not give it, so the Page hears not isolated by it either, and keeps the
+    // document out of the agent cluster of its URL's origin that the policy
+    // isolates.
+    const bool response_sandboxes_origin = SandboxesOrigin(event.headers);
     isolation = IsolationOf(
         request.number(),
-        frame->second.cross_origin_isolated && !SandboxesOrigin(event.headers),
-        coep, dip.dip);
+        frame->second.cross_origin_isolated && !response_sandboxes_origin, coep,
+        response_sandboxes_origin ? DocumentIsolationPolicy() : dip.dip);
   }
   if (const auto script = worker_scripts_.find(request.number());
       script != worker_scripts_.end()) {

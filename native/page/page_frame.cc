@@ -39,6 +39,7 @@
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/page_reveal_event.h"
 #include "mitto/dom/permissions_policy_parser.h"
+#include "mitto/dom/remote_window.h"
 #include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
@@ -1618,6 +1619,7 @@ Document* PageFrame::CommitNavigation(
   const GURL old_url(old_document.UrlForBinding());
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
+  const RendererProcess old_process = Window::Current().Process();
   if (store) {
     StoreDocument(std::exchange(current_, std::move(committing)));
   } else {
@@ -1632,12 +1634,15 @@ Document* PageFrame::CommitNavigation(
         next_browsing_instance;
   }
   // The old document's unload times go to a new one of its origin, as
-  // Blink's UnloadEventTimingInfo carries them.
+  // Blink's UnloadEventTimingInfo carries them, but not to one in another
+  // process, which one of its origin of another isolation by
+  // Document-Isolation-Policy is, whose renderer never saw them.
   DocumentLoadTiming& timing = document_load_timing();
   timing.unload_event_start = unload_event_start;
   timing.unload_event_end = unload_event_end;
   timing.has_same_origin_as_previous_document =
-      url::IsSameOriginWith(old_url, url);
+      url::IsSameOriginWith(old_url, url) &&
+      IsInSameProcess(old_process, document.DefaultView()->Process());
   timing.is_reload = !traversal && !opening && provisional_request_.reload;
   timing.is_back_forward = traversal;
   // The new document's entry, which the session history takes, before any of
