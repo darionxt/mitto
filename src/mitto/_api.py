@@ -84,8 +84,9 @@ class Session:
             _storage: A directory to keep what this Session's Pages store in, localStorage and the rest, as Chrome keeps
                 a profile's, and the Machine whose storage it is, made if it does not exist. A Session that opens on it
                 loads what is there and claims its Machine. One Session at a time can have it, in any process. The default
-                keeps it in memory until the Session closes, as Chrome's Incognito mode does. sessionStorage lasts as
-                long as its Page either way. Private until the Runtime ships, as the Page API is.
+                keeps it in memory until the Session closes, though it acts as a normal window's: its quota comes from
+                the disk that holds the user's home folder, and IndexedDB keeps the locks of a profile on disk.
+                sessionStorage lasts as long as its Page either way. Private until the Runtime ships, as the Page API is.
 
         Raises:
             TypeError: If an argument is of a type it does not take, which the message names: `persona` that is not text,

@@ -1,7 +1,7 @@
 // The store of localStorage: the SQLite database that Chrome's storage service
 // writes when kDomStorageSqlite is on, with its schema and its compression of
-// values, in a file of the Session's storage directory, or in memory as
-// Chrome's Incognito keeps it. It blocks, so it lives on a sequence that may.
+// values, in a file of the Session's storage directory, or in memory for a
+// Session without one. It blocks, so it lives on a sequence that may.
 //
 // Upstream: components/services/storage/dom_storage/sqlite/local_storage_sqlite.cc
 // Upstream: components/services/storage/dom_storage/sqlite/map_entries_table.cc

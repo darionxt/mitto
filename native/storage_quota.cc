@@ -6,7 +6,6 @@
 #include "base/barrier_closure.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/rand_util.h"
 #include "base/system/sys_info.h"
 #include "base/task/task_runner.h"
 
@@ -18,10 +17,6 @@ constexpr int64_t kGiB = 1024 * 1024 * 1024;
 // kPoolSizeRatio, and kDefaultPerStorageKeyRatio.
 constexpr double kPoolSizeRatio = 0.8;
 constexpr double kPerStorageKeyRatio = 0.75;
-
-// Incognito's pool, a random share of the memory, and each key's third.
-constexpr double kIncognitoRatioLowerBound = 0.15;
-constexpr double kIncognitoRatioUpperBound = 0.2;
 
 // QuotaManagerImpl::kTypicalBucketUsage: a storage key may have as many
 // buckets as its quota holds of these, and at least one.
@@ -71,24 +66,14 @@ StorageQuota::BucketInitParams::~BucketInitParams() = default;
 
 StorageQuota::StorageQuota(
     std::optional<base::FilePath> directory,
-    uint64_t physical_memory,
+    base::FilePath disk,
     scoped_refptr<base::SequencedTaskRunner> file_runner,
     scoped_refptr<base::SequencedTaskRunner> database_runner)
     : directory_(std::move(directory)),
+      disk_(std::move(disk)),
       file_runner_(std::move(file_runner)),
       database_runner_(database_runner),
-      buckets_(directory_, std::move(database_runner)) {
-  if (!directory_) {
-    // CalculateIncognitoDynamicSettings().
-    const double ratio = kIncognitoRatioLowerBound +
-                         base::RandDouble() * (kIncognitoRatioUpperBound -
-                                               kIncognitoRatioLowerBound);
-    const int64_t pool =
-        static_cast<int64_t>(static_cast<double>(physical_memory) * ratio);
-    per_key_quota_ = pool / 3;
-    reported_quota_extra_ = ReportedQuotaExtra(std::nullopt);
-  }
-}
+      buckets_(directory_, std::move(database_runner)) {}
 
 StorageQuota::~StorageQuota() = default;
 
@@ -132,8 +117,7 @@ void StorageQuota::WhenQuotaKnown(base::OnceClosure done) {
   }
   asked_disk_ = true;
   file_runner_->PostTaskAndReplyWithResult(
-      FROM_HERE,
-      base::BindOnce(&base::SysInfo::AmountOfTotalDiskSpace, *directory_),
+      FROM_HERE, base::BindOnce(&base::SysInfo::AmountOfTotalDiskSpace, disk_),
       base::BindOnce(&StorageQuota::DidGetTotalDiskSpace,
                      weak_factory_.GetWeakPtr()));
 }

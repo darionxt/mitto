@@ -2,8 +2,8 @@
 // partition holds it in Chrome: where it is kept, the sequence that reads and
 // writes it, and localStorage's areas. A Session with a storage directory
 // keeps localStorage in the file LocalStorage there; one without keeps it in
-// memory, as Chrome's Incognito does. sessionStorage is never written: each
-// Page has a namespace of its own, which goes with it.
+// memory until it closes, and drops it then. sessionStorage is never written:
+// each Page has a namespace of its own, which goes with it.
 //
 // IndexedDB and the Cache API hang off the same context, under the same
 // directory.

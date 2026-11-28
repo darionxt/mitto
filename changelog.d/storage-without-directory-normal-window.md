@@ -1,0 +1,1 @@
+- A Page, whose API stays private, holds what it stores in a Session without a storage directory to a profile's quota, from the disk that holds the user's home folder, as Chrome's normal window does, where it had Incognito's, a third of a random 15% to 20% of the memory. It still keeps it in memory until the Session closes ([runtime.md](docs/runtime.md#from-python)).

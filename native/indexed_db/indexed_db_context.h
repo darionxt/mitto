@@ -7,7 +7,8 @@
 // which every commit writes through to the file from, in order. Without a
 // directory, and for a frame under a top-level document of an opaque origin
 // or a credentialless frame, they are kept in memory until the Session goes,
-// as in Incognito.
+// with the locks, value rules and quota of a profile on disk, as a normal
+// window has them.
 //
 // Upstream: content/browser/indexed_db/indexed_db_context_impl.cc
 
