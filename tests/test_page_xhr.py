@@ -28,8 +28,8 @@ from tests.local_server import QuietServer
 _TIMEOUT_SECONDS = 60
 _PAGE = b"<!doctype html><title>t</title><body>"
 _TESTS = Path(__file__).parent
-_CASES = (_TESTS / "xhr_cases.js").read_text()
-_AS_CHROME = json.loads((_TESTS / "data" / "xhr_cases.json").read_text())
+_CASES = (_TESTS / "xhr_cases.js").read_text(encoding="utf-8")
+_AS_CHROME = json.loads((_TESTS / "data" / "xhr_cases.json").read_text(encoding="utf-8"))
 # The request headers that /seen gives back.
 _SEEN = (
     *("accept", "authorization", "content-length", "content-type", "origin", "referer", "x-a", "x-b"),
