@@ -24999,5 +24999,6 @@
 {"test": "xhr/open-url-redirected-sharedworker-origin.htm", "subtest": null, "chrome": "3 subtests", "mitto": "0 subtests"},
 {"test": "xhr/open-url-redirected-sharedworker-origin.htm", "subtest": null, "chrome": "OK", "mitto": "ERROR: Uncaught TypeError: Failed to read the 'port' property from 'SharedWorker': Not implemented."},
 {"test": "xhr/send-content-type-string.htm", "subtest": null, "chrome": null, "mitto": "FLAKY"},
+{"test": "xhr/xhr-timeout-longtask.any.worker.html", "subtest": null, "chrome": null, "mitto": "FLAKY", "owner": "#291"},
 {"test": "xhr/xmlhttprequest-sync-default-permissions-policy.tentative.sub.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT"}
 ]
