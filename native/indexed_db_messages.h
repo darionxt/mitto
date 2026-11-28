@@ -16,6 +16,7 @@
 #ifndef MITTO_INDEXED_DB_MESSAGES_H_
 #define MITTO_INDEXED_DB_MESSAGES_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <map>
@@ -24,6 +25,9 @@
 #include <string_view>
 #include <vector>
 
+#include "base/functional/function_ref.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/types/expected.h"
 #include "mitto/indexed_db_key.h"
 
@@ -67,7 +71,10 @@ enum class IndexedDbCallOp : uint8_t {
   kCursorPrefetchReset = 29,
   // The Page let the cursor go, as dropping its remote does.
   kCloseCursor = 30,
-  kMaxValue = kCloseCursor,
+  // IDBTransaction: a part of a blob of the transaction's next put, where
+  // Chrome's browser reads the blob over the remote that the put hands it.
+  kPutBlob = 31,
+  kMaxValue = kPutBlob,
 };
 
 // What the Session tells the Page.
@@ -94,7 +101,10 @@ enum class IndexedDbCallbackOp : uint8_t {
   kKeyGeneratorResult = 16,
   kPutResult = 17,
   kCursorResult = 18,
-  kMaxValue = kCursorResult,
+  // A part of a blob of the values that answer a call next, where Chrome's
+  // browser hands over a remote to read it over.
+  kBlob = 19,
+  kMaxValue = kBlob,
 };
 
 // blink.mojom.IDBException's values.
@@ -213,6 +223,87 @@ struct IndexedDbIndexKeys {
   std::vector<IDBKey> keys;
 };
 
+// A blob of a value, as blink.mojom.IDBBlobInfo tells of one. Chrome's has a
+// remote to read it over; this has its bytes, which copies share and which
+// travel ahead of the value, in parts.
+struct IndexedDbBlob {
+  IndexedDbBlob();
+  IndexedDbBlob(const IndexedDbBlob&);
+  IndexedDbBlob(IndexedDbBlob&&);
+  IndexedDbBlob& operator=(const IndexedDbBlob&);
+  IndexedDbBlob& operator=(IndexedDbBlob&&);
+  ~IndexedDbBlob();
+
+  std::string_view bytes() const {
+    return std::string_view(storage->as_string()).substr(offset, size);
+  }
+
+  // The UUID that the value names it by, lowercase.
+  std::string uuid;
+  // Printable ASCII, as every Blob's type is.
+  std::string type;
+  size_t size = 0;
+  // What holds its bytes, from `offset`, and may hold other blobs' too: null
+  // in a message that has been read, until they are put into it.
+  scoped_refptr<const base::RefCountedString> storage;
+  size_t offset = 0;
+};
+
+// A part of a blob's bytes, or all of them.
+struct IndexedDbBlobPart {
+  // Whether it starts a blob, rather than continue the one before it.
+  bool starts = true;
+  std::string bytes;
+};
+
+// blink.mojom.IDBValue.
+struct IndexedDbValue {
+  IndexedDbValue();
+  IndexedDbValue(const IndexedDbValue&);
+  IndexedDbValue(IndexedDbValue&&);
+  IndexedDbValue& operator=(const IndexedDbValue&);
+  IndexedDbValue& operator=(IndexedDbValue&&);
+  ~IndexedDbValue();
+
+  // How many bytes its blobs hold.
+  uint64_t BlobsSize() const;
+  // How many bytes it holds, its blobs' among them.
+  size_t Size() const;
+
+  // The value as SerializedScriptValue wrote it.
+  std::string bits;
+  // The blobs that it names.
+  std::vector<IndexedDbBlob> blobs;
+};
+
+// How much the blobs of one put may hold: the Session keeps them in one row,
+// where Chrome gives each a file.
+inline constexpr size_t kMaxIndexedDbBlobsSize = size_t{512} << 20;
+
+// Hands `send` the blobs of `value`, in order, in parts that each fit a frame.
+void SendIndexedDbBlobs(const IndexedDbValue& value,
+                        base::FunctionRef<void(IndexedDbBlobPart part)> send);
+
+// The blobs that came in parts ahead of the values that name them.
+class IndexedDbBlobs {
+ public:
+  IndexedDbBlobs();
+  IndexedDbBlobs(IndexedDbBlobs&&);
+  IndexedDbBlobs& operator=(IndexedDbBlobs&&);
+  ~IndexedDbBlobs();
+
+  // Returns false for a part that continues no blob, and for one past what a
+  // put may hold.
+  bool Add(IndexedDbBlobPart part);
+  // Puts the blobs that came into those that `values` name, in order, and
+  // returns whether they are as many, each of the size that its value says.
+  bool PutInto(const std::vector<IndexedDbValue*>& values);
+
+ private:
+  std::vector<std::string> blobs_;
+  size_t size_ = 0;
+};
+
 // blink.mojom.IDBReturnValue: a value, and the primary key that a key
 // generator gave it and its key path, which the Page puts into the value.
 struct IndexedDbReturnValue {
@@ -223,8 +314,7 @@ struct IndexedDbReturnValue {
   IndexedDbReturnValue& operator=(IndexedDbReturnValue&&);
   ~IndexedDbReturnValue();
 
-  // The value as SerializedScriptValue wrote it.
-  std::string bits;
+  IndexedDbValue value;
   // None, unless a key generator gave the primary key.
   IDBKey primary_key;
   IDBKeyPath key_path;
@@ -275,12 +365,13 @@ struct PageIndexedDbCall {
   IndexedDbIndexMetadata index;
   IDBKeyPath key_path;
   bool auto_increment = false;
-  std::string value;
+  IndexedDbValue value;
   IDBKey key;
   IDBKey primary_key;
   IndexedDbPutMode put_mode = IndexedDbPutMode::kAddOrUpdate;
   std::vector<IndexedDbIndexKeys> index_keys;
   int64_t num_errors_handled = 0;
+  IndexedDbBlobPart blob_part;
 };
 
 struct PageIndexedDbCallback {
@@ -320,8 +411,14 @@ struct PageIndexedDbCallback {
   uint32_t count = 0;
   // kKeyGeneratorResult's.
   int64_t number = 0;
+  // kBlob's.
+  IndexedDbBlobPart blob_part;
+
+  // The values it carries, in the order that their blobs come.
+  std::vector<IndexedDbValue*> Values();
 };
 
+// Whether a frame holds the call, and a put may hold its blobs.
 bool IndexedDbCallFits(const PageIndexedDbCall& call);
 std::string EncodeIndexedDbCall(const PageIndexedDbCall& call);
 bool IndexedDbCallbackFits(const PageIndexedDbCallback& callback);

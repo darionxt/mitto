@@ -210,7 +210,7 @@ class IndexedDbTransaction {
                          bool auto_increment);
   void DeleteObjectStore(int64_t object_store_id);
   void Put(int64_t object_store_id,
-           std::string value,
+           IndexedDbValue value,
            IDBKey key,
            IndexedDbPutMode mode,
            std::vector<IndexedDbIndexKeys> index_keys,
@@ -235,7 +235,7 @@ class IndexedDbTransaction {
   void CloseOpenCursors();
   void OnInactivityTimeout();
   bool DoPut(int64_t object_store_id,
-             std::string value,
+             IndexedDbValue value,
              IDBKey key,
              IndexedDbPutMode mode,
              std::vector<IndexedDbIndexKeys> index_keys,

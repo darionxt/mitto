@@ -119,11 +119,11 @@ scoped_refptr<BlobDataHandle> BlobDataHandle::Create(BlobData data) {
   if (data.elements_.size() == 1 && data.elements_[0].blob) {
     // A slice of one blob shares its bytes.
     const BlobData::Element& element = data.elements_[0];
-    return base::WrapRefCounted(new BlobDataHandle(
+    return Create(
         element.blob->storage_,
         element.blob->offset_ + base::checked_cast<size_t>(element.offset),
         base::checked_cast<size_t>(element.length),
-        std::move(data.content_type_)));
+        std::move(data.content_type_));
   }
   std::string bytes;
   bytes.reserve(base::checked_cast<size_t>(data.length()));
@@ -143,27 +143,37 @@ scoped_refptr<BlobDataHandle> BlobDataHandle::Create(BlobData data) {
 scoped_refptr<BlobDataHandle> BlobDataHandle::Create(std::string bytes,
                                                      std::string type) {
   const size_t size = bytes.size();
-  return base::WrapRefCounted(
-      new BlobDataHandle(std::make_shared<const std::string>(std::move(bytes)),
-                         0, size, std::move(type)));
+  return Create(base::MakeRefCounted<base::RefCountedString>(std::move(bytes)),
+                0, size, std::move(type));
 }
 
-BlobDataHandle::BlobDataHandle(std::shared_ptr<const std::string> storage,
-                               size_t offset,
-                               size_t size,
-                               std::string type)
+// static
+scoped_refptr<BlobDataHandle> BlobDataHandle::Create(
+    scoped_refptr<const base::RefCountedString> storage,
+    size_t offset,
+    size_t size,
+    std::string type) {
+  return base::WrapRefCounted(
+      new BlobDataHandle(std::move(storage), offset, size, std::move(type)));
+}
+
+BlobDataHandle::BlobDataHandle(
+    scoped_refptr<const base::RefCountedString> storage,
+    size_t offset,
+    size_t size,
+    std::string type)
     : uuid_(base::Uuid::GenerateRandomV4().AsLowercaseString()),
       type_(std::move(type)),
       storage_(std::move(storage)),
       offset_(offset),
       size_(size) {
-  DCHECK_LE(offset_ + size_, storage_->size());
+  DCHECK_LE(offset_ + size_, storage_->as_string().size());
 }
 
 BlobDataHandle::~BlobDataHandle() = default;
 
 base::span<const uint8_t> BlobDataHandle::Bytes() const {
-  return base::as_byte_span(*storage_).subspan(offset_, size_);
+  return base::as_byte_span(storage_->as_string()).subspan(offset_, size_);
 }
 
 }  // namespace mitto

@@ -15,13 +15,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "base/containers/span.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
 
 namespace mitto {
@@ -84,6 +84,13 @@ class BlobDataHandle final : public base::RefCountedThreadSafe<BlobDataHandle> {
   // A blob of `bytes`, of `type`, which must be valid.
   static scoped_refptr<BlobDataHandle> Create(std::string bytes,
                                               std::string type);
+  // A blob of `size` bytes of `storage` from `offset`, of `type`, which must
+  // be valid.
+  static scoped_refptr<BlobDataHandle> Create(
+      scoped_refptr<const base::RefCountedString> storage,
+      size_t offset,
+      size_t size,
+      std::string type);
 
   BlobDataHandle(const BlobDataHandle&) = delete;
   BlobDataHandle& operator=(const BlobDataHandle&) = delete;
@@ -94,11 +101,16 @@ class BlobDataHandle final : public base::RefCountedThreadSafe<BlobDataHandle> {
   uint64_t size() const { return size_; }
   // Its bytes.
   base::span<const uint8_t> Bytes() const;
+  // Its bytes as a part of what may hold other blobs' too.
+  const scoped_refptr<const base::RefCountedString>& storage() const {
+    return storage_;
+  }
+  size_t offset() const { return offset_; }
 
  private:
   friend class base::RefCountedThreadSafe<BlobDataHandle>;
 
-  BlobDataHandle(std::shared_ptr<const std::string> storage,
+  BlobDataHandle(scoped_refptr<const base::RefCountedString> storage,
                  size_t offset,
                  size_t size,
                  std::string type);
@@ -107,7 +119,7 @@ class BlobDataHandle final : public base::RefCountedThreadSafe<BlobDataHandle> {
   const std::string uuid_;
   const std::string type_;
   // The bytes, which other handles may share, and where its own are in them.
-  const std::shared_ptr<const std::string> storage_;
+  const scoped_refptr<const base::RefCountedString> storage_;
   const size_t offset_;
   const size_t size_;
 };

@@ -22,6 +22,10 @@ std::optional<std::string> MemoryKvStore::Get(std::string_view key) {
   return found->second;
 }
 
+bool MemoryKvStore::Has(std::string_view key) const {
+  return entries_.contains(key);
+}
+
 std::optional<KvStore::Entry> MemoryKvStore::Seek(std::string_view key,
                                                   std::string_view lower,
                                                   std::string_view upper,

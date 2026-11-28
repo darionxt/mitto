@@ -38,6 +38,32 @@ ParseEmbedderPolicy(std::string_view header_value) {
   return {CrossOriginEmbedderPolicyValue::kNone, std::nullopt};
 }
 
+// document_isolation_policy_parser.cc's Parse(): a token of an item, with a
+// report-to string, as COEP's.
+std::pair<DocumentIsolationPolicyValue, std::optional<std::string>>
+ParseIsolationPolicy(std::string_view header_value) {
+  auto item = net::structured_headers::ParseItem(header_value);
+  const std::string* token = item ? item->item.GetIfToken() : nullptr;
+  if (!token) {
+    return {DocumentIsolationPolicyValue::kNone, std::nullopt};
+  }
+  std::optional<std::string> endpoint;
+  for (auto& [key, value] : item->params) {
+    if (std::string* str = value.GetIfString(); key == "report-to" && str) {
+      endpoint = std::move(*str);
+    }
+  }
+  if (*token == "isolate-and-require-corp") {
+    return {DocumentIsolationPolicyValue::kIsolateAndRequireCorp,
+            std::move(endpoint)};
+  }
+  if (*token == "isolate-and-credentialless") {
+    return {DocumentIsolationPolicyValue::kIsolateAndCredentialless,
+            std::move(endpoint)};
+  }
+  return {DocumentIsolationPolicyValue::kNone, std::nullopt};
+}
+
 // cross_origin_opener_policy_parser.cc's ParseHeader(): fills `value`,
 // `endpoint` and, if given, `soap_by_default_value` from a header, and leaves
 // them for one that is not valid.
@@ -128,6 +154,20 @@ CrossOriginOpenerPolicy ParseCrossOriginOpenerPolicy(
   return coop;
 }
 
+DocumentIsolationPolicy ParseDocumentIsolationPolicy(
+    const std::optional<std::string>& header,
+    const std::optional<std::string>& report_only_header) {
+  DocumentIsolationPolicy dip;
+  if (header) {
+    std::tie(dip.value, dip.reporting_endpoint) = ParseIsolationPolicy(*header);
+  }
+  if (report_only_header) {
+    std::tie(dip.report_only_value, dip.report_only_reporting_endpoint) =
+        ParseIsolationPolicy(*report_only_header);
+  }
+  return dip;
+}
+
 void AugmentCoopWithCoep(CrossOriginOpenerPolicy& coop,
                          const CrossOriginEmbedderPolicy& coep) {
   if (coop.value == CrossOriginOpenerPolicyValue::kSameOrigin &&
@@ -189,6 +229,26 @@ bool IgnoresCoop(const GURL& url, const PolicyHeaders& headers) {
   return coop.value != CrossOriginOpenerPolicyValue::kUnsafeNone ||
          coop.report_only_value != CrossOriginOpenerPolicyValue::kUnsafeNone ||
          coop.reporting_endpoint || coop.report_only_reporting_endpoint;
+}
+
+NavigationDocumentIsolationPolicy NavigationDocumentIsolationPolicyOf(
+    const GURL& url,
+    const PolicyHeaders& headers) {
+  NavigationDocumentIsolationPolicy policy;
+  const DocumentIsolationPolicy parsed =
+      ParseDocumentIsolationPolicy(headers.dip, headers.dip_report_only);
+  // Only a secure context keeps it, and the browser drops any of it, a
+  // report-only one or an endpoint too, with its console error elsewhere.
+  if (net::IsUrlPotentiallyTrustworthy(url)) {
+    policy.dip = parsed;
+  } else {
+    policy.ignored = parsed != DocumentIsolationPolicy();
+  }
+  return policy;
+}
+
+bool IsolatesByDocumentIsolationPolicy(DocumentIsolationPolicyValue value) {
+  return value != DocumentIsolationPolicyValue::kNone;
 }
 
 bool WorkerEmbedderPolicyAllowed(const CrossOriginEmbedderPolicy& creator,

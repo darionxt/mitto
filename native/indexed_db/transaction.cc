@@ -352,7 +352,7 @@ void IndexedDbTransaction::DeleteObjectStore(int64_t object_store_id) {
 }
 
 void IndexedDbTransaction::Put(int64_t object_store_id,
-                               std::string value,
+                               IndexedDbValue value,
                                IDBKey key,
                                IndexedDbPutMode mode,
                                std::vector<IndexedDbIndexKeys> index_keys,
@@ -371,7 +371,7 @@ void IndexedDbTransaction::Put(int64_t object_store_id,
   }
   // The transaction's size grows by what the put writes.
   preliminary_size_estimate_ +=
-      static_cast<int64_t>(value.size() + key.SizeEstimate());
+      static_cast<int64_t>(value.Size() + key.SizeEstimate());
   ScheduleTask(BindWeakOperation(
       &IndexedDbTransaction::DoPut, AsWeakPtr(), object_store_id,
       std::move(value), std::move(key), mode, std::move(index_keys),
@@ -380,7 +380,7 @@ void IndexedDbTransaction::Put(int64_t object_store_id,
 }
 
 bool IndexedDbTransaction::DoPut(int64_t object_store_id,
-                                 std::string value,
+                                 IndexedDbValue value,
                                  IDBKey key,
                                  IndexedDbPutMode mode,
                                  std::vector<IndexedDbIndexKeys> index_keys,
@@ -462,7 +462,7 @@ bool IndexedDbTransaction::DoPut(int64_t object_store_id,
       }
     }
   }
-  backing_store_->PutRecord(object_store_id, key, value);
+  backing_store_->PutRecord(object_store_id, key, std::move(value));
   for (const IndexedDbIndexKeys& keys : index_keys) {
     backing_store_->PutIndexEntries(object_store_id, keys.index_id, key,
                                     keys.keys);

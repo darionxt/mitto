@@ -571,7 +571,7 @@ void IDBTransaction::DeleteObjectStore(int64_t object_store_id) {
 }
 
 void IDBTransaction::Put(int64_t object_store_id,
-                         std::string value,
+                         IndexedDbValue value,
                          IDBKey primary_key,
                          IndexedDbPutMode put_mode,
                          std::vector<IndexedDbIndexKeys> index_keys,
@@ -586,8 +586,9 @@ void IDBTransaction::Put(int64_t object_store_id,
       index_keys_size += key.SizeEstimate();
     }
   }
+  // Not its blobs', which Chrome's browser reads over their remotes.
   const size_t estimated_size =
-      value.size() + primary_key.SizeEstimate() + index_keys_size;
+      value.bits.size() + primary_key.SizeEstimate() + index_keys_size;
   if (estimated_size >= kMaxPutValueSize) {
     // Blink runs the put's callback with this at once, which only a value
     // that its wrapping in a Blob left this large reaches; here, where values
@@ -623,7 +624,7 @@ void IDBTransaction::Put(int64_t object_store_id,
   call.put_mode = put_mode;
   call.index_keys = std::move(index_keys);
   // Values over 64 KiB go whole, where Chrome's IDBValueWrapper puts them in
-  // a Blob.
+  // a Blob, and blobs go with their bytes.
   database_->AskForRequest(std::move(call), request, &IDBRequest::OnPut);
 }
 
