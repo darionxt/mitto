@@ -720,9 +720,10 @@ void FetchRules::WillFollowRedirect(net::URLRequest& request,
 void FetchRules::SetRequestCredentials(net::URLRequest& request,
                                        const GURL& url) const {
   // WebPoliciesAllowCredentials(): a client whose embedder policy is
-  // "credentialless" sends and keeps none on a request of mode no-cors to
-  // another origin, and takes nothing from the cache for it, whose entries
-  // do not tell one with credentials from one without.
+  // "credentialless", or whose document isolation policy is
+  // "isolate-and-credentialless", sends and keeps none on a request of mode
+  // no-cors to another origin, and takes nothing from the cache for it, whose
+  // entries do not tell one with credentials from one without.
   const bool policies_allow_credentials =
       !params_.credentialless_client || params_.mode != RequestMode::kNoCors ||
       (initiator_ && initiator_->IsSameOriginWith(url));

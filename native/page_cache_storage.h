@@ -58,11 +58,12 @@ class PageCacheStorage {
               const std::optional<std::string>& storage_key,
               bool bucket_live = true);
 
-  // The origin and embedder policy of the Page's context `context`, which the
-  // responses that its matches give are held to.
+  // The origin, embedder policy and document isolation policy of the Page's
+  // context `context`, which the responses that its matches give are held to.
   void SetContextPolicy(uint64_t context,
                         url::Origin origin,
-                        CrossOriginEmbedderPolicy embedder_policy);
+                        CrossOriginEmbedderPolicy embedder_policy,
+                        DocumentIsolationPolicy document_isolation_policy);
 
   // The first number that no cache or stored body has had.
   uint64_t NextNumber() const;
@@ -135,6 +136,7 @@ class PageCacheStorage {
   struct ContextPolicy {
     url::Origin origin;
     CrossOriginEmbedderPolicy embedder_policy;
+    DocumentIsolationPolicy document_isolation_policy;
   };
   std::map<uint64_t, ContextPolicy> context_policies_;
   uint64_t next_cache_ = 1;

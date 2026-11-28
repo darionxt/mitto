@@ -65,8 +65,9 @@ std::optional<BlockedByResourcePolicy> IsBlockedByResourcePolicy(
     const std::optional<std::string>& corp_header_value,
     ResourcePolicyMode mode,
     bool request_include_credentials,
-    const CrossOriginEmbedderPolicy& embedder_policy) {
-  // IsBlockedInternal(), with no Document-Isolation-Policy.
+    const CrossOriginEmbedderPolicy& embedder_policy,
+    const DocumentIsolationPolicy& document_isolation_policy) {
+  // IsBlockedInternal().
   if (!request_initiator) {
     return std::nullopt;
   }
@@ -83,15 +84,29 @@ std::optional<BlockedByResourcePolicy> IsBlockedByResourcePolicy(
       require_corp_due_to_coep = true;
       break;
   }
+  bool require_corp_due_to_dip = false;
+  switch (document_isolation_policy.value) {
+    case DocumentIsolationPolicyValue::kNone:
+      break;
+    case DocumentIsolationPolicyValue::kIsolateAndCredentialless:
+      require_corp_due_to_dip =
+          mode == ResourcePolicyMode::kNavigate || request_include_credentials;
+      break;
+    case DocumentIsolationPolicyValue::kIsolateAndRequireCorp:
+      require_corp_due_to_dip = true;
+      break;
+  }
   ParsedHeader policy = ParseHeaderByString(corp_header_value);
-  // A response with no policy that COEP requires one of is held to
+  // A response with no policy that COEP or DIP requires one of is held to
   // same-origin.
   bool upgrade_to_same_origin_due_to_coep = false;
+  bool upgrade_to_same_origin_due_to_dip = false;
   if ((policy == ParsedHeader::kNoHeader ||
        policy == ParsedHeader::kParsingError) &&
-      require_corp_due_to_coep) {
+      (require_corp_due_to_coep || require_corp_due_to_dip)) {
     policy = ParsedHeader::kSameOrigin;
-    upgrade_to_same_origin_due_to_coep = true;
+    upgrade_to_same_origin_due_to_coep = require_corp_due_to_coep;
+    upgrade_to_same_origin_due_to_dip = require_corp_due_to_dip;
   }
   if (policy == ParsedHeader::kNoHeader ||
       policy == ParsedHeader::kParsingError ||
@@ -103,10 +118,20 @@ std::optional<BlockedByResourcePolicy> IsBlockedByResourcePolicy(
     return std::nullopt;
   }
   if (policy == ParsedHeader::kSameOrigin) {
-    return upgrade_to_same_origin_due_to_coep
-               ? BlockedByResourcePolicy::
-                     kCorpNotSameOriginAfterDefaultedToSameOriginByCoep
-               : BlockedByResourcePolicy::kCorpNotSameOrigin;
+    if (upgrade_to_same_origin_due_to_coep &&
+        upgrade_to_same_origin_due_to_dip) {
+      return BlockedByResourcePolicy::
+          kCorpNotSameOriginAfterDefaultedToSameOriginByCoepAndDip;
+    }
+    if (upgrade_to_same_origin_due_to_coep) {
+      return BlockedByResourcePolicy::
+          kCorpNotSameOriginAfterDefaultedToSameOriginByCoep;
+    }
+    if (upgrade_to_same_origin_due_to_dip) {
+      return BlockedByResourcePolicy::
+          kCorpNotSameOriginAfterDefaultedToSameOriginByDip;
+    }
+    return BlockedByResourcePolicy::kCorpNotSameOrigin;
   }
   if (ShouldAllowSameSite(initiator, target_origin)) {
     return std::nullopt;

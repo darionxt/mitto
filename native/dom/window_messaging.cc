@@ -148,9 +148,12 @@ void DispatchPostMessage(Window& window,
   const std::u16string origin = base::UTF8ToUTF16(source_origin.Serialize());
   // A value locked to its agent cluster, a SharedArrayBuffer's or a
   // WebAssembly module's, is an error in another, and a window's cluster is
-  // keyed by its origin, as Chrome keys it.
+  // keyed by its origin, as Chrome keys it, and by whether
+  // Document-Isolation-Policy isolates it.
   if (data.IsLockedToAgentCluster() &&
-      !source_origin.IsSameOriginWith(recipient)) {
+      (!source_origin.IsSameOriginWith(recipient) ||
+       source_process.isolated_by_document_policy !=
+           process.isolated_by_document_policy)) {
     MessageEvent* const error = MessageEvent::CreateError(origin, source);
     error->SetRemoteSource(remote_source);
     window.DispatchEvent(error);

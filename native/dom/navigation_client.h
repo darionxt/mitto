@@ -62,8 +62,10 @@ struct NavigationRequest {
   // local URL's document that it commits takes with its policy container.
   bool initiator_has_header_csp = false;
   // Whether the initiator's embedder policy, which such a document takes too,
-  // is compatible with cross-origin isolation.
+  // is compatible with cross-origin isolation, and whether its document
+  // isolation policy, which it takes too, isolates it.
   bool initiator_embedder_policy_isolates = false;
+  bool initiator_isolated_by_document_policy = false;
 };
 
 struct HistoryItem;

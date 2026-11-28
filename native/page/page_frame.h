@@ -155,7 +155,7 @@ class PageFrame final : public NavigationClient, public Frame {
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
-      bool cross_origin_isolated,
+      PageCrossOriginIsolation isolation,
       const PermissionsPolicyHeaders& policy_headers,
       const std::optional<std::u16string>& xml_content_type = std::nullopt);
   // `loader`'s navigation ended with no response, with `net_error`: the frame
@@ -309,13 +309,15 @@ class PageFrame final : public NavigationClient, public Frame {
       const GURL& url,
       base::TimeTicks navigation_start,
       const PageConnection& connection,
-      bool cross_origin_isolated,
+      PageCrossOriginIsolation isolation,
       const PermissionsPolicyHeaders& policy_headers,
       const std::optional<std::u16string>& xml_content_type);
   // Makes a window's context, with what Chrome's renderer adds to it, whose
   // time origin is `time_origin` and whose document's origin is `origin`,
   // which decides whether it is a secure context and its security token, in
-  // a cross-origin isolated agent if `cross_origin_isolated`. A frame that had
+  // a cross-origin isolated agent if `cross_origin_isolated`, and in an agent
+  // cluster of its own, whose token is its own, if
+  // `isolated_by_document_policy`. A frame that had
   // a context passes its WindowProxy, the old context's global proxy, which
   // the old context has let go, so that the new context takes it, as
   // LocalWindowProxy reinitializes on the same global proxy.
@@ -326,11 +328,16 @@ class PageFrame final : public NavigationClient, public Frame {
       base::TimeTicks time_origin,
       const url::Origin& origin,
       bool is_trustworthy,
-      bool cross_origin_isolated = false,
+      bool cross_origin_isolated,
+      bool isolated_by_document_policy,
       v8::Local<v8::Object> global_proxy = v8::Local<v8::Object>());
   // The security token of a context of the Page whose document has
-  // `origin`, an opaque one, or an empty handle if no frame's document has it.
-  v8::Local<v8::Value> TokenOfOpaqueOrigin(const url::Origin& origin) const;
+  // `origin`, an opaque one, in the same isolation by
+  // Document-Isolation-Policy, or an empty handle if no frame's document has
+  // it.
+  v8::Local<v8::Value> TokenOfOpaqueOrigin(
+      const url::Origin& origin,
+      bool isolated_by_document_policy) const;
   // Whether a document of `origin` that the frame makes is cross-origin
   // isolated, CrossOriginIsolatedCapability(): its agent cluster is, as
   // `agent_isolated` says, and its permissions policy, of `container_policy`
@@ -483,8 +490,10 @@ class PageFrame final : public NavigationClient, public Frame {
     GURL cookie_url;
     // Whether its document's embedder policy, the parent document's for a
     // srcdoc, the initiator's for an about:blank and none for an error page, is
-    // compatible with cross-origin isolation.
+    // compatible with cross-origin isolation, and whether its document
+    // isolation policy, which it takes from the same, isolates it.
     bool embedder_policy_isolates = false;
+    bool isolated_by_document_policy = false;
     // Whether the frame's sandbox gave it an opaque origin as it started, or
     // the document that started it had one of its response's sandbox, whose
     // origin an about:blank takes, and whether that was its response's.

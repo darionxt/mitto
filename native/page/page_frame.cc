@@ -39,6 +39,7 @@
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/page_reveal_event.h"
 #include "mitto/dom/permissions_policy_parser.h"
+#include "mitto/dom/remote_window.h"
 #include "mitto/dom/storage_bucket_host.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
@@ -258,6 +259,11 @@ void PageFrame::Start(const PageConnection& connection) {
                   parent_->window_->GetDocument().IsCredentialless());
   const bool in_partition =
       parent_ && parent_->window_->GetDocument().InCredentiallessPartition();
+  // It takes its parent's policy container, and with it its parent's agent
+  // cluster where Document-Isolation-Policy isolates that, in which it is
+  // cross-origin isolated whatever its permissions policy says.
+  const bool isolated_by_dip =
+      parent_ && parent_->window_->IsolatedByDocumentPolicy();
   // It is as trustworthy as its parent's, whose context is a secure one only
   // if that is.
   context_.Reset(
@@ -265,12 +271,15 @@ void PageFrame::Start(const PageConnection& connection) {
       NewContext(
           base::TimeTicks::Now(), origin,
           /*is_trustworthy=*/parent_ != nullptr,
-          parent_ && IsolatesDocument(agent_isolated, origin,
-                                      PendingContainerPolicy(), ParsedPolicy(),
-                                      /*headerless=*/true,
-                                      /*response_sandboxed=*/false)));
+          parent_ && (isolated_by_dip ||
+                      IsolatesDocument(agent_isolated, origin,
+                                       PendingContainerPolicy(), ParsedPolicy(),
+                                       /*headerless=*/true,
+                                       /*response_sandboxed=*/false)),
+          isolated_by_dip));
   window_ = bindings::V8Window::ToWrappable(isolate, context()->Global());
   window_->SetAgentCrossOriginIsolated(agent_isolated);
+  window_->SetIsolatedByDocumentPolicy(isolated_by_dip);
   window_->BindToContext(isolate, context());
   if (parent_) {
     // The frame's own storage, which asks as each of its documents in turn.
@@ -497,19 +506,23 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   // Chrome compares the agent cluster's isolation, and keeps the window for a
   // document whose permissions policy takes the feature: a Known Gap, as a
   // reused window would keep the clocks, SharedArrayBuffer and members of its
-  // isolation.
+  // isolation. One of another isolation by Document-Isolation-Policy is in
+  // another agent cluster, which never reuses it.
   const bool agent_isolated =
       parent_ && parent_->window_->AgentCrossOriginIsolated();
+  const bool isolated_by_dip = navigation.isolated_by_document_policy;
   // Chrome's error page is never isolated, whatever its frame's allow.
   const bool isolated =
       committed.source != PageDocumentSource::kErrorPage &&
-      IsolatesDocument(agent_isolated, origin, navigation.container_policy,
-                       ParsedPolicy(),
-                       /*headerless=*/true, navigation.response_sandboxed);
+      (isolated_by_dip ||
+       IsolatesDocument(agent_isolated, origin, navigation.container_policy,
+                        ParsedPolicy(),
+                        /*headerless=*/true, navigation.response_sandboxed));
   const bool reuse_window =
       old_document.IsInitialEmptyDocument() &&
       old_document.GetOrigin().IsSameOriginWith(origin) &&
       window_->CrossOriginIsolatedCapability() == isolated &&
+      window_->IsolatedByDocumentPolicy() == isolated_by_dip &&
       old_document.IsCredentialless() == navigation.credentialless;
   {
     // DocumentLoader::CommitNavigation(): no script of the old document or
@@ -559,11 +572,12 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
     // before the old document's unload events and the task that commits.
     const v8::Local<v8::Context> context =
         NewContext(navigation.start, origin, navigation.trustworthy, isolated,
-                   global_proxy);
+                   isolated_by_dip, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
     window_->SetAgentCrossOriginIsolated(agent_isolated);
+    window_->SetIsolatedByDocumentPolicy(isolated_by_dip);
     AttachWindow(parent_->window_->Connection(), committed);
     const v8::Context::Scope context_scope(context);
     document = Document::CreateHTML();
@@ -861,6 +875,8 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       navigation.referrer_policy = parent_document.GetReferrerPolicy();
       navigation.embedder_policy_isolates =
           parent_document.EmbedderPolicyIsolates();
+      navigation.isolated_by_document_policy =
+          parent_->window_->IsolatedByDocumentPolicy();
       navigation.about_base_url = parent_document.BaseUrl();
       navigation.cookie_url = parent_document.CookieUrl();
     } else {
@@ -876,6 +892,8 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
       navigation.referrer_policy = request.initiator_referrer_policy;
       navigation.embedder_policy_isolates =
           request.initiator_embedder_policy_isolates;
+      navigation.isolated_by_document_policy =
+          request.initiator_isolated_by_document_policy;
       navigation.about_base_url = request.initiator_base_url;
       navigation.cookie_url = request.initiator_cookie_url;
     }
@@ -1087,6 +1105,8 @@ void PageFrame::AnswerDataUrl(uint64_t number) {
   provisional_->SetInheritedHeaderCsp(request.initiator_has_header_csp);
   provisional_->SetEmbedderPolicyIsolates(
       request.initiator_embedder_policy_isolates);
+  provisional_->SetIsolatedByDocumentPolicy(
+      request.initiator_isolated_by_document_policy);
   const base::WeakPtr<DocumentLoader> loader = provisional_->GetWeakPtr();
   PageResponseStarted response;
   response.status = 200;
@@ -1541,7 +1561,7 @@ Document* PageFrame::CommitNavigation(
     const GURL& url,
     base::TimeTicks navigation_start,
     const PageConnection& connection,
-    bool cross_origin_isolated,
+    PageCrossOriginIsolation isolation,
     const PermissionsPolicyHeaders& policy_headers,
     const std::optional<std::u16string>& xml_content_type) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
@@ -1636,6 +1656,7 @@ Document* PageFrame::CommitNavigation(
   const GURL old_url(old_document.UrlForBinding());
   const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
   const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
+  const RendererProcess old_process = Window::Current().Process();
   if (store) {
     StoreDocument(std::exchange(current_, std::move(committing)));
   } else {
@@ -1649,19 +1670,22 @@ Document* PageFrame::CommitNavigation(
   }
   Document& document =
       CommitDocument(current_->number(), url, navigation_start, connection,
-                     cross_origin_isolated, policy_headers, xml_content_type);
+                     isolation, policy_headers, xml_content_type);
   if (!parent_) {
     browsing_instance_ = next_browsing_instance;
     browsing_instances_[document.DefaultView()->DocumentId()] =
         next_browsing_instance;
   }
   // The old document's unload times go to a new one of its origin, as
-  // Blink's UnloadEventTimingInfo carries them.
+  // Blink's UnloadEventTimingInfo carries them, but not to one in another
+  // process, which one of its origin of another isolation by
+  // Document-Isolation-Policy is, whose renderer never saw them.
   DocumentLoadTiming& timing = document_load_timing();
   timing.unload_event_start = unload_event_start;
   timing.unload_event_end = unload_event_end;
   timing.has_same_origin_as_previous_document =
-      url::IsSameOriginWith(old_url, url);
+      url::IsSameOriginWith(old_url, url) &&
+      IsInSameProcess(old_process, document.DefaultView()->Process());
   timing.is_reload = !traversal && !opening && provisional_request_.reload;
   timing.is_back_forward = traversal;
   // The new document's entry, which the session history takes, before any of
@@ -2204,9 +2228,15 @@ Document& PageFrame::CommitDocument(
     const GURL& url,
     base::TimeTicks navigation_start,
     const PageConnection& connection,
-    bool cross_origin_isolated,
+    PageCrossOriginIsolation isolation,
     const PermissionsPolicyHeaders& policy_headers,
     const std::optional<std::u16string>& xml_content_type) {
+  // What the Session said of its page's agent cluster, and whether its own
+  // document isolation policy, or a data: URL's initiator's, gives it an agent
+  // cluster of its own, cross-origin isolated whatever its permissions policy
+  // says.
+  const bool cross_origin_isolated = IsolatesAgentCluster(isolation);
+  const bool isolated_by_dip = IsolatesByDocumentPolicy(isolation);
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);
   // A script that the Session evaluated in the top-level frame's window and
@@ -2265,6 +2295,7 @@ Document& PageFrame::CommitDocument(
   const bool headerless = url.IsAboutBlank() || url.IsAboutSrcdoc() ||
                           url.SchemeIs(url::kDataScheme) || url.SchemeIsBlob();
   const bool isolated =
+      isolated_by_dip ||
       IsolatesDocument(agent_isolated, origin, container_policy, declared,
                        headerless, response_sandboxed);
   origin_sandboxed_ = provisional_origin_sandboxed_ || response_sandboxed;
@@ -2278,6 +2309,7 @@ Document& PageFrame::CommitDocument(
       window_ && window_->GetDocument().IsInitialEmptyDocument() &&
       window_->GetDocument().GetOrigin().IsSameOriginWith(origin) &&
       window_->CrossOriginIsolatedCapability() == isolated &&
+      window_->IsolatedByDocumentPolicy() == isolated_by_dip &&
       window_->GetDocument().IsCredentialless() == credentialless;
   CookieStore* const cookie_store =
       reuse_window ? window_->GetCookieStoreIfExists() : nullptr;
@@ -2314,11 +2346,12 @@ Document& PageFrame::CommitDocument(
     }
     const v8::Local<v8::Context> context = NewContext(
         time_origin, origin, IsOriginPotentiallyTrustworthy(url_origin),
-        isolated, global_proxy);
+        isolated, isolated_by_dip, global_proxy);
     context_.Reset(isolate, context);
     window_ = bindings::V8Window::ToWrappable(isolate, context->Global());
     window_->BindToContext(isolate, context);
     window_->SetAgentCrossOriginIsolated(agent_isolated);
+    window_->SetIsolatedByDocumentPolicy(isolated_by_dip);
     AttachWindow(connection, committed);
   }
   const v8::Context::Scope context_scope(context());
@@ -2472,6 +2505,7 @@ v8::Local<v8::Context> PageFrame::NewContext(
     const url::Origin& origin,
     bool is_trustworthy,
     bool cross_origin_isolated,
+    bool isolated_by_document_policy,
     v8::Local<v8::Object> global_proxy) {
   v8::Isolate* const isolate = runner_->isolate();
   ChromeObjectData& chrome_object_data =
@@ -2503,15 +2537,20 @@ v8::Local<v8::Context> PageFrame::NewContext(
   // the browser: a Page has no browser to tell, and nothing yet that asks
   // across origins (#286), so it shares its origin's token.
   // V8 compares tokens as objects, so the token is an internalized string,
-  // the same object for the same text, as Blink's V8AtomicString is.
+  // the same object for the same text, as Blink's V8AtomicString is. One that
+  // Document-Isolation-Policy isolates is in an agent cluster apart from the
+  // rest of its origin, as Blink's token takes the agent cluster with the
+  // origin, so V8 asks AccessCheckCallback() of each access between them.
   if (!origin.opaque()) {
-    const std::string token = origin.Serialize();
+    const std::string token = base::StrCat(
+        {origin.Serialize(), isolated_by_document_policy ? " isolated" : ""});
     context->SetSecurityToken(
         v8::String::NewFromUtf8(isolate, token.data(),
                                 v8::NewStringType::kInternalized,
                                 base::checked_cast<int>(token.size()))
             .ToLocalChecked());
-  } else if (const v8::Local<v8::Value> token = TokenOfOpaqueOrigin(origin);
+  } else if (const v8::Local<v8::Value> token =
+                 TokenOfOpaqueOrigin(origin, isolated_by_document_policy);
              !token.IsEmpty()) {
     // Blink gives a context of an opaque origin V8's own token, and its
     // CanAccess() lets the same opaque origin through, which a frame's
@@ -2562,7 +2601,8 @@ void PageFrame::SetStorageDocument(uint64_t document) {
 }
 
 v8::Local<v8::Value> PageFrame::TokenOfOpaqueOrigin(
-    const url::Origin& origin) const {
+    const url::Origin& origin,
+    bool isolated_by_document_policy) const {
   const PageFrame* top = this;
   while (top->parent_) {
     top = top->parent_;
@@ -2572,7 +2612,9 @@ v8::Local<v8::Value> PageFrame::TokenOfOpaqueOrigin(
     const PageFrame* const frame = frames.back();
     frames.pop_back();
     if (frame->window_ && frame->window_->HasDocument() &&
-        frame->window_->GetDocument().GetOrigin() == origin) {
+        frame->window_->GetDocument().GetOrigin() == origin &&
+        frame->window_->IsolatedByDocumentPolicy() ==
+            isolated_by_document_policy) {
       return frame->context()->GetSecurityToken();
     }
     for (const std::unique_ptr<PageFrame>& child : frame->children_) {

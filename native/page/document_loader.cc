@@ -66,8 +66,7 @@ void DocumentLoader::TookBody(size_t size) {
 }
 
 void DocumentLoader::OnIsolation(const PageIsolation& isolation) {
-  cross_origin_isolated_ =
-      isolation.isolation != PageCrossOriginIsolation::kNone;
+  isolation_ = isolation.isolation;
   embedder_policy_isolates_ =
       isolation.embedder_policy != PageEmbedderPolicy::kNone;
 }
@@ -119,7 +118,7 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   Document* const document = frame_->CommitNavigation(
       *this, url_,
       base::TimeTicks() + base::Microseconds(response.navigation_start),
-      response.connection, cross_origin_isolated_, policy_headers,
+      response.connection, isolation_, policy_headers,
       xml ? std::optional<std::u16string>(base::ASCIIToUTF16(mime_type))
           : std::nullopt);
   // The frame went as its old document unloaded, and this goes from a later
@@ -181,14 +180,14 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // type is HTML here, as the parser reads it, where Chrome's network service
   // sniffs one.
   // A frame's takes its parent's encoding as its default where the parent's
-  // origin can reach its own, and as the detector's hint where the parent's
-  // detector found it, as Blink's BuildTextResourceDecoder() does.
+  // window can reach its own, of its origin and agent cluster, and as the
+  // detector's hint where the parent's detector found it, as Blink's
+  // BuildTextResourceDecoder() does with a local parent alone.
   std::optional<ParentFrameEncoding> parent_encoding;
   if (const Frame* const parent = frame_->Parent()) {
     const Window* const parent_window = parent->DomWindow();
     if (parent_window && parent_window->HasDocument() &&
-        parent_window->GetSecurityOrigin().IsSameOriginWith(
-            document_->GetOrigin())) {
+        Window::CanAccess(*parent_window, *document_->DefaultView())) {
       const Document& parent_document = parent_window->GetDocument();
       parent_encoding = ParentFrameEncoding{
           base::UTF16ToUTF8(parent_document.CharacterSet()),
