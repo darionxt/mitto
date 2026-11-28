@@ -514,8 +514,8 @@ jobs:
     steps: &reuse-steps
       - if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
-      # The repository and uv, for the tests of the list alone: after a full run, the job only moves the wheel. The steps
-      # are written out rather than taken from the native job's, since a YAML alias takes a step whole, without a
+      # The repository and uv, for the tests of the list alone: after a full run, the job only moves the wheel. The
+      # steps are written out rather than taken from the native job's, since a YAML alias takes a step whole, without a
       # condition of its own.
       - if: needs.changes.outputs.reuse == 'list'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
