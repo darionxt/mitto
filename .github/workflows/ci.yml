@@ -512,10 +512,17 @@ jobs:
     steps: &reuse-steps
       - if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The repository and uv, for the tests of the list alone: after a full run, the job only moves the wheel. The steps
+      # are written out rather than taken from the native job's, since a YAML alias takes a step whole, without a
+      # condition of its own.
+      - if: needs.changes.outputs.reuse == 'list'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - *setup-uv
+      - if: needs.changes.outputs.reuse == 'list'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          save-cache: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       # The wheel that the native job of the run before, or of the full run, built and tested.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -523,8 +530,7 @@ jobs:
           path: ${{ runner.temp }}/dist
           run-id: ${{ needs.changes.outputs.run }}
           github-token: ${{ github.token }}
-      # As the native job installs it, but only for the tests below. The step of the native job cannot take a condition
-      # of its own here, since YAML's aliases take a step whole.
+      # As the native job installs it, for the tests below.
       - name: Install the wheel
         if: needs.changes.outputs.reuse == 'list'
         env:
