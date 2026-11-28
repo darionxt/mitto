@@ -133,6 +133,16 @@ bool DispatchBeforeUnloadEvents(Window& window) {
   return true;
 }
 
+// The frame of the window, which a navigation takes, stops waiting with the
+// navigation that loading=lazy deferred, as Blink's LocalFrame::Navigate() and
+// FrameLoader::StartNavigation() cancel it.
+void CancelPendingLazyLoad(const Window& window) {
+  const Frame* const frame = window.GetFrame();
+  if (HTMLFrameOwnerElement* const owner = frame ? frame->Owner() : nullptr) {
+    owner->CancelPendingLazyLoad();
+  }
+}
+
 // Document::OutgoingReferrer(): none for a document of an opaque origin, and
 // otherwise the URL of the window's document, or for a srcdoc document of its
 // parent's, up to one that is none, stripped for use as a referrer.
@@ -420,6 +430,7 @@ void ProcessJavaScriptUrl(Window& window, const GURL& url) {
 void Navigate(Window& window,
               const FrameLoadRequest& request,
               FrameLoadType type) {
+  CancelPendingLazyLoad(window);
   if (!CanProceedWithNavigation(window)) {
     return;
   }
@@ -433,6 +444,7 @@ void Navigate(Window& window,
 void StartNavigation(Window& window,
                      const FrameLoadRequest& request,
                      FrameLoadType type) {
+  CancelPendingLazyLoad(window);
   Document& document = window.GetDocument();
   const GURL& url = request.url;
   if (!url.is_valid()) {

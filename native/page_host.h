@@ -766,6 +766,9 @@ class PageHost final : public PageChannel::Delegate {
 
   void Push(PageEvent event);
   void PushReport(PageEvent event);
+  // The warning on a frame's parent's console that its navigation to a URL
+  // with credentials is blocked.
+  void WarnOfCredentialedSubresource();
 
   const scoped_refptr<PageEvents> events_;
   const scoped_refptr<PageProcess> process_;

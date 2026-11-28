@@ -480,6 +480,7 @@ void PageFrame::CommitWithoutNetwork(uint64_t number) {
   }
   LocalNavigation navigation = std::move(*pending_local_navigation_);
   pending_local_navigation_.reset();
+  CancelOwnerLazyLoad();
   v8::Isolate* const isolate = runner_->isolate();
   const v8::HandleScope handle_scope(isolate);
   const GURL& url = navigation.url;
@@ -777,6 +778,12 @@ void PageFrame::CommitAboutBlankSynchronously(const GURL& url) {
   DocumentParser& parser =
       document->OpenForNavigation(*empty_body_, DocumentParser::Kind::kHtml);
   parser.Finish();
+}
+
+void PageFrame::CancelOwnerLazyLoad() {
+  if (HTMLFrameOwnerElement* const owner = owner_.Get()) {
+    owner->CancelPendingLazyLoad();
+  }
 }
 
 void PageFrame::ExpectOpeningNavigation() {
@@ -1545,6 +1552,7 @@ Document* PageFrame::CommitNavigation(
     const PermissionsPolicyHeaders& policy_headers,
     const std::optional<std::u16string>& xml_content_type) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
+  CancelOwnerLazyLoad();
   Document& old_document = Window::Current().GetDocument();
   // The loader of the Page's opening navigation, which the library started,
   // and not one of a data: URL, which the Page answered itself.
