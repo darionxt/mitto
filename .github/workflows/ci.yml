@@ -176,6 +176,8 @@ jobs:
                 | max_by(.run_number).id // empty')" || everything "the full runs on $HEAD_SHA cannot be listed."
               [ -n "$run" ] || everything "$HEAD_REF has no full run on $HEAD_SHA."
               take_wheels "$run"
+              # Its native jobs, whose checks main requires. Its web-platform-tests are no such check: what they came to
+              # stands in the full run, which the summary links, and they do not run again.
               passed_on_one_commit "$run" "Full run / "
               [ "$tested" = "$HEAD_SHA" ] || everything "full run $run passed on $tested, not on $HEAD_SHA."
               reuse=ready
