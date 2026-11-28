@@ -495,7 +495,9 @@ jobs:
     name: Native core on ${{ matrix.runner }}
     needs: changes
     if: &reuses ${{ needs.changes.outputs.run != '' }}
-    runs-on: ${{ matrix.runner }}
+    # Taking a full run's results only moves a wheel from that run to this one, which needs no runner of the Host, so it
+    # does not wait for one: macOS runners are few. The check and the wheel keep the Host's name.
+    runs-on: &reuse-runner ${{ needs.changes.outputs.reuse == 'ready' && 'ubuntu-latest' || matrix.runner }}
     timeout-minutes: 30
     permissions: &reads-artifacts
       actions: read
@@ -553,7 +555,7 @@ jobs:
     name: Native core on ${{ matrix.runner }}
     needs: changes
     if: *reuses
-    runs-on: ${{ matrix.runner }}
+    runs-on: *reuse-runner
     timeout-minutes: 30
     permissions: *reads-artifacts
     strategy:
@@ -569,7 +571,7 @@ jobs:
     name: Native core on ${{ matrix.runner }}
     needs: changes
     if: *reuses
-    runs-on: ${{ matrix.runner }}
+    runs-on: *reuse-runner
     timeout-minutes: 30
     permissions: *reads-artifacts
     strategy:
