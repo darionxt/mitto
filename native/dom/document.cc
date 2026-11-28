@@ -781,10 +781,15 @@ std::u16string Document::BodyAttribute(std::u16string_view name) const {
   return value ? *value : u"";
 }
 
+bool Document::IsFrameSet() const {
+  const HTMLElement* const body = Body();
+  return IsHTMLDocument() && body && body->HasHTMLTagName(u"frameset");
+}
+
 void Document::SetBodyAttribute(std::u16string_view name,
                                 const std::u16string& value) {
   HTMLElement* const body = Body();
-  if (!body || (IsHTMLDocument() && body->HasHTMLTagName(u"frameset"))) {
+  if (!body || IsFrameSet()) {
     return;
   }
   const std::u16string* const current = body->FindAttribute(name);
