@@ -796,6 +796,7 @@ source_set("dom") {
     "//mitto:header_rules",
     "//mitto:mime_types",
     "//mitto:string_hasher",
+    "//mitto:url_user_info",
     "//mitto/encoding",
     "//mitto/html:tokenizer",
     "//mitto/xml:libxml",

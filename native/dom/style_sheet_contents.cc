@@ -230,6 +230,7 @@ void StyleRuleImport::RequestStyleSheet() {
   params.render_blocking = root->RenderBlocking();
   // StyleRuleImport::RequestStyleSheet().
   params.initiator_name = u"css";
+  params.from_origin_dirty_style_sheet = !parent->IsOriginClean();
   Resource* const resource = document->Fetcher().RequestResource(params);
   if (!resource) {
     // A document of no window, whose null fetch context Blink gives it.
@@ -270,6 +271,7 @@ void StyleRuleImport::NotifyFinished(Resource& resource) {
     style_sheet_ = bindings::MakeGarbageCollected<StyleSheetContents>(
         *document, response_url, resource.Url(), std::move(referrer),
         std::move(decoded.encoding), nullptr, this);
+    style_sheet_->SetOriginClean(!resource.Response().opaque);
     style_sheet_->ParseAuthorStyleSheet(decoded.text);
   }
   loading_ = false;

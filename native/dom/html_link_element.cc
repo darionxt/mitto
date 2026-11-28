@@ -497,6 +497,7 @@ void HTMLLinkElement::StyleSheetFinished(Resource& resource) {
       document, GURL(resource.Response().url), resource.Url(),
       std::move(referrer), std::move(decoded.encoding), this, nullptr);
   sheet_->SetRenderBlocking(render_blocking_);
+  sheet_->SetOriginClean(!resource.Response().opaque);
   sheet_->ParseAuthorStyleSheet(decoded.text);
   loading_ = false;
   if (resource.ErrorOccurred()) {

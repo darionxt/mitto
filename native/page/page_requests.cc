@@ -159,10 +159,20 @@ uint64_t PageRequests::Start(PageRequest request,
   return number;
 }
 
-uint64_t PageRequests::StartWorkerScript(PageRequest request, Client& client) {
+void PageRequests::DropResourceTiming(uint64_t number) {
+  if (std::optional<Timed>& timed = open_[number].timed) {
+    timed->no_entry = true;
+  }
+}
+
+uint64_t PageRequests::StartWorkerScript(PageRequest request,
+                                         Client& client,
+                                         std::string_view entry_url) {
   const uint64_t number = Start(std::move(request), client,
                                 /*render_blocking=*/false, u"other");
-  open_[number].timed->worker_script = true;
+  Timed& timed = *open_[number].timed;
+  timed.worker_script = true;
+  timed.url = base::UTF8ToUTF16(entry_url);
   return number;
 }
 
@@ -426,7 +436,8 @@ void PageRequests::AddResourceTiming(Timed& timed,
                                      base::TimeTicks response_end,
                                      const PageResponseEnded* ended) {
   ExecutionContext* const execution_context = timed.execution_context.Get();
-  if (!execution_context || !execution_context->HasContext()) {
+  if (timed.no_entry || !execution_context ||
+      !execution_context->HasContext()) {
     return;
   }
   // A request can end outside any context, as when the garbage collector takes

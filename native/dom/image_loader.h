@@ -73,7 +73,9 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
 
   bool ImageComplete() const { return image_complete_; }
   Resource* GetContent() const { return image_content_.Get(); }
-  bool HadError() const { return !failed_load_url_.empty(); }
+  bool HadError() const {
+    return !failed_load_url_.empty() || redirect_blocked_;
+  }
   // Whether an update, a load, a load or error event or a decode waits.
   bool HasPendingActivity() const;
   // Whether the image is available or still loading, as the HTML Standard's
@@ -122,6 +124,10 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   void UpdateImageState(Resource* new_image_content);
   void SetImageWithoutConsideringPendingLoadEvent(Resource* new_image_content);
   void ClearImage();
+  void ClearFailedUrl() {
+    failed_load_url_.clear();
+    redirect_blocked_ = false;
+  }
   GURL ImageSourceToUrl(const std::optional<std::u16string>& source) const;
   bool ShouldLoadImmediately(const GURL& url) const;
   void QueuePendingErrorEvent();
@@ -167,6 +173,9 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   // The URL whose load failed an access check, which is not loaded again
   // until src changes.
   std::u16string failed_load_url_;
+  // Whether a redirect was blocked, whose target, which the Page does not
+  // hear of, is the URL that failed, so that the source loads again.
+  bool redirect_blocked_ = false;
   bool image_complete_ = true;
   LazyImageLoadState lazy_image_load_state_ = LazyImageLoadState::kNone;
   // Which monitoring is current, so that one that stopped does nothing.

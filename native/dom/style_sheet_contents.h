@@ -86,6 +86,10 @@ class StyleSheetContents final
   // Whether the top-level sheet blocks rendering, which boosts the fetch of
   // each import under it, as SetRenderBlocking() has it.
   bool RenderBlocking() const { return render_blocking_; }
+  // CSSParserContext::IsOriginClean(): whether the document may read the
+  // sheet, whose imports have no entries of their own otherwise.
+  bool IsOriginClean() const { return origin_clean_; }
+  void SetOriginClean(bool origin_clean) { origin_clean_ = origin_clean; }
   void SetRenderBlocking(bool render_blocking) {
     render_blocking_ = render_blocking;
   }
@@ -101,6 +105,7 @@ class StyleSheetContents final
   HeapVector<StyleRuleImport> imports_;
   bool did_load_error_occur_ = false;
   bool render_blocking_ = false;
+  bool origin_clean_ = true;
 };
 
 // An @import rule, and the sheet that it fetched.

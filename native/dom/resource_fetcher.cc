@@ -17,16 +17,16 @@
 #include "mitto/dom/window_tasks.h"
 #include "mitto/encoding/content_type.h"
 #include "mitto/header_rules.h"
+#include "mitto/url_user_info.h"
 #include "url/url_constants.h"
 #include "v8/include/cppgc/persistent.h"
 
 namespace mitto {
 namespace {
 
-// net::ERR_INVALID_URL, ERR_BLOCKED_BY_CLIENT and ERR_ABORTED, which the Page
-// program, with no //net, cannot name.
+// net::ERR_INVALID_URL and ERR_ABORTED, which the Page program, with no //net,
+// cannot name.
 constexpr int kInvalidUrl = -300;
-constexpr int kBlockedByClient = -20;
 constexpr int kAborted = -3;
 
 // Blink's kSmallImageMaxSize: an image of at most this many square pixels
@@ -399,12 +399,28 @@ Resource* ResourceFetcher::RequestResource(const FetchParameters& params) {
   if (!window || !params.url.is_valid()) {
     return nullptr;
   }
-  // PrepareRequest() blocks what FrameFetchContext::CanRequest() refuses:
-  // ResourceForBlockedRequest().
-  if (document->RefusesRequestWhileFreezing(params.url)) {
+  // FetchParameters::SetCrossOriginAccessControl() takes a user and a password
+  // off the URL of a request of mode cors.
+  if (params.mode == FetchMode::kCors && HasUserInfo(params.url)) {
+    FetchParameters without_user_info = params;
+    without_user_info.url = WithoutUserInfo(params.url);
+    return RequestResource(without_user_info);
+  }
+  // PrepareRequest() blocks what FrameFetchContext::CanRequest() refuses, even
+  // for a preload: ResourceForBlockedRequest(), and its entry.
+  if (document->RefusesRequestWhileFreezing(params.url) ||
+      window->BlocksCredentialedSubresource(params.url)) {
     Resource* const blocked = bindings::MakeGarbageCollected<Resource>(
         params.type, params.url, params.mode, params.credentials);
-    blocked->Finish(kBlockedByClient);
+    blocked->Block();
+    // PopulateAndAddResourceTimingInfo().
+    if (!params.from_origin_dirty_style_sheet) {
+      window->AddBlockedResourceTiming(
+          params.url,
+          // A script names none, whose entry's is "script".
+          params.initiator_name.empty() ? u"script" : params.initiator_name,
+          params.render_blocking);
+    }
     return blocked;
   }
   // MatchPreload() first: an unused preload of the URL and type, which a
@@ -502,6 +518,7 @@ void ResourceFetcher::StartLoad(Resource& resource,
   request.referrer = params.referrer;
   request.render_blocking = params.render_blocking;
   request.initiator_type = params.initiator_name;
+  request.no_resource_timing = params.from_origin_dirty_style_sheet;
   // A fetch of a type that blocks the load event holds it back, unless it is
   // a link preload or nothing lets it go.
   if (IsLoadEventBlockingResourceType(params.type) && params.load_blocking &&

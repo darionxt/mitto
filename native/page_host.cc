@@ -37,6 +37,7 @@
 #include "mitto/storage/storage_area_impl.h"
 #include "mitto/storage/storage_context.h"
 #include "mitto/storage_quota.h"
+#include "mitto/url_user_info.h"
 #include "net/base/io_buffer.h"
 #include "net/base/is_potentially_trustworthy.h"
 #include "net/base/isolation_info.h"
@@ -1016,6 +1017,19 @@ class PageHost::ResponseChecks {
     if (!AllowsByCors(event) || !AllowsRedirectLocation(event)) {
       return net::ERR_FAILED;
     }
+    // ResourceLoader::WillFollowRedirect(): FetchContext::CanRequest() blocks
+    // a redirect of a subresource's as it blocks its first URL, which a
+    // document's keepalive request hears of with its response.
+    if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
+        checks_.client_user_info &&
+        IsBlockedCredentialedSubresource(
+            GURL(event.new_url), *checks_.client_user_info, document_origin_)) {
+      redirect_blocked_ = true;
+    }
+    if (redirect_blocked_ && (event.type == MITTO_EVENT_RESPONSE_STARTED ||
+                              !checks_.browser_follows_redirects)) {
+      return net::ERR_BLOCKED_BY_CLIENT;
+    }
     // URLLoader::OnReceivedRedirect() and OnResponseStarted(): each response
     // of a request of mode no-cors is held to its
     // Cross-Origin-Resource-Policy, with the embedder policy and the document
@@ -1158,6 +1172,8 @@ class PageHost::ResponseChecks {
   bool cors_ = false;
   bool tainted_ = false;
   bool credentialed_redirect_ = false;
+  // Whether the renderer would block a redirect.
+  bool redirect_blocked_ = false;
 };
 
 // One request of a Page's, which hears how its job goes and sends that to the
@@ -2085,9 +2101,13 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
     parent_origin = contexts_.at(frame_parent).origin;
   }
   std::optional<CrossOriginEmbedderPolicy> creator_embedder_policy;
+  std::optional<UrlUserInfo> client_user_info;
   if (asked.kind == PageRequestKind::kWorker && !outside_settings) {
     worker_scripts_[asked.number] = {.creator = context_id};
     creator_embedder_policy = context.coep;
+  } else if (!is_navigation && asked.kind != PageRequestKind::kXhr) {
+    // FetchContext leaves an XMLHttpRequest's URL to the CORS check.
+    client_user_info = UserInfoOf(contexts_.at(settings_id).url);
   }
   // The URL that the parent's document last committed, which each redirect of
   // a frame's navigation is held to as well.
@@ -2101,6 +2121,8 @@ void PageHost::OnRequest(PageRequest asked, uint64_t context_id) {
       .no_cors = options_mode == RequestMode::kNoCors,
       .credentials = options_credentials == CredentialsMode::kInclude,
       .keepalive = asked.keepalive,
+      .client_user_info = std::move(client_user_info),
+      .browser_follows_redirects = asked.keepalive && !context.is_worker,
       .is_navigation = is_navigation,
       .top_level = top_level,
       // Of what a Page asks for beside navigations, only the response of an
@@ -2530,6 +2552,7 @@ bool PageHost::StartResponse(Request& request, const RequestEvent& event) {
   if (const auto script = worker_scripts_.find(request.number());
       script != worker_scripts_.end()) {
     script->second.url = GURL(event.url);
+    script->second.redirected = event.redirected;
     script->second.coep = EmbedderPolicyOf(PolicyHeadersOf(event.headers));
   }
   if (request.is_navigation()) {
@@ -4512,6 +4535,11 @@ void PageHost::OnWorkerStarted(const PageWorkerStarted& started) {
         return;
       }
       worker.url = std::move(found->second.url);
+      // The renderer loads a module worker's script as a module's request,
+      // whose URL has no user nor password, until a redirect gives another.
+      if (started.module && !found->second.redirected) {
+        worker.url = WithoutUserInfo(worker.url);
+      }
       worker.origin = creator->origin;
       worker.coep = std::move(found->second.coep);
       worker_scripts_.erase(found);

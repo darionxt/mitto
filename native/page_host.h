@@ -35,6 +35,7 @@
 #include "mitto/request_client.h"
 #include "mitto/request_options.h"
 #include "mitto/storage/storage_key.h"
+#include "mitto/url_user_info.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_change_dispatcher.h"
@@ -628,6 +629,15 @@ class PageHost final : public PageChannel::Delegate {
     bool credentials = false;
     // A request that outlives its document and its Page.
     bool keepalive = false;
+    // A subresource: the user and the password of the URL of the document or
+    // worker that asks, which a redirect to a URL with any is held to. Not for
+    // a navigation, nor for a worker's script, which Chrome's browser asks
+    // for, nor for an XMLHttpRequest.
+    std::optional<UrlUserInfo> client_user_info;
+    // Whether Chrome's browser follows the request's redirects before its
+    // renderer hears of them, as KeepAliveURLLoader follows a document's
+    // keepalive request's.
+    bool browser_follows_redirects = false;
     // A navigation, whose response the Page makes a document of, unless it
     // is a 204, a 205 or a download.
     bool is_navigation = false;
@@ -853,6 +863,7 @@ class PageHost final : public PageChannel::Delegate {
   struct WorkerScript {
     uint64_t creator = kNoDocument;
     GURL url;
+    bool redirected = false;
     // The embedder policy that the response gives the worker.
     CrossOriginEmbedderPolicy coep;
   };

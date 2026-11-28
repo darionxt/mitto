@@ -23,6 +23,7 @@
 #include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/header_rules.h"
+#include "mitto/url_user_info.h"
 #include "url/origin.h"
 #include "url/scheme_host_port.h"
 #include "url/url_constants.h"
@@ -253,7 +254,8 @@ void ModuleScriptLoader::FetchInternal(const ModuleScriptFetchRequest& request,
   // the caller gives, of the destination of its module type.
   FetchRequestData data;
   data.method = "GET";
-  data.url = request.url.spec();
+  // FetchParameters::SetCrossOriginAccessControl().
+  data.url = WithoutUserInfo(request.url).spec();
   data.destination =
       DestinationOf(request.expected_module_type, request.destination);
   data.is_module = true;

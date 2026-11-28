@@ -237,7 +237,6 @@ void ClassicPendingScript::Trace(cppgc::Visitor* visitor) const {
 }
 
 void ClassicPendingScript::StartFetch(const FetchParameters& params) {
-  fetch_url_ = params.url;
   Document* const document = original_element_document();
   Resource* const resource = document && original_window()
                                  ? document->Fetcher().RequestResource(params)
@@ -249,6 +248,7 @@ void ClassicPendingScript::StartFetch(const FetchParameters& params) {
     return;
   }
   resource_ = resource;
+  fetch_url_ = resource->Url();
   // A resource that has ended tells the script at once.
   resource->AddClient(this);
 }

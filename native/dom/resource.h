@@ -27,6 +27,11 @@ namespace mitto {
 class Resource;
 class ResourceFetcher;
 
+// net::ERR_BLOCKED_BY_CLIENT, which the Page program, with no //net, cannot
+// name: what a request that an access check refuses ends with, or that one of
+// its redirects does, as ResourceError::CancelledDueToAccessCheckError().
+inline constexpr int kBlockedByClient = -20;
+
 // Blink's ResourceType, of those a Page fetches through its ResourceFetcher.
 enum class ResourceType {
   kImage,
@@ -143,6 +148,11 @@ class Resource : public cppgc::GarbageCollected<Resource> {
   }
   base::OnceClosure TakeCancelLoad() { return std::move(cancel_load_); }
 
+  // Ends it before its request goes, with kBlockedByClient, and whether it
+  // ended so, where one that a redirect ended with that has had a request.
+  void Block();
+  bool IsBlocked() const { return blocked_; }
+
   // What the fetch hears, in order.
   void ResponseReceived(FetchResponseHead head, std::string mime_type);
   void AppendData(const std::string& bytes);
@@ -165,6 +175,7 @@ class Resource : public cppgc::GarbageCollected<Resource> {
   FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
   bool is_unused_preload_ = false;
   bool is_link_preload_ = false;
+  bool blocked_ = false;
   WeakHeapVector<ResourceClient> clients_;
   cppgc::WeakMember<ResourceFetcher> fetcher_;
   base::OnceClosure cancel_load_;

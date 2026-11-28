@@ -22,6 +22,7 @@
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/body_stream_buffer.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/fetch_loader.h"
@@ -29,6 +30,7 @@
 #include "mitto/dom/headers.h"
 #include "mitto/dom/local_scheme_fetch.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/performance.h"
 #include "mitto/dom/preloaded_fetch.h"
 #include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/request.h"
@@ -38,6 +40,7 @@
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_task.h"
 #include "mitto/dom/worker_global_scope.h"
+#include "mitto/url_user_info.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-external.h"
@@ -160,6 +163,27 @@ ExecutionContext::ErrorEventState::~ErrorEventState() = default;
 
 bool ExecutionContext::IsWindow() const {
   return false;
+}
+
+bool ExecutionContext::BlocksCredentialedSubresource(const GURL& url) const {
+  return HasUserInfo(url) &&
+         IsBlockedCredentialedSubresource(url, UserInfoOf(GURL(Url())),
+                                          GetSecurityOrigin());
+}
+
+void ExecutionContext::AddBlockedResourceTiming(
+    const GURL& url,
+    const std::u16string& initiator_type,
+    bool render_blocking) {
+  // ResourceFetcher::PopulateAndAddResourceTimingInfo(), with no response.
+  ResourceTimingInfo info;
+  info.name = base::UTF8ToUTF16(url.possibly_invalid_spec());
+  info.start_time = base::TimeTicks::Now();
+  info.response_end = info.start_time;
+  info.render_blocking_status = render_blocking;
+  RunInContext(this, [&] {
+    Performance()->AddResourceTiming(std::move(info), initiator_type);
+  });
 }
 
 void ExecutionContext::SetStart(const PageStart& start,

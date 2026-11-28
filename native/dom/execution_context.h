@@ -115,6 +115,15 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // The base URL that an API resolves against in UTF-8, as KURL(base, input)
   // does: the document's, or the worker's URL.
   virtual GURL BaseUrl() const = 0;
+  // Whether the context refuses a subresource of `url` for its user or its
+  // password, as its FetchContext's ShouldBlockFetchAsCredentialedSubresource()
+  // says.
+  bool BlocksCredentialedSubresource(const GURL& url) const;
+  // Adds the entry of a request of `url` that the context refused before it
+  // went, as ResourceFetcher::RequestResource() adds it.
+  void AddBlockedResourceTiming(const GURL& url,
+                                const std::u16string& initiator_type,
+                                bool render_blocking);
   // WindowOrWorkerGlobalScope's origin, serialized.
   virtual std::u16string Origin() const = 0;
   // WindowOrWorkerGlobalScope's isSecureContext.

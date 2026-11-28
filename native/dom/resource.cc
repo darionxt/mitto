@@ -96,6 +96,11 @@ bool Resource::HasClients() const {
                              [](ResourceClient* client) { return client; });
 }
 
+void Resource::Block() {
+  blocked_ = true;
+  Finish(kBlockedByClient);
+}
+
 void Resource::ResponseReceived(FetchResponseHead head, std::string mime_type) {
   response_ = std::move(head);
   mime_type_ = std::move(mime_type);

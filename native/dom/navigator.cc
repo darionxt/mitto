@@ -528,6 +528,13 @@ bool Navigator::SendBeacon(const std::u16string& url_string,
   if (!body) {
     return false;
   }
+  // ResourceFetcher::PrepareRequest() asks FrameFetchContext::CanRequest()
+  // before StartLoad() holds the request to the keepalive quota: one whose URL
+  // has a user or a password is blocked, with an entry of its own.
+  if (window.BlocksCredentialedSubresource(url)) {
+    window.AddBlockedResourceTiming(url, u"beacon", /*render_blocking=*/false);
+    return false;
+  }
   // One that never fits in the keepalive quota fails as Fetch() fails it.
   if (body->past_quota) {
     return false;

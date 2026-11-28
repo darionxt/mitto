@@ -65,6 +65,16 @@ source_set("string_hasher") {
   deps = [ "//base" ]
 }
 
+# The user and the password of a URL, and what Blink makes of a subresource's,
+# which a Page's DOM and the library both check.
+source_set("url_user_info") {
+  sources = [
+    "url_user_info.cc",
+    "url_user_info.h",
+  ]
+  public_deps = [ "//url" ]
+}
+
 # Which MIME types Chrome shows as a document, which the library and the Page
 # program both decide navigations by.
 source_set("mime_types") {
@@ -280,6 +290,7 @@ shared_library("mitto_core") {
     ":mime_types",
     ":page_channel",
     ":string_hasher",
+    ":url_user_info",
     "//base",
     "//crypto",
     "//net",

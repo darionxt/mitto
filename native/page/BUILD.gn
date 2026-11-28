@@ -120,6 +120,7 @@ executable("mitto_page") {
     "//base",
     "//mitto:mime_types",
     "//mitto:page_channel",
+    "//mitto:url_user_info",
     "//mitto/dom",
     "//mitto/encoding",
     "//mitto/xml:libxml",
