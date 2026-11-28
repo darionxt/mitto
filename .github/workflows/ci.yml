@@ -57,15 +57,17 @@ jobs:
       - run: uv run pyright
       - run: uv run pytest
 
-  # Which run's wheels the native jobs can take for a push that changes nothing but the list of differences of
-  # web-platform-tests. That push follows a run whose wheels passed every test, and only the tests of the list can come
-  # out otherwise. Whatever this job does not find, it runs everything (docs/building.md, "A push that changes only the
-  # list of differences").
+  # Which run's wheels the native jobs can take instead of building and testing them again. For a push that changes
+  # nothing but the list of differences of web-platform-tests, the run before it: its wheels passed every test, and only
+  # the tests of the list can come out otherwise. For a pull request marked ready for review, the full run by hand of
+  # its head, when merging that head into main changes no file: that run has tested these very files. Whatever this job
+  # does not find, it runs everything (docs/building.md, "A push that changes only the list of differences" and "A pull
+  # request marked ready after its full run").
   changes:
     name: What the push changes
-    # Only a push to a pull request that is ready for review: a draft runs no native job. Only to main, where the checks
-    # are required. Not a fork's, whose runs never take another run's artifacts.
-    if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.base_ref == 'main' && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    # Only a push to a pull request that is ready for review, or a draft that is marked ready: a draft runs no native
+    # job. Only to main, where the checks are required. Not a fork's, whose runs never take another run's artifacts.
+    if: ${{ github.event_name == 'pull_request' && (github.event.action == 'synchronize' || github.event.action == 'ready_for_review') && github.base_ref == 'main' && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -75,6 +77,9 @@ jobs:
       run: ${{ steps.reuse.outputs.run }}
       # The ID of each runner's wheel, as JSON. An ID is of one artifact, whatever is uploaded under its name later.
       wheels: ${{ steps.reuse.outputs.wheels }}
+      # "list" when only the list changed, so the reuse jobs run the tests that read it, and web-platform-tests run.
+      # "ready" when the full run tested these files, so nothing runs again.
+      reuse: ${{ steps.reuse.outputs.reuse }}
     steps:
       # The merge commit and its parents, without the files' contents: only their names are read.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,6 +92,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          ACTION: ${{ github.event.action }}
           NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -105,50 +111,85 @@ jobs:
           fetch() {
             git fetch --quiet --depth 2 --filter=blob:none origin "$1"
           }
+          # The wheels of run $1, by the ID of each. Read before the jobs: a job that is run again in between shows as
+          # not passed.
+          take_wheels() {
+            local artifacts id runner
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | "\(.name) \(.id)"')" || everything "the artifacts of run $1 cannot be listed."
+            wheels=""
+            for runner in $RUNNERS; do
+              id="$(sed -n "s/^wheel-$runner //p" <<< "$artifacts")"
+              [[ "$id" =~ ^[0-9]+$ ]] || everything "run $1 no longer has the wheel of $runner."
+              wheels+="${wheels:+,}\"$runner\":$id"
+            done
+          }
+          # Each native job of run $1, which is named "$2Native core on <runner>" there, passed, on one commit, which
+          # the job's last step names. No job that was skipped can count: it has no steps, and no name with a runner in
+          # it.
+          passed_on_one_commit() {
+            local passed commit runner
+            passed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?filter=latest&per_page=100" --jq '
+              .jobs[] | select(.conclusion == "success") | .name as $job | .steps[]
+              | select(.conclusion == "success" and (.name | test("^Passed on [0-9a-f]{40}$")))
+              | "\($job) \(.name | ltrimstr("Passed on "))"')" || everything "the jobs of run $1 cannot be listed."
+            tested=""
+            for runner in $RUNNERS; do
+              commit="$(sed -n "s|^$2Native core on $runner ||p" <<< "$passed")"
+              [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || everything "run $1 did not pass on $runner."
+              [ "${tested:-$commit}" = "$commit" ] || everything "run $1 passed on more than one commit."
+              tested="$commit"
+            done
+          }
 
-          # What the push itself changes, from the head before it to the head after it.
           [ "$(git rev-parse HEAD^2)" = "$HEAD_SHA" ] || everything "this run does not merge $HEAD_SHA."
-          fetch "$BEFORE" || everything "$BEFORE, the head before the push, is not there to compare with."
-          changes_only_the_list "$BEFORE" "$HEAD_SHA" || everything "the push changes more than $list."
+          case "$ACTION" in
+            synchronize)
+              # What the push itself changes, from the head before it to the head after it.
+              fetch "$BEFORE" || everything "$BEFORE, the head before the push, is not there to compare with."
+              changes_only_the_list "$BEFORE" "$HEAD_SHA" || everything "the push changes more than $list."
 
-          # The last run of this pull request on that head, whatever else has run on it.
-          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$BEFORE&per_page=100" --jq '
-            [.workflow_runs[] | select(.head_repository.full_name == env.GITHUB_REPOSITORY and .head_branch == env.HEAD_REF and any(.pull_requests[]; .number == (env.NUMBER | tonumber)))]
-            | max_by(.run_number).id // empty')" || everything "the runs on $BEFORE cannot be listed."
-          [ -n "$run" ] || everything "this pull request has no run on $BEFORE."
+              # The last run of this pull request on that head, whatever else has run on it.
+              run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$BEFORE&per_page=100" --jq '
+                [.workflow_runs[] | select(.head_repository.full_name == env.GITHUB_REPOSITORY and .head_branch == env.HEAD_REF and any(.pull_requests[]; .number == (env.NUMBER | tonumber)))]
+                | max_by(.run_number).id // empty')" || everything "the runs on $BEFORE cannot be listed."
+              [ -n "$run" ] || everything "this pull request has no run on $BEFORE."
+              take_wheels "$run"
+              passed_on_one_commit "$run" ""
 
-          # The wheels, by the ID of each. Read before the jobs: a job that is run again in between shows as not passed.
-          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | "\(.name) \(.id)"')" || everything "the artifacts of run $run cannot be listed."
-          wheels=""
-          for runner in $RUNNERS; do
-            id="$(sed -n "s/^wheel-$runner //p" <<< "$artifacts")"
-            [[ "$id" =~ ^[0-9]+$ ]] || everything "run $run no longer has the wheel of $runner."
-            wheels+="${wheels:+,}\"$runner\":$id"
-          done
+              # They passed on a merge of that head, and what merges now differs from it by the list alone, so main has
+              # not moved either, and the workflow that ran then is this one.
+              fetch "$tested" || everything "$tested, which run $run passed on, is not there to compare with."
+              [ "$(git rev-parse "$tested^2")" = "$BEFORE" ] || everything "run $run passed on $tested, which does not merge $BEFORE."
+              changes_only_the_list "$tested" "$GITHUB_SHA" || everything "more than $list differs from what run $run passed on."
+              reuse=list
+              taken="Only $list differs from what run $run passed on, so this run tests its wheels"
+              ;;
+            ready_for_review)
+              # The merge holds the head's files and no others, so main has not moved since the head last merged it,
+              # and every file under test is the head's, the workflows included.
+              [ "$(git rev-parse "$GITHUB_SHA^{tree}")" = "$(git rev-parse "$HEAD_SHA^{tree}")" ] || everything "the merge with main differs from $HEAD_SHA: main has moved since the head last merged it."
 
-          # Each of its native jobs passed, on one commit, which the job's last step names. No job that was skipped can
-          # count: it has no steps, and no name with a runner in it.
-          passed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" --jq '
-            .jobs[] | select(.conclusion == "success") | .name as $job | .steps[]
-            | select(.conclusion == "success" and (.name | test("^Passed on [0-9a-f]{40}$")))
-            | "\($job) \(.name | ltrimstr("Passed on "))"')" || everything "the jobs of run $run cannot be listed."
-          tested=""
-          for runner in $RUNNERS; do
-            commit="$(sed -n "s/^Native core on $runner //p" <<< "$passed")"
-            [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || everything "run $run did not pass on $runner."
-            [ "${tested:-$commit}" = "$commit" ] || everything "run $run passed on more than one commit."
-            tested="$commit"
-          done
-
-          # They passed on a merge of that head, and what merges now differs from it by the list alone, so main has not
-          # moved either, and the workflow that ran then is this one.
-          fetch "$tested" || everything "$tested, which run $run passed on, is not there to compare with."
-          [ "$(git rev-parse "$tested^2")" = "$BEFORE" ] || everything "run $run passed on $tested, which does not merge $BEFORE."
-          changes_only_the_list "$tested" "$GITHUB_SHA" || everything "more than $list differs from what run $run passed on."
+              # The newest full run by hand of this branch on that head. It ran the head's own workflows: a run by hand
+              # takes them from the commit it runs on.
+              run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/full-run.yml/runs?event=workflow_dispatch&head_sha=$HEAD_SHA&per_page=100" --jq '
+                [.workflow_runs[] | select(.head_repository.full_name == env.GITHUB_REPOSITORY and .head_branch == env.HEAD_REF and .head_sha == env.HEAD_SHA)]
+                | max_by(.run_number).id // empty')" || everything "the full runs on $HEAD_SHA cannot be listed."
+              [ -n "$run" ] || everything "$HEAD_REF has no full run on $HEAD_SHA."
+              take_wheels "$run"
+              passed_on_one_commit "$run" "Full run / "
+              [ "$tested" = "$HEAD_SHA" ] || everything "full run $run passed on $tested, not on $HEAD_SHA."
+              reuse=ready
+              taken="Full run $run passed on $HEAD_SHA, and merging it into main changes no file, so this run takes its results"
+              ;;
+            *)
+              everything "the event is $ACTION, which takes no run's results."
+              ;;
+          esac
 
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "wheels={$wheels}" >> "$GITHUB_OUTPUT"
-          echo "Only $list differs from what run $run passed on, so this run tests its wheels: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "reuse=$reuse" >> "$GITHUB_OUTPUT"
+          echo "$taken: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # A job for each Host rather than one matrix, so that a Host's web-platform-tests wait for its own native job alone.
   # Each has a matrix of one all the same. GitHub counts a skipped job as a pass of the check of its name, and a job
@@ -158,8 +199,9 @@ jobs:
     name: Native core on ${{ matrix.runner }}
     needs: changes
     # A draft pull request builds nothing: it runs once it is marked ready for review, at the head of the merge queue.
-    # Nor does a push that changes only the list of differences, whose wheels the reuse jobs take. Should "changes"
-    # fail, or be skipped, this builds as on any other push.
+    # Nor does a push that changes only the list of differences, or a pull request marked ready whose full run by hand
+    # tested the same files, whose wheels the reuse jobs take. Should "changes" fail, or be skipped, this builds as on
+    # any other push.
     if: &builds ${{ !cancelled() && !(github.event_name == 'pull_request' && github.event.pull_request.draft) && (needs.changes.result != 'success' || needs.changes.outputs.run == '') }}
     runs-on: ${{ matrix.runner }}
     # From nothing, as in the nightly run, the library takes 13 to 42 minutes, the Runtime 58 to 107 more and the tests
@@ -446,7 +488,9 @@ jobs:
     steps: *native-steps
 
   # What takes the native jobs' place when a push changes only the list of differences: the same wheel, and the tests
-  # that read the list, which run on the Host as in the native job. Like the native jobs, each has a matrix of one.
+  # that read the list, which run on the Host as in the native job. When a pull request marked ready takes its full
+  # run's results, the wheel alone: that run's native job built and tested it from the same files. Like the native
+  # jobs, each has a matrix of one.
   reuse-linux:
     name: Native core on ${{ matrix.runner }}
     needs: changes
@@ -470,22 +514,33 @@ jobs:
         with:
           persist-credentials: false
       - *setup-uv
-      # The wheel that the native job of the run before built and tested.
+      # The wheel that the native job of the run before, or of the full run, built and tested.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ fromJSON(needs.changes.outputs.wheels)[matrix.runner] }}
           path: ${{ runner.temp }}/dist
           run-id: ${{ needs.changes.outputs.run }}
           github-token: ${{ github.token }}
-      - *install-the-wheel
+      # As the native job installs it, but only for the tests below. The step of the native job cannot take a condition
+      # of its own here, since YAML's aliases take a step whole.
+      - name: Install the wheel
+        if: needs.changes.outputs.reuse == 'list'
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/wheel-env
+          ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
+        run: |
+          uv sync --no-install-project
+          uv pip install --python "$ENVIRONMENT_PYTHON" "$RUNNER_TEMP"/dist/*.whl
       # The only tests that read the list. Every other test came out as it did in the run before: nothing that it reads
-      # has changed.
+      # has changed. After a full run, nothing has changed at all.
       - name: Test what reads the list of differences
+        if: needs.changes.outputs.reuse == 'list'
         env:
           ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
         run: |
           "$ENVIRONMENT_PYTHON" -m pytest -rs tests/test_wpt*.py
-      # For the web-platform-tests of this run, and for the next push that changes only the list.
+      # For the web-platform-tests of this run, and for the next push that changes only the list. After a full run, for
+      # that push alone.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-${{ matrix.runner }}
@@ -530,9 +585,10 @@ jobs:
     name: web-platform-tests on ${{ matrix.runner }}
     # From this Host's wheel, which its native job made or, for a push that changes only the list, its reuse job took.
     # So it waits for this Host's job alone, and runs only when that job passed. A draft pull request builds no wheel,
-    # and runs this once it is marked ready for review.
-    needs: [native-linux, reuse-linux]
-    if: ${{ !cancelled() && (needs.native-linux.result == 'success' || needs.reuse-linux.result == 'success') }}
+    # and runs this once it is marked ready for review. Nor does a pull request marked ready that takes its full run's
+    # results: that run ran these tests on the same files.
+    needs: [changes, native-linux, reuse-linux]
+    if: ${{ !cancelled() && (needs.native-linux.result == 'success' || (needs.reuse-linux.result == 'success' && needs.changes.outputs.reuse == 'list')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -572,8 +628,8 @@ jobs:
 
   wpt-macos:
     name: web-platform-tests on ${{ matrix.runner }}
-    needs: [native-macos, reuse-macos]
-    if: ${{ !cancelled() && (needs.native-macos.result == 'success' || needs.reuse-macos.result == 'success') }}
+    needs: [changes, native-macos, reuse-macos]
+    if: ${{ !cancelled() && (needs.native-macos.result == 'success' || (needs.reuse-macos.result == 'success' && needs.changes.outputs.reuse == 'list')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -587,8 +643,8 @@ jobs:
 
   wpt-windows:
     name: web-platform-tests on ${{ matrix.runner }}
-    needs: [native-windows, reuse-windows]
-    if: ${{ !cancelled() && (needs.native-windows.result == 'success' || needs.reuse-windows.result == 'success') }}
+    needs: [changes, native-windows, reuse-windows]
+    if: ${{ !cancelled() && (needs.native-windows.result == 'success' || (needs.reuse-windows.result == 'success' && needs.changes.outputs.reuse == 'list')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
