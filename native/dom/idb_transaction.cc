@@ -40,6 +40,40 @@ namespace {
 // a put may estimate to send.
 constexpr size_t kMaxPutValueSize = 134217728 - 1048576;
 
+// blink.mojom's kIDBWrapThreshold: Chrome's IDBValueWrapper puts a value whose
+// wire data is longer in a Blob.
+constexpr size_t kWrapThreshold = 65536;
+
+size_t VarIntSize(uint64_t value) {
+  size_t size = 1;
+  while (value >= 0x80) {
+    value >>= 7;
+    ++size;
+  }
+  return size;
+}
+
+// What Chrome's IDBValueWrapper::MaybeStoreInBlob() leaves of a value's wire
+// data: past kWrapThreshold, kVersionTag, kRequiresProcessingSSVPseudoVersion
+// and kReplaceWithBlob, then the size and the index of the Blob that holds it.
+size_t WireDataSizeAsChromeSends(const IndexedDbValue& value) {
+  if (value.bits.size() <= kWrapThreshold) {
+    return value.bits.size();
+  }
+  return 3 + VarIntSize(value.bits.size()) + VarIntSize(value.blobs.size());
+}
+
+PageIndexedDbCallback TooLargePutAnswer(size_t estimated_size) {
+  PageIndexedDbCallback answer;
+  answer.op = IndexedDbCallbackOp::kPutResult;
+  answer.error = IndexedDbException::kUnknownError;
+  answer.message = base::UTF8ToUTF16(base::StrCat(
+      {"The serialized keys and/or value are too large (size=",
+       base::NumberToString(estimated_size),
+       " bytes, max=", base::NumberToString(kMaxPutValueSize), " bytes)."}));
+  return answer;
+}
+
 // The tasks of each isolate's next checkpoint. The Page program has one
 // isolate, on its main thread.
 std::vector<base::OnceClosure>& EndOfMicrotaskCheckpointTasks(
@@ -587,31 +621,31 @@ void IDBTransaction::Put(int64_t object_store_id,
     }
   }
   // Not its blobs', which Chrome's browser reads over their remotes.
-  const size_t estimated_size =
-      value.bits.size() + primary_key.SizeEstimate() + index_keys_size;
+  const size_t keys_size = primary_key.SizeEstimate() + index_keys_size;
+  // Blink runs the put's callback with this at once, so that its error event
+  // fires inside put(), after which the transaction is no longer active. Only
+  // keys reach it, as Chrome wraps a value past 64 KiB in a Blob.
+  const size_t size_as_chrome_sends =
+      WireDataSizeAsChromeSends(value) + keys_size;
+  if (size_as_chrome_sends >= kMaxPutValueSize) {
+    request->OnPut(TooLargePutAnswer(size_as_chrome_sends));
+    return;
+  }
+  // A value that Chrome would wrap in a Blob goes whole here, so it fails where
+  // Chrome's goes, and its error comes from a task of its own, as the host's
+  // answer to a call too large to send does.
+  const size_t estimated_size = value.bits.size() + keys_size;
   if (estimated_size >= kMaxPutValueSize) {
-    // Blink runs the put's callback with this at once, which only a value
-    // that its wrapping in a Blob left this large reaches; here, where values
-    // go whole, it comes from a task of its own, as the host's answer to a
-    // call too large to send does, so that its error event does not fire
-    // inside put() while the transaction is active.
-    PageIndexedDbCallback answer;
-    answer.op = IndexedDbCallbackOp::kPutResult;
-    answer.error = IndexedDbException::kUnknownError;
-    answer.message = base::UTF8ToUTF16(base::StrCat(
-        {"The serialized keys and/or value are too large (size=",
-         base::NumberToString(estimated_size),
-         " bytes, max=", base::NumberToString(kMaxPutValueSize), " bytes)."}));
-    PostIDBTask(
-        execution_context_.Get(),
-        base::BindOnce(
-            [](cppgc::WeakPersistent<IDBRequest> request,
-               PageIndexedDbCallback answer) {
-              if (request) {
-                request->OnPut(answer);
-              }
-            },
-            cppgc::WeakPersistent<IDBRequest>(request), std::move(answer)));
+    PostIDBTask(execution_context_.Get(),
+                base::BindOnce(
+                    [](cppgc::WeakPersistent<IDBRequest> request,
+                       PageIndexedDbCallback answer) {
+                      if (request) {
+                        request->OnPut(answer);
+                      }
+                    },
+                    cppgc::WeakPersistent<IDBRequest>(request),
+                    TooLargePutAnswer(estimated_size)));
     return;
   }
 
