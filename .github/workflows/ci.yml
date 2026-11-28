@@ -395,13 +395,11 @@ jobs:
           name: notices-${{ matrix.runner }}
           path: ${{ runner.temp }}/native-core/host-notices.txt
           if-no-files-found: error
-      # The C test program and the library beside it, which the test job's tests of Pages through the C API copy.
+      # The C test program, for the test job's tests of Pages through the C API.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: core-test-${{ matrix.runner }}
-          path: |
-            ${{ runner.temp }}/native-core/${{ matrix.core-test }}
-            ${{ runner.temp }}/native-core/${{ matrix.library }}
+          path: ${{ runner.temp }}/native-core/${{ matrix.core-test }}
           if-no-files-found: error
 
   build-macos:
@@ -467,6 +465,7 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
+            library: libmitto_core.so
             core-test: mitto_core_test
             page-program: mitto_page
             environment-python: bin/python
@@ -480,7 +479,7 @@ jobs:
           persist-credentials: false
       - *setup-uv
       # The wheel and its symbols archive, the notices that the test of the wheel compares with the wheel's, and the C
-      # test program with the library, each where the build job had it.
+      # test program, each where the build job had it.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: wheel-${{ matrix.runner }}
@@ -523,14 +522,17 @@ jobs:
           "$ENVIRONMENT_PYTHON" -m pytest -rs -m alone
       # The C test program opens Pages with the installed Page program beside the library, as the wheel holds them, and
       # kills the processes on each side. Only these tests run it here: the sanitizer builds run its other scenarios.
+      # The tests copy the library that sits beside the program, which is the installed package's.
       - name: Test Pages through the C API
         env:
           ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
           MITTO_CORE_TEST: ${{ runner.temp }}/native-core/${{ matrix.core-test }}
+          LIBRARY: ${{ matrix.library }}
           PAGE_PROGRAM: ${{ matrix.page-program }}
         run: |
           # An artifact keeps no file modes.
           chmod +x "$MITTO_CORE_TEST"
+          "$ENVIRONMENT_PYTHON" -c 'import importlib.util, os, shutil, sys; shutil.copy2(os.path.join(importlib.util.find_spec("mitto").submodule_search_locations[0], sys.argv[1]), sys.argv[2])' "$LIBRARY" "$RUNNER_TEMP/native-core"
           MITTO_PAGE_PROGRAM="$("$ENVIRONMENT_PYTHON" -c 'import importlib.util, os, sys; print(os.path.join(importlib.util.find_spec("mitto").submodule_search_locations[0], sys.argv[1]))' "$PAGE_PROGRAM")"
           export MITTO_PAGE_PROGRAM
           "$ENVIRONMENT_PYTHON" -m pytest -rs tests/test_page_process.py
@@ -551,6 +553,7 @@ jobs:
       matrix:
         include:
           - runner: xcode-27
+            library: libmitto_core.dylib
             core-test: mitto_core_test
             page-program: mitto_page
             environment-python: bin/python
@@ -568,6 +571,7 @@ jobs:
       matrix:
         include:
           - runner: windows-2025-vs2026
+            library: mitto_core.dll
             core-test: mitto_core_test.exe
             page-program: mitto_page.exe
             environment-python: Scripts/python.exe
